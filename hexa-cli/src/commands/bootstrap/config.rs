@@ -1,50 +1,43 @@
-use serde_json::json;
+//! The project config, on bootstrap.
+//!
+//! An existing `.hexa/project.json` is left exactly as it is. This step once
+//! overwrote it with three hardcoded model names: a project's name,
+//! `analyze.exclude` and budget were gone, and validation then reported the
+//! injected models as missing. Model names belong in `hexa-infer` and in the
+//! project's own config, never in this file.
+
 use std::fs;
 use std::path::Path;
 
 pub struct ConfigSetup {
-    profile: String,
     dry_run: bool,
+}
+
+/// What the step did, for the caller to print.
+pub enum ConfigOutcome {
+    Kept,
+    Created,
+    WouldCreate,
 }
 
 impl ConfigSetup {
     pub fn new(config: super::BootstrapConfig) -> Self {
-        Self {
-            profile: config.profile,
-            dry_run: config.dry_run,
-        }
+        Self { dry_run: config.dry_run }
     }
 
-    pub async fn setup(&self) -> anyhow::Result<()> {
+    pub async fn setup(&self) -> anyhow::Result<ConfigOutcome> {
+        let config_path = Path::new(".hexa").join("project.json");
+        if config_path.exists() {
+            return Ok(ConfigOutcome::Kept);
+        }
         if self.dry_run {
-            println!("Would create/update .hexa/project.json with profile: {}", self.profile);
-            return Ok(());
+            return Ok(ConfigOutcome::WouldCreate);
         }
-
-        let config_dir = Path::new(".hexa");
-        if !config_dir.exists() {
-            fs::create_dir_all(config_dir)?;
-        }
-
-        let config_path = config_dir.join("project.json");
-        let config_json = json!({
-            "inference": {
-                "tier_models": {
-                    "t1": "qwen3:4b",
-                    "t2": "qwen2.5-coder:32b",
-                    "t2_5": "gemma4:latest"
-                }
-            },
-            "bootstrap": {
-                "profile": self.profile,
-                "timestamp": chrono::Utc::now().to_rfc3339(),
-                "services_started": ["ollama"]
-            }
-        });
-
-        let json_string = serde_json::to_string_pretty(&config_json)?;
-        fs::write(&config_path, json_string)?;
-
-        Ok(())
+        fs::create_dir_all(".hexa")?;
+        // No models. A project configures its tiers with `hexa config`; a
+        // default here would be a choice made for the user in silence.
+        let body = serde_json::json!({ "inference": { "tier_models": {} } });
+        fs::write(&config_path, serde_json::to_string_pretty(&body)? + "\n")?;
+        Ok(ConfigOutcome::Created)
     }
 }

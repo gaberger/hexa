@@ -120,17 +120,13 @@ pub async fn run(args: BootstrapArgs) -> anyhow::Result<()> {
     let service_status = starter.start_all().await?;
 
     for status in &service_status {
-        let icon = if status.running { "✓".green() } else { "✗".red() };
-        println!(
-            "  {} {} {}",
-            icon,
-            status.name,
-            if let Some(pid) = status.pid {
-                format!("(PID {})", pid)
-            } else {
-                String::new()
-            }
-        );
+        let icon = if status.running { "✓".green() } else { "○".yellow() };
+        let detail = match (&status.pid, &status.note) {
+            (Some(pid), _) => format!("(PID {pid})"),
+            (None, Some(note)) => format!("({note})"),
+            (None, None) => "(not running)".to_string(),
+        };
+        println!("  {} {} {}", icon, status.name, detail);
     }
     println!();
 
@@ -158,8 +154,14 @@ pub async fn run(args: BootstrapArgs) -> anyhow::Result<()> {
     // Phase 4: Configure project
     println!("{}", "⬡ Setting up configuration...".cyan());
     let configurator = ConfigSetup::new(config.clone());
-    configurator.setup().await?;
-    println!("{}", "✓ Configuration created".green());
+    match configurator.setup().await? {
+        config::ConfigOutcome::Kept => println!("{}", "✓ .hexa/project.json kept as it is".green()),
+        config::ConfigOutcome::Created => println!(
+            "{}",
+            "✓ .hexa/project.json created with no models; configure tiers with `hexa config`".green()
+        ),
+        config::ConfigOutcome::WouldCreate => println!("  would create .hexa/project.json"),
+    }
     println!();
 
     // Phase 5: Validate
@@ -172,7 +174,7 @@ pub async fn run(args: BootstrapArgs) -> anyhow::Result<()> {
     } else {
         println!("{}", report.format_warning());
         if !config.dry_run {
-            return Err(anyhow::anyhow!("Bootstrap validation failed"));
+            return Err(anyhow::anyhow!("no path to a model"));
         }
     }
 

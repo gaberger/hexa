@@ -6,54 +6,49 @@ pub struct BootstrapReport {
     pub ready: bool,
     pub service_checks: Vec<(String, bool)>,
     pub model_checks: Vec<(String, bool)>,
+    /// A logged-in `claude` CLI is on PATH.
+    pub frontier: bool,
+    /// Which path to a model is open, in words.
+    pub path: &'static str,
     pub config_exists: bool,
 }
 
 impl BootstrapReport {
     pub fn format_success(&self) -> String {
-        let mut output = String::from("✓ Bootstrap successful — all systems ready\n\n");
-        output.push_str("╭─ Bootstrap Status ─────────────────────╮\n");
-
-        for (service, ready) in &self.service_checks {
-            let icon = if *ready { "✓" } else { "✗" };
-            output.push_str(&format!("│ {} {} (running)\n", icon, service));
+        let mut output = String::from("✓ Bootstrap complete\n\n");
+        output.push_str("╭─ Validation Report ───────────────────╮\n");
+        for (service, ok) in &self.service_checks {
+            output.push_str(&format!("│ {} {}\n", if *ok { "✓" } else { "○" }, service));
         }
-
-        output.push_str("├─ Models ──────────────────────────────┤\n");
         for (model, ready) in &self.model_checks {
-            let icon = if *ready { "✓" } else { "✗" };
-            output.push_str(&format!("│ {} {} (loaded)\n", icon, model));
+            output.push_str(&format!("│ {} {}{}\n", if *ready { "✓" } else { "○" }, model, if *ready { " (loaded)" } else { " (not pulled)" }));
         }
-
-        output.push_str("├─ Status ──────────────────────────────┤\n");
-        output.push_str("│ Config:  ✓ created (.hexa/project.json)\n");
-        output.push_str("│ Ready:   ✓ All systems go\n");
-        output.push_str("│ Next:    hexa plan execute ...\n");
-        output.push_str("╰───────────────────────────────────────╯\n");
-
+        output.push_str(&format!("│ {} frontier (claude)\n", if self.frontier { "✓" } else { "○" }));
+        output.push_str(&format!("│ path: {}\n", self.path));
+        output.push_str("╰───────────────────────────────────────╯");
         output
     }
 
     pub fn format_warning(&self) -> String {
-        let mut output = String::from("⚠ Bootstrap validation detected issues:\n\n");
+        let provider = hexa_infer::local_provider();
+        let mut output = String::from("✗ No path to a model\n\n");
         output.push_str("╭─ Validation Report ───────────────────╮\n");
-
-        for (service, ready) in &self.service_checks {
-            let icon = if *ready { "✓" } else { "✗" };
-            output.push_str(&format!("│ {} {} \n", icon, service));
+        for (service, ok) in &self.service_checks {
+            output.push_str(&format!("│ {} {}\n", if *ok { "✓" } else { "✗" }, service));
         }
-
         for (model, ready) in &self.model_checks {
-            let icon = if *ready { "✓" } else { "⚠" };
-            output.push_str(&format!("│ {} {} (may load on first use)\n", icon, model));
+            output.push_str(&format!("│ {} {}{}\n", if *ready { "✓" } else { "✗" }, model, if *ready { "" } else { " (not pulled)" }));
         }
-
+        output.push_str(&format!("│ {} frontier (claude)\n", if self.frontier { "✓" } else { "✗" }));
         if !self.config_exists {
-            output.push_str("│ ✗ Config (.hexa/project.json) missing\n");
+            output.push_str("│ ✗ .hexa/project.json\n");
         }
-
         output.push_str("╰───────────────────────────────────────╯\n");
-
+        output.push_str(&format!(
+            "Either start {} ({}) and pull the models the project configures, or log in to the claude CLI.",
+            provider.display_name,
+            provider.install_hint()
+        ));
         output
     }
 }
@@ -94,20 +89,28 @@ impl BootstrapValidator {
         // Check config
         let config_exists = Path::new(".hexa/project.json").exists();
 
-        // `ready` used to ignore `model_checks` entirely, so an install with
-        // the server up, a config file present and not one model pulled
-        // reported ready. A readiness claim that cannot be falsified by the
-        // thing it is about is not a claim.
-        let ready = service_checks.iter().all(|(_, ok)| *ok)
-            && !model_checks.is_empty()
-            && model_checks.iter().all(|(_, ok)| *ok)
-            && config_exists;
+        // Two paths to a model: the local server with the models the
+        // project configures, or a logged-in `claude` CLI. Either is enough
+        // to run, and a machine set up for the frontier path has no local
+        // server on purpose. Only no path at all fails.
+        let local_up = service_checks.iter().all(|(_, ok)| *ok);
+        let local_ok = local_up && model_checks.iter().all(|(_, ok)| *ok);
+        let frontier = Command::new("which").arg("claude").output().map(|o| o.status.success()).unwrap_or(false);
+        let path = match (local_ok, frontier) {
+            (true, true) => "local server and frontier",
+            (true, false) => "local server only",
+            (false, true) => "frontier only",
+            (false, false) => "none",
+        };
+        let ready = config_exists && (local_ok || frontier);
 
         Ok(BootstrapReport {
             ready,
             service_checks,
             model_checks,
             config_exists,
+            frontier,
+            path,
         })
     }
 

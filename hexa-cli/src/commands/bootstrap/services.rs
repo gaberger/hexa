@@ -7,6 +7,8 @@ pub struct ServiceStatus {
     pub name: String,
     pub running: bool,
     pub pid: Option<u32>,
+    /// Why it is not running, when that is known: not installed, and how to install it.
+    pub note: Option<String>,
 }
 
 pub struct ServiceStarter {
@@ -44,13 +46,21 @@ impl ServiceStarter {
         let name = provider.display_name.to_string();
 
         if self.is_port_open(provider.default_port).await && !self.force {
-            return ServiceStatus { name, running: true, pid: self.get_pid(provider.binary) };
+            return ServiceStatus { name, running: true, pid: self.get_pid(provider.binary), note: None };
         }
         if !self.force && self.is_process_running(provider.binary) {
-            return ServiceStatus { name, running: true, pid: self.get_pid(provider.binary) };
+            return ServiceStatus { name, running: true, pid: self.get_pid(provider.binary), note: None };
+        }
+        if !binary_on_path(provider.binary) {
+            return ServiceStatus {
+                name,
+                running: false,
+                pid: None,
+                note: Some(format!("not installed; {}", provider.install_hint())),
+            };
         }
         if self.dry_run {
-            return ServiceStatus { name, running: false, pid: None };
+            return ServiceStatus { name, running: false, pid: None, note: None };
         }
         if self.force {
             let _ = Command::new("pkill").arg("-f").arg(provider.binary).output();
@@ -72,17 +82,17 @@ impl ServiceStarter {
                 .is_ok()
         };
         if !started {
-            return ServiceStatus { name, running: false, pid: None };
+            return ServiceStatus { name, running: false, pid: None, note: None };
         }
 
         // Report what is true, not what was attempted: wait for the port.
         for _ in 0..20 {
             sleep(Duration::from_millis(250)).await;
             if self.is_port_open(provider.default_port).await {
-                return ServiceStatus { name, running: true, pid: self.get_pid(provider.binary) };
+                return ServiceStatus { name, running: true, pid: self.get_pid(provider.binary), note: None };
             }
         }
-        ServiceStatus { name, running: false, pid: None }
+        ServiceStatus { name, running: false, pid: None, note: None }
     }
 
     async fn is_port_open(&self, port: u16) -> bool {
@@ -116,4 +126,12 @@ impl ServiceStarter {
             None
         }
     }
+}
+
+fn binary_on_path(binary: &str) -> bool {
+    Command::new("which")
+        .arg(binary)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
