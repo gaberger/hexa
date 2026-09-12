@@ -90,5 +90,5 @@ it.
 There is no spec step. A spec that cannot be run does not exist. It becomes a
 gate, or it becomes ADR prose.
 
-There is no swarm, no task board, and no daemon. Every verb runs in-process and
-exits.
+Every verb runs in-process and exits. Nothing runs between invocations, and
+nothing has to be started before one.

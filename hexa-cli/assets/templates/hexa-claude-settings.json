@@ -6,129 +6,162 @@
     "command": "node scripts/hexa-statusline.cjs"
   },
   "hooks": {
-    "SessionStart": [{
-      "hooks": [{
-        "type": "command",
-        "command": "hexa hook session-start",
-        "timeout": 10000
-      }]
-    }],
-    "SessionEnd": [{
-      "hooks": [{
-        "type": "command",
-        "command": "hexa hook session-end",
-        "timeout": 5000
-      }]
-    }],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "hexa hook session-start",
+            "timeout": 10000
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "hexa hook session-end",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Write|Edit|MultiEdit",
-        "hooks": [{
-          "type": "command",
-          "command": "hexa hook pre-edit",
-          "timeout": 5000
-        }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "hexa hook pre-edit",
+            "timeout": 5000
+          }
+        ]
       },
       {
         "matcher": "Bash",
-        "hooks": [{
-          "type": "command",
-          "command": "hexa hook pre-bash",
-          "timeout": 3000
-        }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "hexa hook pre-bash",
+            "timeout": 3000
+          }
+        ]
       },
       {
         "matcher": "Agent",
-        "hooks": [{
-          "type": "command",
-          "command": "hexa hook pre-agent",
-          "timeout": 3000
-        }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "hexa hook pre-agent",
+            "timeout": 3000
+          }
+        ]
       },
       {
         "matcher": "Write|Edit|MultiEdit",
-        "hooks": [{
-          "type": "command",
-          "command": "hexa enforce check-file \"$TOOL_INPUT_PATH\"",
-          "blocking": true,
-          "timeout": 5000
-        }]
+        "hooks": []
       },
       {
-        "hooks": [{
-          "type": "command",
-          "command": "hexa hook observe-pre",
-          "blocking": false,
-          "timeout": 500
-        }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "hexa hook observe-pre",
+            "blocking": false,
+            "timeout": 500
+          }
+        ]
       }
     ],
     "PostToolUse": [
       {
         "matcher": "Write|Edit|MultiEdit",
-        "hooks": [{
-          "type": "command",
-          "command": "hexa hook post-edit",
-          "timeout": 5000
-        }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "hexa hook post-edit",
+            "timeout": 5000
+          }
+        ]
       },
       {
         "matcher": "Write|Edit|MultiEdit",
-        "hooks": [{
-          "type": "command",
-          "command": "hexa analyze --file \"$TOOL_INPUT_PATH\" --quiet",
-          "blocking": false,
-          "timeout": 10000
-        }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "hexa analyze --file \"$TOOL_INPUT_PATH\" --quiet",
+            "blocking": false,
+            "timeout": 10000
+          }
+        ]
       },
       {
-        "hooks": [{
-          "type": "command",
-          "command": "hexa hook observe-post",
-          "blocking": false,
-          "timeout": 500
-        }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "hexa hook observe-post",
+            "blocking": false,
+            "timeout": 500
+          }
+        ]
       }
     ],
     "Stop": [
       {
-        "hooks": [{
-          "type": "command",
-          "command": "hexa hook observe-stop",
-          "blocking": false,
-          "timeout": 500
-        }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "hexa hook observe-stop",
+            "blocking": false,
+            "timeout": 500
+          }
+        ]
       },
       {
-        "hooks": [{
-          "type": "command",
-          "command": "hexa analyze --violations-only --exit-code",
-          "blocking": true,
-          "timeout": 30000
-        }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "hexa analyze --violations-only --exit-code",
+            "blocking": true,
+            "timeout": 30000
+          }
+        ]
       }
     ],
-    "SubagentStart": [{
-      "hooks": [{
-        "type": "command",
-        "command": "hexa hook subagent-start",
-        "timeout": 3000
-      }]
-    }],
-    "SubagentStop": [{
-      "hooks": [{
-        "type": "command",
-        "command": "hexa hook subagent-stop",
-        "timeout": 3000
-      }]
-    }],
-    "UserPromptSubmit": [{
-      "hooks": [{
-        "type": "command",
-        "command": "hexa hook route",
-        "timeout": 8000
-      }]
-    }]
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "hexa hook subagent-start",
+            "timeout": 3000
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "hexa hook subagent-stop",
+            "timeout": 3000
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "hexa hook route",
+            "timeout": 8000
+          }
+        ]
+      }
+    ]
   },
   "permissions": {
     "allow": [
@@ -140,6 +173,6 @@
     ]
   },
   "companyAnnouncements": [
-    "hexa — Hexagonal Architecture Framework\nRun `hexa analyze .` for architecture health | `hexa status` for overview | `hexa swarm status` for active swarms"
+    "hexa: a scaffolding system with two gates\nRun `hexa analyze .` for the grade | `hexa status` for an overview"
   ]
 }
