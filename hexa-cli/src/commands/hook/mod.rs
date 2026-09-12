@@ -252,6 +252,18 @@ pub enum HookEvent {
 }
 
 pub async fn run(event: HookEvent) -> Result<()> {
+    // A claude that hexa itself started (harden's reviewers, the frontier
+    // candidate in the loop) carries HEXA_INTERNAL. Its prompts are hexa's,
+    // not a person's: sizing them, drafting workplans from them, gating
+    // their edits on a recorded gate, all of that is noise at best. The one
+    // hook that stays on is pre-bash, which stops destructive commands
+    // whoever issues them.
+    if std::env::var("HEXA_INTERNAL").map(|v| !v.is_empty()).unwrap_or(false)
+        && !matches!(event, HookEvent::PreBash)
+    {
+        return Ok(());
+    }
+
     let project_dir = std::env::var("CLAUDE_PROJECT_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());

@@ -105,6 +105,10 @@ fn extract_json(text: &str) -> Option<&str> {
 async fn claude_run(prompt: &str, cwd: &Path, timeout_secs: u64) -> Result<String, String> {
     let fut = tokio::process::Command::new(claude_binary())
         .arg("-p")
+        // hexa\'s own prompt. The project\'s hooks run inside this claude and must
+        // not treat it as a person\'s work: `route` once drafted workplans from the
+        // harden reviewer prompts. `hexa hook` returns early when this is set.
+        .env("HEXA_INTERNAL", "1")
         .arg("--dangerously-skip-permissions")
         .arg(prompt)
         .current_dir(cwd)
