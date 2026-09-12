@@ -313,7 +313,7 @@ Measure your own with `hexa bench agentic`.
 
 ## Architecture
 
-Eight crates, one binary, about 52k lines. hexa obeys its own rules: **A+, 100 of
+Eight crates, one binary, about 51k lines. hexa obeys its own rules: **A+, 100 of
 100, zero boundary violations** on its own analyzer, over all eight crates. The
 only paths it excludes are its embedded scaffold templates, and it declares
 that in `.hexa/project.json` like any other project would. The map is in

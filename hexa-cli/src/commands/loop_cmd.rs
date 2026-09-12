@@ -51,7 +51,7 @@ pub fn project_name(dir: &Path) -> String {
 }
 
 /// Where the loop lives: `.hexa/loop.json` in the project.
-pub fn loop_path(dir: &Path) -> PathBuf {
+fn loop_path(dir: &Path) -> PathBuf {
     dir.join(".hexa").join("loop.json")
 }
 
@@ -79,7 +79,7 @@ pub fn update_loop(dir: &Path, patch: serde_json::Value) -> Result<serde_json::V
 }
 
 /// Remove the loop file. Returns whether there was one.
-pub fn clear_loop(dir: &Path) -> Result<bool, String> {
+fn clear_loop(dir: &Path) -> Result<bool, String> {
     let p = loop_path(dir);
     if !p.is_file() {
         return Ok(false);
