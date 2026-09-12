@@ -108,9 +108,6 @@ pub async fn run(args: InitArgs) -> Result<()> {
     // ── 1a. .hexa/project.json ─────────────────────────────────────
     create_project_json(&target, &project_name)?;
 
-    // ── 1b. .hexa/project.yaml (ADR-043 manifest) ───────────────
-    create_project_yaml(&target, &project_name, interview.as_ref())?;
-
     // ── 1c. .hexa/ADR-rules.toml (enforcement rules) ───────────────
     create_adr_rules_toml(&target)?;
 
@@ -147,7 +144,6 @@ pub async fn run(args: InitArgs) -> Result<()> {
     // ── Summary ───────────────────────────────────────────────────
     println!();
     println!("  {} .hexa/project.json", "\u{2713}".green());
-    println!("  {} .hexa/project.yaml (auto-register manifest)", "\u{2713}".green());
     println!("  {} .hexa/ADR-rules.toml (enforcement rules)", "\u{2713}".green());
     println!("  {} .claude/settings.json", "\u{2713}".green());
     if !args.no_claude_md {
@@ -231,57 +227,6 @@ fn create_project_json(target: &Path, name: &str) -> Result<()> {
 
     fs::write(&project_json, serde_json::to_string_pretty(&content)?)
         .context("Failed to write .hexa/project.json")?;
-
-    Ok(())
-}
-
-fn create_project_yaml(
-    target: &Path,
-    name: &str,
-    interview: Option<&super::interview::ProjectInterview>,
-) -> Result<()> {
-    let hexa_dir = target.join(".hexa");
-    create_dir_if_missing(&hexa_dir)?;
-
-    let yaml_path = hexa_dir.join("project.yaml");
-    if yaml_path.exists() {
-        // Don't overwrite existing manifest
-        return Ok(());
-    }
-
-    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
-    let description = interview
-        .map(|iv| iv.description.as_str())
-        .unwrap_or("");
-    let language = interview
-        .map(|iv| iv.language.to_string())
-        .unwrap_or_default();
-    let content = format!(
-        r#"---
-name: {name}
-description: "{description}"
-language: "{language}"
-version: "0.1.0"
-created: "{today}"
-
-# When hexa nexus starts in this directory, auto-register
-# this project in SpacetimeDB (ADR-043).
-auto_register: true
-
-# Default agent configuration
-agent:
-  provider: auto
-  model: claude-sonnet-4-20250514
-  project_dir: .
-"#,
-        name = name,
-        description = description,
-        language = language,
-        today = today,
-    );
-
-    fs::write(&yaml_path, content)
-        .context("Failed to write .hexa/project.yaml")?;
 
     Ok(())
 }
