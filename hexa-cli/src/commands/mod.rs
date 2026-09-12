@@ -12,6 +12,7 @@ pub mod insight;
 pub mod inference;
 pub mod init;
 pub mod memory;
+pub mod loop_cmd;
 pub mod plan;
 pub mod refresh;
 pub mod scaffold;

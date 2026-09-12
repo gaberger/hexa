@@ -64,6 +64,13 @@ pub struct HardenArgs {
 /// `hexa build` — diverge → red-team → synthesize → build, optionally chaining
 /// the adversarial pass for the full pipeline.
 pub async fn run_build(args: BuildArgs) -> anyhow::Result<()> {
+    // The gate is recorded in the loop, so the hooks can see the work is under one.
+    if let Ok(cwd) = std::env::current_dir() {
+        let _ = hexa_exec::local_store::loop_update(
+            &crate::commands::loop_cmd::project_name(&cwd),
+            serde_json::json!({ "gate": args.gate.clone(), "stage": "build" }),
+        );
+    }
     let repo_root = std::env::current_dir()?;
     println!(
         "{} {} {} {}",
@@ -109,6 +116,13 @@ pub async fn run_build(args: BuildArgs) -> anyhow::Result<()> {
 /// `hexa harden` — hunt the target for bugs by lens, verify each finding
 /// skeptically, and fix the confirmed ones under the gate.
 pub async fn run_harden(args: HardenArgs) -> anyhow::Result<()> {
+    // The gate is recorded in the loop, so the hooks can see the work is under one.
+    if let Ok(cwd) = std::env::current_dir() {
+        let _ = hexa_exec::local_store::loop_update(
+            &crate::commands::loop_cmd::project_name(&cwd),
+            serde_json::json!({ "gate": args.gate.clone(), "stage": "harden" }),
+        );
+    }
     let repo_root = std::env::current_dir()?;
     println!(
         "{} {} (gate: {})",

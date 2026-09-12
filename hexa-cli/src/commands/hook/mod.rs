@@ -42,6 +42,9 @@ struct SessionState {
     claude_pid: Option<u32>,
     #[serde(default)]
     workplan_id: Option<String>,
+    /// The tier the last prompt was classified as: T1, T2 or T3.
+    #[serde(default)]
+    last_tier: Option<String>,
     #[serde(default)]
     edits: u64,
     #[serde(default)]
@@ -65,22 +68,25 @@ struct SessionState {
 
 impl SessionState {
     fn state_file_path() -> PathBuf {
-        let session_id = std::env::var("CLAUDE_SESSION_ID").unwrap_or_default();
         let sessions_dir = dirs::home_dir()
             .unwrap_or_else(|| PathBuf::from("/tmp"))
             .join(".hexa/sessions");
-        let key = if session_id.is_empty() {
-            format!("agent-{}.json", std::process::id())
-        } else {
-            format!("agent-{}.json", &session_id)
-        };
-        sessions_dir.join(key)
+        sessions_dir.join(format!("agent-{}.json", session_key()))
     }
 
     fn load() -> Option<Self> {
         let path = Self::state_file_path();
         let content = std::fs::read_to_string(&path).ok()?;
         serde_json::from_str(&content).ok()
+    }
+
+    /// The session's state, created on first use. Nothing else creates it:
+    /// the daemon that once registered sessions is gone.
+    fn load_or_new() -> Self {
+        Self::load().unwrap_or_else(|| Self {
+            registered_at: chrono::Utc::now().to_rfc3339(),
+            ..Self::default()
+        })
     }
 
     fn save(&self) -> Result<()> {
@@ -112,24 +118,54 @@ impl SessionState {
 /// Check lifecycle enforcement mode for this project.
 /// Default is "mandatory" — all hexa projects enforce the ADR → workplan → code pipeline.
 /// Set "lifecycle_enforcement": "advisory" in .hexa/project.json to downgrade to warnings only.
-/// The tool input for a PreToolUse/PostToolUse hook, as a JSON string.
-///
-/// Claude Code passes one JSON object on stdin with the event's fields and,
-/// for tool hooks, a `tool_input` object. Older setups exported `TOOL_INPUT`
-/// instead. Read stdin once; fall back to the variable.
-fn tool_input_json() -> String {
-    use std::io::IsTerminal;
-    if !std::io::stdin().is_terminal() {
-        if let Ok(raw) = std::io::read_to_string(std::io::stdin()) {
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
-                if let Some(ti) = v.get("tool_input") {
-                    return ti.to_string();
-                }
-                return v.to_string();
-            }
+/// The one JSON object Claude Code passes a hook on stdin: `session_id`,
+/// `cwd`, `hook_event_name`, and per event `prompt`, `tool_name`,
+/// `tool_input`, `agent_id`, `agent_type`. Read once per process; every hook
+/// reads it from here. `Null` when stdin is a terminal or not JSON.
+fn hook_payload() -> &'static serde_json::Value {
+    static PAYLOAD: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
+    PAYLOAD.get_or_init(|| {
+        use std::io::IsTerminal;
+        if std::io::stdin().is_terminal() {
+            return serde_json::Value::Null;
         }
+        std::io::read_to_string(std::io::stdin())
+            .ok()
+            .and_then(|raw| serde_json::from_str(&raw).ok())
+            .unwrap_or(serde_json::Value::Null)
+    })
+}
+
+/// The tool input for a PreToolUse/PostToolUse hook, as a JSON string.
+/// Older setups exported `TOOL_INPUT` instead; that is the fallback.
+fn tool_input_json() -> String {
+    let v = hook_payload();
+    if let Some(ti) = v.get("tool_input") {
+        return ti.to_string();
+    }
+    if !v.is_null() {
+        return v.to_string();
     }
     std::env::var("TOOL_INPUT").unwrap_or_default()
+}
+
+/// What one Claude session is called across its hooks. The payload's
+/// `session_id` first; the `CLAUDE_SESSION_ID` variable if someone set it;
+/// else the parent process, which is the `claude` process for the whole
+/// session. Before this, the key was the hook's own pid, so every hook wrote
+/// a file no other hook read, and the session state was never seen.
+fn session_key() -> String {
+    if let Some(id) = hook_payload().get("session_id").and_then(|v| v.as_str()) {
+        if !id.is_empty() {
+            return id.to_string();
+        }
+    }
+    if let Ok(id) = std::env::var("CLAUDE_SESSION_ID") {
+        if !id.is_empty() {
+            return id;
+        }
+    }
+    format!("ppid-{}", std::os::unix::process::parent_id())
 }
 
 /// Subagent types that only read. They may run anywhere.
@@ -271,6 +307,11 @@ async fn session_start(project_dir: &Path) -> Result<()> {
     // ADR-2026-03-30-1200: Inject architecture fingerprint into Claude Code
     // context. stdout is picked up as session context — never skip this.
     println!("\n{}", fingerprint_block(id, project_dir, name).await);
+    println!("{}", crate::commands::loop_cmd::status_line(&crate::commands::loop_cmd::project_name(project_dir)));
+    let mut st = SessionState::load_or_new();
+    st.project = crate::commands::loop_cmd::project_name(project_dir);
+    st.name = session_key();
+    let _ = st.save();
 
     // ── Workplan reconciliation ──────────────────────
     // Reconcile workplan task statuses against git history on every
@@ -484,8 +525,7 @@ fn ensure_agent_hook(project_dir: &std::path::Path) {
 /// SubagentStart — record the subagent, and say so if a code-writing one is
 /// not in its own worktree. The gate is `pre-agent`; this is the receipt.
 async fn subagent_start() -> Result<()> {
-    let raw = std::io::read_to_string(std::io::stdin()).unwrap_or_default();
-    let v: serde_json::Value = serde_json::from_str(&raw).unwrap_or(serde_json::Value::Null);
+    let v = hook_payload().clone();
     let agent_type = v["agent_type"].as_str().unwrap_or("").to_string();
     let agent_id = v["agent_id"].as_str().unwrap_or("").to_string();
     let cwd = v["cwd"]
@@ -516,8 +556,7 @@ async fn subagent_start() -> Result<()> {
 /// Nothing is merged here. A merge is a decision, and the hook prints the
 /// facts it needs.
 async fn subagent_stop() -> Result<()> {
-    let raw = std::io::read_to_string(std::io::stdin()).unwrap_or_default();
-    let v: serde_json::Value = serde_json::from_str(&raw).unwrap_or(serde_json::Value::Null);
+    let v = hook_payload().clone();
     hexa_exec::local_store::persist_run(&serde_json::json!({
         "kind": "subagent",
         "event": "stop",
@@ -594,7 +633,30 @@ async fn pre_edit(project_dir: &Path) -> Result<()> {
             validate_boundary_edit(project_dir, file_path)?;
 
             let mode = enforcement_mode(project_dir);
-            let state = SessionState::load();
+            let state = Some(SessionState::load_or_new());
+
+            // The loop. A prompt the router sized as T2 or T3 is work with a
+            // shape, and work with a shape is done under a gate that was
+            // written first. No gate recorded means the loop was skipped.
+            let sized = state
+                .as_ref()
+                .and_then(|s| s.last_tier.as_deref())
+                .map(|t| t == "T2" || t == "T3")
+                .unwrap_or(false);
+            if sized {
+                let project = crate::commands::loop_cmd::project_name(project_dir);
+                let has_gate = hexa_exec::local_store::loop_state(&project)
+                    .and_then(|s| s.get("gate").and_then(|g| g.as_str()).map(|g| !g.is_empty()))
+                    .unwrap_or(false);
+                if !has_gate {
+                    let msg = "No gate recorded for this work. Write the command that must exit 0, then `hexa loop gate '<command>'`, then edit.";
+                    if mode == "mandatory" {
+                        println!("\u{26d4} {msg}");
+                        std::process::exit(2);
+                    }
+                    println!("\u{26a0}\u{fe0f} {msg}");
+                }
+            }
 
             if let Some(ref state) = state {
                 // ADR-050: Validate file falls within workplan adapter boundary
@@ -817,7 +879,8 @@ async fn route(project_dir: &Path) -> Result<()> {
     let _ = refresh_fingerprint_if_stale(project_dir).await;
 
     if let Ok(input) = serde_json::from_str::<serde_json::Value>(&tool_input) {
-        if let Some(content) = input["content"].as_str() {
+        // Claude Code sends the prompt as `prompt`; older hook shims sent `content`.
+        if let Some(content) = input["prompt"].as_str().or_else(|| input["content"].as_str()) {
             let lower = content.to_lowercase();
 
             // Detect hexa-relevant intents and provide context hints
@@ -833,15 +896,29 @@ async fn route(project_dir: &Path) -> Result<()> {
             //   T2MiniPlan  → one-line suggestion, no auto-invocation
             //   T3Workplan  → auto-invoke `hexa plan draft --background`
             //                 to create a draft stub + surface it in context
-            if let Some(mut state) = SessionState::load() {
+            {
+                let mut state = SessionState::load_or_new();
+                // Every prompt is sized, whatever else is in flight. pre-edit
+                // reads the size of the *last* prompt; a stale T3 would block
+                // the typo fix that follows a feature.
+                let tier = classify_work_intent(&lower);
+                state.last_tier = Some(
+                    match tier {
+                        Tier::T1Todo => "T1",
+                        Tier::T2MiniPlan => "T2",
+                        Tier::T3Workplan => "T3",
+                    }
+                    .to_string(),
+                );
+                let _ = state.save();
                 if state.workplan_id.is_none() && state.pending_workplan_draft.is_none() {
                     let mode = enforcement_mode(project_dir);
                     let auto_plan_enabled = auto_plan_enabled(project_dir);
-                    let tier = classify_work_intent(&lower);
 
                     // P2.2: Archive stale task.json when on main with a new T2/T3 task.
                     // Worktree branches have a valid task.json — only archive on main.
                     if matches!(tier, Tier::T2MiniPlan | Tier::T3Workplan) {
+                        println!("[HEX] {}", crate::commands::loop_cmd::status_line(&crate::commands::loop_cmd::project_name(project_dir)));
                         let task_json = project_dir.join(".hexa/task.json");
                         if task_json.exists() {
                             let on_main = std::process::Command::new("git")
@@ -880,7 +957,7 @@ async fn route(project_dir: &Path) -> Result<()> {
                         Tier::T2MiniPlan => {
                             // One-line suggestion, no auto-invocation.
                             println!(
-                                "[HEX] mini-plan scope detected — consider `hexa plan create <name>` if this grows"
+                                "[HEX] a change with a shape. Write the gate first (the command that must exit 0), record it with `hexa loop gate '<cmd>'`, build to it, then `hexa analyze .`"
                             );
                         }
                         Tier::T3Workplan => {
@@ -892,10 +969,10 @@ async fn route(project_dir: &Path) -> Result<()> {
                                 match spawn_plan_draft(content) {
                                     Ok(draft_path) => {
                                         println!(
-                                            "[HEX] feature-sized task detected \u{2192} drafting workplan in background"
+                                            "[HEX] feature-sized task. Decide (ADR in docs/adrs/, `hexa loop adr <ID>`) \u{2192} Gate (`hexa loop gate '<cmd>'`, before the code) \u{2192} Build \u{2192} Harden \u{2192} `hexa analyze .`; drafting a workplan in the background"
                                         );
                                         println!(
-                                            "[HEX] draft: {} (run `hexa plan drafts list` to see it, `/hexa-feature-dev` to expand)",
+                                            "[HEX] draft: {} (run `hexa plan drafts list` to see it, `hexa plan drafts approve <name>` to keep it)",
                                             draft_path
                                         );
                                         state.pending_workplan_draft = Some(draft_path);
@@ -1117,7 +1194,7 @@ fn save_restart_checkpoint(state: &SessionState) -> Result<()> {
         "workplan_id": state.workplan_id,
         "phase": state.phase,
         "edits": state.edits,
-        "session_id": std::env::var("CLAUDE_SESSION_ID").unwrap_or_default(),
+        "session_id": session_key(),
         "saved_at": chrono::Utc::now().to_rfc3339(),
     });
     let _ = hexa_exec::local_store::memory_put(
@@ -1457,7 +1534,7 @@ fn classify_work_intent(prompt: &str) -> Tier {
 /// ```
 async fn observe(event_type: &str) -> Result<()> {
     // Read Claude Code hook JSON from stdin (non-blocking on missing data).
-    let stdin = std::io::read_to_string(std::io::stdin()).unwrap_or_default();
+    let stdin = hook_payload().to_string();
     if stdin.trim().is_empty() {
         return Ok(());
     }

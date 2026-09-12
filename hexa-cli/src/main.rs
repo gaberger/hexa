@@ -185,6 +185,11 @@ enum Commands {
         #[command(subcommand)]
         action: MemoryAction,
     },
+    /// Where this project's work stands: Decide → Gate → Build → Harden
+    Loop {
+        #[command(subcommand)]
+        action: Option<commands::loop_cmd::LoopAction>,
+    },
     /// Architecture Decision Records
     Adr {
         #[command(subcommand)]
@@ -387,6 +392,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Harden(args) => commands::build::run_harden(args).await,
         Commands::Insight { action } => commands::insight::run(action).await,
         Commands::Memory { action } => commands::memory::run(action).await,
+        Commands::Loop { action } => commands::loop_cmd::run(action).await,
         Commands::Adr { action } => commands::adr::run(action).await,
         Commands::Spec { action } => commands::spec::run(action).await,
         Commands::Plan { action } => commands::plan::run(action).await,
