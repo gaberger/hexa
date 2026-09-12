@@ -80,9 +80,16 @@ verdicts.
 hexa analyze .                # grade, boundary violations, rule violations
 hexa analyze . --exit-code    # nonzero on any boundary violation or rule error
 hexa analyze . --grade A      # nonzero when the grade is below A, for CI
+hexa analyze . --json         # the same report for a program or a model
 hexa graph build .            # build the code graph
 hexa graph consumers <path>   # who depends on this, before you delete it
 ```
+
+The text output prints the score formula under the grade and marks the
+health lines as outside the score. The JSON carries an `explain` block with
+the formula, the grade bands, each component's weight, meaning and fix, each
+health detector's meaning and languages, and what each gate does. An agent
+that reads the JSON gets the report and its interpretation together.
 
 The scan covers every source file under the project. Vendored code, generated
 output and template data go in `analyze.exclude` in `.hexa/project.json`, as
