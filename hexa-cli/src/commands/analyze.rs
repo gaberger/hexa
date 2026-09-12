@@ -70,14 +70,32 @@ pub async fn run(
         let has_hex_config = root.join(".hexa").is_dir();
         let has_docs_adrs = root.join("docs").join("adrs").is_dir();
 
-        println!("  {}", "Project structure:".bold());
-        print_check("src/ directory", has_src);
-        print_check("package.json", has_package_json);
-        print_check("Cargo.toml", has_cargo_toml);
-        print_check("go.mod", has_go_mod);
-        print_check("pyproject.toml/setup.py/requirements.txt", has_pyproject);
+        // The language is read from the manifest that is present. A Rust
+        // project is not missing package.json and go.mod; it is a Rust
+        // project, and the rest of the report is read in that light.
+        let language = if has_cargo_toml {
+            Some(("rust", "Cargo.toml"))
+        } else if has_go_mod {
+            Some(("go", "go.mod"))
+        } else if has_package_json {
+            Some(("typescript", "package.json"))
+        } else {
+            None
+        };
+        println!("  {}", "Project:".bold());
+        match language {
+            Some((lang, manifest)) => println!("    language:     {} ({})", lang, manifest),
+            None if has_pyproject => println!(
+                "    language:     {} (Python; hexa grades Rust, Go and TypeScript)",
+                "unsupported".yellow()
+            ),
+            None => println!(
+                "    language:     {} (no Cargo.toml, go.mod or package.json)",
+                "unknown".yellow()
+            ),
+        }
         print_check(".hexa/ config", has_hex_config);
-        print_check("docs/adrs/", has_docs_adrs);
+        println!("    docs/adrs/:   {}", if has_docs_adrs { "present" } else { "none" });
 
         // Check hexa architecture layers by classifying every source file under src/
         // via hexa_core::rules::boundary::detect_layer — a path-substring matcher that's
@@ -85,34 +103,70 @@ pub async fn run(
         // "src/domain/x.ts" and "src/mypkg/core/domain/x.py" resolve to Layer::Domain).
         let mut layer_file_counts: Vec<(&str, usize)> = Vec::new();
         let mut layer_counts: std::collections::HashMap<Layer, usize> = std::collections::HashMap::new();
-        if has_src {
+        // Rust and TypeScript keep layers under src/; Go keeps them at the
+        // module root (internal/domain, adapters/secondary).
+        let scan_dir = if has_src { root.join("src") } else { root.clone() };
+        if has_src || has_go_mod {
             println!();
             println!("  {}", "Hex layers:".bold());
 
-            for file in collect_source_files(&root.join("src")) {
+            for file in collect_source_files(&scan_dir) {
                 let rel = file
                     .strip_prefix(&root)
                     .unwrap_or(&file)
                     .to_string_lossy()
                     .replace('\\', "/");
-                *layer_counts.entry(boundary::detect_layer(&rel)).or_insert(0) += 1;
+                // The patterns are `/adapters/secondary/`; a path relative to
+                // the module root, `adapters/secondary/memory.go`, has no
+                // leading slash and matched nothing.
+                *layer_counts.entry(boundary::detect_layer(&format!("/{rel}"))).or_insert(0) += 1;
             }
 
+            // A layer that is not there is not a failure. A library has no
+            // primary adapter and the grade says whether what is there holds.
             for (layer, label) in DISPLAY_LAYERS {
                 let count = layer_counts.get(layer).copied().unwrap_or(0);
-                let indicator = if count > 0 { "\u{2713}".green() } else { "\u{2717}".red() };
                 if count > 0 {
-                    println!("    {} {} ({} files)", indicator, label, count);
+                    println!("    {} {} ({} files)", "\u{2713}".green(), label, count);
                 } else {
-                    println!("    {} {}", indicator, label);
+                    println!("    {} {} (none)", "\u{00b7}".dimmed(), label.dimmed());
                 }
                 layer_file_counts.push((label, count));
             }
 
-            let has_composition_root = root.join("src").join("composition-root.ts").is_file()
-                || root.join("src").join("composition_root.rs").is_file()
-                || layer_counts.get(&Layer::CompositionRoot).copied().unwrap_or(0) > 0;
-            print_check("Composition Root", has_composition_root);
+            // The composition root is the one file that names adapters. Its
+            // name is a convention per language: lib.rs or main.rs in a Rust
+            // crate, composition-root.ts, composition-root.go or main.go.
+            let mut candidates: Vec<String> = [
+                "src/composition-root.ts",
+                "src/composition_root.rs",
+                "src/composition-root.rs",
+                "src/lib.rs",
+                "src/main.rs",
+                "composition-root.go",
+                "main.go",
+                "src/composition-root.go",
+                "src/main.go",
+            ]
+            .iter()
+            .map(|p| p.to_string())
+            .collect();
+            if let Ok(cmd) = std::fs::read_dir(root.join("cmd")) {
+                for e in cmd.flatten() {
+                    candidates.push(format!("cmd/{}/main.go", e.file_name().to_string_lossy()));
+                }
+            }
+            let composition_root = candidates
+                .into_iter()
+                .find(|p| root.join(p).is_file())
+                .or_else(|| {
+                    (layer_counts.get(&Layer::CompositionRoot).copied().unwrap_or(0) > 0)
+                        .then(|| "detected".to_string())
+                });
+            match composition_root {
+                Some(p) => println!("    {} Composition root ({})", "\u{2713}".green(), p),
+                None => println!("    {} Composition root", "\u{2717}".red()),
+            }
         }
 
         // Rust workspace layer detection (ADR-2026-03-28-3000)
@@ -231,6 +285,9 @@ pub async fn run(
         // and to have this directory registered as a project — so the
         // authoritative score depended on a background process and a
         // registration step. Same `hexa-analysis` engine either way.
+        // (violations, cycles, dead exports, unused ports): the grade is a
+        // sum, and a sum without its components gets a story attached.
+        let mut score_components: Option<(usize, usize, Vec<String>, Vec<String>)> = None;
         let deep_score: Option<u64> = match deep_analysis(&root).await {
             Ok(result) => {
                 // This count used to be printed and then dropped. `--exit-code`
@@ -266,6 +323,16 @@ pub async fn run(
                     result.file_count,
                     result.edge_count
                 );
+                score_components = Some((
+                    result.violations.len(),
+                    result.circular_deps.len(),
+                    result
+                        .dead_exports
+                        .iter()
+                        .map(|d| format!("{}:{} {}", d.file, d.line, d.export_name))
+                        .collect::<Vec<_>>(),
+                    result.unused_ports.clone(),
+                ));
                 Some(result.health_score as u64)
             }
             Err(e) => {
@@ -300,6 +367,24 @@ pub async fn run(
             letter.bold(),
             score_colored,
         );
+        if let Some((violations, cycles, dead, unused)) = &score_components {
+            println!(
+                "    violations {} · cycles {} · dead exports {} · unused ports {}",
+                violations,
+                cycles,
+                dead.len(),
+                unused.len()
+            );
+            for d in dead.iter().take(8) {
+                println!("      dead export   {}", d);
+            }
+            if dead.len() > 8 {
+                println!("      … and {} more dead exports", dead.len() - 8);
+            }
+            for u in unused.iter().take(8) {
+                println!("      unused port   {}", u);
+            }
+        }
     }
 
     // Architectural-health detectors (ADR-2608241500 P6.5). Folded in from the
@@ -1152,6 +1237,11 @@ fn collect_source_files_recursive(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if matches!(name.as_ref(), "target" | "node_modules" | "vendor" | ".git" | "dist") {
+                continue;
+            }
             collect_source_files_recursive(&path, out);
         } else if let Some(ext) = path.extension().and_then(|x| x.to_str()) {
             if matches!(ext, "rs" | "ts" | "js" | "go" | "py") {
