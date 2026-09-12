@@ -388,6 +388,8 @@ pub async fn run(
             for u in unused.iter().take(8) {
                 println!("      unused port   {}", u);
             }
+            println!("    {}", SCORE_FORMULA.dimmed());
+            println!("    {}", GRADE_BANDS.dimmed());
         }
     }
 
@@ -397,6 +399,7 @@ pub async fn run(
     if !violations_only && !quiet {
         println!();
         println!("  {}", "Architectural health:".bold());
+        println!("    {}", HEALTH_NOTE.dimmed());
         for (label, outcome) in health_findings(&root) {
             match outcome {
                 Health::Count(0, _) => println!("    {} {:<18} 0", "\u{2713}".green(), label),
@@ -1721,6 +1724,85 @@ fn check_adr_compliance(root: &Path) -> AdrCompliance {
     AdrCompliance::ran(violations)
 }
 
+/// How the score is made, in one line. Printed under every grade and
+/// carried in `--json` under `explain`, so a person and a model read the
+/// same sentence.
+const SCORE_FORMULA: &str =
+    "score = 100 − 10·violations − 15·cycles − dead exports (max 20) − unused ports (max 10)";
+const GRADE_BANDS: &str = "A+ 95–100 · A 90–94 · B 80–89 · C 70–79 · D 60–69 · F below 60";
+const HEALTH_NOTE: &str = "read next to the grade; none of these move the score";
+
+/// The `explain` block of `--json`: what each number means, what moves the
+/// score by how much, what each gate does, and what fixes each finding. A
+/// model that reads the JSON gets this with it, so the report can be acted
+/// on without a person to interpret it.
+fn explain_json() -> serde_json::Value {
+    serde_json::json!({
+        "score": {
+            "formula": "100 - 10*violations - 15*circular_deps - min(dead_exports, 20) - min(unused_ports, 10)",
+            "grade_bands": { "A+": "95-100", "A": "90-94", "B": "80-89", "C": "70-79", "D": "60-69", "F": "0-59" },
+            "in_score": ["violations", "circular_deps", "dead_exports", "unused_ports"],
+            "not_in_score": ["cohesion", "duplication", "god_types", "dead_layers", "orphans"]
+        },
+        "components": {
+            "violations": {
+                "weight": 10,
+                "meaning": "an import that crosses a hexagonal boundary the wrong way (rules 1 to 6)",
+                "fix": "import through the port; if the port does not re-export the type, add the re-export to the port first"
+            },
+            "circular_deps": {
+                "weight": 15,
+                "meaning": "modules that import each other, at module level: files in TypeScript, packages in Go, the module under src/ in Rust",
+                "fix": "move the shared piece to the lower layer so the edge points one way"
+            },
+            "dead_exports": {
+                "weight": 1, "cap": 20,
+                "meaning": "an export that no other file names; a type its own file names again is not dead",
+                "fix": "delete it, or make it private when its own file uses it; run `hexa graph consumers <path>` first"
+            },
+            "unused_ports": {
+                "weight": 1, "cap": 10,
+                "meaning": "a port that no adapter or use case names",
+                "fix": "wire an adapter to it, or delete the port"
+            }
+        },
+        "health": {
+            "in_score": false,
+            "meaning": "read next to the grade; a nonzero count is worth a look and is not a failure",
+            "detectors": {
+                "cohesion":    { "languages": ["rust"], "meaning": "a port whose methods fall into unrelated clusters; it may be two ports" },
+                "duplication": { "languages": ["rust"], "meaning": "two adapters of one port whose bodies are mostly alike; the shared part may belong in one place" },
+                "god_types":   { "languages": ["rust"], "meaning": "a domain type over the size thresholds in .hexa/project.json; it may be several types" },
+                "dead_layers": { "languages": ["rust", "go", "typescript"], "meaning": "a layer directory nothing outside it imports" },
+                "orphans":     { "languages": ["rust", "go", "typescript"], "meaning": "a port with no adapter behind it, or an adapter nothing wires" }
+            },
+            "n_a": "a detector that cannot read the project's language reports not_applicable, never zero"
+        },
+        "gates": {
+            "--exit-code": "exit 1 on any boundary violation or rule error",
+            "--grade <LETTER>": "exit 1 when the grade is below the letter",
+            "--strict": "rule warnings count as errors"
+        },
+        "rules": "adr_compliance lists violations of .hexa/ADR-rules.toml with the rule's message; severity error fails --exit-code, warning fails --strict"
+    })
+}
+
+/// The health detectors as JSON: count, findings, or the reason a
+/// detector did not look.
+fn health_json(root: &Path) -> serde_json::Value {
+    let mut out = serde_json::Map::new();
+    for (label, outcome) in health_findings(root) {
+        let key = label.replace(' ', "_");
+        let v = match outcome {
+            Health::Count(n, lines) => serde_json::json!({ "count": n, "findings": lines }),
+            Health::NotApplicable(why) => serde_json::json!({ "not_applicable": why }),
+            Health::Failed(e) => serde_json::json!({ "failed": e }),
+        };
+        out.insert(key, v);
+    }
+    serde_json::Value::Object(out)
+}
+
 /// The letter for a 0..100 architecture score.
 ///
 /// One table. `hexa scaffold` gates on this and `hexa analyze` prints it, and a
@@ -1843,6 +1925,9 @@ async fn run_json(root: &Path, strict: bool, adr_compliance_only: bool) -> anyho
             if v == 0 { 100 } else { 100u64.saturating_sub(v * 10) }
         });
         result["score"] = serde_json::json!(final_score);
+        result["grade"] = serde_json::json!(grade_letter(final_score));
+        result["health"] = health_json(root);
+        result["explain"] = explain_json();
         result["violations"] = serde_json::Value::Array(violations);
         result["boundary_errors"] = serde_json::Value::Array(boundary_errors);
         result["rust_layers"] = serde_json::Value::Array(rust_layers_data);
