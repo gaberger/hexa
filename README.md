@@ -105,6 +105,7 @@ Otherwise the edit is reverted. A model that wanders commits nothing.
 
 ```bash
 hexa analyze .                       # architecture grade + rule violations
+hexa analyze . --grade A             # fail when the grade is below A
 hexa graph consumers <path>          # who depends on this, before you delete it
 ```
 

@@ -78,7 +78,8 @@ verdicts.
 
 ```bash
 hexa analyze .                # grade, boundary violations, rule violations
-hexa analyze . --exit-code    # nonzero on any violation, for CI
+hexa analyze . --exit-code    # nonzero on any boundary violation or rule error
+hexa analyze . --grade A      # nonzero when the grade is below A, for CI
 hexa graph build .            # build the code graph
 hexa graph consumers <path>   # who depends on this, before you delete it
 ```

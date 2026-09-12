@@ -76,6 +76,9 @@ enum DevGroupAction {
         violations_only: bool,
         #[arg(long)]
         exit_code: bool,
+        /// Exit 1 when the architecture grade is below this letter (A+, A, B, C, D, F)
+        #[arg(long, value_name = "LETTER")]
+        grade: Option<String>,
     },
     /// Run full build pipeline (build → test → analyze → validate)
     Validate {
@@ -273,6 +276,9 @@ enum Commands {
         violations_only: bool,
         #[arg(long)]
         exit_code: bool,
+        /// Exit 1 when the architecture grade is below this letter (A+, A, B, C, D, F)
+        #[arg(long, value_name = "LETTER")]
+        grade: Option<String>,
     },
     /// (hidden) Validate — use `hexa dev validate` instead
     #[command(hide = true)]
@@ -350,8 +356,8 @@ async fn main() -> anyhow::Result<()> {
             ConfigAction::Inference { action } => commands::inference::run(action).await,
         },
         Commands::Dev { action } => match action {
-            DevGroupAction::Analyze { path, strict, adr_compliance, json, file, quiet, violations_only, exit_code } => {
-                analyze::run(&path, strict, adr_compliance, json, file.as_deref(), quiet, violations_only, exit_code).await
+            DevGroupAction::Analyze { path, strict, adr_compliance, json, file, quiet, violations_only, exit_code, grade } => {
+                analyze::run(&path, strict, adr_compliance, json, file.as_deref(), quiet, violations_only, exit_code, grade.as_deref()).await
             }
             DevGroupAction::Validate { skip_test, strict, parallel } => {
                 doctor::run_validate_pipeline(skip_test, strict, parallel).await
@@ -403,8 +409,8 @@ async fn main() -> anyhow::Result<()> {
         }
         // ── Hidden aliases (old top-level commands) ──────────────────
         Commands::Inference { action } => commands::inference::run(action).await,
-        Commands::Analyze { path, strict, adr_compliance, json, file, quiet, violations_only, exit_code } => {
-            analyze::run(&path, strict, adr_compliance, json, file.as_deref(), quiet, violations_only, exit_code).await
+        Commands::Analyze { path, strict, adr_compliance, json, file, quiet, violations_only, exit_code, grade } => {
+            analyze::run(&path, strict, adr_compliance, json, file.as_deref(), quiet, violations_only, exit_code, grade.as_deref()).await
         }
         Commands::Validate { skip_test, strict, parallel } => {
             doctor::run_validate_pipeline(skip_test, strict, parallel).await

@@ -30,6 +30,7 @@ pub async fn run(
     quiet: bool,
     violations_only: bool,
     exit_code: bool,
+    grade_floor: Option<&str>,
 ) -> anyhow::Result<()> {
     let root = Path::new(path)
         .canonicalize()
@@ -56,6 +57,8 @@ pub async fn run(
     let mut local_violations: Vec<boundary::Violation> = Vec::new();
     let mut rust_violations: Vec<RustViolation> = Vec::new();
     let mut all_violation_count = 0usize;
+    // The final score, for the --grade floor at the end.
+    let mut final_score: Option<u64> = None;
 
     // If --ADR-compliance flag is set, skip boundary analysis entirely
     if !adr_compliance_only {
@@ -351,6 +354,7 @@ pub async fn run(
             let v = all_violation_count as u64;
             if v == 0 { 100 } else { 100u64.saturating_sub(v * 10) }
         });
+        final_score = Some(score);
         let letter = grade_letter(score);
         let score_colored = match score {
             95..=100 => format!("{}", score).bright_green().to_string(),
@@ -395,8 +399,16 @@ pub async fn run(
         println!("  {}", "Architectural health:".bold());
         for (label, outcome) in health_findings(&root) {
             match outcome {
-                Health::Count(0) => println!("    {} {:<18} 0", "\u{2713}".green(), label),
-                Health::Count(n) => println!("    {} {:<18} {}", "\u{2022}".yellow(), label, n),
+                Health::Count(0, _) => println!("    {} {:<18} 0", "\u{2713}".green(), label),
+                Health::Count(n, lines) => {
+                    println!("    {} {:<18} {}", "\u{2022}".yellow(), label, n);
+                    for l in lines.iter().take(5) {
+                        println!("        {}", l.dimmed());
+                    }
+                    if lines.len() > 5 {
+                        println!("        {}", format!("… and {} more", lines.len() - 5).dimmed());
+                    }
+                }
                 // Not a pass. The detector did not look.
                 Health::NotApplicable(why) => {
                     println!("    {} {:<18} n/a ({})", "\u{25cb}".dimmed(), label, why.dimmed())
@@ -504,6 +516,32 @@ pub async fn run(
         std::process::exit(1);
     }
 
+    // --grade: the letter is a gate only when asked for. A grade with no
+    // floor passes by definition, and a reader who wants B to fail says so.
+    if let Some(floor) = grade_floor {
+        let floor = floor.to_uppercase();
+        if grade_rank(&floor) == 0 && floor != "F" {
+            anyhow::bail!("--grade {floor}: not a grade (A+, A, B, C, D, F)");
+        }
+        match final_score {
+            Some(score) => {
+                let letter = grade_letter(score);
+                if grade_rank(letter) < grade_rank(&floor) {
+                    println!();
+                    println!(
+                        "  {} grade {} is below the floor {} (score {}/100)",
+                        "\u{2717}".red(),
+                        letter.bold(),
+                        floor.bold(),
+                        score
+                    );
+                    std::process::exit(1);
+                }
+            }
+            None => anyhow::bail!("--grade {floor}: no grade was computed"),
+        }
+    }
+
     // --strict: exit with code 1 if any violations exist (warnings promoted to errors)
     if strict && !adr_violations.is_empty() {
         if !violations_only {
@@ -533,7 +571,8 @@ pub async fn run(
 /// What a health detector said, kept distinct so the display cannot round a
 /// decline or a failure down to a green zero.
 enum Health {
-    Count(usize),
+    /// The count and one line per finding, so a number can be acted on.
+    Count(usize, Vec<String>),
     NotApplicable(String),
     Failed(String),
 }
@@ -546,34 +585,68 @@ fn health_findings(root: &Path) -> Vec<(&'static str, Health)> {
     fn health<T>(
         r: anyhow::Result<T>,
         declined: impl Fn(&T) -> Option<String>,
-        len: impl Fn(&T) -> usize,
+        describe: impl Fn(&T) -> Vec<String>,
     ) -> Health {
         match r {
             Ok(v) => match declined(&v) {
                 Some(why) => Health::NotApplicable(why),
-                None => Health::Count(len(&v)),
+                None => {
+                    let lines = describe(&v);
+                    Health::Count(lines.len(), lines)
+                }
             },
             Err(e) => Health::Failed(e.to_string()),
         }
     }
     vec![
-        ("cohesion", health(cohesion::analyze(root), |r| r.not_applicable.clone(), |r| r.findings.len())),
-        ("duplication", health(duplication::analyze(root), |r| r.not_applicable.clone(), |r| r.findings.len())),
+        (
+            "cohesion",
+            health(cohesion::analyze(root), |r| r.not_applicable.clone(), |r| {
+                r.findings
+                    .iter()
+                    .map(|f| format!("{} {}:{} ({} methods in {} clusters)", f.port, f.file, f.line, f.method_count, f.clusters.len()))
+                    .collect()
+            }),
+        ),
+        (
+            "duplication",
+            health(duplication::analyze(root), |r| r.not_applicable.clone(), |r| {
+                r.findings
+                    .iter()
+                    .map(|f| {
+                        format!(
+                            "{}: {} and {} ({}:{}, {}:{}, {:.0}% alike)",
+                            f.port, f.adapter_a, f.adapter_b, f.file_a, f.line_a, f.file_b, f.line_b, f.similarity * 100.0
+                        )
+                    })
+                    .collect()
+            }),
+        ),
         (
             "god types",
             health(
                 god_types::analyze(root, god_types::GodTypeThresholds::from_project_root(root)),
                 |r| r.not_applicable.clone(),
-                |r| r.findings.len(),
+                |r| r.findings.iter().map(|f| format!("{} {} ({} lines)", f.type_name, f.file, f.lines)).collect(),
             ),
         ),
-        ("dead layers", health(dead_layer::analyze(root), |r| r.not_applicable.clone(), |r| r.findings.len())),
+        (
+            "dead layers",
+            health(dead_layer::analyze(root), |r| r.not_applicable.clone(), |r| {
+                r.findings.iter().map(|f| format!("{} ({})", f.layer, f.layer_kind)).collect()
+            }),
+        ),
         (
             "orphans",
             health(
                 orphan::analyze(root, orphan::OrphanOptions { orphan_adapters: true, orphan_ports: true }),
                 |r| r.not_applicable.clone(),
-                |r| r.findings.len(),
+                |r| {
+                    r.findings
+                        .iter()
+                        .map(|f| format!("{} {} {}:{}", f.kind, f.adapter.clone().unwrap_or_else(|| f.port.clone()), f.file, f.line))
+                        .collect()
+                },
             ),
         ),
     ]
