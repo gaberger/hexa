@@ -105,10 +105,14 @@ impl LocalProvider {
 /// address comes from `host_env` (`HEXA_OLLAMA_HOST`), then `OLLAMA_HOST`,
 /// then the default port; a bare `host:port` gets `http://`.
 pub fn base_url_with(p: &LocalProvider, env: &dyn Fn(&str) -> Option<String>) -> String {
-    let raw = env(p.host_env).or_else(|| env("OLLAMA_HOST")).filter(|v| !v.is_empty());
+    // Trim before deciding: a blank override falls back to the default,
+    // and "  " once became "http://".
+    let raw = env(p.host_env)
+        .map(|v| v.trim().trim_end_matches('/').to_string())
+        .filter(|v| !v.is_empty())
+        .or_else(|| env("OLLAMA_HOST").map(|v| v.trim().trim_end_matches('/').to_string()).filter(|v| !v.is_empty()));
     match raw {
         Some(v) => {
-            let v = v.trim().trim_end_matches('/').to_string();
             if v.starts_with("http://") || v.starts_with("https://") { v } else { format!("http://{v}") }
         }
         None => p.default_base_url(),
