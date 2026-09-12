@@ -10,6 +10,12 @@ on:
   pull_request:
     branches: [main]
 
+# A newer push on the same branch makes the older run's answer moot;
+# cancel it rather than run two five-minute builds side by side.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
 
