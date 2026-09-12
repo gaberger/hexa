@@ -1,49 +1,208 @@
 ---
 name: hexa-analyze-arch
-description: Grade the architecture of a project and fix what the grade names. Use when the user asks to "check architecture", "find dead code", "validate boundaries", "architecture health", "detect circular dependencies", or "hexa analyze".
+description: Check hexagonal architecture health, find dead code, and validate boundary rules. Automatically creates tasks and spawns fix agents for violations found. Use when the user asks to "check architecture", "find dead code", "validate hexa boundaries", "architecture health", "detect circular dependencies", or "hexa analyze".
 ---
 
-# hexa analyze-arch: grade the architecture, then fix what it names
+# Hex Analyze Arch — Architecture Health Check with Auto-Fix
 
-`hexa analyze .` walks the import graph and grades the boundaries. The grade
-is the second gate. This skill runs it, reads it, and fixes what it names
-one file at a time, with the analyzer itself as the evidence command.
+Runs a full hexagonal architecture analysis. When violations are found, automatically creates HexFlo tasks and spawns a fix swarm — no manual triage needed.
 
-## 1. Grade
+## Parameters
 
-```bash
-hexa analyze .                 # grade, boundary violations, rule violations
-hexa analyze . --json          # score_components, dead_exports, unused_ports
-hexa analyze . --exit-code     # nonzero on any error, for a gate
+- **rootPath** (optional, default: "."): Root directory to analyze
+- **autoFix** (implicit: true when critical/high issues found): Spawn agents to fix violations
+- **reportOnly** (optional, default: false): Skip auto-fix, just report
+
+## Execution Steps
+
+### 1. Run Architecture Analysis
+
+Call the hexa_analyze MCP tool:
+
+```
+mcp__hex__hex_analyze({ path: rootPath })
 ```
 
-Read `score_components` first. A score is a sum, and a sum with no components
-gets a story attached. The four components are `violations`, `circular_deps`,
-`dead_exports` and `unused_ports`. Each has a list under the same name.
+This returns the formatted HEXAGONAL ARCHITECTURE HEALTH REPORT with:
+- Summary table (files, exports, violations, circular deps, dead exports, repo hygiene)
+- Error rates with thresholds
+- Layer breakdown
+- Boundary violations grouped by severity (CRITICAL/WARNING)
+- Circular dependencies
+- Dead exports grouped by file
+- Unused ports & adapters
+- **Repo hygiene (anti-slop)**: uncommitted files, staged-not-committed, orphan worktrees, embedded git repos, untracked build artifacts, runtime state dirs
+- Health score and grade (A-F)
 
-## 2. Fix, one file at a time
+Display the full report to the user.
 
-For each finding, the fix is one edit and one evidence command:
+### 2. Extract Action Items
 
-```bash
-hexa do run "<what to change>" --file <path> --evidence "hexa analyze . --exit-code"
+Use the action item extractor from the domain layer to convert findings into structured tasks:
+
+Use the domain layer's action item extractor to convert findings into structured tasks:
+
+```
+actionReport = buildActionItemReport(archResult)
+formatted = formatActionItems(actionReport)
 ```
 
-`hexa do` edits the file, runs the evidence command, and commits only if it
-exits 0. A boundary violation in an adapter is fixed by importing through the
-port; if the port does not re-export the type, add the re-export to the port
-first. A dead export is removed, or made private when its own file uses it.
-Before removing anything, run `hexa graph consumers <path>`.
+Display the ACTION ITEMS report showing:
+- MUST FIX: Critical and high-priority items with suggested fixes
+- SHOULD FIX: Medium and low-priority items
 
-## 3. Grade again
+### 3. Register Tasks in HexFlo
 
-Run `hexa analyze .` after the last fix. The grade must not fall, and every
-component the fixes targeted must be zero. Report the before and after
-scores and the components, not a summary.
+For each action item with priority `critical` or `high`, create a HexFlo task:
 
-## What the display lines mean
+```
+mcp__hex__hex_hexflo_task_create({
+  title: item.title,
+  metadata: {
+    category: item.category,        // bug, violation, circular-dep
+    priority: item.priority,        // critical, high
+    file: item.file,                // affected file path
+    layer: item.layer,              // hexa layer name
+    suggestedFix: item.suggestedFix,
+    source: "hexa-analyze-arch",
+    autoFixable: item.autoFixable
+  }
+})
+```
 
-`cohesion`, `duplication` and `god types` read Rust only and print `n/a` on a
-tree with no Rust. `dead layers` and `orphans` read Rust, Go and TypeScript.
-None of the five moves the grade; they are read next to it, so a nonzero
-number there is worth a look and is not a failure.
+Store the full report in HexFlo memory:
+```
+mcp__hex__hex_hexflo_memory_store("devtracker/validation-actions", JSON.stringify(actionReport))
+```
+
+### 4. Auto-Fix Decision
+
+If `reportOnly` is true, stop here with the report.
+
+Otherwise, evaluate whether to auto-fix:
+
+| Condition | Action |
+|-----------|--------|
+| Critical violations (cross-adapter, domain leak) | Spawn fix agent immediately |
+| Circular dependencies | Spawn fix agent immediately |
+| High-priority violations only | Spawn fix agent |
+| Medium/low only (dead exports, unused ports) | Report only, do not auto-fix |
+| Score >= 90 (Grade A) | No action needed |
+
+### 5. Spawn Fix Swarm
+
+For each fixable issue, spawn a targeted agent in a worktree:
+
+```
+Agent tool: {
+  subagent_type: "general-purpose",
+  mode: "bypassPermissions",
+  run_in_background: true,
+  isolation: "worktree",
+  prompt: <fix prompt with full context>
+}
+```
+
+#### Fix Prompts by Category
+
+**Boundary Violation** (adapter imports from wrong layer):
+```
+Fix hexa boundary violation in {file}.
+Current: imports {names} from {wrongLayer}
+Required: import through ports layer only.
+
+Check if the types are already re-exported through a port file.
+If yes: change the import path to use the port.
+If no: add re-exports to the appropriate port file, then update the import.
+
+Rules:
+- adapters/ may only import from ports/
+- domain/ may only import from domain/
+- usecases/ may only import from domain/ and ports/
+
+After fixing, run the project's test suite.
+```
+
+**Circular Dependency**:
+```
+Break circular dependency: {cycle}
+
+Strategies (pick the simplest):
+1. Extract shared types to a common domain file both can import
+2. Introduce a port interface to break the direct dependency
+3. Use event-based decoupling if the cycle is behavioral
+
+After fixing, run the project's test suite.
+```
+
+**Domain Leak** (domain imports non-domain):
+```
+Fix domain purity violation in {file}.
+Domain layer must have zero external dependencies.
+Move the imported types to domain/ or inject via port interface.
+
+After fixing, run the project's test suite.
+```
+
+### 6. Monitor Fix Results
+
+After spawning fix agents:
+
+1. Wait for agent completion notifications
+2. For each completed fix:
+   - Run `mcp__hex__hex_validate_boundaries(".")` to verify the fix
+   - If violation resolved: `mcp__hex__hex_hexflo_task_complete(taskId, commitHash)`
+   - If still broken: report failure, do NOT retry automatically
+3. Run final `mcp__hex__hex_analyze(".")` to get updated health score
+
+### 7. Write Report
+
+Write the full analysis + action items + fix results to `docs/analysis/arch-report.md`:
+
+```markdown
+# Architecture Health Report — {date}
+
+## Score: {score}/100 ({grade})
+
+## Summary
+{summary table}
+
+## Error Rates
+{error rates table}
+
+## Violations Found
+{violations table with severity}
+
+## Action Items Created
+{list of HexFlo tasks created}
+
+## Fixes Applied
+{list of auto-fixed issues with commit hashes}
+
+## Remaining Issues
+{items that need manual attention}
+```
+
+### 8. Final Status
+
+Display to the user:
+- Before/after health score comparison
+- Number of issues auto-fixed vs remaining
+- Any items that need manual attention
+- Link to the full report
+
+## Exclude Patterns
+
+The analyzer excludes these by default:
+- `node_modules`, `dist`, `examples`
+- `*.test.ts`, `*.spec.ts`, `*_test.go`, `*.test.rs`
+- `/tests/`
+- `**/target/**` (build artifacts)
+
+## Output
+
+- Full health report displayed inline
+- Action items report displayed inline
+- HexFlo tasks created for critical/high issues
+- Fix agents spawned for violations (unless reportOnly)
+- Report written to `docs/analysis/arch-report.md`

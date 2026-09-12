@@ -662,7 +662,7 @@ fn extract_templates(target: &Path) -> std::io::Result<Vec<String>> {
     use crate::assets::Assets;
     let claude = target.join(".claude");
     let mut created = Vec::new();
-    for (prefix, dir) in [("skills/", "skills"), ("hooks/", "hooks")] {
+    for (prefix, dir) in [("skills/", "skills"), ("agents/", "agents"), ("hooks/", "hooks")] {
         created.extend(Assets::extract_to(prefix, &claude.join(dir))?);
     }
     Ok(created)

@@ -538,9 +538,7 @@ fn every_shipped_skill_names_only_real_verbs() {
             }
         }
     }
-    // Eight skills ship. A total this low means the extractor found nothing
-    // in most of them, not that the skills are quiet.
-    assert!(total >= 12, "found only {total} hexa commands across the skills; the extractor is broken");
+    assert!(total >= 20, "found only {total} hexa commands across the skills; the extractor is broken");
     assert!(
         dead.is_empty(),
         "{} dead command(s) in shipped skills:\n  {}",

@@ -78,6 +78,7 @@ async fn list() -> Result<()> {
 /// Asset prefix → target subdirectory under `.claude/`
 const SYNC_MAPPINGS: &[(&str, &str)] = &[
     ("skills/", ".claude/skills/"),
+    ("agents/hexa/hexa/", ".claude/agents/hexa/hexa/"),
     ("hooks/hexa/", ".claude/hooks/hexa/"),
 ];
 
