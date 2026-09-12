@@ -152,8 +152,6 @@ pub async fn run(check_only: bool, version: Option<String>, yes: bool) -> anyhow
 
     let _ = std::fs::remove_dir_all(&tmp_dir);
 
-    println!("\n  If nexus is running, restart it to activate:");
-    println!("    hexa nexus start");
 
     Ok(())
 }

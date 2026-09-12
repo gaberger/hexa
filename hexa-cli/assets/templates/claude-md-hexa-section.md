@@ -48,6 +48,8 @@ an ADR.**
 2. **Gate** — write the command that must exit 0, *before* the code.
    Record it: `hexa loop gate '<command>'`. The hooks stop a feature-sized
    edit that has no gate recorded, and `hexa loop` shows where the work stands.
+   List the steps with `hexa loop task add "<step>"` and check each off with
+   `hexa loop task done N` as it lands; the checklist is the progress report.
 3. **Diverge** — `hexa build` proposes designs and red-teams each one. The spec
    it synthesizes is a disposable intermediate.
 4. **Build to the gate.**

@@ -44,3 +44,38 @@ fn outside_a_hexa_project_nothing_is_recorded() {
     assert!(!out.status.success());
     assert!(!dir.path().join(".hexa").exists());
 }
+
+#[test]
+fn the_checklist_is_checked_off_and_advances() {
+    let proj = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(proj.path().join(".hexa")).unwrap();
+    let run = |args: &[&str]| {
+        let out = hexa().args(args).current_dir(proj.path()).output().expect("run hexa");
+        (out.status.success(), String::from_utf8_lossy(&out.stdout).to_string())
+    };
+    assert!(run(&["loop", "task", "add", "IOS classic parser"]).0);
+    assert!(run(&["loop", "task", "add", "NX-OS parser"]).0);
+    assert!(run(&["loop", "task", "add", "JunOS braces parser"]).0);
+    let (ok, shown) = run(&["loop"]);
+    assert!(ok);
+    assert!(shown.contains("[>] 1 IOS classic parser"), "{shown}");
+    assert!(shown.contains("[ ] 2 NX-OS parser"), "{shown}");
+    assert!(shown.contains("0 of 3 done"), "{shown}");
+    assert!(shown.contains("tasks 0/3") && shown.contains("doing 1 IOS classic parser"), "{shown}");
+
+    run(&["loop", "task", "done", "1"]);
+    let shown = run(&["loop"]).1;
+    assert!(shown.contains("[x] 1 IOS classic parser") && shown.contains("[>] 2 NX-OS parser"), "{shown}");
+    assert!(shown.contains("1 of 3 done"), "{shown}");
+
+    run(&["loop", "task", "start", "3"]);
+    let shown = run(&["loop"]).1;
+    assert!(shown.contains("[ ] 2 NX-OS parser") && shown.contains("[>] 3 JunOS braces parser"), "{shown}");
+
+    let (ok, text) = run(&["loop", "task", "done", "9"]);
+    assert!(!ok || text.contains("no step 9"));
+
+    let state: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(proj.path().join(".hexa/loop.json")).unwrap()).unwrap();
+    assert_eq!(state["tasks"].as_array().unwrap().len(), 3);
+    assert_eq!(state["tasks"][0]["status"], "done");
+}

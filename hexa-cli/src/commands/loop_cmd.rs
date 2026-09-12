@@ -6,6 +6,12 @@
 //! reviewer sees which ADR the work is under and which gate proved it. The
 //! ADR is the durable record; the loop file points at it and names the gate.
 //!
+//! The file also carries the checklist: the steps the work is made of, each
+//! `todo`, `doing` or `done`, checked off with `hexa loop task done N`. The
+//! status line the hooks print says how many are done and which is in
+//! progress, so the feedback is there at session start and on every
+//! feature-sized prompt.
+//!
 //! The hooks read it: session start prints it, a feature-sized prompt prints
 //! it, and an edit in a feature-sized session with no gate recorded is stopped
 //! until the gate is written. `hexa do`, `hexa build` and `hexa harden` record
@@ -35,6 +41,37 @@ pub enum LoopAction {
     },
     /// Forget the recorded state
     Clear,
+    /// The checklist: the steps this work is made of, checked off as they land
+    Task {
+        #[command(subcommand)]
+        action: TaskAction,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum TaskAction {
+    /// Add a step to the end of the list
+    Add {
+        /// What the step is, e.g. "JunOS braces parser"; may begin with a dash
+        #[arg(allow_hyphen_values = true)]
+        title: String,
+    },
+    /// Mark step N as the one being worked on
+    Start {
+        n: usize,
+    },
+    /// Check step N off; the next unstarted step becomes the one in progress
+    Done {
+        n: usize,
+    },
+    /// Uncheck step N
+    Undo {
+        n: usize,
+    },
+    /// Remove step N
+    Rm {
+        n: usize,
+    },
 }
 
 /// The name a project is recorded under: `.hexa/project.json` `name`, else the
@@ -107,7 +144,16 @@ pub fn status_line(dir: &Path) -> String {
             let adr = st.get("adr").and_then(|v| v.as_str()).unwrap_or("none");
             let gate = st.get("gate").and_then(|v| v.as_str()).unwrap_or("none");
             let stage = st.get("stage").and_then(|v| v.as_str()).unwrap_or("decide");
-            format!("Loop ({project}): stage {stage} · ADR {adr} · gate {gate}")
+            let mut line = format!("Loop ({project}): stage {stage} · ADR {adr} · gate {gate}");
+            let tasks = task_list(&st);
+            if !tasks.is_empty() {
+                let done = tasks.iter().filter(|t| t.status == "done").count();
+                line.push_str(&format!(" · tasks {done}/{}", tasks.len()));
+                if let Some(t) = tasks.iter().find(|t| t.status == "doing") {
+                    line.push_str(&format!(" · doing {} {}", t.n, t.title));
+                }
+            }
+            line
         }
         None => format!(
             "Loop ({project}): nothing recorded. Decide → Gate → Build → Harden. Record with `hexa loop adr <ID>` and `hexa loop gate '<command>'`."
@@ -117,18 +163,139 @@ pub fn status_line(dir: &Path) -> String {
 
 const STAGES: &[&str] = &["decide", "gate", "build", "harden", "done"];
 
+/// One step of the work. `status` is `todo`, `doing` or `done`.
+#[derive(Debug, Clone)]
+pub struct Task {
+    pub n: usize,
+    pub title: String,
+    pub status: String,
+}
+
+/// The checklist in a loop state, numbered from 1.
+pub fn task_list(state: &serde_json::Value) -> Vec<Task> {
+    state
+        .get("tasks")
+        .and_then(|t| t.as_array())
+        .map(|arr| {
+            arr.iter()
+                .enumerate()
+                .map(|(i, t)| Task {
+                    n: i + 1,
+                    title: t.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    status: t.get("status").and_then(|v| v.as_str()).unwrap_or("todo").to_string(),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The checklist as lines: `[x]` done, `[>]` in progress, `[ ]` to do.
+pub fn checklist(state: &serde_json::Value) -> Vec<String> {
+    let tasks = task_list(state);
+    let mut out: Vec<String> = tasks
+        .iter()
+        .map(|t| {
+            let mark = match t.status.as_str() {
+                "done" => "[x]",
+                "doing" => "[>]",
+                _ => "[ ]",
+            };
+            format!("{mark} {} {}", t.n, t.title)
+        })
+        .collect();
+    if !tasks.is_empty() {
+        let done = tasks.iter().filter(|t| t.status == "done").count();
+        out.push(format!("{done} of {} done", tasks.len()));
+    }
+    out
+}
+
+fn write_tasks(dir: &Path, tasks: Vec<serde_json::Value>) -> anyhow::Result<()> {
+    update_loop(dir, serde_json::json!({ "tasks": tasks })).map_err(|e| anyhow::anyhow!(e))?;
+    Ok(())
+}
+
+fn tasks_json(dir: &Path) -> Vec<serde_json::Value> {
+    read_loop(dir)
+        .and_then(|s| s.get("tasks").and_then(|t| t.as_array()).cloned())
+        .unwrap_or_default()
+}
+
+fn run_task(dir: &Path, action: TaskAction) -> anyhow::Result<()> {
+    let mut tasks = tasks_json(dir);
+    let index = |n: usize, len: usize| -> anyhow::Result<usize> {
+        if n == 0 || n > len {
+            anyhow::bail!("no step {n}; the list has {len}");
+        }
+        Ok(n - 1)
+    };
+    match action {
+        TaskAction::Add { title } => {
+            let title = title.trim().to_string();
+            if title.is_empty() {
+                anyhow::bail!("a step needs a title");
+            }
+            // The first step added to an empty list is the one in progress.
+            let status = if tasks.is_empty() { "doing" } else { "todo" };
+            tasks.push(serde_json::json!({ "title": title, "status": status }));
+        }
+        TaskAction::Start { n } => {
+            let i = index(n, tasks.len())?;
+            for t in tasks.iter_mut() {
+                if t.get("status").and_then(|v| v.as_str()) == Some("doing") {
+                    t["status"] = serde_json::json!("todo");
+                }
+            }
+            tasks[i]["status"] = serde_json::json!("doing");
+        }
+        TaskAction::Done { n } => {
+            let i = index(n, tasks.len())?;
+            tasks[i]["status"] = serde_json::json!("done");
+            tasks[i]["done_at"] = serde_json::json!(chrono::Utc::now().to_rfc3339());
+            // The next unstarted step becomes the one in progress, unless one is.
+            let any_doing = tasks.iter().any(|t| t.get("status").and_then(|v| v.as_str()) == Some("doing"));
+            if !any_doing {
+                if let Some(next) = tasks.iter_mut().find(|t| t.get("status").and_then(|v| v.as_str()) == Some("todo")) {
+                    next["status"] = serde_json::json!("doing");
+                }
+            }
+        }
+        TaskAction::Undo { n } => {
+            let i = index(n, tasks.len())?;
+            tasks[i]["status"] = serde_json::json!("todo");
+            if let Some(obj) = tasks[i].as_object_mut() {
+                obj.remove("done_at");
+            }
+        }
+        TaskAction::Rm { n } => {
+            let i = index(n, tasks.len())?;
+            tasks.remove(i);
+        }
+    }
+    write_tasks(dir, tasks)?;
+    println!("{} {}", "\u{2b21}".green(), status_line(dir));
+    for l in checklist(&read_loop(dir).unwrap_or_default()) {
+        println!("  {l}");
+    }
+    Ok(())
+}
+
 pub async fn run(action: Option<LoopAction>) -> anyhow::Result<()> {
     let cwd = std::env::current_dir()?;
     match action.unwrap_or(LoopAction::Show) {
         LoopAction::Show => {
             println!("{} {}", "\u{2b21}".cyan(), status_line(&cwd));
             if let Some(st) = read_loop(&cwd) {
+                for l in checklist(&st) {
+                    println!("  {l}");
+                }
                 if let Some(u) = st.get("updated").and_then(|v| v.as_str()) {
                     println!("  updated {u}");
                 }
                 println!("  file    {}", loop_path(&cwd).display());
             }
         }
+        LoopAction::Task { action } => run_task(&cwd, action)?,
         LoopAction::Adr { id } => {
             if !adr_exists(&cwd, &id) {
                 anyhow::bail!(

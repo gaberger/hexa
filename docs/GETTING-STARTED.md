@@ -108,7 +108,14 @@ excludes is the project's decision, and it is visible in the project's config.
 hexa loop adr ADR-2609121400           # the decision this work is under
 hexa loop gate "cargo test --test add" # the command that must exit 0, before the code
 hexa loop                              # stage, ADR and gate, from .hexa/loop.json
+hexa loop task add "JunOS braces parser"   # a step of the work
+hexa loop task done 4                  # check it off; the next step is in progress
 ```
+
+`hexa loop` prints the checklist, `[x]` done, `[>]` in progress, `[ ]` to
+do, with "3 of 6 done". The status line the hooks print carries the same
+count and the step in progress, so the feedback is there at session start
+and on every feature-sized prompt.
 
 The file is committed with the branch, so it travels with the pull request;
 the ADR it names is the record a reviewer reads. `hexa do`, `hexa build` and
