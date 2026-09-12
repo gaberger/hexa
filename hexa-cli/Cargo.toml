@@ -51,7 +51,6 @@ crossterm = "0.28"
 # Structured CLI table output (ADR-2026-03-24-1226)
 tabled = { version = "0.17", features = ["ansi"] }
 # WebSocket client for hexa inference watch (ADR-2026-04-01-1200)
-tokio-tungstenite = { version = "0.24", features = ["native-tls", "connect"] }
 futures-util = { version = "0.3", features = ["sink"] }
 # SHA256 verification for self-update (ADR-2026-04-08-0929)
 sha2 = "0.10"

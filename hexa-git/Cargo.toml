@@ -8,6 +8,7 @@ license.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
-git2 = { version = "0.20", features = ["vendored-libgit2"] }
+# Local worktree operations only; no https or ssh, so no OpenSSL and no libssh2.
+git2 = { version = "0.20", default-features = false, features = ["vendored-libgit2"] }
 serde = { version = "1", features = ["derive"] }
 tracing = "0.1"

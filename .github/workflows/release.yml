@@ -67,9 +67,6 @@ jobs:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
-      - name: Linux build dependencies
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
       - run: rustup target add "$TARGET"
       - uses: Swatinem/rust-cache@v2
         with:
