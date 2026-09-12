@@ -320,33 +320,3 @@ pub fn spend_rows(group_by: &str, limit: usize) -> Vec<Value> {
         .collect()
 }
 
-// ── the loop ──────────────────────────────────────────────────────────────────
-//
-// Where one project's work stands in Decide → Gate → Build → Harden: the ADR it
-// is under, the gate command that must exit 0, and the stage. One memory key
-// per project, `loop:<project>`, so the hooks can read it at session start,
-// on a feature-sized prompt, and before an edit.
-
-/// The recorded loop state for `project`, if any.
-pub fn loop_state(project: &str) -> Option<Value> {
-    memory_get(&format!("loop:{project}")).and_then(|v| serde_json::from_str(&v).ok())
-}
-
-/// Merge `patch` into the project's loop state and record it. Returns the
-/// state as written.
-pub fn loop_update(project: &str, patch: Value) -> Result<Value, String> {
-    let mut state = loop_state(project).unwrap_or_else(|| serde_json::json!({}));
-    if let (Some(obj), Some(p)) = (state.as_object_mut(), patch.as_object()) {
-        for (k, v) in p {
-            obj.insert(k.clone(), v.clone());
-        }
-        obj.insert("updated".to_string(), Value::String(chrono::Utc::now().to_rfc3339()));
-    }
-    memory_put(&format!("loop:{project}"), &state.to_string())?;
-    Ok(state)
-}
-
-/// Forget the project's loop state.
-pub fn loop_clear(project: &str) -> Result<bool, String> {
-    memory_delete(&format!("loop:{project}"))
-}

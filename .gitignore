@@ -78,6 +78,7 @@ Volumes/
 !.hexa/project.json
 !.hexa/project.yaml
 !.hexa/ADR-rules.toml
+!.hexa/loop.json
 .superset/
 # weave framework runtime state (sibling repo ~/development/weave integration) — local db only
 .weave/

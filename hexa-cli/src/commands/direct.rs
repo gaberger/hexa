@@ -50,10 +50,7 @@ pub async fn run(action: DoAction) -> anyhow::Result<()> {
             // human owns their tree). Unset/autonomous callers isolate by default.
             // The evidence command is the gate; record it so the loop shows it.
             if let Ok(cwd) = std::env::current_dir() {
-                let _ = hexa_exec::local_store::loop_update(
-                    &crate::commands::loop_cmd::project_name(&cwd),
-                    json!({ "gate": evidence, "stage": "build" }),
-                );
+                let _ = crate::commands::loop_cmd::update_loop(&cwd, json!({ "gate": evidence, "stage": "build" }));
             }
             let mut body = json!({ "instruction": instruction, "file": file, "evidence": evidence, "fast": fast, "isolate": false });
             if let Some(m) = model {

@@ -103,9 +103,12 @@ Eight crates, one binary. The dependency direction is the architecture:
 ## The loop, and the hooks that keep it
 
 Decide (an ADR) → Gate (the command that must exit 0, written before the code)
-→ Build → Harden. `hexa loop` records where a project's work stands, as one
-entry in hexa memory: the ADR, the gate and the stage. `hexa do`, `hexa build`
-and `hexa harden` record their gate as they run.
+→ Build → Harden. `hexa loop` records where a project's work stands in
+`.hexa/loop.json`: the ADR, the gate and the stage. The file is committed
+with the branch, so it travels with the pull request; the ADR it names is the
+durable record a reviewer reads, and `hexa loop adr` refuses an ADR that is
+not in `docs/adrs/`. `hexa do`, `hexa build` and `hexa harden` record their
+gate as they run.
 
 `hexa init` installs Claude Code hooks that call the binary. Each hook is one
 short process that reads the harness's JSON payload; the payload's
@@ -131,7 +134,7 @@ All of it is files on disk.
 | What | Where |
 |---|---|
 | Lessons, gaps, decisions | `~/.hexa/memory.jsonl` (`hexa memory`) |
-| Where each project's work stands | the same file, key `loop:<project>` (`hexa loop`) |
+| Where the work stands: ADR, gate, stage | `.hexa/loop.json` in the project, committed (`hexa loop`) |
 | Session state, keyed by the harness session id | `~/.hexa/sessions/agent-<session_id>.json` |
 | Agent and subagent run feed | `~/.hexa/agent-runs.jsonl` (`hexa do runs`) |
 | Token spend | `~/.hexa/inference-log.jsonl` |

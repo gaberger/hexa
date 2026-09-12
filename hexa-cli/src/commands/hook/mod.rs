@@ -307,7 +307,7 @@ async fn session_start(project_dir: &Path) -> Result<()> {
     // ADR-2026-03-30-1200: Inject architecture fingerprint into Claude Code
     // context. stdout is picked up as session context — never skip this.
     println!("\n{}", fingerprint_block(id, project_dir, name).await);
-    println!("{}", crate::commands::loop_cmd::status_line(&crate::commands::loop_cmd::project_name(project_dir)));
+    println!("{}", crate::commands::loop_cmd::status_line(project_dir));
     let mut st = SessionState::load_or_new();
     st.project = crate::commands::loop_cmd::project_name(project_dir);
     st.name = session_key();
@@ -644,8 +644,7 @@ async fn pre_edit(project_dir: &Path) -> Result<()> {
                 .map(|t| t == "T2" || t == "T3")
                 .unwrap_or(false);
             if sized {
-                let project = crate::commands::loop_cmd::project_name(project_dir);
-                let has_gate = hexa_exec::local_store::loop_state(&project)
+                let has_gate = crate::commands::loop_cmd::read_loop(project_dir)
                     .and_then(|s| s.get("gate").and_then(|g| g.as_str()).map(|g| !g.is_empty()))
                     .unwrap_or(false);
                 if !has_gate {
@@ -918,7 +917,7 @@ async fn route(project_dir: &Path) -> Result<()> {
                     // P2.2: Archive stale task.json when on main with a new T2/T3 task.
                     // Worktree branches have a valid task.json — only archive on main.
                     if matches!(tier, Tier::T2MiniPlan | Tier::T3Workplan) {
-                        println!("[HEX] {}", crate::commands::loop_cmd::status_line(&crate::commands::loop_cmd::project_name(project_dir)));
+                        println!("[HEX] {}", crate::commands::loop_cmd::status_line(project_dir));
                         let task_json = project_dir.join(".hexa/task.json");
                         if task_json.exists() {
                             let on_main = std::process::Command::new("git")

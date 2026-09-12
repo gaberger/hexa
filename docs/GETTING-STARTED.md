@@ -107,11 +107,12 @@ excludes is the project's decision, and it is visible in the project's config.
 ```bash
 hexa loop adr ADR-2609121400           # the decision this work is under
 hexa loop gate "cargo test --test add" # the command that must exit 0, before the code
-hexa loop                              # stage, ADR and gate, from hexa memory
+hexa loop                              # stage, ADR and gate, from .hexa/loop.json
 ```
 
-`hexa do`, `hexa build` and `hexa harden` record their gate on their own. The
-hooks read the loop: session start prints it, a feature-sized prompt prints it,
+The file is committed with the branch, so it travels with the pull request;
+the ADR it names is the record a reviewer reads. `hexa do`, `hexa build` and
+`hexa harden` record their gate on their own. The hooks read the loop: session start prints it, a feature-sized prompt prints it,
 and in a project with `lifecycle_enforcement: "mandatory"` an edit for
 feature-sized work is stopped until a gate is recorded.
 

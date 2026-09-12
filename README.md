@@ -150,9 +150,11 @@ that `hexa analyze` runs from then on. The scaffold is not a starting point you
 leave behind. It is the contract the project keeps being measured against.
 
 **The loop is recorded, and the hooks read it.** Decide, gate, build, harden.
-`hexa loop` keeps the ADR, the gate and the stage for each project in hexa
-memory, and `hexa do`, `hexa build` and `hexa harden` record their gate as
-they run. The hooks `hexa init` installs read that record: a session opens
+`hexa loop` keeps the ADR, the gate and the stage in `.hexa/loop.json`,
+committed with the branch, so a reviewer of the pull request sees which
+decision the work is under and which command proved it. The ADR is the
+durable record; the loop file points at it. `hexa do`, `hexa build` and
+`hexa harden` record their gate as they run. The hooks `hexa init` installs read that record: a session opens
 with it, a feature-sized prompt repeats it, and an edit for feature-sized
 work with no gate recorded is stopped until the gate is written.
 
