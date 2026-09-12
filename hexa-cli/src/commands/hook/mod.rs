@@ -10,7 +10,8 @@
 //! - `TOOL_NAME` / `TOOL_INPUT` — for PreToolUse/PostToolUse hooks
 //!
 //! ADR-050: Hook-Enforced Agent Lifecycle Pipeline
-//! Every hook validates participation in: ADR → WorkPlan → HexFlo Memory → Swarm
+//! Multi-agent work runs in harness subagents, one worktree each. The hooks
+//! enforce that at spawn time and report what the subagents leave behind.
 
 pub mod punch_list;
 
@@ -42,12 +43,6 @@ struct SessionState {
     #[serde(default)]
     workplan_id: Option<String>,
     #[serde(default)]
-    swarm_id: Option<String>,
-    #[serde(default)]
-    current_task_id: Option<String>,
-    #[serde(default)]
-    last_heartbeat: Option<String>,
-    #[serde(default)]
     edits: u64,
     #[serde(default)]
     phase: Option<String>,
@@ -57,9 +52,6 @@ struct SessionState {
     /// Allowed file paths for adapter boundary enforcement (ADR-2026-03-23-1700)
     #[serde(default)]
     allowed_paths: Vec<String>,
-    /// Resolved worktree branch name from workplan step
-    #[serde(default)]
-    worktree_branch: Option<String>,
     /// RFC-3339 timestamp of last architecture fingerprint generation (ADR-2026-03-30-1200).
     /// Used to detect staleness when key project files change.
     #[serde(default)]
@@ -120,6 +112,38 @@ impl SessionState {
 /// Check lifecycle enforcement mode for this project.
 /// Default is "mandatory" — all hexa projects enforce the ADR → workplan → code pipeline.
 /// Set "lifecycle_enforcement": "advisory" in .hexa/project.json to downgrade to warnings only.
+/// The tool input for a PreToolUse/PostToolUse hook, as a JSON string.
+///
+/// Claude Code passes one JSON object on stdin with the event's fields and,
+/// for tool hooks, a `tool_input` object. Older setups exported `TOOL_INPUT`
+/// instead. Read stdin once; fall back to the variable.
+fn tool_input_json() -> String {
+    use std::io::IsTerminal;
+    if !std::io::stdin().is_terminal() {
+        if let Ok(raw) = std::io::read_to_string(std::io::stdin()) {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
+                if let Some(ti) = v.get("tool_input") {
+                    return ti.to_string();
+                }
+                return v.to_string();
+            }
+        }
+    }
+    std::env::var("TOOL_INPUT").unwrap_or_default()
+}
+
+/// Subagent types that only read. They may run anywhere.
+const READ_ONLY_AGENTS: &[&str] = &["Explore", "Plan", "claude-code-guide", "code-explorer", "statusline-setup"];
+
+fn is_read_only_agent(kind: &str) -> bool {
+    READ_ONLY_AGENTS.iter().any(|t| kind.eq_ignore_ascii_case(t))
+}
+
+/// A git worktree has a `.git` file; the main checkout has a `.git` directory.
+fn in_worktree(dir: &Path) -> bool {
+    dir.join(".git").is_file()
+}
+
 fn enforcement_mode(project_dir: &Path) -> &'static str {
     let project_json = project_dir.join(".hexa/project.json");
     if let Ok(content) = std::fs::read_to_string(&project_json) {
@@ -171,23 +195,23 @@ pub enum HookEvent {
     SessionEnd,
     /// Before a Write/Edit/MultiEdit — validate hexa boundaries
     PreEdit,
-    /// After a Write/Edit/MultiEdit — notify nexus
+    /// After a Write/Edit/MultiEdit
     PostEdit,
     /// Before a Bash command
     PreBash,
     /// User submitted a prompt — route/classify
     Route,
-    /// Before an Agent tool call — enforce HEXFLO_TASK for background agents
+    /// Before an Agent tool call — a code-writing subagent needs its own worktree
     PreAgent,
-    /// Subagent spawned — auto-assign task if HEXFLO_TASK in prompt
+    /// Subagent spawned — record it, and say if it is not in a worktree
     SubagentStart,
     /// Subagent completed — auto-complete task
     SubagentStop,
-    /// Before a tool call — fire-and-forget POST to /api/events (ADR-2026-04-01-2137)
+    /// Before a tool call — record insights the transcript carries
     ObservePre,
-    /// After a tool call — fire-and-forget POST to /api/events (ADR-2026-04-01-2137)
+    /// After a tool call — record insights the transcript carries
     ObservePost,
-    /// On Stop — fire-and-forget POST to /api/events with hook output (ADR-2026-04-01-2137)
+    /// On Stop — record insights the transcript carries
     ObserveStop,
 }
 
@@ -321,15 +345,15 @@ async fn session_start(project_dir: &Path) -> Result<()> {
 
 /// Generate a minimal architecture fingerprint block from local project files.
 ///
-/// Used as a fallback when nexus is offline or fingerprint generation failed.
+/// Used when no cached fingerprint exists.
 /// Reads go.mod / Cargo.toml / package.json for language detection and any
 /// active workplan for objective. Output matches the injection format from
 /// ADR-2026-03-30-1200 §3, trimmed to the most essential fields.
 fn minimal_fingerprint_block(project_dir: &Path, project_name: &str) -> String {
-    minimal_fingerprint_block_inner(project_dir, project_name, false)
+    minimal_fingerprint_block_inner(project_dir, project_name)
 }
 
-fn minimal_fingerprint_block_inner(project_dir: &Path, project_name: &str, nexus_online: bool) -> String {
+fn minimal_fingerprint_block_inner(project_dir: &Path, project_name: &str) -> String {
     let mut language = "unknown".to_string();
     let mut framework = "unknown".to_string();
     let mut output_type = "unknown".to_string();
@@ -405,11 +429,7 @@ fn minimal_fingerprint_block_inner(project_dir: &Path, project_name: &str, nexus
     if !objective.is_empty() {
         block.push_str(&format!("Objective: {}\n", objective));
     }
-    let note = if nexus_online {
-        "Note: fingerprint not cached — run `hexa fingerprint generate` for full context."
-    } else {
-        "Note: nexus offline — run `hexa nexus start` then `hexa fingerprint generate` for full context."
-    };
+    let note = "Note: run `hexa analyze .` for the full architecture report.";
     block.push_str(&format!("{}\n---", note));
     block
 }
@@ -461,247 +481,96 @@ fn ensure_agent_hook(project_dir: &std::path::Path) {
     }
 }
 
-/// SubagentStart — read stdin for HEXFLO_TASK:{uuid}, auto-assign the task.
-/// ADR-2026-03-22-1939 P2: Hardened with heartbeat, lazy connect, and ownership validation.
+/// SubagentStart — record the subagent, and say so if a code-writing one is
+/// not in its own worktree. The gate is `pre-agent`; this is the receipt.
 async fn subagent_start() -> Result<()> {
-    let stdin = std::io::read_to_string(std::io::stdin()).unwrap_or_default();
-
-    // Spec S08: block non-worktree execution when HEXFLO_TASK is present in the prompt
-    if stdin.contains("HEXFLO_TASK:") {
-        let cwd = std::env::current_dir().unwrap_or_default();
-        // Git worktrees have a .git FILE (not directory); the project root has a .git DIR
-        let in_worktree = cwd.join(".git").is_file();
-        if !in_worktree {
-            eprintln!("worktree_required: swarm agents must run in an isolated worktree, not the project root");
-            eprintln!("  cwd: {}", cwd.to_string_lossy());
-            eprintln!("  hint: use 'hexa swarm' to spawn agents in isolated worktrees");
-            std::process::exit(1);
-        }
-    }
-
-    // Look for HEXFLO_TASK:{uuid} pattern in the subagent prompt
-    let task_id = extract_hexflo_task(&stdin);
-    if task_id.is_none() {
-        return Ok(()); // No task reference — nothing to sync
-    }
-    let task_id = task_id.unwrap();
-
-    // Resolve agent_id from session state
-    let mut state = match SessionState::load() {
-        Some(s) => s,
-        None => return Ok(()),
-    };
-
-    // The agent id came from the daemon's roster and the task assignment from
-    // its HexFlo table. Neither exists; the session file is the state.
-    if state.agent_id.is_empty() {
-        state.agent_id = format!(
-            "agent-{}",
-            std::env::var("CLAUDE_SESSION_ID").unwrap_or_else(|_| "local".into())
+    let raw = std::io::read_to_string(std::io::stdin()).unwrap_or_default();
+    let v: serde_json::Value = serde_json::from_str(&raw).unwrap_or(serde_json::Value::Null);
+    let agent_type = v["agent_type"].as_str().unwrap_or("").to_string();
+    let agent_id = v["agent_id"].as_str().unwrap_or("").to_string();
+    let cwd = v["cwd"]
+        .as_str()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+    let isolated = in_worktree(&cwd);
+    if !isolated && !agent_type.is_empty() && !is_read_only_agent(&agent_type) {
+        eprintln!(
+            "[hexa hook] subagent {} ({}) is running in the main checkout, not a worktree; its edits land on this branch",
+            agent_id, agent_type
         );
-        let _ = state.save();
     }
-
-    // P4: Capture HEXFLO_WORKPLAN:{id} if present in subagent prompt
-    if let Some(wp_id) = extract_prefixed_value(&stdin, "HEXFLO_WORKPLAN:") {
-        state.workplan_id = Some(wp_id);
-    }
-
-    // Extract swarm_id for tier gate enforcement
-    let swarm_id = extract_prefixed_value(&stdin, "HEXFLO_SWARM:");
-
-    // The worktree branch and the tier gate both came from the HexFlo task
-    // table, which the daemon owned. A subagent runs in this process now, on
-    // the branch the operator is on.
-    let _ = &swarm_id;
-
-    // Track the mapping so SubagentStop can complete it
-    state.current_task_id = Some(task_id);
-    state.save()?;
-
+    hexa_exec::local_store::persist_run(&serde_json::json!({
+        "kind": "subagent",
+        "event": "start",
+        "agent_id": agent_id,
+        "agent_type": agent_type,
+        "cwd": cwd.display().to_string(),
+        "in_worktree": isolated,
+        "ts": chrono::Utc::now().to_rfc3339(),
+    }));
     Ok(())
 }
 
-/// Extract a value after a PREFIX: marker (e.g. HEXFLO_WORKPLAN:wp-foo → "wp-foo").
-fn extract_prefixed_value(text: &str, prefix: &str) -> Option<String> {
-    let start = text.find(prefix)?;
-    let after = &text[start + prefix.len()..];
-    // Take chars until whitespace or newline
-    let value: String = after.chars().take_while(|c| !c.is_whitespace()).collect();
-    if value.is_empty() { None } else { Some(value) }
-}
-
-/// SubagentStop — auto-complete the task if one was assigned on start.
+/// SubagentStop — record the stop, then name every worktree branch that
+/// holds commits this branch does not, with the command that lands them.
+/// Nothing is merged here. A merge is a decision, and the hook prints the
+/// facts it needs.
 async fn subagent_stop() -> Result<()> {
-    let stdin = std::io::read_to_string(std::io::stdin()).unwrap_or_default();
-
-    let state = match SessionState::load() {
-        Some(s) => s,
-        None => return Ok(()),
-    };
-
-    let task_id = match &state.current_task_id {
-        Some(id) => id.clone(),
-        None => return Ok(()), // No task was assigned — nothing to complete
-    };
-
-    // Use the first 200 chars of subagent output as the result summary
-    let result = if stdin.len() > 200 {
-        format!("{}...", &stdin[..200])
-    } else if stdin.is_empty() {
-        "completed".to_string()
-    } else {
-        stdin.trim().to_string()
-    };
-
-    // The completion PATCH went to the daemon's HexFlo task table. What
-    // actually matters here — clearing the task and merging the worktree —
-    // is local and follows.
-    let _ = (&task_id, &result);
-
-    // Clear the current task from session state
-    let mut state = state;
-    state.current_task_id = None;
-
-    // Auto-merge and cleanup worktree if one was set for this task (ADR-2026-03-23-1700)
-    if let Some(ref branch) = state.worktree_branch.clone() {
-        let branch = branch.clone();
-
-        // Check if subagent result indicates failure — skip merge if so
-        let looks_like_failure = result.to_lowercase().contains("error")
-            || result.to_lowercase().contains("failed");
-
-        // Find repo root (fail-open)
-        let repo_root_opt = std::process::Command::new("git")
-            .args(["rev-parse", "--show-toplevel"])
-            .output()
-            .ok()
-            .and_then(|o| if o.status.success() {
-                String::from_utf8(o.stdout).ok().map(|s| s.trim().to_string())
-            } else {
-                None
-            });
-
-        if let Some(repo_root) = repo_root_opt {
-            // Check the branch exists
-            let branch_exists = std::process::Command::new("git")
-                .args(["branch", "--list", &branch])
-                .current_dir(&repo_root)
-                .output()
-                .ok()
-                .map(|o| !String::from_utf8_lossy(&o.stdout).trim().is_empty())
-                .unwrap_or(false);
-
-            let mut merge_ok = false;
-
-            if !branch_exists {
-                eprintln!("[hexa hook] subagent_stop: branch '{}' not found, skipping merge", branch);
-            } else if looks_like_failure {
-                eprintln!("[hexa hook] subagent_stop: result looks like failure, skipping merge of '{}'", branch);
-            } else {
-                // Merge the worktree branch into current branch
-                let merge_msg = format!("feat(worktree): merge {}", branch);
-                let merge_out = std::process::Command::new("git")
-                    .args(["merge", "--no-ff", &branch, "-m", &merge_msg])
-                    .current_dir(&repo_root)
-                    .output();
-
-                match merge_out {
-                    Ok(o) if o.status.success() => {
-                        eprintln!("[hexa hook] subagent_stop: merged branch '{}'", branch);
-                        merge_ok = true;
-                    }
-                    Ok(o) => {
-                        eprintln!(
-                            "[hexa hook] subagent_stop: merge of '{}' failed: {}",
-                            branch,
-                            String::from_utf8_lossy(&o.stderr).trim()
-                        );
-                    }
-                    Err(e) => {
-                        eprintln!("[hexa hook] subagent_stop: merge command error for '{}': {}", branch, e);
-                    }
-                }
-            }
-
-            // Remove worktree (regardless of merge outcome)
-            let worktree_dir = format!("hexa-worktrees-{}", branch);
-            let rm_out = std::process::Command::new("git")
-                .args(["worktree", "remove", "--force", &worktree_dir])
-                .current_dir(&repo_root)
-                .output();
-
-            match rm_out {
-                Ok(o) if o.status.success() => {
-                    eprintln!("[hexa hook] subagent_stop: removed worktree '{}'", worktree_dir);
-                }
-                Ok(o) => {
-                    eprintln!(
-                        "[hexa hook] subagent_stop: worktree remove failed: {}",
-                        String::from_utf8_lossy(&o.stderr).trim()
-                    );
-                }
-                Err(e) => {
-                    eprintln!("[hexa hook] subagent_stop: worktree remove error: {}", e);
-                }
-            }
-
-            // Delete the branch (safe delete — only if merged)
-            if merge_ok {
-                let del_out = std::process::Command::new("git")
-                    .args(["branch", "-d", &branch])
-                    .current_dir(&repo_root)
-                    .output();
-
-                match del_out {
-                    Ok(o) if o.status.success() => {
-                        eprintln!("[hexa hook] subagent_stop: deleted branch '{}'", branch);
-                    }
-                    Ok(o) => {
-                        eprintln!(
-                            "[hexa hook] subagent_stop: branch delete failed: {}",
-                            String::from_utf8_lossy(&o.stderr).trim()
-                        );
-                    }
-                    Err(e) => {
-                        eprintln!("[hexa hook] subagent_stop: branch delete error: {}", e);
-                    }
-                }
-            }
-        } else {
-            eprintln!("[hexa hook] subagent_stop: could not determine repo root, skipping worktree cleanup");
-        }
-
-        // Clear worktree state
-        state.worktree_branch = None;
-        state.worktree_path = None;
+    let raw = std::io::read_to_string(std::io::stdin()).unwrap_or_default();
+    let v: serde_json::Value = serde_json::from_str(&raw).unwrap_or(serde_json::Value::Null);
+    hexa_exec::local_store::persist_run(&serde_json::json!({
+        "kind": "subagent",
+        "event": "stop",
+        "agent_id": v["agent_id"].as_str().unwrap_or(""),
+        "agent_type": v["agent_type"].as_str().unwrap_or(""),
+        "ts": chrono::Utc::now().to_rfc3339(),
+    }));
+    for (path, branch, ahead) in worktrees_with_unmerged_commits() {
+        println!(
+            "worktree {} on {} holds {} commit{} not on this branch; land them with: hexa dev worktree merge {}",
+            path,
+            branch,
+            ahead,
+            if ahead == 1 { "" } else { "s" },
+            branch
+        );
     }
-
-    state.save()?;
-
     Ok(())
 }
 
-/// Extract HEXFLO_TASK:{uuid} from text. Returns the UUID if found.
-fn extract_hexflo_task(text: &str) -> Option<String> {
-    let prefix = "HEXFLO_TASK:";
-    let start = text.find(prefix)?;
-    let after = &text[start + prefix.len()..];
-    // UUID is 36 chars (8-4-4-4-12)
-    if after.len() >= 36 {
-        let candidate = &after[..36];
-        // Basic validation: contains hyphens at right positions
-        if candidate.chars().nth(8) == Some('-')
-            && candidate.chars().nth(13) == Some('-')
-        {
-            return Some(candidate.to_string());
+/// `(path, branch, commits ahead of HEAD)` for every linked worktree whose
+/// branch has commits HEAD does not.
+fn worktrees_with_unmerged_commits() -> Vec<(String, String, usize)> {
+    let git = |args: &[&str]| -> Option<String> {
+        let o = std::process::Command::new("git").args(args).output().ok()?;
+        o.status.success().then(|| String::from_utf8_lossy(&o.stdout).trim().to_string())
+    };
+    let Some(listing) = git(&["worktree", "list", "--porcelain"]) else {
+        return Vec::new();
+    };
+    let main = git(&["rev-parse", "--show-toplevel"]).unwrap_or_default();
+    let mut out = Vec::new();
+    let mut path = String::new();
+    for line in listing.lines() {
+        if let Some(p) = line.strip_prefix("worktree ") {
+            path = p.to_string();
+        } else if let Some(b) = line.strip_prefix("branch refs/heads/") {
+            if path == main {
+                continue;
+            }
+            let ahead = git(&["rev-list", "--count", &format!("HEAD..{b}")])
+                .and_then(|n| n.parse::<usize>().ok())
+                .unwrap_or(0);
+            if ahead > 0 {
+                out.push((path.clone(), b.to_string(), ahead));
+            }
         }
     }
-    None
+    out
 }
 
 async fn session_end(_project_dir: &PathBuf) -> Result<()> {
-    // Progress used to be flushed to HexFlo memory and the agent deregistered
+    // The session file is the only state; nothing to flush
     // from the daemon's roster. There is no roster.
     //
     // The checkpoint is written here now. Its only trigger used to be a
@@ -717,7 +586,7 @@ async fn session_end(_project_dir: &PathBuf) -> Result<()> {
 }
 
 async fn pre_edit(project_dir: &Path) -> Result<()> {
-    let tool_input = std::env::var("TOOL_INPUT").unwrap_or_default();
+    let tool_input = tool_input_json();
 
     if let Ok(input) = serde_json::from_str::<serde_json::Value>(&tool_input) {
         if let Some(file_path) = input["file_path"].as_str() {
@@ -727,37 +596,7 @@ async fn pre_edit(project_dir: &Path) -> Result<()> {
             let mode = enforcement_mode(project_dir);
             let state = SessionState::load();
 
-            // ADR-050: Enforce workplan + swarm registration before edits
             if let Some(ref state) = state {
-                let has_workplan = state.workplan_id.is_some();
-                let has_swarm = state.swarm_id.is_some();
-
-                if !has_workplan {
-                    if mode == "mandatory" {
-                        // stdout so Claude sees it; exit non-zero to block
-                        println!(
-                            "BLOCKED: No active workplan. Create one first: hexa plan create <name>"
-                        );
-                        std::process::exit(2);
-                    } else {
-                        // Advisory: stdout warning so it enters Claude's context
-                        println!(
-                            "WARNING: Editing without an active workplan. Consider: hexa plan create <name>"
-                        );
-                    }
-                } else if !has_swarm {
-                    if mode == "mandatory" {
-                        println!(
-                            "BLOCKED: Workplan active but no HexFlo swarm registered. Run: hexa swarm init <name>"
-                        );
-                        std::process::exit(2);
-                    } else {
-                        println!(
-                            "WARNING: Editing without a HexFlo swarm. Consider: hexa swarm init <name>"
-                        );
-                    }
-                }
-
                 // ADR-050: Validate file falls within workplan adapter boundary
                 if let Some(ref workplan_id) = state.workplan_id {
                     validate_workplan_boundary(project_dir, file_path, workplan_id)?;
@@ -788,10 +627,10 @@ async fn pre_edit(project_dir: &Path) -> Result<()> {
 }
 
 async fn post_edit(project_dir: &PathBuf) -> Result<()> {
-    let tool_input = std::env::var("TOOL_INPUT").unwrap_or_default();
+    let tool_input = tool_input_json();
     if let Ok(input) = serde_json::from_str::<serde_json::Value>(&tool_input) {
         if input["file_path"].as_str().is_some() {
-            // The dashboard notification and the HexFlo edit event both went
+            // Nothing to notify; the edit count is the record
             // to the daemon. The counter is local and stays.
             if let Some(mut state) = SessionState::load() {
                 state.edits += 1;
@@ -802,121 +641,47 @@ async fn post_edit(project_dir: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-/// PreAgent — enforce HEXFLO_TASK tracking for background agents (ADR-2026-03-22-1939).
+/// PreAgent — a code-writing subagent runs in its own worktree.
 ///
-/// Background agents (`run_in_background: true`) MUST include `HEXFLO_TASK:{uuid}`
-/// in their prompt. Without it, the agent is invisible to HexFlo tracking, the
-/// dashboard, and session continuity.
+/// The harness gives an Agent call `isolation: "worktree"`, which checks the
+/// subagent out in a sibling worktree on its own branch. Without it, several
+/// subagents edit and commit on the operator's branch at once. Read-only
+/// agent types are exempt. In mandatory mode the call is blocked; in advisory
+/// mode it is warned about.
 ///
-/// Exempt agent types (read-only, no code changes): Explore, Plan, claude-code-guide.
-///
-/// Exit codes:
-///   0 = allow (foreground agent, or exempt type, or has task)
-///   2 = block (background agent without HEXFLO_TASK)
+/// Exit codes: 0 = allow, 2 = block.
 async fn pre_agent() -> Result<()> {
-    let tool_input = std::env::var("TOOL_INPUT").unwrap_or_default();
-
+    let tool_input = tool_input_json();
     let input: serde_json::Value = match serde_json::from_str(&tool_input) {
         Ok(v) => v,
         Err(_) => return Ok(()), // Can't parse — allow (fail-open)
     };
-
-    let prompt = input["prompt"].as_str().unwrap_or("");
     let subagent_type = input["subagent_type"].as_str().unwrap_or("");
-    let is_background = input["run_in_background"].as_bool().unwrap_or(false);
-
-    // Exempt agent types — read-only, no code changes
-    let exempt_types = ["Explore", "Plan", "claude-code-guide", "code-explorer"];
-    if exempt_types.iter().any(|t| subagent_type.eq_ignore_ascii_case(t)) {
+    if is_read_only_agent(subagent_type) {
         return Ok(());
     }
-
+    let isolated = input["isolation"].as_str() == Some("worktree");
+    if isolated {
+        return Ok(());
+    }
     let project_dir = std::env::var("CLAUDE_PROJECT_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
-    let mode = enforcement_mode(&project_dir);
-
-    // ADR-2026-03-22-1939: Check workplan requirement for code-writing agents
-    if is_background {
-        let has_workplan = SessionState::load()
-            .and_then(|s| s.workplan_id)
-            .is_some();
-
-        if !has_workplan {
-            if mode == "mandatory" {
-                println!(
-                    "\u{26d4} Background agent blocked — no active workplan (ADR-2026-03-22-1939)"
-                );
-                println!("  Pipeline: ADR → Workplan → Swarm → Agent");
-                println!("  Create a workplan first: hexa plan create <requirements> --adr <ADR-ID>");
-                std::process::exit(2);
-            } else {
-                println!(
-                    "\u{26a0}\u{fe0f} Agent spawned without active workplan — work may not be tracked"
-                );
-            }
-        }
-    }
-
-    // ADR-2026-03-23-2000: Check active swarm exists for background agents
-    if is_background {
-        let has_swarm = SessionState::load()
-            .and_then(|s| s.swarm_id)
-            .is_some();
-
-        if !has_swarm {
-            if mode == "mandatory" {
-                println!(
-                    "\u{26d4} Background agent blocked — no active HexFlo swarm (ADR-2026-03-23-2000)"
-                );
-                println!("  Pipeline: ADR → Workplan → Swarm → Task → Agent");
-                println!("  Create a swarm first: hexa swarm init <name>");
-                std::process::exit(2);
-            } else {
-                println!(
-                    "\u{26a0}\u{fe0f} Agent spawned without active swarm — coordination disabled"
-                );
-            }
-        }
-    }
-
-    // Check for HEXFLO_TASK:{uuid} in prompt
-    let has_task = extract_hexflo_task(prompt).is_some();
-
-    if is_background && !has_task {
-        // BLOCK: background agent without task tracking
+    let who = if subagent_type.is_empty() { "subagent".to_string() } else { format!("{subagent_type} subagent") };
+    if enforcement_mode(&project_dir) == "mandatory" {
         println!(
-            "\u{26d4} Background agent blocked — missing HEXFLO_TASK:{{uuid}} in prompt (ADR-2026-03-22-1939)"
+            "\u{26d4} {who} blocked: it would edit on this branch. Give it its own worktree: isolation: \"worktree\" on the Agent call."
         );
-        println!("  Create a swarm and task first:");
-        println!("    hexa swarm init <name>");
-        println!("    hexa task create <swarm_id> <title>");
-        println!("  Then include HEXFLO_TASK:{{task_id}} as the first line of the agent prompt.");
         std::process::exit(2);
     }
-
-    if !is_background && !has_task {
-        // ADVISORY: foreground agent without tracking — warn but allow
-        println!(
-            "\u{26a0}\u{fe0f} Agent spawned without HEXFLO_TASK — work won't be tracked in HexFlo"
-        );
-    }
-
-    // P4: Propagate workplan context — output HEXFLO_WORKPLAN so subagent inherits it
-    if let Some(state) = SessionState::load() {
-        if let Some(ref wp_id) = state.workplan_id {
-            println!("HEXFLO_WORKPLAN:{}", wp_id);
-        }
-    }
-
-    // Swarm membership used to be validated against the daemon's HexFlo task
-    // table. There are no swarms and no table.
-
+    println!(
+        "\u{26a0}\u{fe0f} {who} has no worktree of its own; its edits and commits land on this branch. Add isolation: \"worktree\" to the Agent call."
+    );
     Ok(())
 }
 
 async fn pre_bash() -> Result<()> {
-    let tool_input = std::env::var("TOOL_INPUT").unwrap_or_default();
+    let tool_input = tool_input_json();
 
     if let Ok(input) = serde_json::from_str::<serde_json::Value>(&tool_input) {
         if let Some(command) = input["command"].as_str() {
@@ -944,11 +709,11 @@ async fn pre_bash() -> Result<()> {
 /// ADR-2026-03-30-1200: Refresh the architecture fingerprint when key project files have changed.
 ///
 /// Key files: docs/adrs/*.md, docs/workplans/*.json, go.mod, Cargo.toml, package.json.
-/// The last generation timestamp is cached in session state — avoiding a nexus round-trip
+/// The last generation timestamp is cached in session state
 /// on every prompt. When stale, regenerates silently (best-effort) and prints the updated
 /// fingerprint block to stdout so Claude Code picks it up as fresh context.
 async fn refresh_fingerprint_if_stale(project_dir: &Path) -> Result<()> {
-    // Only run when nexus is available and project is registered
+    // Only run when a project id is known
     let project_json = project_dir.join(".hexa/project.json");
     if !project_json.exists() {
         return Ok(());
@@ -1046,7 +811,7 @@ async fn fingerprint_block(project_id: &str, project_dir: &Path, name: &str) -> 
 }
 
 async fn route(project_dir: &Path) -> Result<()> {
-    let tool_input = std::env::var("TOOL_INPUT").unwrap_or_default();
+    let tool_input = tool_input_json();
 
     // ADR-2026-03-30-1200: Refresh architecture fingerprint if key project files have changed
     let _ = refresh_fingerprint_if_stale(project_dir).await;
@@ -1342,7 +1107,7 @@ fn detect_hex_layer(rel_path: &str) -> Option<&'static str> {
 /// Save a restart checkpoint so the next session can pick up where this one
 /// stopped (ADR-060 step 8).
 ///
-/// Was a POST to the daemon's HexFlo memory table. It is a local memory entry
+/// A local memory entry
 /// now — which also means a checkpoint survives when nothing is running.
 fn save_restart_checkpoint(state: &SessionState) -> Result<()> {
     let checkpoint = serde_json::json!({
@@ -1350,7 +1115,6 @@ fn save_restart_checkpoint(state: &SessionState) -> Result<()> {
         "agent_name": state.name,
         "project": state.project,
         "workplan_id": state.workplan_id,
-        "current_task_id": state.current_task_id,
         "phase": state.phase,
         "edits": state.edits,
         "session_id": std::env::var("CLAUDE_SESSION_ID").unwrap_or_default(),
@@ -1380,7 +1144,6 @@ async fn recover_restart_checkpoint() -> Result<()> {
 
     let field = |k: &str| cp.get(k).and_then(|v| v.as_str()).map(String::from);
     state.workplan_id = field("workplan_id").or(state.workplan_id);
-    state.current_task_id = field("current_task_id").or(state.current_task_id);
     state.phase = field("phase").or(state.phase);
     let _ = state.save();
 
@@ -1474,8 +1237,8 @@ fn classify_prompt(prompt: &str) -> Vec<&'static str> {
     if prompt.contains("adr") || prompt.contains("decision record") {
         hints.push("Relevant: hexa adr list/search/status");
     }
-    if prompt.contains("swarm") || prompt.contains("agent") || prompt.contains("coordinate") {
-        hints.push("Relevant: hexa swarm, hexa task");
+    if prompt.contains("agent") || prompt.contains("parallel") || prompt.contains("coordinate") {
+        hints.push("Relevant: harness subagents with isolation: \"worktree\"; hexa dev worktree list|merge");
     }
     if prompt.contains("feature") && (prompt.contains("develop") || prompt.contains("implement") || prompt.contains("build")) {
         hints.push("Relevant: /hexa-feature-dev");
@@ -1685,7 +1448,7 @@ fn classify_work_intent(prompt: &str) -> Tier {
 // ── Observe (ADR-2026-04-01-2137) ─────────────────────────────────────────────────
 
 /// Non-blocking tool-call observer: reads Claude Code hook JSON from stdin and
-/// POSTs it to `/api/events` with a 100 ms timeout (fire-and-forget).
+/// Records the insight blocks the transcript carries, locally.
 ///
 /// Invoked as a non-blocking hook:
 /// ```json
