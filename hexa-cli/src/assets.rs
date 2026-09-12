@@ -62,7 +62,7 @@ mod tests {
         let schema = Assets::get_str("schemas/workplan.schema.json");
         assert!(schema.is_some(), "workplan schema should be embedded");
         let content = schema.unwrap();
-        assert!(content.contains("Hex Workplan"), "schema should contain title");
+        assert!(content.contains("\"title\": \"hexa workplan\""), "schema should carry the hexa title");
     }
 
     #[test]
