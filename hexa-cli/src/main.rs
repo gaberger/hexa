@@ -391,7 +391,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Docs { action } => commands::docs::run(action).await,
         Commands::Doctor { verbose, fix, check } => {
             match check.as_deref() {
-                Some("composition") => {
+                Some("composition") | Some("inference") => {
                     doctor::composition::run_composition_check().await;
                     Ok(())
                 }

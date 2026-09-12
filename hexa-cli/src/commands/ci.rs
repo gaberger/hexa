@@ -55,17 +55,17 @@ pub async fn run() -> anyhow::Result<()> {
 pub async fn run_standalone_gate() -> anyhow::Result<()> {
     println!("{} hexa ci --standalone-gate", "\u{2b21}".cyan());
     println!();
-    println!("  {}", "Standalone composition gate (ADR-2026-04-11-2000)".bold());
+    println!("  {}", "Inference gate".bold());
     println!();
 
     let mut all_passed = true;
 
     // Step 1: Doctor composition check
-    print!("  {} Composition prerequisites . ", "\u{25cb}".dimmed());
+    print!("  {} Inference path . ", "\u{25cb}".dimmed());
     let comp = super::doctor::composition::run_composition_check_quiet().await;
     let has_inference = comp.has_any_inference();
     if has_inference {
-        println!("{} (variant: {})", "pass".green(), comp.variant());
+        println!("{} (path: {})", "pass".green(), comp.path());
     } else {
         println!(
             "{} (no inference adapter available)",

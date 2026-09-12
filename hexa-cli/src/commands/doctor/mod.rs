@@ -1,10 +1,6 @@
-//! Installation and pipeline validation command.
-//!
-//! `hexa doctor` — verifies hexa installation and project health
-//! `hexa doctor composition` — probes composition prerequisites (SpacetimeDB,
-//!     hexa-nexus, Ollama, claude binary, CLAUDE_SESSION_ID) to determine
-//!     whether the standalone or Claude-integrated variant will be selected.
-//! `hexa validate pipeline` — runs full build pipeline (build → test → analyze → validate)
+//! `hexa doctor`: is hexa installed, is this project initialised, and is
+//! there a path to a model. Every failure is listed in the summary, and the
+//! verdict is derived from the list.
 
 pub mod composition;
 
@@ -16,126 +12,75 @@ pub async fn run_doctor(_verbose: bool, _fix: bool) -> anyhow::Result<()> {
     println!("{} hexa doctor", "\u{2b21}".cyan());
     println!();
 
-    let mut all_ok = true;
+    // Every failure is listed in the summary. The verdict is derived from
+    // the lines above it, so it cannot say "all checks passed" under a ✗.
+    let mut failures: Vec<String> = Vec::new();
 
-    // 1. Check hexa binary is installed
+    // 1. Installation
     println!("  {}", "Installation:".bold());
-    let hexa_which = tokio::process::Command::new("which")
-        .arg("hexa")
-        .output()
-        .await;
-
-    match hexa_which {
-        Ok(output) if output.status.success() => {
-            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            println!("    hexa binary:   {} ({})", "found".green(), path);
+    let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_else(|_| "unknown".to_string());
+    println!("    binary:       {}", exe);
+    println!("    version:      hexa {}", env!("CARGO_PKG_VERSION"));
+    let on_path = tokio::process::Command::new("which").arg("hexa").output().await;
+    match on_path {
+        Ok(o) if o.status.success() => {
+            println!("    on PATH:      {} ({})", "\u{2713}".green(), String::from_utf8_lossy(&o.stdout).trim());
         }
         _ => {
-            println!("    hexa binary:   {}", "not found".red());
-            all_ok = false;
+            println!("    on PATH:      {} (install -m 755 {} ~/.local/bin/hexa)", "\u{2717}".red(), exe);
+            failures.push("hexa is not on PATH".to_string());
         }
     }
-
-    // Check hexa version
-    let version_output = tokio::process::Command::new("hexa")
-        .arg("--version")
-        .output()
-        .await;
-
-    match version_output {
-        Ok(output) if output.status.success() => {
-            let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            println!("    version:      {}", version);
-        }
-        _ => {
-            println!("    version:      {}", "unknown".yellow());
-        }
-    }
-
     println!();
 
-    // 2. Check project structure
+    // 2. Project
     println!("  {}", "Project:".bold());
     let cwd = std::env::current_dir()?;
     println!("    directory:    {}", cwd.display());
-
-    let hexa_dir = cwd.join(".hexa");
-    let has_hex = hexa_dir.is_dir();
-    print_check(".hexa/ config", has_hex);
-
-    let has_src = cwd.join("src").is_dir();
     let has_cargo = cwd.join("Cargo.toml").is_file();
     let has_package_json = cwd.join("package.json").is_file();
     let has_go_mod = cwd.join("go.mod").is_file();
-    print_check("src/ directory", has_src || has_cargo);
-
-    // Show only the build manifest that's actually present; a TS project
-    // shouldn't be told `Cargo.toml: ✗` (and vice-versa) — it's not a gap.
     let project_type = if has_cargo {
         "rust (Cargo.toml)"
-    } else if has_package_json {
-        "typescript/node (package.json)"
     } else if has_go_mod {
         "go (go.mod)"
+    } else if has_package_json {
+        "typescript (package.json)"
     } else {
         "unknown"
     };
-    println!("    project type: {}", project_type);
-
-    let has_docs_adrs = cwd.join("docs").join("adrs").is_dir();
-    print_check("docs/adrs/", has_docs_adrs);
-
-    let has_git = cwd.join(".git").is_dir();
-    print_check(".git/", has_git);
-
+    println!("    type:         {}", project_type);
+    let config = cwd.join(".hexa").join("project.json").is_file();
+    let rules = cwd.join(".hexa").join("ADR-rules.toml").is_file();
+    print_check(".hexa/project.json", config);
+    print_check(".hexa/ADR-rules.toml", rules);
+    if !config || !rules {
+        failures.push("project is not initialised; run `hexa init .`".to_string());
+    }
+    print_check(".git/", cwd.join(".git").is_dir());
+    if !cwd.join(".git").is_dir() {
+        failures.push("no git repository; `hexa do` commits its evidence and needs one".to_string());
+    }
+    println!("    docs/adrs/:   {}", if cwd.join("docs").join("adrs").is_dir() { "present" } else { "none" });
+    println!("    assets:       {} embedded", Assets::iter().count());
     println!();
 
-    // 4. Check embedded assets
-    println!("  {}", "Embedded assets:".bold());
-    let asset_count = Assets::iter().count();
-    println!("    loaded:       {} assets baked in", asset_count);
-
-    // 4b. Check embedded assets are project-generic (no hexa-intf-specific references)
-    // Skip for Rust workspaces (they have different asset patterns)
-    let asset_violations = if has_cargo {
-        Vec::new()
-    } else {
-        check_embedded_assets_generic()
-    };
-    if asset_violations.is_empty() {
-        println!("    generic-only: {} (no project-specific references)", "✓".green());
-    } else {
-        println!(
-            "    generic-only: {} ({} violation{})",
-            "✗".red(),
-            asset_violations.len(),
-            if asset_violations.len() == 1 { "" } else { "s" }
-        );
-        for (file, line_num, marker) in asset_violations.iter().take(10) {
-            println!("      {}:{} matched `{}`", file, line_num, marker);
-        }
-        if asset_violations.len() > 10 {
-            println!("      ... and {} more", asset_violations.len() - 10);
-        }
-        all_ok = false;
+    // 3. Inference
+    let inference = composition::run_composition_check().await;
+    if !inference.has_any_inference() {
+        failures.push("no path to a model: start the local server or log in to `claude`".to_string());
     }
-
-    println!();
-
-    // 5. Composition prerequisites
-    let comp_result = composition::run_composition_check().await;
-    if !comp_result.all_ok() {
-        all_ok = false;
-    }
-
     println!();
 
     // Summary
     println!("  {}", "Summary:".bold());
-    if all_ok {
+    if failures.is_empty() {
         println!("    {}", "All checks passed".green());
     } else {
-        println!("    {}", "Some checks failed — run with --verbose for details".yellow());
+        println!("    {} check{} failed:", failures.len(), if failures.len() == 1 { "" } else { "s" });
+        for f in &failures {
+            println!("      {} {}", "\u{2717}".red(), f);
+        }
     }
 
     Ok(())
