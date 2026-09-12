@@ -95,7 +95,7 @@ impl ServiceStarter {
         ServiceStatus { name, running: false, pid: None, note: None }
     }
 
-    async fn is_port_open(&self, port: u16) -> bool {
+    async fn is_port_open(&self, _port: u16) -> bool {
         match tokio::net::TcpStream::connect(hexa_infer::local_provider().socket_addr()).await {
             Ok(_) => true,
             Err(_) => false,

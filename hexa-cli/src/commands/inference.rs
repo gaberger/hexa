@@ -34,8 +34,6 @@ struct ProviderTemplate {
     #[serde(default)]
     rate_limits: ProviderRateLimits,
     #[serde(default)]
-    cost: ProviderCost,
-    #[serde(default)]
     models: Vec<ProviderModelEntry>,
 }
 
@@ -50,14 +48,6 @@ struct ProviderRateLimits {
     daily_tokens: Option<u64>,
     #[serde(default)]
     tpm: u64,
-}
-
-#[derive(Debug, Default, serde::Deserialize)]
-struct ProviderCost {
-    #[serde(default)]
-    input_per_mtok: f64,
-    #[serde(default)]
-    output_per_mtok: f64,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -547,7 +537,7 @@ async fn add_from_template(
 
     let provider_id = custom_id.unwrap_or(template_name);
     let model_ids: Vec<String> = template.models.iter().map(|m| m.id.clone()).collect();
-    let models_json = serde_json::to_string(&model_ids).unwrap_or_else(|_| "[]".to_string());
+    let _models_json = serde_json::to_string(&model_ids).unwrap_or_else(|_| "[]".to_string());
     let quantization = template.models.first()
         .map(|m| m.tier.clone())
         .unwrap_or_else(|| "cloud".to_string());
@@ -1894,7 +1884,7 @@ async fn bench_provider(
             }
     }
 
-    let Some(mut r) = resolved.filter(|r| !r.url.is_empty()) else {
+    let Some(r) = resolved.filter(|r| !r.url.is_empty()) else {
         println!("{} Could not resolve target '{}' — register it first with `hexa inference add`", "✗".red(), target);
         return Ok(());
     };

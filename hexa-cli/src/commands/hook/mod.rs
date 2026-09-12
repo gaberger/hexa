@@ -21,11 +21,6 @@ use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-pub mod checks;
-use checks::{
-    autofix_workplan, check_binary_freshness, check_stale_worktrees, check_workplan_status,
-    FreshnessStatus,
-};
 
 /// Extended session state file (ADR-050).
 /// Persisted to ~/.hexa/sessions/agent-{sessionId}.json
@@ -300,16 +295,20 @@ async fn session_start(project_dir: &Path) -> Result<()> {
     let content = std::fs::read_to_string(&project_json)?;
     let project: serde_json::Value = serde_json::from_str(&content)?;
 
-    let name = project["name"].as_str().unwrap_or("unknown");
+    // The manifest names the project (Cargo.toml, package.json, go.mod).
+    // `.hexa/project.json` carries config, not identity.
+    let name = project["name"]
+        .as_str()
+        .map(str::to_string)
+        .unwrap_or_else(|| crate::commands::loop_cmd::project_name(project_dir));
     let id = project["id"].as_str().unwrap_or("?");
 
     // Print a compact status banner
-    println!(
-        "\u{2b21}  hexa \u{2014} {}",
-        name
-    );
+    println!("\u{2b21}  hexa \u{2014} {}", name);
     println!("  \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}");
-    println!("  Project: {} ({})", name, id.get(..8).unwrap_or(id));
+    if id != "?" {
+        println!("  Project: {} ({})", name, id.get(..8).unwrap_or(id));
+    }
 
     // ADR-060: recover context from a previous session's checkpoint.
     let _ = recover_restart_checkpoint().await;
@@ -318,71 +317,12 @@ async fn session_start(project_dir: &Path) -> Result<()> {
 
     // ADR-2026-03-30-1200: Inject architecture fingerprint into Claude Code
     // context. stdout is picked up as session context — never skip this.
-    println!("\n{}", fingerprint_block(id, project_dir, name).await);
+    println!("\n{}", fingerprint_block(id, project_dir, &name).await);
     println!("{}", crate::commands::loop_cmd::status_line(project_dir));
     let mut st = SessionState::load_or_new();
     st.project = crate::commands::loop_cmd::project_name(project_dir);
     st.name = session_key();
     let _ = st.save();
-
-    // ── Workplan reconciliation ──────────────────────
-    // Reconcile workplan task statuses against git history on every
-    // session start so agents never act on stale "todo" states.
-    match check_workplan_status() {
-        Ok(summaries) if summaries.is_empty() => {}
-        Ok(summaries) => {
-            let total_stale: usize = summaries.iter().map(|s| s.stale_tasks.len()).sum();
-            let mut total_fixed = 0usize;
-
-            if total_stale > 0 {
-                for wp in &summaries {
-                    if let Ok(n) = autofix_workplan(wp) {
-                        total_fixed += n;
-                    }
-                }
-            }
-
-            if total_stale == 0 {
-                println!(
-                    "  Workplans: {} {} active, all consistent",
-                    "\u{2713}".green(),
-                    summaries.len()
-                );
-            } else if total_fixed == total_stale {
-                println!(
-                    "  Workplans: {} {} active, reconciled {} stale {}",
-                    "\u{2713}".green(),
-                    summaries.len(),
-                    total_fixed,
-                    "[auto-fixed]".cyan()
-                );
-            } else {
-                println!(
-                    "  Workplans: {} {} active, {}/{} stale reconciled",
-                    "\u{2717}".red(),
-                    summaries.len(),
-                    total_fixed,
-                    total_stale
-                );
-            }
-        }
-        Err(_) => {}
-    }
-
-    // ── Brain validate: stale worktree detection ───────────────────
-    match check_stale_worktrees() {
-        Ok(stale) if stale.is_empty() => {}
-        Ok(stale) => {
-            let branches: Vec<&str> = stale.iter().map(|w| w.branch.as_str()).collect();
-            println!(
-                "  Worktrees: {} {} stale (>24h): {}",
-                "\u{26a0}".yellow(),
-                stale.len(),
-                branches.join(", ")
-            );
-        }
-        Err(_) => {}
-    }
 
     // Check for architecture violations
     let src_dir = project_dir.join("src");
@@ -699,7 +639,7 @@ async fn pre_edit(project_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-async fn post_edit(project_dir: &PathBuf) -> Result<()> {
+async fn post_edit(_project_dir: &PathBuf) -> Result<()> {
     let tool_input = tool_input_json();
     if let Ok(input) = serde_json::from_str::<serde_json::Value>(&tool_input) {
         if input["file_path"].as_str().is_some() {
@@ -1648,35 +1588,6 @@ async fn observe(event_type: &str) -> Result<()> {
             Ok(())
         })() {
             eprintln!("insight extractor error: {}", e);
-        }
-    }
-
-    if event_type == "PostToolUse" {
-        let is_commit = tool_name.as_deref() == Some("Bash")
-            && input_json
-                .as_deref()
-                .map(|s| s.contains("git commit") || s.contains("git merge"))
-                .unwrap_or(false);
-
-        if is_commit {
-            // Binary freshness — triggers background rebuild if stale
-            match check_binary_freshness() {
-                FreshnessStatus::Stale { .. } => {
-                    eprintln!(
-                        "{}",
-                        "⬡ brain: binary stale after commit — background rebuild spawned"
-                            .yellow()
-                    );
-                }
-                FreshnessStatus::Missing => {
-                    eprintln!(
-                        "{}",
-                        "⬡ brain: release binary missing — run cargo build --release"
-                            .yellow()
-                    );
-                }
-                _ => {}
-            }
         }
     }
 

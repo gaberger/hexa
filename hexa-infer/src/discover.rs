@@ -47,7 +47,7 @@ pub fn discover() -> Vec<Found> {
 }
 
 /// The same, with every input injected. What the tests drive.
-pub fn discover_with(
+fn discover_with(
     env: &dyn Fn(&str) -> Option<String>,
     endpoints: &[Endpoint],
     claude_path: Option<&str>,

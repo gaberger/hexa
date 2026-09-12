@@ -44,7 +44,7 @@ pub async fn run(args: SpendArgs) -> anyhow::Result<()> {
     let week = (chrono::Utc::now() - chrono::Duration::days(7)).to_rfc3339();
     let today_rows = spend::since(&rows, &spend::start_of_today());
     let week_rows = spend::since(&rows, &week);
-    let all_rows: Vec<&Value> = rows.iter().collect();
+    let _all_rows: Vec<&Value> = rows.iter().collect();
     let today = spend::totals(&today_rows.iter().map(|r| (*r).clone()).collect::<Vec<_>>());
     let seven = spend::totals(&week_rows.iter().map(|r| (*r).clone()).collect::<Vec<_>>());
     let all = spend::totals(&rows);

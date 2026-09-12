@@ -10,12 +10,6 @@
 //! |--------|----------|--------|--------|
 //! | `hexa plan reconcile --update` | plan/mod.rs CLI dispatch | Explicit operator | `true` (via `--update`) |
 //! | `hexa hey "reconcile"` | hey.rs NL classifier | Explicit operator | `true` (via `--update`) |
-//! | `autofix_workplan()` | sched.rs (validate) | Passive daemon | `false` — report only |
-//! | `autofix_workplan()` | hook.rs (SessionStart) | Passive hook | `false` — report only |
-//!
-//! Passive callers (sched, hook) use `autofix_workplan()` which is a separate
-//! code path that predates evidence verification. Those callers should migrate
-//! to `reconcile::run(mutate=false)` to get evidence checks without mutation.
 
 use colored::Colorize;
 use tabled::Tabled;

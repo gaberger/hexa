@@ -33,17 +33,9 @@ pub(super) struct EvidenceViolation {
 /// CLI message and (eventually) a suggested fix.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum ViolationKind {
-    /// `files` field is missing entirely from the task (wouldn't serde-default to
-    /// empty, but defensive — kept for future schema versions that make the field
-    /// required at the JSON level).
-    MissingFiles,
     /// `files` field is present but empty. The common case — most pre-verifier
     /// workplans have empty files[].
     EmptyFiles,
-    /// `files` lists a path that references outside the repo root (absolute,
-    /// parent-traversal, etc). Not enforced at author-time (we can't resolve
-    /// without a repo_root), but the kind is reserved for future extension.
-    NonExistentPath,
     /// Task id is also missing — prevents any downstream reference.
     MissingTaskId,
 }
@@ -57,9 +49,7 @@ impl std::fmt::Display for EvidenceViolation {
 impl EvidenceViolation {
     fn kind_str(&self) -> &'static str {
         match self.kind {
-            ViolationKind::MissingFiles => "missing-files",
             ViolationKind::EmptyFiles => "empty-files",
-            ViolationKind::NonExistentPath => "non-existent-path",
             ViolationKind::MissingTaskId => "missing-task-id",
         }
     }

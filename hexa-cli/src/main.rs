@@ -8,9 +8,7 @@
 use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
-pub mod assets;
-mod commands;
-pub mod fmt;
+use hexa_cli::commands;
 
 use commands::{
     adr::AdrAction,

@@ -290,8 +290,8 @@ fn print_vector(results: &[ArmResult]) {
     for r in results {
         let mark = if r.evidence_pass { "✓".green() } else { "✗".red() };
         println!(
-            "    {} {:<22} {:<4} {:<6} edit={} reason={:<14} {}ms",
-            mark, r.id, r.tier, r.arm, yn(r.did_edit), r.failure_reason, r.wall_ms
+            "    {} {:<22} {:<4} {:<6} edit={} reason={:<14} {}ms attempts={}",
+            mark, r.id, r.tier, r.arm, yn(r.did_edit), r.failure_reason, r.wall_ms, r.attempts
         );
     }
 }

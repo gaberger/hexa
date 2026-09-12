@@ -6,8 +6,6 @@ pub struct BootstrapReport {
     pub ready: bool,
     pub service_checks: Vec<(String, bool)>,
     pub model_checks: Vec<(String, bool)>,
-    /// A logged-in `claude` CLI is on PATH.
-    pub frontier: bool,
     /// Which paths to a model are open, in words.
     pub path: String,
     /// Every path discovered, open or not.
@@ -107,7 +105,6 @@ impl BootstrapValidator {
         let local_up = service_checks.iter().all(|(_, ok)| *ok);
         let local_ok = local_up && model_checks.iter().all(|(_, ok)| *ok);
         let others: Vec<&hexa_infer::Found> = found.iter().filter(|f| f.kind != "local" && f.open()).collect();
-        let frontier = others.iter().any(|f| f.kind == "frontier");
         let mut names: Vec<String> = Vec::new();
         if local_ok {
             names.push("local server".to_string());
@@ -121,13 +118,12 @@ impl BootstrapValidator {
             service_checks,
             model_checks,
             config_exists,
-            frontier,
             path,
             found,
         })
     }
 
-    async fn check_service_health(&self, port: u16) -> bool {
+    async fn check_service_health(&self, _port: u16) -> bool {
         match tokio::net::TcpStream::connect(hexa_infer::local_provider().socket_addr()).await {
             Ok(_) => true,
             Err(_) => false,

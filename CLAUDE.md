@@ -173,9 +173,9 @@ then found three real bugs its own passing tests missed.
 - **Tests can mirror bugs** — the same model writes the code and the test, so the
   test encodes the misunderstanding. Use property tests and behavioral specs as
   independent oracles. Worse: a test that redefines its subject inside the test
-  file asserts against a copy of the design, not the shipped code. Thirty such
-  tests were deleted in the solo collapse and cost no coverage, because they had
-  never covered anything that ran.
+  file asserts against a copy of the design, not the shipped code. Such tests can
+  be deleted at no cost to coverage, because they never covered anything that
+  ran.
 - **"It compiles" ≠ "it works"** — always add runtime validation. Can a user
   actually start the thing?
 - **A gate that degrades silently is worse than no gate.** `hexa ci`'s boundary

@@ -172,7 +172,7 @@ pub struct Task {
 }
 
 /// The checklist in a loop state, numbered from 1.
-pub fn task_list(state: &serde_json::Value) -> Vec<Task> {
+fn task_list(state: &serde_json::Value) -> Vec<Task> {
     state
         .get("tasks")
         .and_then(|t| t.as_array())
@@ -190,7 +190,7 @@ pub fn task_list(state: &serde_json::Value) -> Vec<Task> {
 }
 
 /// The checklist as lines: `[x]` done, `[>]` in progress, `[ ]` to do.
-pub fn checklist(state: &serde_json::Value) -> Vec<String> {
+fn checklist(state: &serde_json::Value) -> Vec<String> {
     let tasks = task_list(state);
     let mut out: Vec<String> = tasks
         .iter()

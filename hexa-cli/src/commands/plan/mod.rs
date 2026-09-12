@@ -1031,7 +1031,7 @@ async fn execute_plan_local(_path: &std::path::Path, wp: &serde_json::Value) -> 
         None => { anyhow::bail!("Workplan has no phases"); }
     };
 
-    let client = reqwest::Client::builder()
+    let _client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(600))
         .build()?;
 

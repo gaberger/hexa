@@ -107,7 +107,7 @@ pub fn start_of_today() -> String {
 }
 
 /// Dollars spent today over calls that reported a cost.
-pub fn today_cost_usd() -> f64 {
+fn today_cost_usd() -> f64 {
     let rows = entries();
     let today = since(&rows, &start_of_today());
     today.iter().filter_map(|r| r.get("cost_usd").and_then(Value::as_f64)).sum()

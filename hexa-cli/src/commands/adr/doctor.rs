@@ -435,22 +435,6 @@ fn file_has_git_history(path: &Path) -> bool {
     matches!(out, Ok(o) if o.status.success() && !o.stdout.iter().all(|b| b.is_ascii_whitespace()))
 }
 
-/// Days since the file's first git commit. Returns None for untracked files
-/// so callers can fall back to "no age info available."
-fn file_git_age_days(path: &Path) -> Option<i64> {
-    let out = std::process::Command::new("git")
-        .args(["log", "--diff-filter=A", "--format=%ct", "--", &path.to_string_lossy()])
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let ts: i64 = stdout.trim().lines().last()?.parse().ok()?;
-    let now = chrono::Utc::now().timestamp();
-    Some(((now - ts).max(0)) / 86400)
-}
-
 fn detect_missing_required_field(path: &Path, content: &str) -> Vec<Finding> {
     let adr_id = extract_filename_adr_id(path).unwrap_or_default();
     let mut findings = Vec::new();
@@ -746,10 +730,9 @@ impl Outcome {
     }
 }
 
-/// Tunables for `shadow_promote_with_config`. The default
-/// `shadow_promote(finding)` uses the live filesystem (cwd-rooted repo,
-/// `~/.hexa/sessions/`, today's date); tests inject a tempdir and a fake
-/// sessions dir so they're hermetic.
+/// Tunables for `shadow_promote_with_config`. `ShadowPromoteConfig::live()`
+/// uses the live filesystem (cwd-rooted repo, `~/.hexa/sessions/`, today's
+/// date); tests inject a tempdir and a fake sessions dir so they're hermetic.
 #[derive(Debug, Clone)]
 pub struct ShadowPromoteConfig {
     /// Repo root containing the ADR file and where the merge will happen.
@@ -769,14 +752,6 @@ impl ShadowPromoteConfig {
             now: chrono::Local::now().date_naive(),
         })
     }
-}
-
-/// Try to safely apply a Tier-A finding's auto-fix patch via shadow
-/// promotion. The default config rooted at the current git repo. See
-/// [`shadow_promote_with_config`] for the injectable variant.
-fn shadow_promote(finding: &Finding) -> anyhow::Result<Outcome> {
-    let cfg = ShadowPromoteConfig::live()?;
-    shadow_promote_with_config(finding, &cfg)
 }
 
 /// Hermetic variant — every path/clock/session-source the orchestrator

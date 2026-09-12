@@ -645,7 +645,7 @@ async fn cleanup(force: bool) -> anyhow::Result<()> {
     // Find stale worktrees (24h+ no commits)
     let stale_wts: Vec<(String, String)> = worktrees
         .iter()
-        .filter(|(path, branch)| {
+        .filter(|(_path, branch)| {
             if branch == &main || branch == "(detached)" {
                 return false;
             }

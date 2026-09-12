@@ -6,14 +6,13 @@
 //! Non-interactive mode: `hexa new ./myapp --name myapp --description "My app"`
 
 use colored::Colorize;
-use serde_json::json;
 
 use super::init::InitArgs;
 
 pub async fn run(
     path: &str,
     name: Option<String>,
-    description: Option<String>,
+    _description: Option<String>,
     lang: &str,
 ) -> anyhow::Result<()> {
     // ── 1. Ensure target directory exists ─────────────────────────────
