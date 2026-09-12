@@ -390,6 +390,15 @@ pub async fn run(
             }
             println!("    {}", SCORE_FORMULA.dimmed());
             println!("    {}", GRADE_BANDS.dimmed());
+            if *violations > 0 || *cycles > 0 || !dead.is_empty() || !unused.is_empty() {
+                // Said here because it was not done: an agent relayed "B, 87,
+                // unchanged" five times and fixed only the two items its own
+                // diff had added. The grade is a property of the tree.
+                println!(
+                    "    {}",
+                    "These are deductions to clear, not a status to report. Each item above names its fix; the grade is a property of the tree, not of your diff.".yellow()
+                );
+            }
         }
     }
 

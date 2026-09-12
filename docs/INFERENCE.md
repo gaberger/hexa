@@ -112,6 +112,22 @@ when the local model will not fit.
 `hexa config inference gpu-check` confirms the local server is using the GPU.
 
 
+## Discovery
+
+`hexa doctor` and `hexa bootstrap` find every path to a model the machine
+holds, without being told:
+
+| Path | Discovered from |
+|---|---|
+| local server | `HEXA_OLLAMA_HOST`, then `OLLAMA_HOST`, then the default address; probed |
+| anthropic | `ANTHROPIC_API_KEY` present (`ANTHROPIC_BASE_URL` optional); the key is never printed |
+| openai-compatible | `HEXA_INFERENCE_URL` (`HEXA_INFERENCE_MODEL`, `HEXA_INFERENCE_KEY`); probed |
+| vllm | `HEXA_VLLM_HOST` (`HEXA_VLLM_MODEL`, `HEXA_VLLM_KEY`); probed |
+| registered endpoints | `~/.hexa/inference-servers.json`, from `hexa config inference add`; probed |
+| claude | a `claude` CLI on PATH |
+
+Any one open path is enough to run. Bootstrap fails only when there is none.
+
 ## Spend and budget
 
 Every inference hexa makes appends one line to `~/.hexa/inference-log.jsonl`:

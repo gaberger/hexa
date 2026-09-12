@@ -36,6 +36,10 @@ If the verb you want is missing, **build the verb**. That is how the tool grows.
 5. **No stub tasks.** A task whose body is `echo TODO` is audit theater. Real
    work goes in a workplan; not-yet-actionable work goes in an ADR.
 6. **Seek improvements proactively.** Drift or a gap → ADR → workplan.
+7. **A grade below the floor is a deduction to clear, not a status to relay.**
+   `hexa analyze .` names every item and its fix. Clear them, re-run, and
+   report the new grade. The grade is a property of the tree, not of your
+   diff: an item that predates your change is still yours to clear.
 7. **Prefer `hexa hey <intent>`** when the task maps cleanly to natural language.
 
 ## Development pipeline (gate-first)

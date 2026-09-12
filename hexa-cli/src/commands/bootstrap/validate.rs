@@ -8,8 +8,10 @@ pub struct BootstrapReport {
     pub model_checks: Vec<(String, bool)>,
     /// A logged-in `claude` CLI is on PATH.
     pub frontier: bool,
-    /// Which path to a model is open, in words.
-    pub path: &'static str,
+    /// Which paths to a model are open, in words.
+    pub path: String,
+    /// Every path discovered, open or not.
+    pub found: Vec<hexa_infer::Found>,
     pub config_exists: bool,
 }
 
@@ -23,7 +25,10 @@ impl BootstrapReport {
         for (model, ready) in &self.model_checks {
             output.push_str(&format!("│ {} {}{}\n", if *ready { "✓" } else { "○" }, model, if *ready { " (loaded)" } else { " (not pulled)" }));
         }
-        output.push_str(&format!("│ {} frontier (claude)\n", if self.frontier { "✓" } else { "○" }));
+        for f in self.found.iter().filter(|f| f.kind != "local") {
+            let mark = match f.reachable { Some(true) => "✓", Some(false) => "✗", None => "○" };
+            output.push_str(&format!("│ {} {} {} (via {})\n", mark, f.kind, f.name, f.via));
+        }
         output.push_str(&format!("│ path: {}\n", self.path));
         output.push_str("╰───────────────────────────────────────╯");
         output
@@ -39,7 +44,10 @@ impl BootstrapReport {
         for (model, ready) in &self.model_checks {
             output.push_str(&format!("│ {} {}{}\n", if *ready { "✓" } else { "✗" }, model, if *ready { "" } else { " (not pulled)" }));
         }
-        output.push_str(&format!("│ {} frontier (claude)\n", if self.frontier { "✓" } else { "✗" }));
+        for f in self.found.iter().filter(|f| f.kind != "local") {
+            let mark = match f.reachable { Some(true) => "✓", Some(false) => "✗", None => "○" };
+            output.push_str(&format!("│ {} {} {} (via {})\n", mark, f.kind, f.name, f.via));
+        }
         if !self.config_exists {
             output.push_str("│ ✗ .hexa/project.json\n");
         }
@@ -93,16 +101,20 @@ impl BootstrapValidator {
         // project configures, or a logged-in `claude` CLI. Either is enough
         // to run, and a machine set up for the frontier path has no local
         // server on purpose. Only no path at all fails.
+        // Every path the environment, the registry and PATH hold. The local
+        // server counts only with the models the project configures.
+        let found = hexa_infer::discover();
         let local_up = service_checks.iter().all(|(_, ok)| *ok);
         let local_ok = local_up && model_checks.iter().all(|(_, ok)| *ok);
-        let frontier = Command::new("which").arg("claude").output().map(|o| o.status.success()).unwrap_or(false);
-        let path = match (local_ok, frontier) {
-            (true, true) => "local server and frontier",
-            (true, false) => "local server only",
-            (false, true) => "frontier only",
-            (false, false) => "none",
-        };
-        let ready = config_exists && (local_ok || frontier);
+        let others: Vec<&hexa_infer::Found> = found.iter().filter(|f| f.kind != "local" && f.open()).collect();
+        let frontier = others.iter().any(|f| f.kind == "frontier");
+        let mut names: Vec<String> = Vec::new();
+        if local_ok {
+            names.push("local server".to_string());
+        }
+        names.extend(others.iter().map(|f| if f.kind == "frontier" { "claude".to_string() } else { f.name.clone() }));
+        let path: String = if names.is_empty() { "none".to_string() } else { names.join(", ") };
+        let ready = config_exists && (local_ok || !others.is_empty());
 
         Ok(BootstrapReport {
             ready,
@@ -111,6 +123,7 @@ impl BootstrapValidator {
             config_exists,
             frontier,
             path,
+            found,
         })
     }
 

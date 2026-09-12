@@ -19,7 +19,7 @@
 use serde::{Deserialize, Serialize};
 
 /// A single inference backend hexa can dispatch to.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct Endpoint {
     /// Stable identifier, e.g. `ollama-local`, `tenstorrent-qwen3-32b`.
     pub id: String,
