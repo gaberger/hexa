@@ -45,9 +45,7 @@ serde_yaml = "0.9"
 # Embedded asset bundle (ADR-2026-03-22-1522)
 rust-embed = "8"
 # TUI for `hexa dev` (ADR-2026-03-23-2005)
-ratatui = "0.29"
 pulldown-cmark = { version = "0.12", default-features = false }
-crossterm = "0.28"
 # Structured CLI table output (ADR-2026-03-24-1226)
 tabled = { version = "0.22", features = ["ansi"] }
 # WebSocket client for hexa inference watch (ADR-2026-04-01-1200)

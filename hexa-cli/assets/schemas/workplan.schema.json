@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Hex Workplan",
-  "description": "A workplan decomposes a feature into dependency-ordered phases of tasks. Each task maps to one hexagonal adapter boundary. Workplans are stored in docs/workplans/ and executed by HexFlo swarms.",
+  "title": "hexa workplan",
+  "description": "A workplan decomposes a feature into dependency-ordered phases of tasks. Each task maps to one hexagonal adapter boundary. Workplans are stored in docs/workplans/ and run by `hexa plan`.",
   "type": "object",
   "required": ["id", "feature", "adr", "status", "phases"],
   "properties": {
@@ -21,7 +21,7 @@
     "adr": {
       "type": "string",
       "pattern": "^ADR-\\d+",
-      "description": "ADR reference (ADR-NNN legacy or ADR-YYMMDDHHMM timestamp). Required by ADR-050 pipeline: ADR → Workplan → Swarm"
+      "description": "The ADR this workplan implements (ADR-YYMMDDHHMM). Every workplan implements one ADR."
     },
     "status": {
       "type": "string",
@@ -168,7 +168,7 @@
       "id": "wp-example",
       "feature": "Example Feature",
       "description": "Demonstrates the workplan format",
-      "adr": "ADR-001",
+      "adr": "ADR-2609121400",
       "status": "planned",
       "created_at": "2026-01-01T00:00:00Z",
       "created_by": "planner",

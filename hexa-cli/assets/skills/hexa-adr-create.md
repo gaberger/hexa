@@ -16,7 +16,7 @@ must include a full consumer dependency map before it can be accepted.
    ```bash
    hexa adr schema
    ```
-   This returns the next number (atomically reserved in SpacetimeDB), the template, valid statuses, and required sections.
+   This returns the next id, the template, valid statuses, and required sections.
 
 2. Ask the user for:
    - **Title** (required)

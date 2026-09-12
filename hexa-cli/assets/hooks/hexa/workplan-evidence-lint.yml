@@ -40,7 +40,7 @@ bypass:
     false-positive under `hexa plan reconcile` because tasks lack files[]
     assertions. Use only when explicitly authoring a "placeholder" workplan.
   action_on_bypass: |
-    Log bypass to HexFlo memory:
+    Log the bypass with `hexa memory store`:
       key: "bypass/workplan-evidence/<workplan-id>"
       value:
         bypassed_at: <ISO timestamp>
