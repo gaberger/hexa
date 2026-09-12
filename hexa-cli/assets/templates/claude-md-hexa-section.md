@@ -46,6 +46,8 @@ an ADR.**
 1. **Decide** — an ADR in `docs/adrs/`, if this adds a port, an adapter, or a
    dependency.
 2. **Gate** — write the command that must exit 0, *before* the code.
+   Record it: `hexa loop gate '<command>'`. The hooks stop a feature-sized
+   edit that has no gate recorded, and `hexa loop` shows where the work stands.
 3. **Diverge** — `hexa build` proposes designs and red-teams each one. The spec
    it synthesizes is a disposable intermediate.
 4. **Build to the gate.**

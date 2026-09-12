@@ -503,18 +503,6 @@ fn run_lint_checks(r: &mut TestResults) {
         .unwrap_or(false);
     r.check("cargo clippy (workspace)", clippy_ok);
 
-    // SpacetimeDB modules clippy — resolve dir relative to workspace root so
-    // this works regardless of the CWD from which `hexa` is invoked.
-    let stdb_dir = locate_workspace_root()
-        .map(|p| p.join("spacetime-modules"))
-        .unwrap_or_else(|| std::path::PathBuf::from("spacetime-modules"));
-    let stdb_clippy_ok = Command::new("cargo")
-        .args(["clippy", "--workspace", "--", "-D", "warnings"])
-        .current_dir(&stdb_dir)
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-    r.check("cargo clippy (spacetime-modules)", stdb_clippy_ok);
 
     // TypeScript type check (if bun available)
     let tsc_ok = Command::new("bun")

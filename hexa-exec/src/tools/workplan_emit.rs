@@ -31,7 +31,7 @@ impl Tool for WorkplanEmit {
         "Emit a hexa workplan JSON to docs/workplans/wp-<slug>.json. \
          Use this immediately after authoring an ADR with implementation \
          work to dispatch — turns the ADR's Decision section into a \
-         schema-conformant workplan that hexa swarm/task can consume. \
+         schema-conformant workplan that hexa plan can consume. \
          Phases are dependency-ordered; tasks within a phase run parallel."
     }
     fn input_schema(&self) -> Value {
@@ -48,7 +48,7 @@ impl Tool for WorkplanEmit {
                 },
                 "adr": {
                     "type": "string",
-                    "description": "Source ADR reference (e.g. 'ADR-2026-05-08-2600'). Required by ADR→workplan→swarm pipeline."
+                    "description": "Source ADR reference (e.g. 'ADR-2026-05-08-2600'). Required by the ADR→workplan pipeline."
                 },
                 "phases": {
                     "type": "array",
@@ -210,7 +210,7 @@ impl Tool for WorkplanEmit {
                 "adr": adr,
                 "phases": phases_out.len(),
                 "byte_len": pretty.len(),
-                "note": "proposed_action queued; twin auto-approves tool:* per ADR-2026-05-08-2500; once executor writes, run `hexa swarm init wp-<slug>` to dispatch",
+                "note": "proposed_action queued; twin auto-approves tool:* per ADR-2026-05-08-2500; once executor writes, run `hexa plan list` to see it",
             }),
             start.elapsed().as_millis() as u64,
         )

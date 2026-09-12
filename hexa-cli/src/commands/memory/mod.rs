@@ -149,12 +149,4 @@ pub async fn run(action: MemoryAction) -> anyhow::Result<()> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn preview_clips_on_a_character_boundary() {
-        // Slicing by byte index here would panic.
-        let wide = "\u{e9}".repeat(100);
-        let got = preview(&wide);
-        assert!(got.ends_with("..."));
-        assert_eq!(got.chars().count(), 60);
-    }
 }

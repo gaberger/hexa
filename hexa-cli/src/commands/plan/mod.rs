@@ -1282,7 +1282,7 @@ async fn create_plan(requirements: &[String], lang: &str, adr: Option<&str>, no_
             None => {
                 anyhow::bail!(
                     "Workplan requires an ADR reference. Use --adr ADR-NNN or --no-adr to skip.\n\
-                     Pipeline: ADR → Workplan → HexFlo Memory → Swarm"
+                     Pipeline: ADR → Workplan → subagents, one worktree each"
                 );
             }
             Some(adr_ref) => {
@@ -1298,7 +1298,7 @@ async fn create_plan(requirements: &[String], lang: &str, adr: Option<&str>, no_
                     if !found {
                         anyhow::bail!(
                             "ADR '{}' not found in docs/adrs/. Create the ADR first.\n\
-                             Pipeline: ADR → Workplan → HexFlo Memory → Swarm",
+                             Pipeline: ADR → Workplan → subagents, one worktree each",
                             adr_ref
                         );
                     }

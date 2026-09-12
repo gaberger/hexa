@@ -131,6 +131,6 @@
     ]
   },
   "companyAnnouncements": [
-    "hexa — Hexagonal Architecture Framework\nRun `hexa analyze .` for architecture health | `hexa status` for overview | `hexa swarm status` for active swarms"
+    "hexa: a scaffolding system with two gates\nRun `hexa analyze .` for the grade | `hexa status` for an overview"
   ]
 }

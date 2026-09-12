@@ -243,35 +243,12 @@ fn classify_intent(text: &str) -> TaskIntent {
     // Rebuild
     if t.contains("rebuild") || (t.contains("build") && t.contains("release")) {
         return TaskIntent::Shell {
-            cmd: "cargo build -p hexa-cli -p hexa-nexus --release".into(),
+            cmd: "cargo build -p hexa-cli --release".into(),
             destructive: false,
-            description: "Rebuild hexa-cli and hexa-nexus in release mode".into(),
-        };
-    }
-    // Restart nexus
-    if t.contains("restart") && t.contains("nexus") {
-        return TaskIntent::HexCommand {
-            args: "nexus stop && hexa nexus start".into(),
-            destructive: false,
-            description: "Restart the hexa-nexus daemon".into(),
-        };
-    }
-    // Stop nexus
-    if t.contains("stop") && t.contains("nexus") {
-        return TaskIntent::HexCommand {
-            args: "nexus stop".into(),
-            destructive: false,
-            description: "Stop the hexa-nexus daemon".into(),
+            description: "Rebuild hexa in release mode".into(),
         };
     }
     // Nexus logs
-    if t.contains("logs") || (t.contains("tail") && t.contains("nexus")) {
-        return TaskIntent::HexCommand {
-            args: "nexus logs".into(),
-            destructive: false,
-            description: "Tail hexa-nexus daemon logs".into(),
-        };
-    }
     // README check / generate
     if t.contains("readme") {
         let args = if t.contains("generate") || t.contains("write") || t.contains("create") {

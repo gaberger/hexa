@@ -68,11 +68,7 @@ pub async fn run(action: DocsAction) -> anyhow::Result<()> {
 /// terms that aren't merely sloppy but actively confuse readers
 /// (e.g. legacy product names that have been replaced).
 const GLOSSARY: &[(&str, &str, &str)] = &[
-    // Legacy product names
-    ("hexa-hub", "hexa-nexus", "error"),
-    ("ruflo", "HexFlo", "error"),
-    // Sloppy abbreviations that lose meaning
-    ("orchestration nexus", "hexa-nexus", "warning"),
+    // No entries today. The list held the names of retired components.
 ];
 
 fn print_glossary() {
@@ -141,7 +137,6 @@ async fn check(
     let root = discover_root(root)?;
     let mut findings: Vec<Finding> = Vec::new();
 
-    findings.extend(check_module_readmes(&root)?);
     findings.extend(check_terminology(&root)?);
     findings.extend(check_adr_frontmatter(&root)?);
     if max_age_days > 0 {
@@ -212,37 +207,6 @@ fn print_human(findings: &[Finding], summary: &Summary, root: &Path) {
     );
 }
 
-// ─── Module README check ───────────────────────────────────────────────────
-
-fn check_module_readmes(root: &Path) -> anyhow::Result<Vec<Finding>> {
-    let mods_dir = root.join("spacetime-modules");
-    if !mods_dir.is_dir() {
-        return Ok(Vec::new());
-    }
-    let mut out = Vec::new();
-    for entry in std::fs::read_dir(&mods_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-        // Only count directories that look like a Rust crate.
-        if !path.join("Cargo.toml").exists() {
-            continue;
-        }
-        if !path.join("README.md").exists() {
-            let rel = relative_to(&path, root);
-            out.push(Finding {
-                kind: "missing_module_readme".into(),
-                severity: "error".into(),
-                path: rel,
-                line: None,
-                detail: "WASM module has no README.md (ADR-047 Phase 3)".into(),
-            });
-        }
-    }
-    Ok(out)
-}
 
 // ─── Terminology check ─────────────────────────────────────────────────────
 
@@ -566,11 +530,8 @@ fn parse_csv_field(content: &str, name: &str) -> Vec<String> {
 
 fn collect_md_files(root: &Path) -> anyhow::Result<Vec<PathBuf>> {
     let mut out = Vec::new();
-    // Roots we care about: docs/, spacetime-modules/, top-level README/CLAUDE.
-    let candidates = [
-        root.join("docs"),
-        root.join("spacetime-modules"),
-    ];
+    // Roots we care about: docs/ and the top-level README/CLAUDE.
+    let candidates = [root.join("docs")];
     for base in &candidates {
         if base.is_dir() {
             walk_md(base, &mut out);
@@ -656,10 +617,10 @@ mod tests {
     }
 
     #[test]
-    fn glossary_has_known_legacy_terms() {
-        let bad_terms: Vec<&str> = GLOSSARY.iter().map(|(b, _, _)| *b).collect();
-        assert!(bad_terms.contains(&"hexa-hub"));
-        assert!(bad_terms.contains(&"ruflo"));
+    fn glossary_names_no_retired_component() {
+        // The list once mapped retired product names to their daemon-era
+        // replacements. There is nothing to canonicalise to now.
+        assert!(GLOSSARY.is_empty(), "{GLOSSARY:?}");
     }
 
     #[test]

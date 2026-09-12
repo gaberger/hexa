@@ -125,7 +125,7 @@ impl Tool for EscalateToOperator {
                 "escalation_id": chrono::Utc::now().timestamp_millis(),
                 "priority": priority,
                 "note": note,
-                "warning": "escalation logged to nexus.log; dashboard surface lands in wave-2 follow-on workplan",
+                "note": "escalation recorded locally; read it with `hexa status`",
             }),
             elapsed,
         )

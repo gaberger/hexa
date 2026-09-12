@@ -167,10 +167,6 @@ then found three real bugs its own passing tests missed.
 `/hexa-summarize`, `/hexa-analyze-deps`, `/hexa-analyze-arch`, `/hexa-validate`,
 `/cargo-fast`.
 
-**Agents**: `feature-developer`, `planner`, `hexa-coder`, `integrator`,
-`dependency-analyst`, `dead-code-analyzer`, `scaffold-validator`,
-`behavioral-spec-writer`, `validation-judge`, `adversarial-reviewer`,
-`ADR-reviewer`, `rust-refactorer`.
 
 ## Key lessons (from adversarial review)
 
