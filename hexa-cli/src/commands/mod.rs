@@ -11,7 +11,6 @@ pub mod hook;
 pub mod insight;
 pub mod inference;
 pub mod init;
-pub mod interview;
 pub mod memory;
 pub mod plan;
 pub mod refresh;

@@ -53,10 +53,6 @@ pub struct InitArgs {
     #[arg(long)]
     pub no_claude_md: bool,
 
-    /// Skip the project interview (generate bare scaffolding only)
-    #[arg(long)]
-    pub skip_interview: bool,
-
     /// Force overwrite existing .hexa/ config
     #[arg(short, long)]
     pub force: bool,
@@ -85,19 +81,6 @@ pub async fn run(args: InitArgs) -> Result<()> {
             target.display()
         );
     }
-
-    // ── 0. Interview (empty directory only, ADR-055) ────────────
-    let interview = if super::interview::is_empty_project(&target) && !args.skip_interview {
-        match super::interview::run_interview() {
-            Ok(iv) => Some(iv),
-            Err(e) => {
-                tracing::debug!("Interview skipped: {e}");
-                None
-            }
-        }
-    } else {
-        None
-    };
 
     println!(
         "{} Initializing hexa in {}",

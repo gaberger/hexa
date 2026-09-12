@@ -49,7 +49,6 @@ pub async fn run(
         scaffold: true,
         lang: lang.to_string(),
         no_claude_md: false,
-        skip_interview: true, // non-interactive for `hexa new`
         force: false,
     };
 
