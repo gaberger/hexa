@@ -70,7 +70,23 @@ pub async fn run(action: MemoryAction) -> anyhow::Result<()> {
                 println!("  Key:   {}", key.bold());
                 println!("  Value: {}", value);
             }
-            None => println!("{} Key '{}' not found", "\u{2b21}".yellow(), key),
+            None => {
+                // Keys are namespaced, `lesson:quadratic-cost-walks`. A bare
+                // namespace names every entry under it.
+                let prefix = format!("{}:", key.trim_end_matches(':'));
+                let under: Vec<(String, String)> = local_store::memory_entries(LIST_LIMIT)
+                    .into_iter()
+                    .filter(|(k, _)| k.starts_with(&prefix))
+                    .collect();
+                if under.is_empty() {
+                    println!("{} Key '{}' not found", "\u{2b21}".yellow(), key);
+                } else {
+                    println!("{} {} entries under '{}'", "\u{2b21}".cyan(), under.len(), prefix.bold());
+                    for (k, v) in under {
+                        println!("  {}\n    {}", k.bold(), v);
+                    }
+                }
+            }
         },
         MemoryAction::Search { query } => {
             let results = local_store::memory_search(&query);
@@ -86,7 +102,10 @@ pub async fn run(action: MemoryAction) -> anyhow::Result<()> {
             );
             println!();
             for (key, value) in &results {
-                println!("  {} {}", key.bold(), preview(value).dimmed());
+                println!("  {}", key.bold());
+                for line in value.lines() {
+                    println!("    {line}");
+                }
             }
         }
         MemoryAction::List { json } => {
@@ -105,8 +124,14 @@ pub async fn run(action: MemoryAction) -> anyhow::Result<()> {
             }
             println!("{} Memory ({} entries)", "\u{2b21}".cyan(), all.len());
             println!();
+            // The whole value, on its own lines. A list that clips every
+            // lesson at 57 characters is a list nobody can read.
             for (key, value) in &all {
-                println!("  {} {}", key.bold(), preview(value).dimmed());
+                println!("  {}", key.bold());
+                for line in value.lines() {
+                    println!("    {line}");
+                }
+                println!();
             }
         }
         MemoryAction::Delete { key } => {
@@ -120,27 +145,9 @@ pub async fn run(action: MemoryAction) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// First line of a value, clipped, for list and search output.
-fn preview(value: &str) -> String {
-    let first = value.lines().next().unwrap_or("");
-    if first.chars().count() > 60 {
-        // Clip on a character boundary; values are arbitrary UTF-8.
-        let clipped: String = first.chars().take(57).collect();
-        format!("{clipped}...")
-    } else {
-        first.to_string()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn preview_takes_the_first_line_only() {
-        assert_eq!(preview("one\ntwo\nthree"), "one");
-        assert_eq!(preview(""), "");
-    }
 
     #[test]
     fn preview_clips_on_a_character_boundary() {
