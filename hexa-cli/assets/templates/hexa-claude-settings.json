@@ -46,15 +46,6 @@
         }]
       },
       {
-        "matcher": "Write|Edit|MultiEdit",
-        "hooks": [{
-          "type": "command",
-          "command": "hexa enforce check-file \"$TOOL_INPUT_PATH\"",
-          "blocking": true,
-          "timeout": 5000
-        }]
-      },
-      {
         "hooks": [{
           "type": "command",
           "command": "hexa hook observe-pre",
