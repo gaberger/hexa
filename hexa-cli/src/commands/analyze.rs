@@ -456,16 +456,37 @@ pub async fn run(
             error_count,
             warning_count,
         );
+        // One rule prints once: its id, severity, message, then every site.
+        // Four sites of one rule printed the same paragraph four times.
+        let mut order: Vec<(String, String)> = Vec::new();
         for v in adr_violations {
-            let icon = if v.severity == "error" {
+            let key = (v.id.clone(), v.adr.clone());
+            if !order.contains(&key) {
+                order.push(key);
+            }
+        }
+        for (id, adr) in order {
+            let sites: Vec<&AdrViolationLocal> =
+                adr_violations.iter().filter(|v| v.id == id && v.adr == adr).collect();
+            let first = sites[0];
+            let icon = if first.severity == "error" {
                 "\u{2717}".red()
             } else {
                 "\u{26a0}".yellow()
             };
             println!(
-                "    {} [{}] {}:{} — {}",
-                icon, v.adr, v.file, v.line, v.message,
+                "    {} {} [{}] {} site{}, {}",
+                icon,
+                id.bold(),
+                adr,
+                sites.len(),
+                if sites.len() == 1 { "" } else { "s" },
+                first.severity
             );
+            println!("      {}", first.message);
+            for v in sites {
+                println!("      {}:{}", v.file, v.line);
+            }
         }
     }
 
@@ -1355,6 +1376,7 @@ fn resolve_relative_path(source_dir: &str, import_path: &str) -> String {
 
 struct AdrViolationLocal {
     adr: String,
+    id: String,
     file: String,
     line: usize,
     message: String,
@@ -1372,11 +1394,16 @@ struct AdrRulesFile {
 #[derive(serde::Deserialize)]
 struct AdrRuleConfig {
     adr: String,
-    #[allow(dead_code)]
     id: String,
     message: String,
     #[serde(default = "default_severity")]
     severity: String,
+    /// A line matching any of these is not a violation of this rule, even
+    /// when it matches a violation pattern. This is how a text rule admits
+    /// what it cannot tell apart: `x.trunc() as u32` is a float cast, and
+    /// the float is visible on the line.
+    #[serde(default)]
+    allow_line_patterns: Vec<String>,
     #[serde(default)]
     file_patterns: Vec<String>,
     #[serde(default)]
@@ -1598,10 +1625,14 @@ fn check_adr_compliance(root: &Path) -> AdrCompliance {
                 if trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*') {
                     continue;
                 }
+                if rule.allow_line_patterns.iter().any(|p| line.contains(p.as_str())) {
+                    continue;
+                }
                 for pattern in &rule.violation_patterns {
                     if line.contains(pattern.as_str()) {
                         violations.push(AdrViolationLocal {
                             adr: rule.adr.to_string(),
+                            id: rule.id.clone(),
                             file: rel.clone(),
                             line: line_num + 1,
                             message: rule.message.to_string(),

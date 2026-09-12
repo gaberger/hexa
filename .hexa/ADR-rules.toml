@@ -71,11 +71,12 @@ violation_patterns = ["gpt-4", "gpt-5", "claude-3", "claude-4", "qwen", "llama-3
 [[adr_rules]]
 adr = "ADR-2609121400"
 id = "narrowing-cast-needs-a-check"
-message = "Narrowing `as` cast. An integer `as` silently truncates, and a truncated limit or penalty produces a check that never fires. Use try_from. A float-to-int `as` saturates rather than truncating and has no try_from; this rule cannot tell the two apart, so if the source is a float, give the cast a named function."
+message = "Narrowing `as` cast. An integer `as` silently truncates, and a truncated limit or penalty produces a check that never fires. Use try_from. A float-to-int `as` saturates and has no try_from; put the float on the same line (`x.trunc() as u32`, `(n as f64 * 0.9) as u32`) and the rule lets it through."
 severity = "warning"
 file_patterns = [".rs"]
 exclude_patterns = ["test", "_test."]
 violation_patterns = [" as u8", " as u16", " as u32", " as i8", " as i16", " as i32"]
+allow_line_patterns = ["as f64", "as f32", ".trunc()", ".round()", ".ceil()", ".floor()", "f64::", "f32::"]
 
 [[adr_rules]]
 adr = "ADR-2609121400"

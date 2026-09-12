@@ -117,7 +117,7 @@ pub async fn run(action: DoAction) -> anyhow::Result<()> {
                 "runs": hexa_exec::direct_exec::runs_snapshot(),
             });
             let s = &r["summary"];
-            let pass_pct = (s["pass_rate"].as_f64().unwrap_or(0.0) * 100.0) as u32;
+            let pass_pct = (s["pass_rate"].as_f64().unwrap_or(0.0) * 100.0).trunc() as u32;
             println!(
                 "{}  {} runs · {} passed · {} failed · {} committed · {}% pass",
                 "⬡ Direct Runs".cyan().bold(),

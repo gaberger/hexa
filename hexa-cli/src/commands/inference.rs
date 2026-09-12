@@ -1560,7 +1560,7 @@ fn raw_quality(r: &BenchResult) -> u32 {
     } else if raw >= u32::MAX as f32 {
         u32::MAX
     } else {
-        raw as u32
+        raw.trunc() as u32
     }
 }
 
