@@ -137,7 +137,7 @@ All of it is files on disk.
 | Where the work stands: ADR, gate, stage | `.hexa/loop.json` in the project, committed (`hexa loop`) |
 | Session state, keyed by the harness session id | `~/.hexa/sessions/agent-<session_id>.json` |
 | Agent and subagent run feed | `~/.hexa/agent-runs.jsonl` (`hexa do runs`) |
-| Token spend | `~/.hexa/inference-log.jsonl` |
+| Token and dollar spend, per call | `~/.hexa/inference-log.jsonl` (`hexa spend`; budget in `.hexa/project.json`) |
 | Registered inference backends | `~/.hexa/inference-servers.json` (`hexa config inference`) |
 | Code knowledge graph | `graph-out/graph.json` (`hexa graph build`) |
 | ADRs, workplans | `docs/` |

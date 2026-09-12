@@ -103,10 +103,12 @@ fn extract_json(text: &str) -> Option<&str> {
 
 /// Spawn one `claude -p` agent in `cwd`, return stdout.
 async fn claude_run(prompt: &str, cwd: &Path, timeout_secs: u64) -> Result<String, String> {
+    crate::frontier::budget_check()?;
     let fut = tokio::process::Command::new(claude_binary())
         .arg("-p")
-        // hexa\'s own prompt. The project\'s hooks run inside this claude and must
-        // not treat it as a person\'s work: `route` once drafted workplans from the
+        .args(crate::frontier::OUTPUT_JSON)
+        // hexa's own prompt. The project\'s hooks run inside this claude and must
+        // not treat it as a person's work: `route` once drafted workplans from the
         // harden reviewer prompts. `hexa hook` returns early when this is set.
         .env("HEXA_INTERNAL", "1")
         .arg("--dangerously-skip-permissions")
@@ -116,7 +118,7 @@ async fn claude_run(prompt: &str, cwd: &Path, timeout_secs: u64) -> Result<Strin
         .stderr(std::process::Stdio::piped())
         .output();
     match tokio::time::timeout(Duration::from_secs(timeout_secs), fut).await {
-        Ok(Ok(o)) => Ok(String::from_utf8_lossy(&o.stdout).to_string()),
+        Ok(Ok(o)) => Ok(crate::frontier::take_answer(&String::from_utf8_lossy(&o.stdout), "harden")),
         Ok(Err(e)) => Err(format!("spawn claude: {e}")),
         Err(_) => Err("claude -p timed out".to_string()),
     }

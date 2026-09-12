@@ -117,6 +117,7 @@ hexa graph consumers <path>          # who depends on this, before you delete it
 ```bash
 hexa loop gate "cargo test --test add"   # record the gate, before the code
 hexa loop                                 # the ADR, the gate and the stage
+hexa spend                                # tokens and dollars, by source and model
 ```
 
 With the hooks installed, a session opens by printing where the work stands,

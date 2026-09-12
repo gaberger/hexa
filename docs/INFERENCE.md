@@ -110,3 +110,27 @@ checks available memory before each candidate and routes to the frontier path
 when the local model will not fit.
 
 `hexa config inference gpu-check` confirms the local server is using the GPU.
+
+
+## Spend and budget
+
+Every inference hexa makes appends one line to `~/.hexa/inference-log.jsonl`:
+model, input and output tokens, the source (`complete` for a local or API
+provider, `react` for the frontier candidate in the loop, `harden` for the
+adversarial pass), and a cost in dollars when the provider reported one. A
+local model reports none and is not priced. A `claude -p` call reports its
+own `total_cost_usd`, and that figure is recorded as given.
+
+```bash
+hexa spend            # today, last 7 days, all; by source and by model
+hexa spend --json     # the same, with an explain block
+```
+
+A daily budget is optional:
+
+```json
+{ "inference": { "budget_usd_per_day": 5.0 } }
+```
+
+With it set, the frontier path refuses to run once today's priced spend has
+reached it, and says so. Local calls are never refused; they cost nothing.

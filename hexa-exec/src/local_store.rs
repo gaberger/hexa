@@ -296,9 +296,8 @@ pub fn memory_delete(key: &str) -> Result<bool, String> {
 /// filter, the HashMap, the cost parse — is fine and was never the problem; only where the rows
 /// came from was. Keeping the shape means none of that code changes.
 ///
-/// `cost_usd` is "0": these are LOCAL completions. Reporting a dollar figure for inference that
-/// cost nothing would be worse than reporting zero, and the ladder tiers work down to local
-/// models precisely so it IS zero.
+/// `cost_usd` is what the row reported, or "0". A local completion reports none and costs
+/// nothing; a `claude -p` call reports its own figure and that is what is shown.
 pub fn spend_rows(group_by: &str, limit: usize) -> Vec<Value> {
     read_tail(SPEND, limit)
         .into_iter()
@@ -313,7 +312,9 @@ pub fn spend_rows(group_by: &str, limit: usize) -> Vec<Value> {
                 key,
                 v.get("input_tokens").and_then(|x| x.as_u64()).unwrap_or(0),
                 v.get("output_tokens").and_then(|x| x.as_u64()).unwrap_or(0),
-                "0",
+                // A row that reported a cost carries it; a local completion
+                // carries none, and none is "0", not a made-up figure.
+                v.get("cost_usd").and_then(|x| x.as_f64()).map(|c| c.to_string()).unwrap_or_else(|| "0".to_string()),
                 v.get("ts").and_then(|x| x.as_str()).unwrap_or(""),
             ])
         })

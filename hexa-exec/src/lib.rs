@@ -13,6 +13,7 @@ pub mod adversarial;
 pub mod compress;
 pub mod direct_exec;
 pub mod direct_react;
+pub mod frontier;
 pub mod direct_workspace;
 pub mod resource_governor;
 pub mod simple_agent;

@@ -829,10 +829,15 @@ async fn claude_attempts(
         std::env::var("CLAUDE_TIMEOUT_SECS").ok().and_then(|s| s.parse().ok()).unwrap_or(300),
     );
 
+    if let Err(msg) = crate::frontier::budget_check() {
+        result.error = Some(msg);
+        return (result, 0, model);
+    }
     let spawn = tokio::process::Command::new(&binary)
         .arg("-p")
-        // hexa\'s own prompt. The project\'s hooks run inside this claude and must
-        // not treat it as a person\'s work: `route` once drafted workplans from the
+        .args(crate::frontier::OUTPUT_JSON)
+        // hexa's own prompt. The project\'s hooks run inside this claude and must
+        // not treat it as a person's work: `route` once drafted workplans from the
         // harden reviewer prompts. `hexa hook` returns early when this is set.
         .env("HEXA_INTERNAL", "1")
         .arg("--dangerously-skip-permissions")
@@ -843,7 +848,11 @@ async fn claude_attempts(
         .output();
 
     match tokio::time::timeout(timeout, spawn).await {
-        Ok(Ok(_out)) => {} // claude finished (or errored) — the evidence gate decides
+        Ok(Ok(out)) => {
+            // claude finished (or errored); the evidence gate decides. Its
+            // usage and cost are recorded either way: they were spent.
+            let _ = crate::frontier::take_answer(&String::from_utf8_lossy(&out.stdout), "react");
+        }
         Ok(Err(e)) => {
             result.error = Some(format!("claude spawn failed ({}): {}", binary, e));
             return (result, 1, model);

@@ -64,7 +64,7 @@ fn react_models_in(root: &Path) -> Vec<String> {
 }
 
 /// The repository this process is working in.
-fn project_root() -> PathBuf {
+pub(crate) fn project_root() -> PathBuf {
     if let Ok(p) = std::env::var("HEXA_PROJECT_ROOT") {
         return PathBuf::from(p);
     }
