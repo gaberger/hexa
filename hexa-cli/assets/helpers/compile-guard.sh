@@ -26,7 +26,7 @@ except Exception:
 " 2>/dev/null || true)"
 
 # Only guard cargo compile commands
-if ! printf '%s' "$CMD" | grep -qE 'cargo[[:space:]]+(build|check|test|clippy|nexus)'; then
+if ! printf '%s' "$CMD" | grep -qE 'cargo[[:space:]]+(build|check|test|clippy)'; then
     exit 0
 fi
 

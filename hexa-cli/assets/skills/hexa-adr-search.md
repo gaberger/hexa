@@ -26,5 +26,5 @@ trigger: /hexa-ADR-search
 
 ## Example
 
-User: `/hexa-ADR-search spacetimedb`
--> Shows ADR-025, ADR-032, ADR-042 with relevant snippets
+User: `/hexa-ADR-search sqlite`
+-> Shows every ADR that mentions SQLite, with relevant snippets
