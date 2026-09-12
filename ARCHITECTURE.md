@@ -44,9 +44,14 @@ assembled for one loop, not the number of loops.
 - **The gate is the sole authority on what commits.** A pass that exercised nothing
   is rejected as vacuous. A failed edit reverts atomically, so the next attempt
   matches against the original file rather than a half-applied one.
-- **Per-run worktree isolation.** Autonomous runs execute in a `hexa/auto/<id>`
-  worktree off the operator's branch, hard-guarded against committing to the
-  operator's tree. Interactive `hexa do` commits on the current branch.
+- **Worktrees separate agents.** Multi-agent work is harness subagents, one
+  worktree each. The `pre-agent` hook blocks a code-writing subagent whose
+  Agent call lacks `isolation: "worktree"`, and `subagent-stop` names every
+  worktree branch holding commits the current branch lacks, with the
+  `hexa dev worktree merge` command that lands them. hexa's own isolated runs
+  (`hexa bench`) use `hexa/auto/<id>` worktrees beside the repo, hard-guarded
+  against committing to the operator's tree. Interactive `hexa do` commits on
+  the current branch.
 - **Best-of-N across complementary models.** A run walks the ordered candidate list
   in `.hexa/project.json → inference.react_models` and commits the first candidate
   whose edit passes the gate. The gate picks the winner, not a classifier, so a
@@ -95,6 +100,30 @@ Eight crates, one binary. The dependency direction is the architecture:
 | **hexa-git** · **hexa-parser** | Git plumbing over libgit2 · parsing utilities. |
 | **hexa-cli** | The binary, and the only composition root. The one place adapters are wired together. |
 
+## The loop, and the hooks that keep it
+
+Decide (an ADR) → Gate (the command that must exit 0, written before the code)
+→ Build → Harden. `hexa loop` records where a project's work stands, as one
+entry in hexa memory: the ADR, the gate and the stage. `hexa do`, `hexa build`
+and `hexa harden` record their gate as they run.
+
+`hexa init` installs Claude Code hooks that call the binary. Each hook is one
+short process that reads the harness's JSON payload; the payload's
+`session_id` keys the session state in `~/.hexa/sessions/`.
+
+| Hook | What it does |
+|---|---|
+| `session-start` | prints the architecture fingerprint and where the work stands |
+| `route` | sizes the prompt (T1 trivial, T2 a change with a shape, T3 feature-sized); on T2 and T3 prints the loop, on T3 drafts a workplan |
+| `pre-edit` | boundary check; in a T2 or T3 session with no gate recorded, stops the edit in mandatory mode and warns in advisory mode |
+| `pre-bash` | stops destructive commands |
+| `pre-agent` | a code-writing subagent must have `isolation: "worktree"` |
+| `subagent-start`, `subagent-stop` | record the subagent; on stop, name worktree branches with unmerged commits |
+| `post-edit` | runs `hexa analyze --file` on the edited file |
+
+`lifecycle_enforcement` in `.hexa/project.json` is `mandatory` (stop) or
+`advisory` (warn).
+
 ## State
 
 All of it is files on disk.
@@ -102,11 +131,13 @@ All of it is files on disk.
 | What | Where |
 |---|---|
 | Lessons, gaps, decisions | `~/.hexa/memory.jsonl` (`hexa memory`) |
-| Agent run feed | `~/.hexa/runs.jsonl` (`hexa do runs`) |
-| Token spend | `~/.hexa/spend.jsonl` |
+| Where each project's work stands | the same file, key `loop:<project>` (`hexa loop`) |
+| Session state, keyed by the harness session id | `~/.hexa/sessions/agent-<session_id>.json` |
+| Agent and subagent run feed | `~/.hexa/agent-runs.jsonl` (`hexa do runs`) |
+| Token spend | `~/.hexa/inference-log.jsonl` |
 | Registered inference backends | `~/.hexa/inference-servers.json` (`hexa config inference`) |
 | Code knowledge graph | `graph-out/graph.json` (`hexa graph build`) |
-| ADRs, specs, workplans | `docs/` |
+| ADRs, workplans | `docs/` |
 | Project config and rules | `.hexa/project.json`, `.hexa/ADR-rules.toml` |
 
 Files rather than a database because every reader is a short-lived process on one

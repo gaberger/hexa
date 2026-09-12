@@ -109,7 +109,18 @@ hexa analyze . --grade A             # fail when the grade is below A
 hexa graph consumers <path>          # who depends on this, before you delete it
 ```
 
-It scaffolds Rust, Go and TypeScript. `hexa --help` lists all 26 verbs.
+**Stay in the loop**
+
+```bash
+hexa loop gate "cargo test --test add"   # record the gate, before the code
+hexa loop                                 # the ADR, the gate and the stage
+```
+
+With the hooks installed, a session opens by printing where the work stands,
+a feature-sized edit with no recorded gate is stopped, and a code-writing
+subagent must run in its own worktree.
+
+It scaffolds Rust, Go and TypeScript. `hexa --help` lists all 27 verbs.
 [Getting started](docs/GETTING-STARTED.md) has the longer version.
 
 ---
@@ -137,6 +148,13 @@ everything measured after it meaningless.
 **Rules travel with the project.** Every scaffold ships a `.hexa/ADR-rules.toml`
 that `hexa analyze` runs from then on. The scaffold is not a starting point you
 leave behind. It is the contract the project keeps being measured against.
+
+**The loop is recorded, and the hooks read it.** Decide, gate, build, harden.
+`hexa loop` keeps the ADR, the gate and the stage for each project in hexa
+memory, and `hexa do`, `hexa build` and `hexa harden` record their gate as
+they run. The hooks `hexa init` installs read that record: a session opens
+with it, a feature-sized prompt repeats it, and an edit for feature-sized
+work with no gate recorded is stopped until the gate is written.
 
 ---
 
