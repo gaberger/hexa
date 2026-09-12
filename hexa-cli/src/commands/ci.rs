@@ -1,0 +1,504 @@
+//! `hexa ci` — Run all hexa enforcement gates.
+//!
+//! ADR-2026-04-06-1100: single entry point for CI systems.
+//! Gates: architecture boundaries, ADR rules, workplan done_commands, spec coverage.
+
+use colored::Colorize;
+
+pub async fn run() -> anyhow::Result<()> {
+    println!("{} hexa ci", "\u{2b21}".cyan());
+    println!();
+
+    let mut all_passed = true;
+
+    // Gate 1: Architecture boundaries
+    all_passed &= gate_analyze().await;
+
+    // Gate 2: ADR rule compliance
+    all_passed &= gate_enforce().await;
+
+    // Gate 3: Workplan done_command sweep
+    all_passed &= gate_workplan_done_commands().await;
+
+    // Gate 4: Spec coverage — every step must reference >=1 spec ID
+    all_passed &= gate_spec_coverage().await;
+
+    // Gate 5: Embedded assets must be project-generic (ADR-2026-04-11-1142)
+    all_passed &= gate_embedded_assets_generic();
+
+    // Gate 6 is gone with the modules it guarded. It compared hexa-cli/assets/wasm/<x>.wasm against
+    // spacetime-modules/<x>/src/ — both deleted in the solo collapse. A freshness check against a
+    // source tree that does not exist cannot fail honestly, and a gate that cannot fail is worse
+    // than no gate: it reports green forever (spec S12).
+
+    println!();
+    if all_passed {
+        println!("{} All gates passed", "\u{2713}".green().bold());
+        Ok(())
+    } else {
+        println!("{} One or more gates failed", "\u{2717}".red().bold());
+        std::process::exit(1);
+    }
+}
+
+/// Standalone composition gate (ADR-2026-04-11-2000).
+///
+/// Validates that the dispatch path works end to end:
+/// 1. The composition check — an inference adapter resolves.
+/// 2. The inference adapters' own tests.
+/// 3. The agent loop and its guarded tool library.
+///
+/// "Standalone" named the no-daemon variant back when there was a daemon to be
+/// the other variant. There is only this one now (ADR-2608241500); the verb
+/// survives because the question it asks — can this binary dispatch work on its
+/// own — is still worth asking on every build.
+pub async fn run_standalone_gate() -> anyhow::Result<()> {
+    println!("{} hexa ci --standalone-gate", "\u{2b21}".cyan());
+    println!();
+    println!("  {}", "Standalone composition gate (ADR-2026-04-11-2000)".bold());
+    println!();
+
+    let mut all_passed = true;
+
+    // Step 1: Doctor composition check
+    print!("  {} Composition prerequisites . ", "\u{25cb}".dimmed());
+    let comp = super::doctor::composition::run_composition_check_quiet().await;
+    let has_inference = comp.has_any_inference();
+    if has_inference {
+        println!("{} (variant: {})", "pass".green(), comp.variant());
+    } else {
+        println!(
+            "{} (no inference adapter available)",
+            "fail".red()
+        );
+        all_passed = false;
+    }
+
+    // Steps 2 and 3: the crates the dispatch path is actually made of.
+    //
+    // These three steps used to run `cargo test -p hexa-nexus -- … --ignored`
+    // against three suites in the daemon. The daemon went in ADR-2608241500 and
+    // its suites went with it, so every run of this gate printed three `fail`
+    // lines reading "package ID specification `hexa-nexus` did not match any
+    // packages" — a gate failing for a reason that has nothing to do with what
+    // it gates, which is indistinguishable from the thing it gates being
+    // broken. It was found by hexa's own ADR rules, on the line naming the
+    // deleted crate.
+    all_passed &= run_test_suite("Inference adapters", &["test", "-p", "hexa-infer"]).await;
+    all_passed &= run_test_suite("Agent loop + tools", &["test", "-p", "hexa-exec"]).await;
+
+    println!();
+    if all_passed {
+        println!(
+            "{} Standalone gate passed",
+            "\u{2713}".green().bold()
+        );
+        Ok(())
+    } else {
+        println!(
+            "{} Standalone gate failed",
+            "\u{2717}".red().bold()
+        );
+        std::process::exit(1);
+    }
+}
+
+async fn run_test_suite(label: &str, args: &[&str]) -> bool {
+    print!("  {} {} ... ", "\u{25cb}".dimmed(), label);
+    let output = tokio::process::Command::new("cargo")
+        .args(args)
+        .output()
+        .await;
+
+    match output {
+        Ok(o) if o.status.success() => {
+            println!("{}", "pass".green());
+            true
+        }
+        Ok(o) => {
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            let stdout = String::from_utf8_lossy(&o.stdout);
+            println!("{}", "fail".red());
+            // Show the lines that say what failed.
+            //
+            // This used to print the first five lines of stderr, which for
+            // `cargo test` are compile warnings from the build it ran first.
+            // A failing gate reported "warning: function `feed_path` is never
+            // used" and said nothing about the assertion that actually broke —
+            // output that is worse than none, because it sends the reader after
+            // the wrong thing.
+            let combined = format!("{stderr}\n{stdout}");
+            let signal: Vec<&str> = combined
+                .lines()
+                .filter(|l| {
+                    let t = l.trim_start();
+                    t.starts_with("error")
+                        || t.starts_with("test result: FAILED")
+                        || t.starts_with("panicked")
+                        || t.contains("... FAILED")
+                        || t.contains("did not match any packages")
+                })
+                .collect();
+            let shown: Vec<&str> = if signal.is_empty() {
+                // Nothing matched: fall back to the tail, where a runner puts
+                // its summary, rather than the head, where the build puts noise.
+                combined.lines().rev().take(5).collect::<Vec<_>>()
+            } else {
+                signal
+            };
+            for line in shown.iter().take(8) {
+                println!("      {}", line.trim_end().dimmed());
+            }
+            false
+        }
+        Err(e) => {
+            println!("{} ({})", "fail".red(), e);
+            false
+        }
+    }
+}
+
+async fn gate_analyze() -> bool {
+    print!("  {} Architecture boundaries ... ", "\u{25cb}".dimmed());
+    // In-process (ADR-2608241500 P6.2). This asked the daemon for
+    // /api/analyze and fell back to `cargo check` when it was down — so the
+    // gate silently degraded from "no boundary violations" to "it compiles",
+    // which are not the same claim.
+    let root = std::path::Path::new(".");
+    let ast = std::sync::Arc::new(hexa_analysis::treesitter_adapter::TreeSitterAdapter::new());
+    let analyzer = hexa_analysis::analyzer::ArchAnalyzer::new(ast);
+    use hexa_analysis::ports::ArchAnalysisPort;
+    match analyzer.analyze(root).await {
+        Ok(result) => {
+            let violations = &result.violations;
+            if violations.is_empty() {
+                println!("{}", "pass".green());
+                return true;
+            }
+            println!(
+                "{} ({} violation{})",
+                "fail".red(),
+                violations.len(),
+                if violations.len() == 1 { "" } else { "s" }
+            );
+            for v in violations.iter().take(5) {
+                println!("      {} {}", v.edge.from_file.dimmed(), v.rule.dimmed());
+            }
+            if violations.len() > 5 {
+                println!("      ... and {} more", violations.len() - 5);
+            }
+            false
+        }
+        Err(e) => {
+            println!("{} ({})", "fail".red(), e);
+            false
+        }
+    }
+}
+
+async fn gate_enforce() -> bool {
+    print!("  {} ADR rule compliance ....... ", "\u{25cb}".dimmed());
+
+    let rules_file = std::path::Path::new(".hexa/ADR-rules.toml");
+    if !rules_file.exists() {
+        println!("{} (no .hexa/ADR-rules.toml)", "skip".yellow());
+        return true;
+    }
+
+    let content = match std::fs::read_to_string(rules_file) {
+        Ok(c) => c,
+        Err(e) => {
+            println!("{} (cannot read rules: {})", "skip".yellow(), e);
+            return true;
+        }
+    };
+
+    // Parse [[adr_rules]] directly — same schema as analyze.rs
+    #[derive(serde::Deserialize)]
+    struct RulesFile {
+        #[serde(default)]
+        adr_rules: Vec<AdrRule>,
+    }
+    #[derive(serde::Deserialize)]
+    struct AdrRule {
+        adr: String,
+        message: String,
+        #[serde(default)]
+        file_patterns: Vec<String>,
+        #[serde(default)]
+        violation_patterns: Vec<String>,
+    }
+
+    let parsed: RulesFile = match toml::from_str(&content) {
+        Ok(p) => p,
+        Err(e) => {
+            println!("{} (parse error: {})", "fail".red(), e);
+            return false;
+        }
+    };
+
+    let rules: Vec<&AdrRule> = parsed.adr_rules.iter()
+        .filter(|r| !r.violation_patterns.is_empty())
+        .collect();
+
+    if rules.is_empty() {
+        println!("{} (0 rules)", "pass".green());
+        return true;
+    }
+
+    // Scan source files for violations
+    let src = std::path::Path::new("src");
+    if !src.is_dir() {
+        println!("{} ({} rules, no src/)", "pass".green(), rules.len());
+        return true;
+    }
+
+    let files = collect_source_files(src);
+    let mut violations: Vec<String> = Vec::new();
+
+    for path in &files {
+        let rel = path.to_string_lossy().to_string();
+        let file_content = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        for rule in &rules {
+            // Match file_patterns: "src/core/domain/**" → check if path starts with prefix
+            if !rule.file_patterns.is_empty() {
+                let matches = rule.file_patterns.iter().any(|p| {
+                    let prefix = p.trim_end_matches("/**").trim_end_matches("**");
+                    rel.starts_with(prefix)
+                });
+                if !matches { continue; }
+            }
+
+            for (line_num, line) in file_content.lines().enumerate() {
+                let trimmed = line.trim();
+                if trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*') {
+                    continue;
+                }
+                for pattern in &rule.violation_patterns {
+                    if line.contains(pattern.as_str()) {
+                        violations.push(format!(
+                            "{} [{}] {}:{}",
+                            rule.adr, rule.message, rel, line_num + 1
+                        ));
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    if violations.is_empty() {
+        println!("{} ({} rule{})", "pass".green(), rules.len(), if rules.len() == 1 { "" } else { "s" });
+        true
+    } else {
+        println!("{} ({} violation{})", "fail".red(), violations.len(), if violations.len() == 1 { "" } else { "s" });
+        for v in violations.iter().take(5) {
+            println!("      {}", v.dimmed());
+        }
+        if violations.len() > 5 {
+            println!("      ... and {} more", violations.len() - 5);
+        }
+        false
+    }
+}
+
+fn collect_source_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut files = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if path.is_dir() {
+                files.extend(collect_source_files(&path));
+            } else if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                if matches!(ext, "ts" | "tsx" | "js" | "jsx" | "rs" | "go" | "py") {
+                    files.push(path);
+                }
+            }
+        }
+    }
+    files
+}
+
+async fn gate_workplan_done_commands() -> bool {
+    print!("  {} Workplan done_commands .... ", "\u{25cb}".dimmed());
+
+    let pattern = std::path::Path::new("docs/workplans");
+    if !pattern.is_dir() {
+        println!("{} (no docs/workplans/ directory)", "skip".yellow());
+        return true;
+    }
+
+    let entries: Vec<_> = std::fs::read_dir(pattern)
+        .unwrap_or_else(|_| panic!("cannot read docs/workplans"))
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"))
+        .collect();
+
+    let mut failures: Vec<String> = Vec::new();
+
+    for entry in &entries {
+        let path = entry.path();
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let workplan: serde_json::Value = match serde_json::from_str(&content) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        // Support both "steps" (new format) and "phases[].tasks" (old format)
+        let steps = collect_steps(&workplan);
+
+        for step in steps {
+            let done_cmd = match step["done_command"].as_str() {
+                Some(c) if !c.is_empty() => c,
+                _ => continue,
+            };
+            let step_id = step["id"].as_str().unwrap_or("?");
+            let workplan_id = workplan["id"].as_str().unwrap_or("?");
+            let condition = step["done_condition"].as_str().unwrap_or("(no condition text)");
+
+            let out = tokio::process::Command::new("sh")
+                .args(["-c", done_cmd])
+                .output()
+                .await;
+
+            let passed = matches!(out, Ok(ref o) if o.status.success());
+            if !passed {
+                failures.push(format!(
+                    "{} / {}: {}\n        command: {}",
+                    workplan_id, step_id, condition, done_cmd
+                ));
+            }
+        }
+    }
+
+    if failures.is_empty() {
+        println!("{}", "pass".green());
+        true
+    } else {
+        println!("{} ({} failed)", "fail".red(), failures.len());
+        for f in &failures {
+            println!("      {}", f.dimmed());
+        }
+        false
+    }
+}
+
+fn collect_steps(workplan: &serde_json::Value) -> Vec<serde_json::Value> {
+    // New format: top-level "steps" array
+    if let Some(steps) = workplan["steps"].as_array() {
+        return steps.clone();
+    }
+    // Old format: phases[].tasks
+    let mut tasks = Vec::new();
+    if let Some(phases) = workplan["phases"].as_array() {
+        for phase in phases {
+            if let Some(phase_tasks) = phase["tasks"].as_array() {
+                tasks.extend(phase_tasks.iter().cloned());
+            }
+        }
+    }
+    tasks
+}
+
+async fn gate_spec_coverage() -> bool {
+    print!("  {} Spec coverage ............. ", "\u{25cb}".dimmed());
+
+    let pattern = std::path::Path::new("docs/workplans");
+    if !pattern.is_dir() {
+        println!("{} (no docs/workplans/ directory)", "skip".yellow());
+        return true;
+    }
+
+    let mut missing: Vec<String> = Vec::new();
+    let mut checked = 0u32;
+
+    for entry in std::fs::read_dir(pattern)
+        .unwrap_or_else(|_| panic!("cannot read docs/workplans"))
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"))
+    {
+        let path = entry.path();
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let workplan: serde_json::Value = match serde_json::from_str(&content) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        // Only enforce spec coverage when:
+        // 1. The workplan references a spec file (top-level "specs" field, non-empty), AND
+        // 2. At least one step already has spec references — proving the author
+        //    intentionally started spec tracing. This prevents retroactive failures
+        //    on historical workplans that predate step-level spec requirements.
+        let specs_path = workplan["specs"].as_str().unwrap_or("").trim();
+        if specs_path.is_empty() || !std::path::Path::new(specs_path).exists() {
+            continue;
+        }
+        let steps_preview = collect_steps(&workplan);
+        let any_step_has_specs = steps_preview.iter().any(|s| {
+            s["specs"].as_array().map(|a| !a.is_empty()).unwrap_or(false)
+        });
+        if !any_step_has_specs {
+            continue;
+        }
+
+        let workplan_id = workplan["id"].as_str().unwrap_or("?").to_string();
+        let steps = collect_steps(&workplan);
+
+        for step in &steps {
+            checked += 1;
+            let step_id = step["id"].as_str().unwrap_or("?");
+            let specs = step["specs"].as_array();
+            let has_specs = specs.map(|s| !s.is_empty()).unwrap_or(false);
+            if !has_specs {
+                missing.push(format!("{} / {}", workplan_id, step_id));
+            }
+        }
+    }
+
+    if missing.is_empty() {
+        println!("{} ({} step{} checked)", "pass".green(), checked, if checked == 1 { "" } else { "s" });
+        true
+    } else {
+        println!("{} ({} step{} without spec refs)", "fail".red(), missing.len(), if missing.len() == 1 { "" } else { "s" });
+        for m in &missing {
+            println!("      {}", m.dimmed());
+        }
+        false
+    }
+}
+
+
+fn gate_embedded_assets_generic() -> bool {
+    print!("  {} Embedded assets generic ... ", "\u{25cb}".dimmed());
+
+    let violations = super::doctor::check_embedded_assets_generic();
+
+    if violations.is_empty() {
+        println!("{}", "pass".green());
+        true
+    } else {
+        println!(
+            "{} ({} violation{})",
+            "fail".red(),
+            violations.len(),
+            if violations.len() == 1 { "" } else { "s" }
+        );
+        for (file, line, marker) in violations.iter().take(10) {
+            println!("      {}:{} matched `{}`", file, line, marker);
+        }
+        if violations.len() > 10 {
+            println!("      ... and {} more", violations.len() - 10);
+        }
+        false
+    }
+}

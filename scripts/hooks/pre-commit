@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+#
+# hexa anti-slop pre-commit hook
+#
+# Blocks commits when:
+#   1. Any boundary violation exists (HARD BLOCK)
+#   2. Any circular dependency exists (HARD BLOCK)
+#   3. Dead export rate exceeds threshold (SOFT WARNING)
+#
+# Skip with: git commit --no-verify (emergency only)
+#
+
+set -euo pipefail
+
+# Configurable thresholds
+MAX_VIOLATIONS=0
+MAX_CIRCULAR=0
+DEAD_EXPORT_WARN_THRESHOLD=40  # percent — warn above this
+
+# Only run if hexa is available
+if ! command -v hexa &>/dev/null; then
+  exit 0
+fi
+
+# Only run if we're in a hexa project (has src/core/ports/)
+if [ ! -d "src/core/ports" ]; then
+  exit 0
+fi
+
+# ── Rust check: if any .rs files are staged, run cargo check ──
+RS_STAGED=$(git diff --cached --name-only --diff-filter=ACMR -- '*.rs' 2>/dev/null || true)
+if [ -n "$RS_STAGED" ]; then
+  echo "⬡ hexa pre-commit: Rust files staged — running cargo check..."
+  if command -v cargo &>/dev/null; then
+    if [ -f "Cargo.toml" ]; then
+      cargo check --workspace 2>&1 | tail -5 || {
+        echo "  ⬡ BLOCKED: cargo check failed — fix Rust compilation errors before committing"
+        exit 1
+      }
+      echo "  ⬡ Rust: cargo check passed"
+    fi
+  else
+    echo "  ⬡ WARNING: Rust files staged but cargo not found — skipping Rust check"
+  fi
+fi
+
+# ── Go check: if any .go files are staged, run go build ──
+GO_STAGED=$(git diff --cached --name-only --diff-filter=ACMR -- '*.go' 2>/dev/null || true)
+if [ -n "$GO_STAGED" ]; then
+  echo "⬡ hexa pre-commit: Go files staged — running go build..."
+  if command -v go &>/dev/null; then
+    if [ -f "go.mod" ]; then
+      go build ./... 2>&1 | tail -5 || {
+        echo "  ⬡ BLOCKED: go build failed — fix Go compilation errors before committing"
+        exit 1
+      }
+      echo "  ⬡ Go: build passed"
+    fi
+  else
+    echo "  ⬡ WARNING: Go files staged but go not found — skipping Go check"
+  fi
+fi
+
+# ── Pattern check: nullable-but-always-initialized anti-pattern ──
+echo "⬡ hexa pre-commit: checking for learned anti-patterns..."
+if command -v bun &>/dev/null; then
+  if [ -f "scripts/hooks/pattern-detector.ts" ]; then
+    bun scripts/hooks/pattern-detector.ts || {
+      echo "  ⬡ BLOCKED: pattern violations detected — fix before committing"
+      exit 1
+    }
+  fi
+else
+  echo "  ⬡ WARNING: bun not found — skipping pattern detection"
+fi
+
+echo "⬡ hexa pre-commit: checking architecture boundaries..."
+
+# Run analysis in JSON mode
+JSON=$(hexa analyze . --json 2>/dev/null) || {
+  echo "⬡ hexa pre-commit: analysis failed (non-blocking) — skipping check"
+  exit 0
+}
+
+# Parse results using node (available in any hexa project)
+RESULT=$(node -e "
+  const r = JSON.parse(process.argv[1]);
+  const s = r.summary || {};
+  const violations = s.violationCount || 0;
+  const circular = s.circularCount || 0;
+  const deadRate = s.totalExports > 0
+    ? ((s.deadExportCount || 0) / s.totalExports * 100).toFixed(1)
+    : '0.0';
+  const score = s.healthScore || 0;
+
+  let blocked = false;
+  let messages = [];
+
+  if (violations > ${MAX_VIOLATIONS}) {
+    blocked = true;
+    messages.push('BLOCKED: ' + violations + ' boundary violation(s) — adapters must only import from ports');
+  }
+  if (circular > ${MAX_CIRCULAR}) {
+    blocked = true;
+    messages.push('BLOCKED: ' + circular + ' circular dependency cycle(s)');
+  }
+  if (parseFloat(deadRate) > ${DEAD_EXPORT_WARN_THRESHOLD}) {
+    messages.push('WARNING: dead export rate is ' + deadRate + '% (threshold: ${DEAD_EXPORT_WARN_THRESHOLD}%)');
+  }
+
+  if (messages.length > 0) {
+    messages.forEach(m => console.error('  ⬡ ' + m));
+  }
+
+  if (blocked) {
+    console.error('');
+    console.error('  Fix violations before committing. Run: hexa analyze .');
+    console.error('  Emergency bypass: git commit --no-verify');
+    process.exit(1);
+  } else {
+    console.log('  ⬡ Score: ' + score + '/100 | Violations: 0 | Dead exports: ' + deadRate + '%');
+  }
+" "$JSON")
+
+echo "$RESULT"

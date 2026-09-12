@@ -1,0 +1,50 @@
+# hexa CI enforcement workflow (ADR-2026-04-06-1100)
+# Deployed to target projects via: hexa init
+# Runs all hexa enforcement gates on every push and pull request.
+#
+# Prerequisites:
+#   - hexa binary available on PATH (install step below)
+#   - Adjust the install URL to match your hexa release location
+#
+# See examples/ for language-specific variants (rust-workspace, etc.)
+
+name: hexa CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  hexa-ci:
+    name: hexa enforcement gates
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install hexa
+        run: |
+<<<<<<< HEAD
+          # TODO: Replace with your hexa release URL or install method.
+          # Examples:
+          #   curl -fsSL https://your-org/releases/hexa-linux-x86_64.tar.gz | tar -xz -C /usr/local/bin hexa
+          #   brew install hexa
+          #   cargo install hexa-cli
+          echo "hexa install step — configure for your environment"
+          hexa --version
+
+=======
+          # Replace with the actual hexa release URL for your organization
+          curl -fsSL https://github.com/<org>/hexa/releases/latest/download/hexa-linux-x86_64.tar.gz \
+            | tar -xz -C /usr/local/bin hexa
+          hexa --version
+
+      - name: Start hexa nexus daemon
+        run: hexa nexus start --detach
+        continue-on-error: true
+
+>>>>>>> worktree-agent-aacb2365
+      - name: Run hexa ci
+        run: hexa ci

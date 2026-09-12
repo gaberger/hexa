@@ -1,0 +1,45 @@
+# hexa CI — Rust workspace example
+# Copy to .github/workflows/hexa-ci.yml and adjust the install URL.
+#
+# This is an EXAMPLE for Rust workspaces. For the generic template
+# that hexa init deploys, see ../hexa-ci.yml.
+
+name: hexa CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  hexa-ci:
+    name: hexa enforcement gates
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install hexa
+        run: |
+          # Replace with your org's hexa release URL
+          curl -fsSL https://github.com/gaberger/hexa-intf/releases/latest/download/hexa-linux-x86_64.tar.gz \
+            | tar -xz -C /usr/local/bin hexa
+          hexa --version
+
+      - name: Start hexa daemon
+        run: hexa nexus start --detach
+        continue-on-error: true
+
+      - name: Run hexa ci
+        run: hexa ci
+
+      - name: Upload gate summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hexa-ci-results
+          path: |
+            docs/workplans/
+            docs/specs/
+          if-no-files-found: ignore

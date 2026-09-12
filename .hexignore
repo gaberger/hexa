@@ -1,0 +1,6 @@
+# hexa-agent is a separate Rust binary with its own hexa architecture
+# It should not be analyzed as part of the main src/ tree
+hexa-agent/
+
+# SpacetimeDB WASM modules — independent workspace
+spacetime-modules/

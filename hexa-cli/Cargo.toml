@@ -1,0 +1,62 @@
+[package]
+name = "hexa-cli"
+version.workspace = true
+edition.workspace = true
+description = "Hexagonal architecture CLI for LLM-driven development"
+license.workspace = true
+
+[[bin]]
+name = "hexa"
+path = "src/main.rs"
+
+[lib]
+name = "hexa_cli"
+path = "src/lib.rs"
+
+[dependencies]
+hexa-core = { path = "../hexa-core" }
+hexa-exec = { path = "../hexa-exec" }
+hexa-graph = { path = "../hexa-graph" }
+hexa-analysis = { path = "../hexa-analysis" }
+hexa-git = { path = "../hexa-git" }
+hexa-infer = { path = "../hexa-infer" }
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+colored = "2"
+anyhow = "1"
+async-trait = "0.1"
+dirs = "5"
+libc = "0.2"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+# Parse --since durations like "1h", "30m" in `hexa sched watch` (wp-brain-updates-to-operator P2.1)
+humantime = "2"
+dialoguer = "0.11"
+gethostname = "0.4"
+# ADR compliance rule loading (ADR-045)
+toml = "0.8"
+# Agent/swarm YAML definitions (ADR-2026-03-24-0130)
+serde_yaml = "0.9"
+# Embedded asset bundle (ADR-2026-03-22-1522)
+rust-embed = "8"
+# TUI for `hexa dev` (ADR-2026-03-23-2005)
+ratatui = "0.29"
+pulldown-cmark = { version = "0.12", default-features = false }
+crossterm = "0.28"
+# Structured CLI table output (ADR-2026-03-24-1226)
+tabled = { version = "0.17", features = ["ansi"] }
+# WebSocket client for hexa inference watch (ADR-2026-04-01-1200)
+tokio-tungstenite = { version = "0.24", features = ["native-tls", "connect"] }
+futures-util = { version = "0.3", features = ["sink"] }
+# SHA256 verification for self-update (ADR-2026-04-08-0929)
+sha2 = "0.10"
+# Symbol extraction regex for reconcile evidence (ADR-2026-04-14-2201)
+regex = "1"
+
+[dev-dependencies]
+tempfile = "3"

@@ -1,0 +1,118 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Local cargo config (sccache, lld, machine-specific — ADR-064)
+.cargo/config.toml
+
+# Environment
+.env
+.env.*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude tooling — track skills + agents (framework integration with Claude Code)
+.claude/*
+!.claude/skills/
+!.claude/agents/
+.claude/agents/*
+!.claude/agents/hexa-intf/
+!.claude/agents/neural-lab-researcher.yml
+.claude-flow/
+.mcp.json
+
+# Bun
+bun.lockb
+# bun.lock is the root lockfile; keep npm's out (hexa-nexus/assets has its own)
+/package-lock.json
+
+# Coverage
+coverage/
+
+# Logs
+*.log
+.hexa-intf/
+
+# Docs — local-only by default, but track the structured artifact dirs
+docs/*
+!docs/adrs/
+!docs/intent/
+!docs/workplans/
+!docs/specs/
+!docs/analysis/
+!docs/examples/
+!docs/guides/
+!docs/algebra/
+!docs/reference/
+!docs/benchmarks/
+!docs/STATUS-*.md
+# TLC model-checker state cache — per-run scratch, do not commit
+docs/algebra/states/
+!docs/GETTING-STARTED.md
+!docs/INFERENCE.md
+!docs/COMPARISON.md
+!docs/DEVELOPER-EXPERIENCE.md
+!docs/FORMAL-VERIFICATION.md
+!docs/EVIDENCE.md
+!docs/BOOTSTRAP.md
+!docs/hexa-primer.md
+!docs/remote-agent-walkthrough.md
+
+# Filesystem artifacts
+Volumes/
+# .hexa is runtime state (at any depth) except the root config files below.
+# ADR-rules.toml is the project's rule set, not per-machine state: it is what
+# `hexa analyze .` checks this repository against, so it has to travel with the
+# repository or every checkout enforces something different.
+**/.hexa/*
+!.hexa/project.json
+!.hexa/project.yaml
+!.hexa/ADR-rules.toml
+.superset/
+# weave framework runtime state (sibling repo ~/development/weave integration) — local db only
+.weave/
+examples/hexa-worktrees/
+target/
+examples/rust-api/target/
+hexa-hub/target/
+
+# Example projects are isolated git repos — ignore their build artifacts and git state
+examples/*/target/
+examples/*/.git/
+examples/sandbox-demo/target/
+
+# Built binaries (use target/ or ~/.hexa/bin/ instead)
+bin/hexa-agent
+bin/hexa-cli
+bin/hexa-nexus
+bin/hexa
+bin/hexa-chat
+
+# Scratch / generated artifacts
+tmp/
+test-output/
+*.tmp
+
+# SpacetimeDB module lock files
+spacetime-modules/*/Cargo.lock
+
+# SpacetimeDB claude config
+spacetime-modules/.claude/
+tla2tools.jar
+hexflo_TTrace_*.tla
+
+# hexa-graph knowledge-graph engine output
+graph-out/
+
+# Python build tooling caches
+__pycache__/

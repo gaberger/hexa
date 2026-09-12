@@ -1,0 +1,33 @@
+[workspace]
+members = [
+    "hexa-analysis",
+    "hexa-cli",
+    "hexa-core",
+    "hexa-exec",
+    "hexa-git",
+    "hexa-graph",
+    "hexa-infer",
+    "hexa-parser",
+]
+exclude = [
+]
+resolver = "2"
+
+[workspace.package]
+version = "26.5.1"
+edition = "2021"
+license = "MIT"
+
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[profile.dev]
+opt-level = 0
+debug = 1                   # line tables only (not full debug info) — cuts link time
+
+[profile.dev.package."*"]
+opt-level = 3               # optimize dependencies at max, keep our code fast-to-compile
