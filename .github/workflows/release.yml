@@ -1,458 +1,128 @@
 name: Release
 
+# A tag v<YY.M.patch> builds hexa for four targets and publishes one tarball
+# per target, named the way `hexa self-update` and install.sh expect:
+# hexa-<version>-<target>.tar.gz containing the single binary `hexa`, plus
+# SHA256SUMS.txt. The tag must match the version in Cargo.toml, or the run
+# fails before it builds anything: a release that says one version and
+# reports another from `hexa --version` is worse than no release.
+
 on:
   push:
     tags:
       - 'v*.*.*'
   workflow_dispatch:
     inputs:
-      version:
-        description: 'Release version (e.g., 26.4.0) — used only for workflow_dispatch'
-        required: false
-        type: string
-        default: '26.9.0'
       prerelease:
-        description: 'Pre-release'
+        description: 'Mark the release as a pre-release'
         required: false
         type: boolean
         default: false
 
 env:
   CARGO_TERM_COLOR: always
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  build-macos-arm64:
-    runs-on: macos-14
-    env:
-      MACOSX_DEPLOYMENT_TARGET: '11.0'
-      TARGET: aarch64-apple-darwin
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Cache Cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-registry-
-
-      - name: Cache build target
-        uses: actions/cache@v4
-        with:
-          path: target/
-          key: ${{ runner.os }}-cargo-target-aarch64-apple-darwin-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-target-aarch64-apple-darwin-
-
-      - name: Add Rust target
-        run: rustup target add "$TARGET"
-
-      - name: Ensure dashboard assets directory exists
-        run: mkdir -p hexa-nexus/assets/dist
-
-      - name: Build hexa-cli
-        run: cargo build --release --target "$TARGET" -p hexa-cli
-
-      - name: Build hexa-nexus
-        run: cargo build --release --target "$TARGET" -p hexa-nexus
-
-      - name: Build hexa-agent
-        run: cargo build --release --target "$TARGET" -p hexa-agent
-
-      - name: Determine version
-        id: version
+      - id: v
         env:
-          DISPATCH_VERSION: ${{ github.event.inputs.version }}
           GIT_REF: ${{ github.ref }}
         run: |
+          CARGO_VER=$(grep -m1 '^version' Cargo.toml | sed 's/.*"\([^"]*\)".*/\1/')
           if [[ "$GIT_REF" == refs/tags/* ]]; then
-            VERSION="${GIT_REF#refs/tags/v}"
+            TAG="${GIT_REF#refs/tags/}"
+            if [[ "${TAG#v}" != "$CARGO_VER" ]]; then
+              echo "::error::tag $TAG does not match Cargo.toml version $CARGO_VER"
+              exit 1
+            fi
           else
-            VERSION="${DISPATCH_VERSION:-26.8.0}"
+            TAG="v${CARGO_VER}"
           fi
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "tarball=hexa-${VERSION}-${TARGET}.tar.gz" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
-      - name: Create tarball
-        env:
-          TARBALL: ${{ steps.version.outputs.tarball }}
-        run: |
-          tar czf "$TARBALL" \
-            -C "target/${TARGET}/release" \
-            hexa hexa-nexus hexa-agent
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+  build:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            target: aarch64-apple-darwin
+          - runner: macos-14
+            target: x86_64-apple-darwin
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+    runs-on: ${{ matrix.runner }}
+    env:
+      TARGET: ${{ matrix.target }}
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+      - run: rustup target add "$TARGET"
+      - uses: Swatinem/rust-cache@v2
         with:
-          name: hexa-macos-arm64
-          path: ${{ steps.version.outputs.tarball }}
+          key: ${{ matrix.target }}
+      - name: Build hexa
+        run: cargo build --release --locked --target "$TARGET" -p hexa-cli
+      - name: Check the binary reports the release version
+        run: |
+          GOT=$(target/$TARGET/release/hexa --version | awk '{print $2}')
+          [[ "$GOT" == "$VERSION" ]] || { echo "::error::binary says $GOT, release is $VERSION"; exit 1; }
+        if: matrix.target == 'x86_64-unknown-linux-gnu' || matrix.target == 'aarch64-apple-darwin' || matrix.target == 'aarch64-unknown-linux-gnu'
+      - name: Tarball
+        run: tar czf "hexa-${VERSION}-${TARGET}.tar.gz" -C "target/${TARGET}/release" hexa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hexa-${{ matrix.target }}
+          path: hexa-${{ needs.version.outputs.version }}-${{ matrix.target }}.tar.gz
           retention-days: 7
-
-  build-macos-x86_64:
-    runs-on: macos-12
-    env:
-      MACOSX_DEPLOYMENT_TARGET: '11.0'
-      TARGET: x86_64-apple-darwin
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Cache Cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-registry-
-
-      - name: Cache build target
-        uses: actions/cache@v4
-        with:
-          path: target/
-          key: ${{ runner.os }}-cargo-target-x86_64-apple-darwin-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-target-x86_64-apple-darwin-
-
-      - name: Add Rust target
-        run: rustup target add "$TARGET"
-
-      - name: Ensure dashboard assets directory exists
-        run: mkdir -p hexa-nexus/assets/dist
-
-      - name: Build hexa-cli
-        run: cargo build --release --target "$TARGET" -p hexa-cli
-
-      - name: Build hexa-nexus
-        run: cargo build --release --target "$TARGET" -p hexa-nexus
-
-      - name: Build hexa-agent
-        run: cargo build --release --target "$TARGET" -p hexa-agent
-
-      - name: Determine version
-        id: version
-        env:
-          DISPATCH_VERSION: ${{ github.event.inputs.version }}
-          GIT_REF: ${{ github.ref }}
-        run: |
-          if [[ "$GIT_REF" == refs/tags/* ]]; then
-            VERSION="${GIT_REF#refs/tags/v}"
-          else
-            VERSION="${DISPATCH_VERSION:-26.8.0}"
-          fi
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "tarball=hexa-${VERSION}-${TARGET}.tar.gz" >> "$GITHUB_OUTPUT"
-
-      - name: Create tarball
-        env:
-          TARBALL: ${{ steps.version.outputs.tarball }}
-        run: |
-          tar czf "$TARBALL" \
-            -C "target/${TARGET}/release" \
-            hexa hexa-nexus hexa-agent
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: hexa-macos-x86_64
-          path: ${{ steps.version.outputs.tarball }}
-          retention-days: 7
-
-  build-linux-x86_64:
-    runs-on: ubuntu-22.04
-    env:
-      TARGET: x86_64-unknown-linux-gnu
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y pkg-config libssl-dev libsqlite3-dev
-
-      - name: Cache Cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-registry-
-
-      - name: Cache build target
-        uses: actions/cache@v4
-        with:
-          path: target/
-          key: ${{ runner.os }}-cargo-target-x86_64-unknown-linux-gnu-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-target-x86_64-unknown-linux-gnu-
-
-      - name: Add Rust target
-        run: rustup target add "$TARGET"
-
-      - name: Ensure dashboard assets directory exists
-        run: mkdir -p hexa-nexus/assets/dist
-
-      - name: Build hexa-cli
-        run: cargo build --release --target "$TARGET" -p hexa-cli
-
-      - name: Build hexa-nexus
-        run: cargo build --release --target "$TARGET" -p hexa-nexus
-
-      - name: Build hexa-agent
-        run: cargo build --release --target "$TARGET" -p hexa-agent
-
-      - name: Determine version
-        id: version
-        env:
-          DISPATCH_VERSION: ${{ github.event.inputs.version }}
-          GIT_REF: ${{ github.ref }}
-        run: |
-          if [[ "$GIT_REF" == refs/tags/* ]]; then
-            VERSION="${GIT_REF#refs/tags/v}"
-          else
-            VERSION="${DISPATCH_VERSION:-26.8.0}"
-          fi
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "tarball=hexa-${VERSION}-${TARGET}.tar.gz" >> "$GITHUB_OUTPUT"
-
-      - name: Create tarball
-        env:
-          TARBALL: ${{ steps.version.outputs.tarball }}
-        run: |
-          tar czf "$TARBALL" \
-            -C "target/${TARGET}/release" \
-            hexa hexa-nexus hexa-agent
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: hexa-linux-x86_64
-          path: ${{ steps.version.outputs.tarball }}
-          retention-days: 7
-
-  build-linux-arm64:
-    runs-on: ubuntu-22.04
-    env:
-      TARGET: aarch64-unknown-linux-gnu
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y pkg-config libssl-dev libsqlite3-dev gcc-aarch64-linux-gnu
-
-      - name: Cache Cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-registry-
-
-      - name: Cache build target
-        uses: actions/cache@v4
-        with:
-          path: target/
-          key: ${{ runner.os }}-cargo-target-aarch64-unknown-linux-gnu-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-target-aarch64-unknown-linux-gnu-
-
-      - name: Add Rust target
-        run: rustup target add "$TARGET"
-
-      - name: Ensure dashboard assets directory exists
-        run: mkdir -p hexa-nexus/assets/dist
-
-      - name: Build hexa-cli
-        run: cargo build --release --target "$TARGET" -p hexa-cli
-
-      - name: Build hexa-nexus
-        run: cargo build --release --target "$TARGET" -p hexa-nexus
-
-      - name: Build hexa-agent
-        run: cargo build --release --target "$TARGET" -p hexa-agent
-
-      - name: Determine version
-        id: version
-        env:
-          DISPATCH_VERSION: ${{ github.event.inputs.version }}
-          GIT_REF: ${{ github.ref }}
-        run: |
-          if [[ "$GIT_REF" == refs/tags/* ]]; then
-            VERSION="${GIT_REF#refs/tags/v}"
-          else
-            VERSION="${DISPATCH_VERSION:-26.8.0}"
-          fi
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "tarball=hexa-${VERSION}-${TARGET}.tar.gz" >> "$GITHUB_OUTPUT"
-
-      - name: Create tarball
-        env:
-          TARBALL: ${{ steps.version.outputs.tarball }}
-        run: |
-          tar czf "$TARBALL" \
-            -C "target/${TARGET}/release" \
-            hexa hexa-nexus hexa-agent
 
   release:
-    needs: [build-macos-arm64, build-macos-x86_64, build-linux-x86_64]
-    runs-on: ubuntu-22.04
+    needs: [version, build]
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Download macOS ARM64 artifact
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
-          name: hexa-macos-arm64
-          path: artifacts/
-
-      - name: Download macOS x86_64 artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: hexa-macos-x86_64
-          path: artifacts/
-
-      - name: Download Linux x86_64 artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: hexa-linux-x86_64
-          path: artifacts/
-
-      - name: List artifacts
-        run: find artifacts/ -type f
-
-      - name: Generate SHA256 checksums
-        run: |
-          cd artifacts
-          sha256sum *.tar.gz > SHA256SUMS.txt
-          cat SHA256SUMS.txt
-
-      - name: Determine tag name
-        id: tag
+          path: artifacts
+          merge-multiple: true
+      - name: Checksums
+        run: cd artifacts && sha256sum *.tar.gz > SHA256SUMS.txt && cat SHA256SUMS.txt
+      - name: Release notes
         env:
-          DISPATCH_VERSION: ${{ github.event.inputs.version }}
-          GIT_REF: ${{ github.ref }}
+          TAG: ${{ needs.version.outputs.tag }}
         run: |
-          if [[ "$GIT_REF" == refs/tags/* ]]; then
-            TAG="${GIT_REF#refs/tags/}"
-          else
-            TAG="v${DISPATCH_VERSION:-26.8.0}"
-          fi
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+          {
+            echo "## Install"
+            echo
+            echo '```bash'
+            echo "curl -fsSL https://raw.githubusercontent.com/gaberger/hexa/${TAG}/install.sh | bash"
+            echo '```'
+            echo
+            echo "Already installed: \`hexa self-update\`."
+            echo
+            echo "Each tarball holds the one binary, \`hexa\`, for its target; SHA256SUMS.txt covers all four."
+          } > notes.md
+      - uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          name: hexa ${{ steps.tag.outputs.tag }}
-          draft: false
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: hexa ${{ needs.version.outputs.tag }}
+          body_path: notes.md
           prerelease: ${{ github.event.inputs.prerelease || false }}
           generate_release_notes: true
           files: |
             artifacts/*.tar.gz
             artifacts/SHA256SUMS.txt
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Print install instructions
-        env:
-          TAG: ${{ steps.tag.outputs.tag }}
-        run: |
-          VERSION="${TAG#v}"
-          {
-            echo "## Install"
-            echo ""
-            echo 'One-liner (handles all 3 hexa binaries + SpacetimeDB + JWT keys + post-install verify):'
-            echo ''
-            echo '```bash'
-            echo "curl -fsSL https://raw.githubusercontent.com/gaberger/hexa/${TAG}/scripts/install.sh | bash"
-            echo '```'
-            echo ''
-            echo 'Pin a specific version:'
-            echo '```bash'
-            echo "curl -fsSL https://raw.githubusercontent.com/gaberger/hexa/${TAG}/scripts/install.sh | bash -s -- ${VERSION}"
-            echo '```'
-            echo ''
-            echo 'Re-verify an existing install:'
-            echo '```bash'
-            echo "curl -fsSL https://raw.githubusercontent.com/gaberger/hexa/${TAG}/scripts/install.sh | bash -s -- --check"
-            echo '```'
-            echo ''
-            echo '### Manual install (if you prefer)'
-            echo ''
-            echo 'Each platform tarball ships 3 binaries: \`hexa\`, \`hexa-nexus\`, \`hexa-agent\`.'
-            echo ''
-            echo '```bash'
-            echo '# Pick your platform'
-            echo "# macOS ARM64 (Apple Silicon)"
-            echo "curl -LO https://github.com/gaberger/hexa/releases/download/${TAG}/hexa-${VERSION}-aarch64-apple-darwin.tar.gz"
-            echo ''
-            echo "# macOS x86_64 (Intel)"
-            echo "curl -LO https://github.com/gaberger/hexa/releases/download/${TAG}/hexa-${VERSION}-x86_64-apple-darwin.tar.gz"
-            echo ''
-            echo "# Linux x86_64"
-            echo "curl -LO https://github.com/gaberger/hexa/releases/download/${TAG}/hexa-${VERSION}-x86_64-unknown-linux-gnu.tar.gz"
-            echo ''
-            echo "# Then extract + install all three binaries"
-            echo "tar xzf hexa-${VERSION}-<target>.tar.gz"
-            echo 'sudo mv hexa hexa-nexus hexa-agent /usr/local/bin/    # or ~/.local/bin on linux'
-            echo ''
-            echo "# Also install SpacetimeDB (required)"
-            echo 'curl --proto "=https" --tlsv1.2 -sSf https://install.spacetimedb.com | sh'
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-  docker:
-    needs: [release]
-    runs-on: ubuntu-22.04
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Determine tag name
-        id: tag
-        env:
-          DISPATCH_VERSION: ${{ github.event.inputs.version }}
-          GIT_REF: ${{ github.ref }}
-        run: |
-          if [[ "$GIT_REF" == refs/tags/* ]]; then
-            TAG="${GIT_REF#refs/tags/}"
-          else
-            TAG="${DISPATCH_VERSION:-latest}"
-          fi
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push hexa-nexus
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: hexa-nexus/Dockerfile
-          push: true
-          tags: |
-            ghcr.io/gaberger/hexa-nexus:${{ steps.tag.outputs.tag }}
-            ghcr.io/gaberger/hexa-nexus:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max

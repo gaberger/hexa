@@ -68,9 +68,12 @@ whole difference, and it is why hexa has no spec step.
 ## Quick start
 
 ```bash
-cargo build -p hexa-cli --release
+curl -fsSL https://raw.githubusercontent.com/gaberger/hexa/main/install.sh | bash
 hexa bootstrap                       # prerequisites, inference server, config
 ```
+
+That installs one binary from the latest release; `hexa self-update` keeps
+it current, and `cargo build -p hexa-cli --release` builds it from source.
 
 **Scaffold**
 
