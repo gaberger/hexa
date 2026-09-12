@@ -1,10 +1,13 @@
-# hexa — a solo software-engineering agent
+# hexa: a scaffolding system that grades the architecture of what it builds
 
 ## What this project is
 
-hexa is one binary that writes hexagonally-correct code against an inference
-server. You give it a task, a file, and a command that must pass; it edits,
-runs your command, and commits only if the command exits 0.
+hexa is one binary. It scaffolds Rust, Go and TypeScript projects in the
+ports-and-adapters style from a deterministic floor, has an AI agent write the
+code, and lets two gates decide whether the result counts: a command that must
+exit 0, and an architecture grade that must hold. For a single change, you give
+it a task, a file, and a command that must pass; it edits, runs your command,
+and commits only if the command exits 0.
 
 There is no daemon, no database, no dashboard, and no network peer. Nothing
 needs to be started.
