@@ -58,7 +58,7 @@ if [[ -f package.json ]]; then
 fi
 
 echo "Running cargo check to update Cargo.lock..."
-cargo check -p hexa-cli -p hexa-nexus 2>&1 | tail -5
+cargo check -p hexa-cli 2>&1 | tail -5
 
 echo "Staging changes..."
 git add Cargo.toml Cargo.lock package.json
