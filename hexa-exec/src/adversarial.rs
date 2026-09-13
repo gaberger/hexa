@@ -272,6 +272,18 @@ impl Drop for Phase {
 
 /// `1 lens`, `4 lenses`, `3 designs`. A sibilant takes `es`; everything
 /// else this harness counts takes `s`.
+/// How the calls will actually be issued. The frontier takes them at once;
+/// a local reviewer takes them one at a time (ADR-2609131822 §2), and a
+/// phase that says "in parallel" while its callers queue is describing a
+/// plan rather than what is happening.
+fn issue_order() -> &'static str {
+    if crate::frontier::budget_check().is_ok() {
+        "in parallel"
+    } else {
+        "one at a time — the frontier is unavailable, so the local reviewer takes them in turn"
+    }
+}
+
 fn plural(n: usize, one: &str) -> String {
     let suffix = if n == 1 {
         ""
@@ -329,6 +341,12 @@ impl Reviewer {
     }
 }
 
+/// Output budget for one local review call. A reasoning model emits its
+/// thinking into this budget before the answer, so the figure is mostly
+/// headroom for that; the envelope asked for is a few hundred tokens
+/// (ADR-2609131835). `HEXA_REVIEW_MAX_TOKENS` overrides it.
+pub const REVIEW_MAX_TOKENS: u32 = 16_384;
+
 /// How much of a target the local reviewer is shown. A completion has no
 /// way to fetch more, so the cap is the review's field of view and §3
 /// requires it be stated when it bites.
@@ -385,6 +403,15 @@ fn review_model() -> Option<String> {
     ["t2.5", "t2", "t1"].iter().find_map(|t| hexa_infer::tier_model(t))
 }
 
+/// One local call at a time, process-wide (ADR-2609131822).
+///
+/// One model on one machine serves one request at a time. Four arriving
+/// together queue inside the server, where the wait is invisible and counts
+/// against each caller's timeout: the first fallback run lost three of four
+/// lenses that way, each having waited its full 300 seconds without being
+/// served. Queuing here makes the wait visible and finite.
+static LOCAL_TURN: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+
 /// Ask the tier-mapped model, with the code in the prompt because a
 /// completion cannot go and read it.
 async fn local_run(prompt: &str, code: &str, truncated: bool) -> Result<String, String> {
@@ -397,11 +424,20 @@ async fn local_run(prompt: &str, code: &str, truncated: bool) -> Result<String, 
         String::new()
     };
     let user = format!("{prompt}{note}\n\nTHE CODE UNDER REVIEW:\n```rust\n{code}\n```");
+    let _turn = LOCAL_TURN.acquire().await.map_err(|e| format!("local reviewer queue closed: {e}"))?;
+    // A reasoning model spends output tokens thinking before it answers, and
+    // 4096 covered the thinking and not the reply: every lens came back
+    // empty (ADR-2609131835). The envelope itself is small; the headroom is
+    // for the reasoning in front of it.
+    let budget = std::env::var("HEXA_REVIEW_MAX_TOKENS")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(REVIEW_MAX_TOKENS);
     hexa_infer::complete_text(
         &model,
-        "You are a meticulous reviewer. Answer with the exact JSON object asked for and nothing else.",
+        "You are a meticulous reviewer. Think briefly, then answer with the exact JSON object asked for and nothing else.",
         &user,
-        4096,
+        budget,
     )
     .await
     .map_err(|e| format!("{model}: {e}"))
@@ -578,7 +614,7 @@ pub async fn run_review_with(target: &str, gate: &str, repo_root: &Path, reporte
     }
 
     // ── Phase 1: hunt (parallel lenses) ──────────────────────────────────────
-    let hunt = Phase::start(&reporter, "hunt", format!("{} on {target}, in parallel", plural(LENSES.len(), "lens")), HEARTBEAT);
+    let hunt = Phase::start(&reporter, "hunt", format!("{} on {target}, {}", plural(LENSES.len(), "lens"), issue_order()), HEARTBEAT);
     let mut hunts = Vec::new();
     for lens in LENSES {
         let prompt = format!(
@@ -632,7 +668,7 @@ pub async fn run_review_with(target: &str, gate: &str, repo_root: &Path, reporte
     hunt.finish(format!("{} to verify", plural(candidates.len(), "candidate")));
 
     // ── Phase 2: skeptical verify (parallel, default-refute) ─────────────────
-    let verify = Phase::start(&reporter, "verify", format!("{}, default refute, in parallel", plural(candidates.len(), "claim")), HEARTBEAT);
+    let verify = Phase::start(&reporter, "verify", format!("{}, default refute, {}", plural(candidates.len(), "claim"), issue_order()), HEARTBEAT);
     let mut checks = Vec::new();
     for f in candidates {
         let prompt = format!(
@@ -721,7 +757,7 @@ pub async fn run_review_with(target: &str, gate: &str, repo_root: &Path, reporte
     report.gate_passed = passed;
     report.gate_run = true;
     final_gate.finish(if passed { "passed" } else { "FAILED" });
-    if passed && report.reviewed() {
+    if passed && report.reviewed() && !report.fixed.is_empty() {
         let mut paths: Vec<String> = dirty_paths(repo_root)
             .await
             .into_iter()
@@ -1040,6 +1076,56 @@ mod answered_tests {
         assert!(code.contains("fn a() {}") && code.contains("fn b() {}"), "{code}");
         assert!(code.find("other.rs").unwrap() < code.find("small.rs").unwrap(), "name order: {code}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ADR-2609131822 §2: the phase describes how the calls are actually
+    /// issued. Saying "in parallel" while every caller queues behind one
+    /// permit describes a plan, not what is happening.
+    #[test]
+    fn the_phase_says_how_the_calls_are_issued() {
+        let order = issue_order();
+        assert!(
+            order == "in parallel" || order.starts_with("one at a time"),
+            "one of the two real orders, got {order:?}"
+        );
+        // Whichever it is, it is the same sentence the operator reads.
+        let line = format!("{} on src/x.rs, {}", plural(4, "lens"), order);
+        assert!(line.starts_with("4 lenses on src/x.rs, "), "{line}");
+    }
+
+    /// ADR-2609131822: local calls do not overlap, however many are issued
+    /// together. Measured by holding the permit and watching a second
+    /// caller wait for it.
+    #[test]
+    fn local_calls_are_serialised() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            assert_eq!(LOCAL_TURN.available_permits(), 1, "one caller at a time");
+            let held = LOCAL_TURN.acquire().await.unwrap();
+            assert_eq!(LOCAL_TURN.available_permits(), 0, "the permit is taken");
+
+            let waited = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let flag = waited.clone();
+            let second = tokio::spawn(async move {
+                let _t = LOCAL_TURN.acquire().await.unwrap();
+                flag.store(true, std::sync::atomic::Ordering::SeqCst);
+            });
+            tokio::time::sleep(Duration::from_millis(60)).await;
+            assert!(!waited.load(std::sync::atomic::Ordering::SeqCst), "the second caller must wait");
+
+            drop(held);
+            second.await.unwrap();
+            assert!(waited.load(std::sync::atomic::Ordering::SeqCst), "and proceed once the first is done");
+            assert_eq!(LOCAL_TURN.available_permits(), 1, "the permit returns");
+        });
+    }
+
+    /// A pass that fixed nothing has nothing to commit.
+    #[test]
+    fn a_pass_that_fixed_nothing_commits_nothing() {
+        let reviewed_no_fixes = ReviewReport { lenses: 4, answered: 1, gate_passed: true, gate_run: true, ..ReviewReport::default() };
+        assert!(reviewed_no_fixes.reviewed());
+        assert!(reviewed_no_fixes.fixed.is_empty(), "nothing was fixed, so the commit is skipped");
     }
 
     /// A gate nobody ran is reported as such, never as a failure.
