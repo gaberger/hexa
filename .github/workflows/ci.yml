@@ -4,9 +4,13 @@ name: CI
 # and the architecture grade holds. hexa is graded by the binary this
 # commit builds.
 
+# ADR-2609132158: hexa's own workflow puts work on `adr/*` branches, and until
+# this they met no gate until merge — so a commit there could claim a CI result
+# that was never scheduled, and d4b6ee9 did. The pull_request trigger stays on
+# `main` alone, or a branch with an open PR would run the same job twice.
 on:
   push:
-    branches: [main]
+    branches: [main, 'adr/**']
   pull_request:
     branches: [main]
 
