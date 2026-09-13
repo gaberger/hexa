@@ -53,6 +53,24 @@ pub struct OpenAiCompatAdapter {
 }
 
 impl OpenAiCompatAdapter {
+    /// The base a request is posted under.
+    ///
+    /// Every convenience constructor here appends `/v1`; the registry path
+    /// passed its URL through untouched, so an endpoint registered as
+    /// `http://host:7000` — the exact form `hexa inference list` tells you to
+    /// register — posted to `/chat/completions` and got a 404 that was
+    /// reported as a missing model (ADR-2609131655). A URL with no path of
+    /// its own gets `/v1`; a URL that carries one is respected exactly.
+    fn normalise_base_url(base_url: &str) -> String {
+        let trimmed = base_url.trim().trim_end_matches('/');
+        let after_scheme = trimmed.split_once("://").map(|(_, rest)| rest).unwrap_or(trimmed);
+        if after_scheme.contains('/') {
+            trimmed.to_string()
+        } else {
+            format!("{trimmed}/v1")
+        }
+    }
+
     pub fn new(api_key: String, base_url: String, model: String) -> Self {
         let timeout = std::env::var("HEXA_INFERENCE_TIMEOUT_SECS")
             .ok()
@@ -64,7 +82,7 @@ impl OpenAiCompatAdapter {
                 .build()
                 .unwrap_or_default(),
             api_key,
-            base_url: base_url.trim_end_matches('/').to_string(),
+            base_url: Self::normalise_base_url(&base_url),
             model,
         }
     }
@@ -365,10 +383,13 @@ impl IInferencePort for OpenAiCompatAdapter {
         if status == 404 {
             // Same convention as the Ollama adapter: 404 means the backend has
             // never heard of this model, which is distinct from being down.
+            // Name the URL: a 404 here is usually a wrong path, not a
+            // missing model, and "has no model" sends the reader to check
+            // the one thing that is right (ADR-2609131655 §2).
             return Err(InferenceError::UnknownProvider(format!(
-                "{} has no model '{}'",
-                self.base_url,
-                self.resolve_model(&request.model)
+                "no model '{}' at {}/chat/completions",
+                self.resolve_model(&request.model),
+                self.base_url
             )));
         }
         if status >= 400 {
@@ -775,5 +796,34 @@ mod tests {
         let body = a.build_body(&req("m"));
         assert!(body.get("route").is_none());
         assert!(body.get("provider").is_none());
+    }
+}
+
+#[cfg(test)]
+mod base_url_tests {
+    use super::OpenAiCompatAdapter;
+
+    fn base(url: &str) -> String {
+        // Private to the file, visible to this child module: the pure
+        // function is the thing under test, not a constructed adapter.
+        OpenAiCompatAdapter::normalise_base_url(url)
+    }
+
+    /// ADR-2609131655 §1: a pathless URL gains `/v1`; a URL that carries a
+    /// path of its own is respected exactly.
+    #[test]
+    fn a_pathless_base_url_gains_the_api_version() {
+        assert_eq!(base("http://127.0.0.1:7000"), "http://127.0.0.1:7000/v1");
+        assert_eq!(base("http://127.0.0.1:7000/"), "http://127.0.0.1:7000/v1");
+        assert_eq!(base("https://host"), "https://host/v1");
+        assert_eq!(base("  http://127.0.0.1:7000  "), "http://127.0.0.1:7000/v1", "whitespace is not a path");
+    }
+
+    #[test]
+    fn a_base_url_that_carries_a_path_is_left_alone() {
+        assert_eq!(base("http://127.0.0.1:7000/v1"), "http://127.0.0.1:7000/v1");
+        assert_eq!(base("https://openrouter.ai/api/v1"), "https://openrouter.ai/api/v1");
+        assert_eq!(base("http://host:8000/inference"), "http://host:8000/inference");
+        assert_eq!(base("http://host:8000/v1/"), "http://host:8000/v1");
     }
 }
