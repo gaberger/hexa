@@ -70,6 +70,19 @@ pub async fn run_doctor(_verbose: bool, _fix: bool) -> anyhow::Result<()> {
     if !inference.has_any_inference() {
         failures.push("no path to a model: start the local server or log in to `claude`".to_string());
     }
+    // A tier naming a model nothing can serve fails the run: doctor's job is
+    // to say whether the installation works, and it does not (ADR-2609131617).
+    for t in inference.unserved_tiers() {
+        failures.push(format!(
+            "tier {} names {}, which no reachable path serves — pull it, register the endpoint that has it, or point the tier at one of: {}",
+            t.label,
+            t.model,
+            {
+                let served = inference.served_models();
+                if served.is_empty() { "nothing reachable".to_string() } else { served.join(", ") }
+            }
+        ));
+    }
     println!();
 
     // Summary
@@ -81,6 +94,10 @@ pub async fn run_doctor(_verbose: bool, _fix: bool) -> anyhow::Result<()> {
         for f in &failures {
             println!("      {} {}", "\u{2717}".red(), f);
         }
+        // A health check that prints failures and exits 0 is the same lie
+        // one layer up: `hexa doctor && deploy` would proceed
+        // (ADR-2609131617 §4).
+        anyhow::bail!("{} check(s) failed", failures.len());
     }
 
     Ok(())

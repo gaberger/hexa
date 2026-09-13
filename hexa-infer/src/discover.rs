@@ -24,6 +24,9 @@ pub struct Found {
     pub via: String,
     /// `Some(true)` answered a probe, `Some(false)` did not, `None` not probed.
     pub reachable: Option<bool>,
+    /// The models this path is known to serve. Empty means *not
+    /// enumerated*, never *none* (ADR-2609131617 §1).
+    pub models: Vec<String>,
 }
 
 impl Found {
@@ -63,20 +66,36 @@ fn discover_with(
         .map(|k| k.to_string())
         .unwrap_or_else(|| "default address".to_string());
     let url = crate::local_provider::base_url_with(&p, env);
-    out.push(Found { kind: "local", name: p.display_name.to_string(), detail: url.clone(), via, reachable: probe(&url) });
+    // A local runtime serves whatever has been pulled into it; doctor
+    // enumerates it (ADR-2609131617 §2), so it starts unenumerated.
+    out.push(Found { kind: "local", name: p.display_name.to_string(), detail: url.clone(), via, reachable: probe(&url), models: Vec::new() });
 
     // API providers, by the presence of their key or URL.
     if env("ANTHROPIC_API_KEY").is_some() {
         let base = env("ANTHROPIC_BASE_URL").unwrap_or_else(|| "api.anthropic.com".to_string());
-        out.push(Found { kind: "api", name: "anthropic".to_string(), detail: base, via: "ANTHROPIC_API_KEY".to_string(), reachable: None });
+        out.push(Found { kind: "api", name: "anthropic".to_string(), detail: base, via: "ANTHROPIC_API_KEY".to_string(), reachable: None, models: Vec::new() });
     }
     if let Some(url) = env("HEXA_INFERENCE_URL") {
         let model = env("HEXA_INFERENCE_MODEL").map(|m| format!(" · {m}")).unwrap_or_default();
-        out.push(Found { kind: "api", name: "openai-compatible".to_string(), detail: format!("{url}{model}"), via: "HEXA_INFERENCE_URL".to_string(), reachable: probe(&url) });
+        out.push(Found {
+            kind: "api",
+            name: "openai-compatible".to_string(),
+            detail: format!("{url}{model}"),
+            via: "HEXA_INFERENCE_URL".to_string(),
+            reachable: probe(&url),
+            models: env("HEXA_INFERENCE_MODEL").into_iter().collect(),
+        });
     }
     if let Some(host) = env("HEXA_VLLM_HOST") {
         let model = env("HEXA_VLLM_MODEL").map(|m| format!(" · {m}")).unwrap_or_default();
-        out.push(Found { kind: "api", name: "vllm".to_string(), detail: format!("{host}{model}"), via: "HEXA_VLLM_HOST".to_string(), reachable: probe(&host) });
+        out.push(Found {
+            kind: "api",
+            name: "vllm".to_string(),
+            detail: format!("{host}{model}"),
+            via: "HEXA_VLLM_HOST".to_string(),
+            reachable: probe(&host),
+            models: env("HEXA_VLLM_MODEL").into_iter().collect(),
+        });
     }
 
     // Endpoints registered with `hexa config inference add`.
@@ -87,14 +106,109 @@ fn discover_with(
             detail: format!("{} · {} · {}", e.url, e.provider, e.model),
             via: "~/.hexa/inference-servers.json".to_string(),
             reachable: probe(&e.url),
+            models: {
+                let mut m = e.models.clone();
+                if !e.model.is_empty() && !m.contains(&e.model) {
+                    m.push(e.model.clone());
+                }
+                m
+            },
         });
     }
 
     // The frontier path: a logged-in claude CLI.
     if let Some(path) = claude_path {
-        out.push(Found { kind: "frontier", name: "claude".to_string(), detail: path.to_string(), via: "PATH".to_string(), reachable: Some(true) });
+        out.push(Found { kind: "frontier", name: "claude".to_string(), detail: path.to_string(), via: "PATH".to_string(), reachable: Some(true), models: Vec::new() });
     }
     out
+}
+
+/// What a configured tier's model resolves to among the discovered paths
+/// (ADR-2609131617 §3).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Coverage {
+    /// A reachable path lists it; the name is that path's.
+    Served(String),
+    /// Every reachable path was enumerated and none lists it.
+    NotServed,
+    /// A reachable path could not be enumerated, so nothing can be said.
+    /// The name is that path's.
+    Unverified(String),
+}
+
+/// Does a frontier CLI answer for this model id?
+fn frontier_serves(model: &str) -> bool {
+    let m = model.to_ascii_lowercase();
+    m.starts_with("claude") || m.starts_with("anthropic/") || m.starts_with("us.anthropic.")
+}
+
+/// Resolve `model` against the discovered paths. Never a substring match:
+/// `registry::serving` makes the same point about routing, and a diagnosis
+/// that guesses is the thing this replaces.
+pub fn serves(found: &[Found], model: &str) -> Coverage {
+    let reachable = || found.iter().filter(|f| f.reachable == Some(true));
+    for f in reachable() {
+        if f.models.iter().any(|m| m == model) {
+            return Coverage::Served(f.name.clone());
+        }
+        if f.kind == "frontier" && frontier_serves(model) {
+            return Coverage::Served(f.name.clone());
+        }
+    }
+    // Nothing listed it. Only say so when every reachable path was asked.
+    match reachable().find(|f| f.models.is_empty() && f.kind != "frontier") {
+        Some(f) => Coverage::Unverified(f.name.clone()),
+        None => Coverage::NotServed,
+    }
+}
+
+/// Every model the reachable paths list, for the line that says what is
+/// actually on offer.
+pub fn served_models(found: &[Found]) -> Vec<String> {
+    let mut out: Vec<String> = found
+        .iter()
+        .filter(|f| f.reachable == Some(true))
+        .flat_map(|f| f.models.iter().cloned())
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// The names in an Ollama `/api/tags` body.
+fn tags_models(v: &serde_json::Value) -> Vec<String> {
+    v.get("models")
+        .and_then(|m| m.as_array())
+        .map(|a| a.iter().filter_map(|m| m.get("name").and_then(|n| n.as_str()).map(String::from)).collect())
+        .unwrap_or_default()
+}
+
+/// The ids in an OpenAI-compatible `/v1/models` body.
+fn openai_models(v: &serde_json::Value) -> Vec<String> {
+    v.get("data")
+        .and_then(|m| m.as_array())
+        .map(|a| a.iter().filter_map(|m| m.get("id").and_then(|n| n.as_str()).map(String::from)).collect())
+        .unwrap_or_default()
+}
+
+/// Ask a runtime what it serves: Ollama's `/api/tags`, then an
+/// OpenAI-compatible `/v1/models`. `None` when neither answers, which is
+/// what makes the tier unverified rather than unserved (ADR-2609131617 §2).
+pub async fn enumerate_models(base_url: &str) -> Option<Vec<String>> {
+    let client = reqwest::Client::builder().timeout(Duration::from_secs(3)).build().ok()?;
+    let base = base_url.trim_end_matches('/');
+    for (path, pick) in [("/api/tags", tags_models as fn(&serde_json::Value) -> Vec<String>), ("/v1/models", openai_models)] {
+        let Ok(resp) = client.get(format!("{base}{path}")).send().await else { continue };
+        if !resp.status().is_success() {
+            continue;
+        }
+        let Ok(json) = resp.json::<serde_json::Value>().await else { continue };
+        let models = pick(&json);
+        if !models.is_empty() {
+            return Some(models);
+        }
+    }
+    None
 }
 
 /// Is there any path to a model?
@@ -129,6 +243,80 @@ fn probe(url: &str) -> Option<bool> {
     };
     let addr = hostport.to_socket_addrs().ok()?.next()?;
     Some(TcpStream::connect_timeout(&addr, Duration::from_millis(700)).is_ok())
+}
+
+#[cfg(test)]
+mod serves_tests {
+    use super::*;
+
+    fn path(kind: &'static str, name: &str, reachable: Option<bool>, models: &[&str]) -> Found {
+        Found {
+            kind,
+            name: name.to_string(),
+            detail: String::new(),
+            via: String::new(),
+            reachable,
+            models: models.iter().map(|m| m.to_string()).collect(),
+        }
+    }
+
+    /// ADR-2609131617 §3: served names the backend; unreachable does not
+    /// serve; nothing listing it, with everything enumerated, is not served.
+    #[test]
+    fn serves_is_answered_only_from_reachable_enumerated_paths() {
+        let tt = path("registered", "tt-gptoss", Some(true), &["openai/gpt-oss-120b"]);
+        assert_eq!(serves(&[tt.clone()], "openai/gpt-oss-120b"), Coverage::Served("tt-gptoss".into()));
+        assert_eq!(serves(&[tt.clone()], "qwen3:4b"), Coverage::NotServed);
+
+        let down = path("local", "Ollama", Some(false), &[]);
+        assert_eq!(serves(&[down.clone(), tt.clone()], "qwen3:4b"), Coverage::NotServed, "an unreachable path serves nothing");
+        assert_eq!(serves(&[path("registered", "x", Some(false), &["m"])], "m"), Coverage::NotServed);
+
+        // Never a substring: a diagnosis that guesses is what this replaces.
+        assert_eq!(serves(&[path("registered", "x", Some(true), &["meta/llama-3.3-70b"])], "llama-3"), Coverage::NotServed);
+    }
+
+    /// A reachable path nobody could enumerate makes the answer unverified,
+    /// never "not served" and never "fine".
+    #[test]
+    fn an_unenumerated_reachable_path_is_unverified_not_either_answer() {
+        let mystery = path("local", "Ollama", Some(true), &[]);
+        let tt = path("registered", "tt-gptoss", Some(true), &["openai/gpt-oss-120b"]);
+        assert_eq!(serves(&[mystery.clone(), tt.clone()], "qwen3:4b"), Coverage::Unverified("Ollama".into()));
+        // It still does not mask a path that does list the model.
+        assert_eq!(serves(&[mystery, tt], "openai/gpt-oss-120b"), Coverage::Served("tt-gptoss".into()));
+    }
+
+    /// A frontier CLI answers for its own family without being enumerated.
+    #[test]
+    fn a_claude_model_is_served_by_a_reachable_frontier() {
+        let claude = path("frontier", "claude", Some(true), &[]);
+        assert_eq!(serves(&[claude.clone()], "claude-opus-5"), Coverage::Served("claude".into()));
+        assert_eq!(serves(&[claude.clone()], "anthropic/claude-sonnet-5"), Coverage::Served("claude".into()));
+        assert_eq!(serves(&[claude], "qwen3:4b"), Coverage::NotServed, "a frontier does not answer for a local model");
+    }
+
+    /// Both model endpoints are parsed from the shape each really returns.
+    #[test]
+    fn both_model_endpoints_are_parsed() {
+        let tags = serde_json::json!({"models":[{"name":"qwen3:4b"},{"name":"gemma4-12b"}]});
+        assert_eq!(tags_models(&tags), vec!["qwen3:4b".to_string(), "gemma4-12b".to_string()]);
+        let oai = serde_json::json!({"object":"list","data":[{"id":"openai/gpt-oss-120b","object":"model"}]});
+        assert_eq!(openai_models(&oai), vec!["openai/gpt-oss-120b".to_string()]);
+        // A body of the other shape yields nothing rather than a wrong list.
+        assert!(tags_models(&oai).is_empty());
+        assert!(openai_models(&tags).is_empty());
+    }
+
+    #[test]
+    fn served_models_lists_what_the_reachable_paths_offer() {
+        let found = vec![
+            path("registered", "tt", Some(true), &["openai/gpt-oss-120b"]),
+            path("local", "Ollama", Some(false), &["qwen3:4b"]),
+            path("api", "vllm", Some(true), &["mistral-7b"]),
+        ];
+        assert_eq!(served_models(&found), vec!["mistral-7b".to_string(), "openai/gpt-oss-120b".to_string()]);
+    }
 }
 
 #[cfg(test)]

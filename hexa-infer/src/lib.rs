@@ -24,4 +24,4 @@ pub use endpoint::Endpoint;
 pub use complete::{complete_raw, complete_text};
 pub use tiers::{react_models, tier_model};
 pub use local_provider::{configured_tiers, local_provider, LocalProvider};
-pub use discover::{discover, Found};
+pub use discover::{discover, enumerate_models, served_models, serves, Coverage, Found};
