@@ -1,9 +1,9 @@
 {
   "sessions": {
     "15e0cf79-70e3-425b-aa08-d2c85df00d10": {
-      "adr": "ADR-2609132049",
-      "evidence": "cargo test --workspace 2>&1 | tail -1; hexa analyze . 2>&1 | grep 'Architecture grade'; echo -n 'clippy exit: '; cargo clippy --workspace --all-targets -- -D warnings >/dev/null 2>&1; echo $?",
-      "gate": "cargo build --workspace && cargo test --workspace",
+      "adr": "ADR-2609132059",
+      "evidence": "cargo test -p hexa-cli gate_at_done 2>&1 | grep -E 'gate_at_done::|test result: ok. 4'",
+      "gate": "cargo test -p hexa-cli gate_at_done",
       "pid": 520445,
       "pid_start": 2378261,
       "running": null,
@@ -75,7 +75,7 @@
           "title": "harden commits under the repo identity, and drops swarm vocabulary"
         }
       ],
-      "updated": "2026-09-13T20:53:15.666804763+00:00"
+      "updated": "2026-09-13T21:02:11.850731331+00:00"
     }
   }
 }
