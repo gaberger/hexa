@@ -39,6 +39,12 @@ pub enum LoopAction {
     Stage {
         stage: String,
     },
+    /// Record the evidence: a command whose stdout is appended to the ADR when
+    /// the stage is marked done (ADR-2609131341)
+    Evidence {
+        /// A shell command, e.g. "cargo test --test instrument -- --ignored --nocapture"
+        command: String,
+    },
     /// Forget the recorded state
     Clear,
     /// The checklist: the steps this work is made of, checked off as they land
@@ -125,15 +131,73 @@ fn clear_loop(dir: &Path) -> Result<bool, String> {
     Ok(true)
 }
 
-/// Does `docs/adrs/` hold an ADR whose file name starts with `id`?
-fn adr_exists(dir: &Path, id: &str) -> bool {
-    let Ok(entries) = std::fs::read_dir(dir.join("docs").join("adrs")) else {
-        return false;
-    };
-    entries.flatten().any(|e| {
-        let name = e.file_name().to_string_lossy().to_string();
+/// The ADR file in `docs/adrs/` whose name starts with `id`.
+fn adr_path(dir: &Path, id: &str) -> Option<PathBuf> {
+    let entries = std::fs::read_dir(dir.join("docs").join("adrs")).ok()?;
+    entries.flatten().map(|e| e.path()).find(|p| {
+        let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
         name.starts_with(id) && name.ends_with(".md")
     })
+}
+
+/// Does `docs/adrs/` hold an ADR whose file name starts with `id`?
+fn adr_exists(dir: &Path, id: &str) -> bool {
+    adr_path(dir, id).is_some()
+}
+
+/// Run the evidence command and append its stdout to the ADR under
+/// `## Evidence`, with the command, the commit and the time. A failing
+/// command appends nothing and is an error: evidence comes from a run that
+/// succeeded (ADR-2609131341).
+pub fn record_evidence(dir: &Path, adr_id: &str, command: &str) -> Result<PathBuf, String> {
+    let path = adr_path(dir, adr_id).ok_or_else(|| format!("no {adr_id} in docs/adrs/ to append evidence to"))?;
+    let out = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .current_dir(dir)
+        .output()
+        .map_err(|e| format!("cannot run the evidence command: {e}"))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let tail: Vec<&str> = stderr.lines().rev().take(8).collect::<Vec<_>>().into_iter().rev().collect();
+        return Err(format!(
+            "evidence command failed ({}); nothing appended to {}\n{}",
+            out.status,
+            path.display(),
+            tail.join("\n")
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout).trim_end().to_string();
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+    };
+    let commit = match git(&["rev-parse", "--short", "HEAD"]) {
+        Some(sha) if git(&["status", "--porcelain"]).map_or(true, |s| s.is_empty()) => sha,
+        Some(sha) => format!("{sha} with uncommitted changes"),
+        None => "no commit".to_string(),
+    };
+    let mut text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    if !text.ends_with('\n') {
+        text.push('\n');
+    }
+    if !text.contains("\n## Evidence\n") {
+        text.push_str("\n## Evidence\n");
+    }
+    text.push_str(&format!(
+        "\n`{}` at {} on {}:\n\n```text\n{}\n```\n",
+        command,
+        commit,
+        chrono::Utc::now().format("%Y-%m-%d %H:%M UTC"),
+        stdout
+    ));
+    std::fs::write(&path, text).map_err(|e| e.to_string())?;
+    Ok(path)
 }
 
 /// One line for the hooks: the state, or what is missing.
@@ -289,6 +353,9 @@ pub async fn run(action: Option<LoopAction>) -> anyhow::Result<()> {
                 for l in checklist(&st) {
                     println!("  {l}");
                 }
+                if let Some(e) = st.get("evidence").and_then(|v| v.as_str()) {
+                    println!("  evidence {e}");
+                }
                 if let Some(u) = st.get("updated").and_then(|v| v.as_str()) {
                     println!("  updated {u}");
                 }
@@ -316,10 +383,31 @@ pub async fn run(action: Option<LoopAction>) -> anyhow::Result<()> {
             update_loop(&cwd, serde_json::json!({ "gate": command, "stage": "gate" })).map_err(|e| anyhow::anyhow!(e))?;
             println!("{} {}", "\u{2b21}".green(), status_line(&cwd));
         }
+        LoopAction::Evidence { command } => {
+            let command = command.trim().to_string();
+            if command.is_empty() {
+                anyhow::bail!("evidence is a command; it cannot be empty");
+            }
+            update_loop(&cwd, serde_json::json!({ "evidence": command })).map_err(|e| anyhow::anyhow!(e))?;
+            println!("{} {}", "\u{2b21}".green(), status_line(&cwd));
+            println!("  evidence {command}");
+        }
         LoopAction::Stage { stage } => {
             let stage = stage.to_lowercase();
             if !STAGES.contains(&stage.as_str()) {
                 anyhow::bail!("stage must be one of: {}", STAGES.join(", "));
+            }
+            // Done means measured: the evidence command runs now, and its
+            // output lands in the ADR before the stage is recorded.
+            if stage == "done" {
+                if let Some(st) = read_loop(&cwd) {
+                    let adr = st.get("adr").and_then(|v| v.as_str());
+                    let evidence = st.get("evidence").and_then(|v| v.as_str());
+                    if let (Some(adr), Some(cmd)) = (adr, evidence) {
+                        let path = record_evidence(&cwd, adr, cmd).map_err(|e| anyhow::anyhow!(e))?;
+                        println!("  evidence appended to {}", path.display());
+                    }
+                }
             }
             update_loop(&cwd, serde_json::json!({ "stage": stage })).map_err(|e| anyhow::anyhow!(e))?;
             println!("{} {}", "\u{2b21}".green(), status_line(&cwd));
@@ -330,4 +418,44 @@ pub async fn run(action: Option<LoopAction>) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod evidence_tests {
+    use super::record_evidence;
+
+    fn project() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("hexa-evidence-{}-{:?}", std::process::id(), std::thread::current().id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".hexa")).unwrap();
+        std::fs::create_dir_all(dir.join("docs/adrs")).unwrap();
+        std::fs::write(dir.join("docs/adrs/ADR-1-a-decision.md"), "# ADR-1: a decision\n\n**Status:** Accepted\n").unwrap();
+        dir
+    }
+
+    /// ADR-2609131341: the evidence command's stdout lands under `## Evidence`
+    /// with the command and the time; a second run appends without a second
+    /// heading; a failing command appends nothing and is an error.
+    #[test]
+    fn evidence_is_appended_to_the_adr_once_per_done_and_never_from_a_failing_run() {
+        let dir = project();
+        let path = record_evidence(&dir, "ADR-1", "printf 'precision 0.833\\nrecall 1.000\\n'").unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("\n## Evidence\n"), "{text}");
+        assert!(text.contains("`printf 'precision 0.833\\nrecall 1.000\\n'` at no commit on "), "{text}");
+        assert!(text.contains("```text\nprecision 0.833\nrecall 1.000\n```\n"), "{text}");
+
+        record_evidence(&dir, "ADR-1", "echo second").unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(text.matches("## Evidence").count(), 1, "one heading, two entries: {text}");
+        assert!(text.contains("```text\nsecond\n```"), "{text}");
+
+        let before = text.clone();
+        let err = record_evidence(&dir, "ADR-1", "echo broken >&2; exit 3").unwrap_err();
+        assert!(err.contains("failed") && err.contains("broken"), "{err}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), before, "a failing run appends nothing");
+
+        assert!(record_evidence(&dir, "ADR-9", "true").is_err(), "no such ADR");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
