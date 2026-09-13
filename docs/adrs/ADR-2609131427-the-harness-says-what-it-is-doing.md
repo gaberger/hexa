@@ -44,7 +44,7 @@ to say where the work stands, said nothing about a run at all.
 
 ## Gate
 
-`cargo test -p hexa-exec progress -p hexa-cli running`: a phase with a 20ms heartbeat produces at
+`cargo test -p hexa-exec progress && cargo test -p hexa-cli running`: a phase with a 20ms heartbeat produces at
 least three beats in 110ms, reports its note and its finish with an elapsed time, and beats no more
 after finishing; the loop's status line renders a running entry with its elapsed time and renders
 nothing once it is cleared.
