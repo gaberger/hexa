@@ -81,14 +81,7 @@ impl LocalProvider {
     /// server at another machine — reporting "not running" for a server that
     /// was running fine.
     pub fn socket_addr(&self) -> String {
-        let url = self.base_url();
-        let rest = url.strip_prefix("http://").or_else(|| url.strip_prefix("https://")).unwrap_or(&url);
-        let host_port = rest.split('/').next().unwrap_or(rest);
-        if host_port.contains(':') {
-            host_port.to_string()
-        } else {
-            format!("{host_port}:{}", self.default_port)
-        }
+        socket_addr_with(self, &|k| std::env::var(k).ok())
     }
 
     /// The install hint for the platform this binary was built for.
@@ -119,6 +112,18 @@ pub fn base_url_with(p: &LocalProvider, env: &dyn Fn(&str) -> Option<String>) ->
     }
 }
 
+/// `socket_addr`, with the environment reader injected (ADR-2609131749).
+pub fn socket_addr_with(p: &LocalProvider, env: &dyn Fn(&str) -> Option<String>) -> String {
+    let url = base_url_with(p, env);
+    let rest = url.strip_prefix("http://").or_else(|| url.strip_prefix("https://")).unwrap_or(&url);
+    let host_port = rest.split('/').next().unwrap_or(rest);
+    if host_port.contains(':') {
+        host_port.to_string()
+    } else {
+        format!("{host_port}:{}", p.default_port)
+    }
+}
+
 /// The tiers this project configures, as `(label, tier key, model id)`.
 ///
 /// Empty when `.hexa/project.json` declares none — which is a real answer, and
@@ -130,50 +135,62 @@ pub fn configured_tiers() -> Vec<(&'static str, &'static str, String)> {
         .collect()
 }
 
+/// [`configured_tiers`], rooted at an explicit directory (ADR-2609131749).
+pub fn configured_tiers_in(root: &std::path::Path) -> Vec<(&'static str, &'static str, String)> {
+    [("T1", "t1"), ("T2", "t2"), ("T2.5", "t2.5")]
+        .into_iter()
+        .filter_map(|(label, key)| crate::tiers::tier_model_in(root, key).map(|m| (label, key, m)))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn the_base_url_is_built_from_the_declared_port() {
-        let p = local_provider();
+        let p = &local_provider();
         assert_eq!(p.default_base_url(), format!("http://127.0.0.1:{}", p.default_port));
     }
 
     /// Both spellings of the override must produce one well-formed URL.
+    /// Driven through the injected reader: the process environment holds one
+    /// value at a time and is shared with every other test on the thread
+    /// pool (ADR-2609131749).
     #[test]
     fn the_host_override_is_normalised_either_way() {
-        let p = local_provider();
-        let prev = std::env::var(p.host_env).ok();
+        let p = &local_provider();
+        let env = |value: &'static str| move |k: &str| (k == p.host_env).then(|| value.to_string());
         for (set, want) in [
             ("127.0.0.1:9999", "http://127.0.0.1:9999"),
             ("http://box:9999", "http://box:9999"),
-            ("  ", ""), // blank falls back to the default
+            ("http://box:9999/", "http://box:9999"),
         ] {
-            std::env::set_var(p.host_env, set);
-            let got = p.base_url();
-            let expected = if want.is_empty() { p.default_base_url() } else { want.to_string() };
-            assert_eq!(got, expected, "OLLAMA_HOST={set:?}");
+            let got = base_url_with(p, &env(set));
+            assert_eq!(got, want, "override {set:?}");
             assert!(!got.contains("http://http"), "double scheme from {set:?}");
         }
-        match prev {
-            Some(v) => std::env::set_var(p.host_env, v),
-            None => std::env::remove_var(p.host_env),
+        // Blank, whitespace and unset all fall back to the default.
+        for blank in ["", "   "] {
+            assert_eq!(base_url_with(p, &env(blank)), p.default_base_url(), "blank {blank:?}");
         }
+        assert_eq!(base_url_with(p, &|_| None), p.default_base_url(), "unset");
+
+        // This provider's own variable IS `OLLAMA_HOST`, so the two lookups
+        // in `base_url_with` collapse onto one name and there is no
+        // precedence to assert. A reader is owed that, because the doc
+        // comment names both.
+        assert_eq!(p.host_env, "OLLAMA_HOST");
+        assert_eq!(base_url_with(p, &|_| Some("one:1111".into())), "http://one:1111");
     }
 
     #[test]
     fn the_probe_target_follows_the_host_override() {
-        let p = local_provider();
-        let prev = std::env::var(p.host_env).ok();
-        std::env::set_var(p.host_env, "http://gpu-box:9999/");
-        assert_eq!(p.socket_addr(), "gpu-box:9999");
-        std::env::set_var(p.host_env, "gpu-box");
-        assert_eq!(p.socket_addr(), format!("gpu-box:{}", p.default_port));
-        match prev {
-            Some(v) => std::env::set_var(p.host_env, v),
-            None => std::env::remove_var(p.host_env),
-        }
+        let p = &local_provider();
+        let env = |value: &'static str| move |k: &str| (k == p.host_env).then(|| value.to_string());
+        assert_eq!(socket_addr_with(p, &env("http://gpu-box:9999/")), "gpu-box:9999");
+        assert_eq!(socket_addr_with(p, &env("gpu-box")), format!("gpu-box:{}", p.default_port));
+        assert_eq!(socket_addr_with(p, &|_| None), format!("127.0.0.1:{}", p.default_port));
     }
 
     #[test]
@@ -187,15 +204,52 @@ mod tests {
     #[test]
     fn no_config_means_no_tiers_rather_than_a_default() {
         let dir = tempfile::tempdir().expect("tempdir");
-        // tier_model resolves through HEXA_PROJECT_ROOT; point it at an empty
-        // directory and the answer must be "none", not a guess.
-        let prev = std::env::var("HEXA_PROJECT_ROOT").ok();
-        std::env::set_var("HEXA_PROJECT_ROOT", dir.path());
-        let got = configured_tiers();
-        match prev {
-            Some(p) => std::env::set_var("HEXA_PROJECT_ROOT", p),
-            None => std::env::remove_var("HEXA_PROJECT_ROOT"),
+        assert!(configured_tiers_in(dir.path()).is_empty(), "an unconfigured project produced tiers");
+
+        // And it returns exactly what is declared, no more.
+        std::fs::create_dir_all(dir.path().join(".hexa")).unwrap();
+        std::fs::write(
+            dir.path().join(".hexa/project.json"),
+            r#"{"inference":{"tier_models":{"t1":"a-model","t2.5":"c-model"}}}"#,
+        )
+        .unwrap();
+        let got = configured_tiers_in(dir.path());
+        assert_eq!(got.len(), 2, "{got:?}");
+        assert_eq!(got[0], ("T1", "t1", "a-model".to_string()));
+        assert_eq!(got[1], ("T2.5", "t2.5", "c-model".to_string()), "a dotted key is read as a key");
+    }
+
+    /// ADR-2609131749 §3: the next person will follow the pattern they see.
+    /// Cargo runs this crate's tests on one process's threads, so a
+    /// `set_var` anywhere in it is visible to every other test that reads
+    /// that variable.
+    #[test]
+    fn no_test_in_this_crate_writes_the_process_environment() {
+        // Built at compile time so this file does not contain the literal
+        // it searches for, which would make the guard flag itself.
+        const NEEDLE: &str = concat!("set_", "var(");
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut offenders = Vec::new();
+        let mut stack = vec![src];
+        while let Some(d) = stack.pop() {
+            for e in std::fs::read_dir(&d).expect("read src").flatten() {
+                let path = e.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().is_some_and(|x| x == "rs") {
+                    let text = std::fs::read_to_string(&path).unwrap_or_default();
+                    for (i, line) in text.lines().enumerate() {
+                        if line.contains(NEEDLE) && !line.trim_start().starts_with("//") {
+                            offenders.push(format!("{}:{}", path.display(), i + 1));
+                        }
+                    }
+                }
+            }
         }
-        assert!(got.is_empty(), "an unconfigured project produced tiers: {got:?}");
+        assert!(
+            offenders.is_empty(),
+            "a test writing the process environment races every other test that reads it; \
+             inject the reader instead (see base_url_with, tier_model_in): {offenders:?}"
+        );
     }
 }
