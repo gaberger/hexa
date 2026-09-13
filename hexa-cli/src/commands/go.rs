@@ -15,7 +15,8 @@ pub async fn run() -> anyhow::Result<()> {
     // 1. Check if nexus is running
 
     // 2. Check if release binary is stale
-    actions_needed |= check_binary_staleness().await;
+    let rebuild_in_flight = check_binary_staleness().await;
+    actions_needed |= rebuild_in_flight;
 
     // 3. Check for pending workplans
     actions_needed |= check_pending_workplans().await;
@@ -24,7 +25,9 @@ pub async fn run() -> anyhow::Result<()> {
     actions_needed |= check_stale_worktrees().await;
 
     // 5. Check if tests pass
-    actions_needed |= check_tests().await;
+    let tests = check_tests(rebuild_in_flight).await;
+    println!("{}", tests.line());
+    actions_needed |= tests.is_problem();
 
     if !actions_needed {
         println!("\n  {}", "All clear. hexa is healthy.".green().bold());
@@ -274,11 +277,48 @@ async fn check_stale_worktrees() -> bool {
     }
 }
 
-/// Check if workspace tests pass.
-async fn check_tests() -> bool {
-    let cwd = match std::env::current_dir() {
-        Ok(d) => d,
-        Err(_) => return false,
+/// What a check found. A check that could not run is not a failing one:
+/// it is one the operator cannot act on, and a next-action list is for
+/// things to act on (ADR-2609131800 §2).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Checked {
+    /// The activity ran and was clean.
+    Ok(String),
+    /// The activity ran and found something to fix.
+    Problem(String),
+    /// The activity did not run. The string says why.
+    Unknown(String),
+}
+
+impl Checked {
+    /// Only a real problem belongs in the next-action list.
+    pub fn is_problem(&self) -> bool {
+        matches!(self, Checked::Problem(_))
+    }
+
+    /// The line, marked by what it is.
+    pub fn line(&self) -> String {
+        match self {
+            Checked::Ok(m) => format!("  {} {m}", "\u{2713}".green()),
+            Checked::Problem(m) => format!("  {} {m}", "\u{2192}".red()),
+            Checked::Unknown(m) => format!("  {} {m}", "\u{25cb}".dimmed()),
+        }
+    }
+}
+
+/// Do the test binaries compile?
+///
+/// This compiles and runs nothing, so it reports on compilation
+/// (ADR-2609131800 §1). The old failure branch said "tests failing" for a
+/// check that had never run a test, and sent an operator to a green suite.
+async fn check_tests(rebuild_in_flight: bool) -> Checked {
+    // A rebuild this verb itself spawned holds the build lock; racing it
+    // and blaming the code is the fault this replaces (§3).
+    if rebuild_in_flight {
+        return Checked::Unknown("tests not compiled — a rebuild is in flight".to_string());
+    }
+    let Ok(cwd) = std::env::current_dir() else {
+        return Checked::Unknown("tests not compiled — no working directory".to_string());
     };
 
     let test_result = tokio::process::Command::new("cargo")
@@ -290,17 +330,63 @@ async fn check_tests() -> bool {
         .await;
 
     match test_result {
-        Ok(status) if status.success() => {
-            println!("  {} tests compile", "\u{2713}".green());
-            false
+        Ok(status) if status.success() => Checked::Ok("tests compile".to_string()),
+        Ok(_) => Checked::Problem("tests do not compile — cargo test --workspace --no-run".to_string()),
+        Err(e) => Checked::Unknown(format!("could not check whether tests compile: {e}")),
+    }
+}
+
+#[cfg(test)]
+mod checked_tests {
+    use super::{check_tests, Checked};
+
+    /// ADR-2609131800 §1: a check names the activity it performed. This one
+    /// compiles and never runs a test, so neither branch may say "tests
+    /// failing" — that sent an operator to a suite of 819 passing tests.
+    #[test]
+    fn a_compile_check_reports_compilation_never_test_results() {
+        for c in [
+            Checked::Ok("tests compile".into()),
+            Checked::Problem("tests do not compile — cargo test --workspace --no-run".into()),
+            Checked::Unknown("tests not compiled — a rebuild is in flight".into()),
+        ] {
+            let line = c.line();
+            assert!(!line.contains("tests failing"), "names an activity that never happened: {line}");
+            assert!(!line.contains("tests pass"), "this check runs nothing: {line}");
         }
-        _ => {
-            println!(
-                "  {} tests failing {}",
-                "\u{2192}".red(),
-                "— fix with: cargo test --workspace".dimmed()
-            );
-            true
-        }
+    }
+
+    /// §2: only a real problem is a next action. A check that could not run
+    /// is not something the operator can act on.
+    #[test]
+    fn only_a_problem_counts_as_a_next_action() {
+        assert!(Checked::Problem("x".into()).is_problem());
+        assert!(!Checked::Ok("x".into()).is_problem());
+        assert!(!Checked::Unknown("x".into()).is_problem(), "an unrunnable check accuses nothing");
+    }
+
+    /// §3: the verb does not race the rebuild it just spawned — the exact
+    /// sequence that produced the false report.
+    #[tokio::test]
+    async fn a_rebuild_in_flight_skips_the_check_rather_than_racing_it() {
+        let got = check_tests(true).await;
+        assert!(matches!(got, Checked::Unknown(_)), "{got:?}");
+        assert!(!got.is_problem(), "a skipped check is not a failing one");
+        assert!(got.line().contains("rebuild is in flight"), "{}", got.line());
+    }
+
+    /// The three states are visually distinct, so a list of them reads.
+    #[test]
+    fn each_state_is_marked_differently() {
+        let marks: Vec<char> = [
+            Checked::Ok("a".into()),
+            Checked::Problem("b".into()),
+            Checked::Unknown("c".into()),
+        ]
+        .iter()
+        .map(|c| c.line().trim_start().chars().next().unwrap())
+        .collect();
+        assert_eq!(marks.len(), 3);
+        assert!(marks[0] != marks[1] && marks[1] != marks[2] && marks[0] != marks[2], "{marks:?}");
     }
 }
