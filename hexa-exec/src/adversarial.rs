@@ -495,11 +495,20 @@ async fn ask<T: serde::de::DeserializeOwned>(
     if let Answer::Answered(v) = frontier {
         return (Answer::Answered(v), Reviewer::Frontier);
     }
+    // Why the frontier did not answer, for the case where the local one does
+    // not either: an operator with both paths shut needs both reasons, and
+    // the frontier's is the one that says the account is out of budget.
+    let frontier_why = match &frontier {
+        Answer::NotAnswered(why) => format!("frontier: {why}"),
+        Answer::Failed(e) => format!("frontier failed: {e}"),
+        Answer::Answered(_) => unreachable!("answered was returned above"),
+    };
     let model = review_model().unwrap_or_else(|| "no tier model".to_string());
     let local = read_answer::<T>(Ok(local_run(prompt, code, truncated).await));
     match local {
         Answer::Answered(v) => (Answer::Answered(v), Reviewer::Local(model)),
-        other => (other, Reviewer::None),
+        Answer::NotAnswered(why) => (Answer::NotAnswered(format!("{frontier_why}; then {model}: {why}")), Reviewer::None),
+        Answer::Failed(e) => (Answer::Failed(format!("{frontier_why}; then {model}: {e}")), Reviewer::None),
     }
 }
 
@@ -1212,6 +1221,17 @@ mod answered_tests {
         assert!(code.contains("fn a() {}") && code.contains("fn b() {}"), "{code}");
         assert!(code.find("other.rs").unwrap() < code.find("small.rs").unwrap(), "name order: {code}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Both paths shut means both reasons: the frontier's names the budget,
+    /// the local one names what the model said (ADR-2609131948).
+    #[test]
+    fn a_non_answer_from_both_paths_carries_both_reasons() {
+        // The shape `ask` builds when neither answers.
+        let combined = format!("{}; then {}: {}", "frontier: You've hit your monthly spend limit.", "a-model", "I cannot help with that.");
+        assert!(combined.starts_with("frontier: "), "the frontier's reason leads: {combined}");
+        assert!(combined.contains("spend limit"), "{combined}");
+        assert!(combined.contains("a-model: I cannot help"), "and the local model's follows: {combined}");
     }
 
     /// ADR-2609131907 §1: the probe must actually contain the defect its
