@@ -33,7 +33,7 @@ const LENSES: &[Lens] = &[
     Lens { key: "edges", focus: "boundary conditions, empty/zero/duplicate inputs, error paths, terminal-state operations" },
 ];
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Finding {
     pub title: String,
     #[serde(default)]
@@ -43,12 +43,12 @@ pub struct Finding {
     pub lens: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug, PartialEq)]
 struct FindingsEnvelope {
     findings: Vec<Finding>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug, PartialEq)]
 struct VerdictEnvelope {
     is_real: bool,
     #[serde(default)]
@@ -62,7 +62,94 @@ pub struct ReviewReport {
     pub confirmed: Vec<Finding>,
     pub fixed: Vec<String>,
     pub gate_passed: bool,
+    /// Whether the final gate was run at all. A pass that returned before
+    /// it did not fail the gate; it never asked (ADR-2609131646).
+    pub gate_run: bool,
     pub notes: Vec<String>,
+    /// How many lenses were asked (ADR-2609131646).
+    pub lenses: usize,
+    /// How many replied with the envelope that was asked for. Zero means
+    /// nothing was reviewed, whatever the counts say.
+    pub answered: usize,
+}
+
+impl ReviewReport {
+    /// Did any lens answer? A pass where none did reviewed nothing and may
+    /// not report a clean file (ADR-2609131646 §2).
+    pub fn reviewed(&self) -> bool {
+        self.answered > 0
+    }
+
+    /// The gate, in words: it ran and passed, ran and failed, or was never
+    /// reached. "FAIL" for a gate nobody ran is the same lie as a clean
+    /// review nobody performed.
+    pub fn gate_line(&self) -> &'static str {
+        match (self.gate_run, self.gate_passed) {
+            (false, _) => "not run",
+            (true, true) => "PASS",
+            (true, false) => "FAIL",
+        }
+    }
+
+    /// The headline: what this pass is entitled to claim.
+    pub fn verdict_line(&self) -> String {
+        if !self.reviewed() {
+            return format!("{} of {} lenses answered — nothing was reviewed", self.answered, self.lenses);
+        }
+        let scope = if self.answered < self.lenses {
+            format!(" ({} of {} lenses answered)", self.answered, self.lenses)
+        } else {
+            String::new()
+        };
+        format!(
+            "{} candidate(s) → {} confirmed real → {} fixed (gate-passed){}",
+            self.candidate,
+            self.confirmed.len(),
+            self.fixed.len(),
+            scope
+        )
+    }
+}
+
+/// What came back from one agent asked for a JSON envelope.
+///
+/// `claude -p` exits 0 when it declines: a spend limit, an expired login and
+/// a refusal are all successful processes carrying prose. Parsing is the
+/// only thing that separates an answer from a non-answer, so it is the thing
+/// that decides (ADR-2609131646 §1).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Answer<T> {
+    Answered(T),
+    /// The call returned, and what it returned was not the envelope. The
+    /// string is the first line of it, for the operator.
+    NotAnswered(String),
+    /// The call itself failed: a timeout, a spawn error, a panicked task.
+    Failed(String),
+}
+
+/// The first line of a reply, trimmed for a status line.
+fn first_line(text: &str) -> String {
+    let line = text.trim().lines().next().unwrap_or("").trim();
+    if line.is_empty() {
+        return "empty reply".to_string();
+    }
+    let mut out: String = line.chars().take(120).collect();
+    if line.chars().count() > 120 {
+        out.push('…');
+    }
+    out
+}
+
+/// Read one agent's reply as the envelope it was asked for.
+fn read_answer<T: serde::de::DeserializeOwned>(result: Result<Result<String, String>, String>) -> Answer<T> {
+    match result {
+        Ok(Ok(out)) => match extract_json(&out).and_then(|js| serde_json::from_str::<T>(js).ok()) {
+            Some(v) => Answer::Answered(v),
+            None => Answer::NotAnswered(first_line(&out)),
+        },
+        Ok(Err(e)) => Answer::Failed(e),
+        Err(e) => Answer::Failed(e),
+    }
 }
 
 /// Extract the first balanced JSON value (object or array) from agent prose. Pure and
@@ -353,24 +440,34 @@ pub async fn run_review_with(target: &str, gate: &str, repo_root: &Path, reporte
         let root = repo_root.to_path_buf();
         hunts.push((lens.key, tokio::spawn(async move { claude_run_retry(&prompt, &root, 600, DEFAULT_RETRIES).await })));
     }
+    report.lenses = hunts.len();
     for (key, h) in hunts {
-        match h.await {
-            Ok(Ok(out)) => {
-                let mut n = 0;
-                if let Some(js) = extract_json(&out) {
-                    if let Ok(env) = serde_json::from_str::<FindingsEnvelope>(js) {
-                        n = env.findings.len();
-                        report.candidate += n;
-                        report.confirmed.extend(env.findings); // staged; pruned by verify below
-                    }
-                }
+        match read_answer::<FindingsEnvelope>(h.await.map_err(|e| e.to_string())) {
+            Answer::Answered(env) => {
+                report.answered += 1;
+                let n = env.findings.len();
+                report.candidate += n;
+                report.confirmed.extend(env.findings); // staged; pruned by verify below
                 hunt.note(format!("{key}: {}", plural(n, "candidate")));
             }
-            Ok(Err(e)) => hunt.note(format!("{key}: no answer ({e})")),
-            Err(_) => hunt.note(format!("{key}: task failed")),
+            Answer::NotAnswered(why) => {
+                hunt.note(format!("{key}: NO ANSWER — {why}"));
+                report.notes.push(format!("{key} did not answer: {why}"));
+            }
+            Answer::Failed(e) => {
+                hunt.note(format!("{key}: FAILED — {e}"));
+                report.notes.push(format!("{key} failed: {e}"));
+            }
         }
     }
     let candidates = std::mem::take(&mut report.confirmed);
+    if !report.reviewed() {
+        hunt.finish(format!("no lens answered — nothing was reviewed ({} asked)", report.lenses));
+        report.notes.push("nothing was reviewed: no lens returned the findings envelope".to_string());
+        // A gate run now would pass on code nobody read, and a pass is not
+        // entitled to that claim (ADR-2609131646 §3).
+        return report;
+    }
     hunt.finish(format!("{} to verify", plural(candidates.len(), "candidate")));
 
     // ── Phase 2: skeptical verify (parallel, default-refute) ─────────────────
@@ -389,22 +486,25 @@ pub async fn run_review_with(target: &str, gate: &str, repo_root: &Path, reporte
         checks.push((f, tokio::spawn(async move { claude_run_retry(&prompt, &root, 600, DEFAULT_RETRIES).await })));
     }
     for (f, c) in checks {
-        match c.await {
-            Ok(Ok(out)) => {
-                let verdict = extract_json(&out).and_then(|js| serde_json::from_str::<VerdictEnvelope>(js).ok());
-                match verdict {
-                    Some(v) if v.is_real => {
-                        verify.note(format!("real: {}", f.title));
-                        report.confirmed.push(f);
-                    }
-                    Some(v) => {
-                        verify.note(format!("refuted: {}", f.title));
-                        report.notes.push(format!("refuted: {} — {}", f.title, v.reasoning));
-                    }
-                    None => verify.note(format!("no verdict: {}", f.title)),
-                }
+        match read_answer::<VerdictEnvelope>(c.await.map_err(|e| e.to_string())) {
+            Answer::Answered(v) if v.is_real => {
+                verify.note(format!("real: {}", f.title));
+                report.confirmed.push(f);
             }
-            _ => verify.note(format!("no answer: {}", f.title)),
+            Answer::Answered(v) => {
+                verify.note(format!("refuted: {}", f.title));
+                report.notes.push(format!("refuted: {} — {}", f.title, v.reasoning));
+            }
+            // Unverified is not refuted: the claim stands unexamined, and
+            // saying so is the point (ADR-2609131646 §1).
+            Answer::NotAnswered(why) => {
+                verify.note(format!("NO VERDICT: {} — {why}", f.title));
+                report.notes.push(format!("unverified, no verdict: {} — {why}", f.title));
+            }
+            Answer::Failed(e) => {
+                verify.note(format!("VERIFY FAILED: {} — {e}", f.title));
+                report.notes.push(format!("unverified, call failed: {} — {e}", f.title));
+            }
         }
     }
     verify.finish(format!("{} confirmed real", report.confirmed.len()));
@@ -439,8 +539,9 @@ pub async fn run_review_with(target: &str, gate: &str, repo_root: &Path, reporte
     let final_gate = Phase::start(&reporter, "gate", format!("running: {gate}"), HEARTBEAT);
     let (passed, _) = crate::direct_exec::run_evidence(gate, repo_root).await;
     report.gate_passed = passed;
+    report.gate_run = true;
     final_gate.finish(if passed { "passed" } else { "FAILED" });
-    if passed {
+    if passed && report.reviewed() {
         let mut paths: Vec<String> = dirty_paths(repo_root)
             .await
             .into_iter()
@@ -634,6 +735,79 @@ pub async fn run_build_with(
         .await;
     }
     report
+}
+
+#[cfg(test)]
+mod answered_tests {
+    use super::*;
+
+    fn ok(body: &str) -> Result<Result<String, String>, String> {
+        Ok(Ok(body.to_string()))
+    }
+
+    /// ADR-2609131646 §1: parsing decides. An envelope is an answer, prose
+    /// is not, and the refusal text survives into the reason.
+    #[test]
+    fn an_envelope_is_answered_and_prose_is_not() {
+        let a: Answer<FindingsEnvelope> = read_answer(ok(r#"{"findings":[]}"#));
+        assert!(matches!(a, Answer::Answered(ref e) if e.findings.is_empty()), "an empty list is a real answer: {a:?}");
+
+        let a: Answer<FindingsEnvelope> = read_answer(ok("You've hit your monthly spend limit. Switch to another model."));
+        assert_eq!(a, Answer::NotAnswered("You've hit your monthly spend limit. Switch to another model.".into()));
+
+        let a: Answer<FindingsEnvelope> = read_answer(ok("   "));
+        assert_eq!(a, Answer::NotAnswered("empty reply".into()));
+
+        let a: Answer<FindingsEnvelope> = read_answer(Ok(Err("claude -p timed out".into())));
+        assert_eq!(a, Answer::Failed("claude -p timed out".into()));
+
+        // Markdown fences still parse: that is why extract_json exists.
+        let a: Answer<FindingsEnvelope> =
+            read_answer(ok("Here you go:\n```json\n{\"findings\":[{\"title\":\"t\",\"location\":\"l\",\"description\":\"d\",\"lens\":\"x\"}]}\n```"));
+        assert!(matches!(a, Answer::Answered(ref e) if e.findings.len() == 1), "{a:?}");
+    }
+
+    /// §2: a pass where no lens answered reviewed nothing and may not say
+    /// otherwise — this is the run that produced the ADR.
+    #[test]
+    fn a_review_with_no_answer_is_not_a_clean_review() {
+        let none = ReviewReport { lenses: 4, answered: 0, gate_passed: true, ..ReviewReport::default() };
+        assert!(!none.reviewed());
+        let line = none.verdict_line();
+        assert_eq!(line, "0 of 4 lenses answered — nothing was reviewed");
+        assert!(!line.contains("confirmed real"), "never a clean-sounding count: {line}");
+    }
+
+    /// §4: a partial review keeps its count and says how partial it was.
+    #[test]
+    fn a_partial_review_keeps_its_count_and_names_the_ratio() {
+        let partial = ReviewReport { lenses: 4, answered: 2, candidate: 3, gate_passed: true, ..ReviewReport::default() };
+        assert!(partial.reviewed());
+        let line = partial.verdict_line();
+        assert!(line.starts_with("3 candidate(s) → 0 confirmed real → 0 fixed (gate-passed)"), "{line}");
+        assert!(line.ends_with("(2 of 4 lenses answered)"), "{line}");
+
+        let whole = ReviewReport { lenses: 4, answered: 4, candidate: 3, gate_passed: true, ..ReviewReport::default() };
+        assert!(!whole.verdict_line().contains("lenses answered"), "a full review says nothing about the ratio");
+    }
+
+    /// A gate nobody ran is reported as such, never as a failure.
+    #[test]
+    fn a_gate_that_never_ran_is_not_a_failed_gate() {
+        let unreviewed = ReviewReport { lenses: 4, answered: 0, ..ReviewReport::default() };
+        assert_eq!(unreviewed.gate_line(), "not run");
+        let failed = ReviewReport { lenses: 4, answered: 4, gate_run: true, gate_passed: false, ..ReviewReport::default() };
+        assert_eq!(failed.gate_line(), "FAIL");
+        let passed = ReviewReport { lenses: 4, answered: 4, gate_run: true, gate_passed: true, ..ReviewReport::default() };
+        assert_eq!(passed.gate_line(), "PASS");
+    }
+
+    #[test]
+    fn a_first_line_is_trimmed_not_dropped() {
+        assert_eq!(first_line("one\ntwo"), "one");
+        assert_eq!(first_line(""), "empty reply");
+        assert_eq!(first_line(&"x".repeat(200)).chars().count(), 121, "120 plus the ellipsis");
+    }
 }
 
 #[cfg(test)]

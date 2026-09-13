@@ -223,20 +223,20 @@ pub async fn run_harden(args: HardenArgs) -> anyhow::Result<()> {
     let report = hexa_exec::adversarial::run_review_with(&args.target, &args.gate, &repo_root, reporter("harden", &repo_root)).await;
     running_done(&repo_root);
     print_review(&report, "  ");
+    // A pass that reviewed nothing is not a pass: `hexa harden && ship`
+    // would otherwise proceed on code no reviewer read (ADR-2609131646 §2).
+    if !report.reviewed() {
+        anyhow::bail!("nothing was reviewed: {} of {} lenses answered", report.answered, report.lenses);
+    }
     Ok(())
 }
 
 /// Render a review report. Shared so `hexa build --harden` and `hexa harden`
 /// cannot drift into reporting the same result two different ways.
 fn print_review(report: &hexa_exec::adversarial::ReviewReport, indent: &str) {
-    println!(
-        "{}{} {} candidate(s) → {} confirmed real → {} fixed (gate-passed)",
-        indent,
-        "✓".green().bold(),
-        report.candidate,
-        report.confirmed.len(),
-        report.fixed.len()
-    );
+    // A pass that reviewed nothing does not get a tick (ADR-2609131646 §2).
+    let mark = if report.reviewed() { "\u{2713}".green().bold() } else { "\u{26d4}".red().bold() };
+    println!("{}{} {}", indent, mark, report.verdict_line());
     for f in &report.confirmed {
         let mark = if report.fixed.contains(&f.title) { "✓".green() } else { "•".yellow() };
         println!("{}  {} [{}] {} {}", indent, mark, f.lens, f.title, f.location.dimmed());
@@ -244,11 +244,12 @@ fn print_review(report: &hexa_exec::adversarial::ReviewReport, indent: &str) {
     for n in &report.notes {
         println!("{}  {} {}", indent, "·".dimmed(), n.dimmed());
     }
-    println!(
-        "{}  final gate: {}",
-        indent,
-        if report.gate_passed { "PASS".green() } else { "FAIL".red() }
-    );
+    let gate = match report.gate_line() {
+        "PASS" => "PASS".green(),
+        "FAIL" => "FAIL".red(),
+        other => other.dimmed(),
+    };
+    println!("{}  final gate: {}", indent, gate);
 }
 
 #[cfg(test)]
