@@ -230,11 +230,25 @@ pub fn path_words(found: &[Found]) -> String {
     if names.is_empty() { "none".to_string() } else { names.join(", ") }
 }
 
+/// Does this authority already carry a port?
+///
+/// A bare `contains(':')` says yes for every IPv6 address, whose own colons
+/// are not a port separator, so `http://[::1]` got no default appended and
+/// `to_socket_addrs` then refused it — a reachable server reported
+/// unreachable. In the bracket form the port, if any, follows the `]`.
+/// Found by `hexa harden` on this file (ADR-2609131907).
+fn has_port(hostport: &str) -> bool {
+    match hostport.rfind(']') {
+        Some(close) => hostport[close + 1..].starts_with(':'),
+        None => hostport.contains(':'),
+    }
+}
+
 /// A TCP connect with a short timeout; `None` when the URL has no host.
 fn probe(url: &str) -> Option<bool> {
     let hostport = url.trim_start_matches("http://").trim_start_matches("https://");
     let hostport = hostport.split('/').next().unwrap_or("");
-    let hostport = if hostport.contains(':') {
+    let hostport = if has_port(hostport) {
         hostport.to_string()
     } else if url.starts_with("https://") {
         format!("{hostport}:443")
@@ -243,6 +257,29 @@ fn probe(url: &str) -> Option<bool> {
     };
     let addr = hostport.to_socket_addrs().ok()?.next()?;
     Some(TcpStream::connect_timeout(&addr, Duration::from_millis(700)).is_ok())
+}
+
+#[cfg(test)]
+mod has_port_tests {
+    use super::has_port;
+
+    /// An IPv6 address's own colons are not a port separator. `[::1]` with
+    /// no port must take the default like any other host.
+    #[test]
+    fn an_ipv6_address_without_a_port_has_no_port() {
+        assert!(!has_port("[::1]"), "the colons are the address");
+        assert!(!has_port("[2001:db8::1]"));
+        assert!(has_port("[::1]:11434"), "the port follows the bracket");
+        assert!(has_port("[2001:db8::1]:443"));
+    }
+
+    #[test]
+    fn an_ordinary_host_is_judged_by_its_colon() {
+        assert!(!has_port("127.0.0.1"));
+        assert!(!has_port("localhost"));
+        assert!(has_port("127.0.0.1:7000"));
+        assert!(has_port("localhost:11434"));
+    }
 }
 
 #[cfg(test)]

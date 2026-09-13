@@ -56,7 +56,7 @@ struct VerdictEnvelope {
 }
 
 /// Outcome of a review run.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct ReviewReport {
     pub candidate: usize,
     pub confirmed: Vec<Finding>,
@@ -71,11 +71,31 @@ pub struct ReviewReport {
     pub reviewed_by: Vec<String>,
     /// Whether the local reviewer saw a truncated target (§3).
     pub truncated: bool,
+    /// What an empty local review was shown to be worth (ADR-2609131907).
+    pub calibration: Calibration,
     /// How many lenses were asked (ADR-2609131646).
     pub lenses: usize,
     /// How many replied with the envelope that was asked for. Zero means
     /// nothing was reviewed, whatever the counts say.
     pub answered: usize,
+}
+
+impl Default for ReviewReport {
+    fn default() -> Self {
+        ReviewReport {
+            candidate: 0,
+            confirmed: Vec::new(),
+            fixed: Vec::new(),
+            gate_passed: false,
+            gate_run: false,
+            notes: Vec::new(),
+            reviewed_by: Vec::new(),
+            truncated: false,
+            calibration: Calibration::NotNeeded,
+            lenses: 0,
+            answered: 0,
+        }
+    }
 }
 
 impl ReviewReport {
@@ -112,6 +132,7 @@ impl ReviewReport {
             format!(" · reviewed by {}", self.reviewed_by.join(", "))
         };
         let cut = if self.truncated { " · target truncated" } else { "" };
+        let cal = self.calibration.note().map(|n| format!(" · {n}")).unwrap_or_default();
         format!(
             "{} candidate(s) → {} confirmed real → {} fixed (gate-passed){}{}{}",
             self.candidate,
@@ -120,7 +141,7 @@ impl ReviewReport {
             scope,
             by,
             cut
-        )
+        ) + &cal
     }
 
     /// Record who answered, once each, in the order they first did.
@@ -272,16 +293,15 @@ impl Drop for Phase {
 
 /// `1 lens`, `4 lenses`, `3 designs`. A sibilant takes `es`; everything
 /// else this harness counts takes `s`.
-/// How the calls will actually be issued. The frontier takes them at once;
-/// a local reviewer takes them one at a time (ADR-2609131822 §2), and a
-/// phase that says "in parallel" while its callers queue is describing a
-/// plan rather than what is happening.
+/// How the calls will actually be issued.
+///
+/// Both halves are true of every pass and neither can be predicted:
+/// `budget_check` reads hexa's own spend accounting, not the account's live
+/// limit, so whether the frontier will answer is only known by asking it.
+/// The lenses go out at once; whichever fall back queue behind one permit
+/// (ADR-2609131822 §2). Saying both is honest where picking one was a guess.
 fn issue_order() -> &'static str {
-    if crate::frontier::budget_check().is_ok() {
-        "in parallel"
-    } else {
-        "one at a time — the frontier is unavailable, so the local reviewer takes them in turn"
-    }
+    "in parallel; any that fall back to the local reviewer take their turn"
 }
 
 fn plural(n: usize, one: &str) -> String {
@@ -403,6 +423,10 @@ fn review_model() -> Option<String> {
     ["t2.5", "t2", "t1"].iter().find_map(|t| hexa_infer::tier_model(t))
 }
 
+/// Attempts for one local call. A local gateway drops a connection now and
+/// then; the frontier path has had retries all along.
+const LOCAL_ATTEMPTS: u32 = 3;
+
 /// One local call at a time, process-wide (ADR-2609131822).
 ///
 /// One model on one machine serves one request at a time. Four arriving
@@ -433,14 +457,28 @@ async fn local_run(prompt: &str, code: &str, truncated: bool) -> Result<String, 
         .ok()
         .and_then(|v| v.parse::<u32>().ok())
         .unwrap_or(REVIEW_MAX_TOKENS);
-    hexa_infer::complete_text(
-        &model,
-        "You are a meticulous reviewer. Think briefly, then answer with the exact JSON object asked for and nothing else.",
-        &user,
-        budget,
-    )
-    .await
-    .map_err(|e| format!("{model}: {e}"))
+    // The frontier path retries; this one did not, so a gateway that drops
+    // one connection cost a whole lens — observed twice on this machine.
+    let mut last = String::new();
+    for attempt in 1..=LOCAL_ATTEMPTS {
+        match hexa_infer::complete_text(
+            &model,
+            "You are a meticulous reviewer. Think briefly, then answer with the exact JSON object asked for and nothing else.",
+            &user,
+            budget,
+        )
+        .await
+        {
+            Ok(v) => return Ok(v),
+            Err(e) => {
+                last = format!("{model}: {e}");
+                if attempt < LOCAL_ATTEMPTS {
+                    tracing::debug!(attempt, error = %last, "local reviewer call failed; retrying");
+                }
+            }
+        }
+    }
+    Err(last)
 }
 
 /// Ask the frontier; on any non-answer, ask the tier-mapped model with the
@@ -462,6 +500,94 @@ async fn ask<T: serde::de::DeserializeOwned>(
     match local {
         Answer::Answered(v) => (Answer::Answered(v), Reviewer::Local(model)),
         other => (other, Reviewer::None),
+    }
+}
+
+/// A short snippet with one planted defect, for asking a reviewer that
+/// reported nothing whether it can find anything at all (ADR-2609131907).
+///
+/// The defect is a use-after-release: the guard is dropped on its own line,
+/// and the map is then written outside the lock. It is of a class the
+/// concurrency lens hunts, and it is unambiguous — a reviewer that reads the
+/// code cannot honestly call this clean.
+const PROBE_CODE: &str = r#"
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+pub struct Counters {
+    inner: Arc<Mutex<HashMap<String, u64>>>,
+}
+
+impl Counters {
+    pub fn bump(&self, key: &str) {
+        let mut guard = self.inner.lock().unwrap();
+        let next = guard.get(key).copied().unwrap_or(0) + 1;
+        drop(guard);
+        // The lock is gone; this write races every other caller.
+        self.inner.lock().unwrap().insert(key.to_string(), next);
+    }
+}
+"#;
+
+/// What the probe's reviewer must notice for its answer to count.
+const PROBE_EXPECTS: &str = "the read and the write are not under one lock";
+
+/// Whether an empty local review was shown to be worth anything
+/// (ADR-2609131907 §2).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Calibration {
+    /// Not applicable: findings were produced, or the frontier answered.
+    NotNeeded,
+    /// The reviewer found the planted defect.
+    Calibrated,
+    /// The reviewer missed it; an empty result from it is not evidence.
+    Missed,
+    /// The probe itself did not answer.
+    Unrun(String),
+}
+
+impl Calibration {
+    pub fn note(&self) -> Option<String> {
+        match self {
+            Calibration::NotNeeded => None,
+            Calibration::Calibrated => Some("calibrated — the reviewer found a planted defect".into()),
+            Calibration::Missed => Some(
+                "uncalibrated — the reviewer missed a planted defect, so an empty result is not evidence".into(),
+            ),
+            Calibration::Unrun(why) => Some(format!("calibration did not run: {why}")),
+        }
+    }
+}
+
+/// Does a reply show the reviewer noticed the planted defect? Judged on the
+/// finding's own words, not on a count: a reviewer may report it once or
+/// alongside noise.
+fn probe_found_it(findings: &[Finding]) -> bool {
+    findings.iter().any(|f| {
+        let t = format!("{} {}", f.title, f.description).to_ascii_lowercase();
+        (t.contains("lock") || t.contains("guard") || t.contains("mutex"))
+            && (t.contains("rac") || t.contains("drop") || t.contains("outside") || t.contains("released") || t.contains("atomic"))
+    })
+}
+
+/// Ask the local reviewer to find the planted defect in [`PROBE_CODE`].
+async fn calibrate(repo_root: &Path) -> Calibration {
+    let prompt = format!(
+        "You are an adversarial code reviewer. Hunt this code for concurrency defects: races, \
+         lost updates, work done outside a lock. Report exclusively REAL bugs you can point to. \
+         Output ONLY a JSON object: \
+         {{\"findings\":[{{\"title\":\"...\",\"location\":\"file:line or fn\",\"description\":\"the concrete failure\",\"lens\":\"concurrency\"}}]}}"
+    );
+    let (answer, who) = ask::<FindingsEnvelope>(&prompt, PROBE_CODE, false, repo_root, 600, 1).await;
+    // `who` is deliberately not recorded on the report: the probe reviewed a
+    // snippet, not the target, and `reviewed_by` names who reviewed the code
+    // the findings are about.
+    let _ = who;
+    match answer {
+        Answer::Answered(env) if probe_found_it(&env.findings) => Calibration::Calibrated,
+        Answer::Answered(_) => Calibration::Missed,
+        Answer::NotAnswered(why) => Calibration::Unrun(why),
+        Answer::Failed(e) => Calibration::Unrun(e),
     }
 }
 
@@ -658,6 +784,16 @@ pub async fn run_review_with(target: &str, gate: &str, repo_root: &Path, reporte
         }
     }
     let candidates = std::mem::take(&mut report.confirmed);
+    // An empty answer from a local reviewer is either good news or no news,
+    // and one small call tells them apart (ADR-2609131907 §3). Only then:
+    // the frontier has been observed finding real defects, and a pass with
+    // findings has already shown the reviewer looks.
+    let local_only = report.reviewed_by.iter().any(|r| r != "frontier");
+    if candidates.is_empty() && local_only {
+        let probe = Phase::start(&reporter, "calibrate", "one planted defect, to see if an empty review means anything", HEARTBEAT);
+        report.calibration = calibrate(repo_root).await;
+        probe.finish(report.calibration.note().unwrap_or_else(|| "not needed".into()));
+    }
     if !report.reviewed() {
         hunt.finish(format!("no lens answered — nothing was reviewed ({} asked)", report.lenses));
         report.notes.push("nothing was reviewed: no lens returned the findings envelope".to_string());
@@ -1078,19 +1214,74 @@ mod answered_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// ADR-2609131907 §1: the probe must actually contain the defect its
+    /// expectation describes, or it measures nothing.
+    #[test]
+    fn the_probe_contains_the_defect_it_claims_to() {
+        assert!(PROBE_CODE.contains("drop(guard)"), "the guard is released early");
+        let after_drop = PROBE_CODE.split("drop(guard)").nth(1).unwrap();
+        assert!(after_drop.contains("insert("), "and the write happens after it: {after_drop}");
+        assert!(PROBE_EXPECTS.contains("lock"), "the expectation names what is wrong");
+        assert!(PROBE_CODE.lines().count() < 30, "small enough to be the cheapest call the harness makes");
+    }
+
+    /// §2: a reviewer that names the defect calibrates; one that finds
+    /// nothing, or something else, does not.
+    #[test]
+    fn only_naming_the_planted_defect_calibrates() {
+        let f = |title: &str, desc: &str| Finding {
+            title: title.into(),
+            location: "bump".into(),
+            description: desc.into(),
+            lens: "concurrency".into(),
+        };
+        assert!(probe_found_it(&[f("Lock dropped before the write", "the guard is released, then the map is written, so two callers race")]));
+        assert!(probe_found_it(&[f("Race on counters", "read and write are not atomic because the mutex guard is dropped between them")]));
+        assert!(!probe_found_it(&[]), "finding nothing is not finding it");
+        assert!(!probe_found_it(&[f("unwrap on a poisoned mutex", "lock().unwrap() panics if another thread panicked")]), "a different real bug is not this one");
+    }
+
+    /// §2 and §4: each outcome reads as what it is, and a probe that did not
+    /// answer is not a miss.
+    #[test]
+    fn each_calibration_outcome_says_what_it_is() {
+        assert_eq!(Calibration::NotNeeded.note(), None);
+        assert!(Calibration::Calibrated.note().unwrap().contains("found a planted defect"));
+        let missed = Calibration::Missed.note().unwrap();
+        assert!(missed.contains("not evidence"), "{missed}");
+        let unrun = Calibration::Unrun("spend limit".into()).note().unwrap();
+        assert!(unrun.starts_with("calibration did not run: spend limit"), "{unrun}");
+        assert!(!unrun.contains("not evidence"), "an unrun probe accuses nobody: {unrun}");
+    }
+
+    /// The verdict line carries the qualification where the count is read.
+    #[test]
+    fn the_verdict_line_carries_the_calibration() {
+        let r = ReviewReport {
+            lenses: 4, answered: 3,
+            reviewed_by: vec!["openai/gpt-oss-120b".into()],
+            calibration: Calibration::Missed,
+            ..ReviewReport::default()
+        };
+        let line = r.verdict_line();
+        assert!(line.contains("0 candidate(s)"), "{line}");
+        assert!(line.ends_with("an empty result is not evidence"), "{line}");
+    }
+
     /// ADR-2609131822 §2: the phase describes how the calls are actually
     /// issued. Saying "in parallel" while every caller queues behind one
     /// permit describes a plan, not what is happening.
     #[test]
     fn the_phase_says_how_the_calls_are_issued() {
         let order = issue_order();
-        assert!(
-            order == "in parallel" || order.starts_with("one at a time"),
-            "one of the two real orders, got {order:?}"
-        );
-        // Whichever it is, it is the same sentence the operator reads.
+        // Both halves, because both happen and neither is predictable: the
+        // first cut branched on `budget_check`, which reads hexa's own spend
+        // accounting and not the account's live limit, so it said "in
+        // parallel" on the very run whose lenses all queued.
+        assert!(order.contains("in parallel"), "the lenses do go out at once: {order:?}");
+        assert!(order.contains("local reviewer"), "and the fallbacks queue: {order:?}");
         let line = format!("{} on src/x.rs, {}", plural(4, "lens"), order);
-        assert!(line.starts_with("4 lenses on src/x.rs, "), "{line}");
+        assert!(line.starts_with("4 lenses on src/x.rs, in parallel;"), "{line}");
     }
 
     /// ADR-2609131822: local calls do not overlap, however many are issued
