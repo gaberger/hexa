@@ -383,6 +383,30 @@ fn sync_settings(target: &Path, dry_run: bool) -> Result<Vec<String>> {
 /// template hooks whose command starts with "hexa " are considered
 /// hexa-managed. We replace those while preserving any user-added hooks
 /// (commands that don't start with "hexa ").
+/// Is this entry one of hexa's own hooks?
+///
+/// The command lives at `entry.hooks[].command`, not `entry.command`. Reading
+/// the shallow field found nothing, so every existing entry counted as a user
+/// hook, was kept, and the template was appended next to it. Each sync added
+/// another copy, and every hook fired once more per run (ADR-2609122048).
+fn is_hexa_hook(entry: &serde_json::Value) -> bool {
+    entry
+        .get("hooks")
+        .and_then(|h| h.as_array())
+        .map(|inner| {
+            inner.iter().any(|h| {
+                h.get("command")
+                    .and_then(|c| c.as_str())
+                    .is_some_and(|c| c.starts_with("hexa "))
+            })
+        })
+        .unwrap_or(false)
+        || entry
+            .get("command")
+            .and_then(|c| c.as_str())
+            .is_some_and(|c| c.starts_with("hexa "))
+}
+
 fn merge_hooks(settings: &mut serde_json::Value, template_hooks: &serde_json::Value) {
     let template_obj = match template_hooks.as_object() {
         Some(o) => o,
@@ -420,13 +444,10 @@ fn merge_hooks(settings: &mut serde_json::Value, template_hooks: &serde_json::Va
             .cloned()
             .unwrap_or_default();
 
-        // Keep user hooks (commands NOT starting with "hexa ")
+        // Keep user hooks, drop hexa's own so they are replaced, not repeated.
         let user_hooks: Vec<_> = existing_arr
             .iter()
-            .filter(|entry| {
-                let cmd = entry.get("command").and_then(|c| c.as_str()).unwrap_or("");
-                !cmd.starts_with("hexa ")
-            })
+            .filter(|entry| !is_hexa_hook(entry))
             .cloned()
             .collect();
 
@@ -555,4 +576,51 @@ fn find_hex_section_end(from_marker: &str) -> usize {
     }
 
     from_marker.len()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn template() -> serde_json::Value {
+        json!({
+            "SessionStart": [
+                {"hooks": [{"type": "command", "command": "hexa hook session-start"}]}
+            ]
+        })
+    }
+
+    /// Syncing twice must leave the same file. It used to add another copy of
+    /// every hexa hook per run, so each one fired once more each time.
+    #[test]
+    fn merging_the_same_template_twice_changes_nothing() {
+        let mut settings = json!({});
+        merge_hooks(&mut settings, &template());
+        let once = settings.clone();
+        merge_hooks(&mut settings, &template());
+        assert_eq!(once, settings, "a second sync duplicated the hooks");
+        assert_eq!(settings["hooks"]["SessionStart"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_users_own_hook_survives_the_merge() {
+        let mut settings = json!({
+            "hooks": {
+                "SessionStart": [
+                    {"hooks": [{"type": "command", "command": "./scripts/mine.sh"}]}
+                ]
+            }
+        });
+        merge_hooks(&mut settings, &template());
+        let arr = settings["hooks"]["SessionStart"].as_array().unwrap();
+        assert_eq!(arr.len(), 2, "the user hook or the hexa hook went missing");
+        let cmds: Vec<&str> = arr
+            .iter()
+            .flat_map(|e| e["hooks"].as_array().unwrap())
+            .map(|h| h["command"].as_str().unwrap())
+            .collect();
+        assert!(cmds.contains(&"./scripts/mine.sh"));
+        assert!(cmds.contains(&"hexa hook session-start"));
+    }
 }

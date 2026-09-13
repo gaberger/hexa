@@ -29,5 +29,13 @@ jobs:
         run: cargo build --workspace --release --locked
       - name: Test
         run: cargo test --workspace --release --locked
+      # `hexa dev test lint` denies warnings and had been red since this
+      # repository began, because nothing here ran it (ADR-2609122048).
+      - name: Lint
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Architecture grade
         run: ./target/release/hexa analyze . --grade A+ --exit-code
+      # Syncing must be a no-op on a clean checkout. It was not: every run
+      # appended another copy of every hook.
+      - name: Installed assets are in sync
+        run: ./target/release/hexa assets sync --dry-run | grep -q 'Everything up to date'
