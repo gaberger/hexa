@@ -63,6 +63,18 @@ pub async fn run_doctor(_verbose: bool, _fix: bool) -> anyhow::Result<()> {
     }
     println!("    docs/adrs/:   {}", if cwd.join("docs").join("adrs").is_dir() { "present" } else { "none" });
     println!("    assets:       {} embedded", Assets::iter().count());
+    // A gate needs the tool that runs it (ADR-2609132018). clippy and
+    // rustfmt are optional rustup components, and their absence is silent
+    // until a push.
+    for c in required_components(project_type) {
+        match component_present(c) {
+            true => println!("    {} {:<12} present", "\u{2713}".green(), c),
+            false => {
+                println!("    {} {:<12} missing — rustup component add {}", "\u{2717}".red(), c, c);
+                failures.push(format!("{c} is missing, and a project gate runs it: rustup component add {c}"));
+            }
+        }
+    }
     println!();
 
     // 3. Inference
@@ -537,5 +549,80 @@ mod tests {
         let v = scan("bad.md", "see spacetime-modules/hexflo-coordination for details");
         // Should catch both markers on the same line but we break after first
         assert_eq!(v.len(), 1);
+    }
+}
+/// The toolchain components this project's own gates run
+/// (ADR-2609132018 §1, §3). Only for the project type in hand, and only
+/// what a gate actually runs: the first cut asked for `rustfmt` too, and
+/// doctor promptly failed on a tool no gate in this repository uses, which
+/// is the false failure this whole check exists to prevent.
+fn required_components(project_type: &str) -> &'static [&'static str] {
+    if project_type.starts_with("rust") {
+        &["clippy"]
+    } else {
+        &[]
+    }
+}
+
+/// Does the component answer? Presence is what decides whether the gate can
+/// run here; matching CI's version is a different problem (§4).
+fn component_present(name: &str) -> bool {
+    component_present_with(name, &|n| {
+        std::process::Command::new("cargo")
+            .arg(n)
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    })
+}
+
+/// [`component_present`] with the probe injected, so both directions are
+/// testable without depending on what this machine happens to have
+/// installed (ADR-2609131749: tests do not reach for global state).
+fn component_present_with(name: &str, answers: &dyn Fn(&str) -> bool) -> bool {
+    !name.is_empty() && answers(name)
+}
+
+#[cfg(test)]
+mod toolchain_tests {
+    use super::{component_present, component_present_with, required_components};
+
+    /// ADR-2609132018 §3: only the project type in hand is told about its
+    /// own tools.
+    #[test]
+    fn components_are_required_per_project_type() {
+        assert_eq!(required_components("rust (Cargo.toml)"), &["clippy"], "only what a gate runs");
+        assert!(!required_components("rust (Cargo.toml)").contains(&"rustfmt"), "no gate here runs it");
+        assert!(required_components("go (go.mod)").is_empty(), "a Go project is not told about clippy");
+        assert!(required_components("typescript (package.json)").is_empty());
+        assert!(required_components("unknown").is_empty());
+    }
+
+    /// §4: presence is whether the component answers — both directions,
+    /// driven through the injected probe so the result does not depend on
+    /// what this machine happens to have installed.
+    #[test]
+    fn presence_is_decided_by_whether_the_component_answers() {
+        let installed = |_: &str| true;
+        let absent = |_: &str| false;
+        assert!(component_present_with("clippy", &installed));
+        assert!(!component_present_with("clippy", &absent));
+        assert!(!component_present_with("", &installed), "an empty name asks nothing");
+
+        // The probe is asked about the name it was given, and no other.
+        let only_rustfmt = |n: &str| n == "rustfmt";
+        assert!(component_present_with("rustfmt", &only_rustfmt));
+        assert!(!component_present_with("clippy", &only_rustfmt));
+    }
+
+    /// A component that is genuinely not a cargo subcommand is absent, and
+    /// asking is not an error. This one does touch the machine, which is
+    /// why it only checks the negative direction.
+    #[test]
+    fn an_unknown_component_is_absent_rather_than_a_panic() {
+        assert!(!component_present("definitely-not-a-cargo-subcommand"));
     }
 }
