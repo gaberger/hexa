@@ -121,7 +121,10 @@ pub fn detect_communities(graph: &mut KnowledgeGraph, max_iters: usize) {
             Community {
                 id: cid,
                 label,
-                members: idxs.into_iter().map(|i| graph.nodes[i].id.clone()).collect(),
+                members: idxs
+                    .into_iter()
+                    .map(|i| graph.nodes[i].id.clone())
+                    .collect(),
             }
         })
         .collect();

@@ -24,7 +24,11 @@ async fn build_fixture(dir: &std::path::Path) -> hexa_graph::model::KnowledgeGra
     );
     write(dir, "src/lib.rs", "pub mod thing;\npub fn root_fn() {}\n");
     write(dir, "src/thing.rs", "pub struct Widget;\n");
-    write(dir, "README.md", "# Project Title\n\nSome prose about Beta and Widget.\n");
+    write(
+        dir,
+        "README.md",
+        "# Project Title\n\nSome prose about Beta and Widget.\n",
+    );
 
     let opts = BuildOpts {
         project_id: "test".into(),
@@ -121,7 +125,9 @@ async fn context_bundle_has_neighbourhood() {
     assert_eq!(ctx.kind, "file");
     assert!(ctx.defines.iter().any(|d| d.label == "alpha"));
     assert!(
-        ctx.used_by.iter().any(|u| u.file == "src/b.ts" && u.entity == "alpha"),
+        ctx.used_by
+            .iter()
+            .any(|u| u.file == "src/b.ts" && u.entity == "alpha"),
         "a.ts should be used_by b.ts via alpha"
     );
     assert!(ctx.imported_by.iter().any(|f| f == "src/b.ts"));
@@ -144,8 +150,14 @@ async fn rank_lessons_prefers_neighbourhood_mentions() {
     let ctx = context_for(&g, "src/a.ts", ContextOpts::default()).expect("context");
 
     let lessons = vec![
-        ("lesson:alpha".into(), "the alpha function in src/a.ts needs care".into()),
-        ("lesson:unrelated".into(), "tune the postgres connection pool size".into()),
+        (
+            "lesson:alpha".into(),
+            "the alpha function in src/a.ts needs care".into(),
+        ),
+        (
+            "lesson:unrelated".into(),
+            "tune the postgres connection pool size".into(),
+        ),
         ("lesson:beta".into(), "Beta class consumes alpha".into()),
     ];
     let ranked = rank_lessons(&ctx, &lessons, 6);
@@ -165,4 +177,102 @@ async fn build_is_deterministic() {
     let g2 = build_fixture(tmp2.path()).await;
     // Same structure → identical community assignment and serialization.
     assert_eq!(g1.to_json().unwrap(), g2.to_json().unwrap());
+}
+
+#[tokio::test]
+async fn excluded_dir_name_at_the_root_still_walks() {
+    // The root itself is named `build` — one of EXCLUDE_DIRS. walkdir applies
+    // filter_entry to the root, so rejecting it there ended the walk immediately
+    // and produced an empty graph.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("build");
+    fs::create_dir_all(&root).unwrap();
+    let g = build_fixture(&root).await;
+
+    assert!(
+        g.nodes.iter().any(|n| n.file == "src/a.ts"),
+        "root named `build` yielded {} nodes",
+        g.nodes.len()
+    );
+    // A nested excluded directory is still pruned.
+    write(&root, "target/gen.rs", "pub fn generated() {}\n");
+    let g = build_fixture(&root).await;
+    assert!(!g.nodes.iter().any(|n| n.file.starts_with("target/")));
+}
+
+#[tokio::test]
+async fn a_scaffolded_root_crate_keeps_its_crate_import_edges() {
+    // The layout `hexa new` scaffolds for Rust: one crate at the graph root, so
+    // every path starts `src/` with no crate directory in front of it. Import
+    // resolution looked for the substring `/src/`, with a leading slash, found
+    // nothing, and dropped every `use crate::…` edge. `graph consumers` then
+    // printed SAFE TO REMOVE for a file the build depends on — the ADR-2609122048
+    // excision-oracle failure, still live for the root-crate case.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("counter-app");
+    fs::create_dir_all(&root).unwrap();
+
+    write(
+        &root,
+        "src/domain/user.rs",
+        "pub struct User {\n    pub id: u32,\n}\n",
+    );
+    write(
+        &root,
+        "src/usecases/create_user.rs",
+        "use crate::domain::user::User;\npub fn create_user(id: u32) -> User {\n    User { id }\n}\n",
+    );
+    write(&root, "src/lib.rs", "pub mod domain;\npub mod usecases;\n");
+
+    let opts = BuildOpts {
+        project_id: "root-crate".into(),
+        mode: Mode::Ast,
+        ..Default::default()
+    };
+    let g = build(&root, opts, &NoopSemanticExtractor).await.unwrap();
+
+    let ctx = hexa_graph::context::context_for(
+        &g,
+        "src/domain/user.rs",
+        hexa_graph::context::ContextOpts::default(),
+    )
+    .expect("context for src/domain/user.rs");
+
+    // What `hexa graph consumers` reads to decide safe_to_remove.
+    assert!(
+        ctx.imported_by
+            .iter()
+            .any(|f| f == "src/usecases/create_user.rs"),
+        "create_user.rs imports crate::domain::user, imported_by was {:?}",
+        ctx.imported_by
+    );
+    assert!(
+        ctx.used_by.iter().any(|u| u.entity == "User"),
+        "create_user.rs names User, used_by was {:?}",
+        ctx.used_by
+    );
+
+    // An integration test names the root crate by its ident; that reaches `src/lib.rs`.
+    write(
+        &root,
+        "tests/counter.rs",
+        "use counter_app::usecases::create_user::create_user;\n#[test]\nfn works() {\n    let _ = create_user(1);\n}\n",
+    );
+    let opts = BuildOpts {
+        project_id: "root-crate".into(),
+        mode: Mode::Ast,
+        ..Default::default()
+    };
+    let g = build(&root, opts, &NoopSemanticExtractor).await.unwrap();
+    let lib = hexa_graph::context::context_for(
+        &g,
+        "src/lib.rs",
+        hexa_graph::context::ContextOpts::default(),
+    )
+    .expect("context for src/lib.rs");
+    assert!(
+        lib.imported_by.iter().any(|f| f == "tests/counter.rs"),
+        "tests/counter.rs names the root crate, imported_by was {:?}",
+        lib.imported_by
+    );
 }

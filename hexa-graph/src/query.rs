@@ -208,14 +208,10 @@ fn neighbour_labels(graph: &KnowledgeGraph) -> HashMap<&str, Vec<String>> {
     let label_of = |id: &str| graph.node(id).map(|n| n.label.clone());
     for e in &graph.edges {
         if let Some(l) = label_of(&e.dst) {
-            map.entry(e.src.as_str())
-                .or_default()
-                .extend(tokenize(&l));
+            map.entry(e.src.as_str()).or_default().extend(tokenize(&l));
         }
         if let Some(l) = label_of(&e.src) {
-            map.entry(e.dst.as_str())
-                .or_default()
-                .extend(tokenize(&l));
+            map.entry(e.dst.as_str()).or_default().extend(tokenize(&l));
         }
     }
     map

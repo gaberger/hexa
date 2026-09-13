@@ -103,7 +103,7 @@ pub async fn build(
 
     // Dedup sets so repeated ids never produce duplicate nodes/edges.
     let mut node_ids: HashSet<String> = HashSet::new();
-    let mut edge_ids: HashSet<String> = HashSet::new();
+    let mut edge_ids: HashMap<String, usize> = HashMap::new();
     // label (lowercased) → entity node ids, for cross-file reference edges.
     let mut label_index: HashMap<String, Vec<String>> = HashMap::new();
     // entity node id → its file, to resolve a reference to the right definition.
@@ -115,12 +115,14 @@ pub async fn build(
     // prose chunks for the deep semantic pass: (file_rel, prose).
     let mut prose_chunks: Vec<(String, String)> = Vec::new();
 
-    let push_node = |graph: &mut KnowledgeGraph,
-                     seen: &mut HashSet<String>,
-                     node: Node| {
+    // Returns true only the first time an id is seen, so callers can keep their
+    // own per-node bookkeeping (label_index) free of duplicates.
+    let push_node = |graph: &mut KnowledgeGraph, seen: &mut HashSet<String>, node: Node| -> bool {
         if seen.insert(node.id.clone()) {
             graph.nodes.push(node);
+            return true;
         }
+        false
     };
 
     for entry in WalkDir::new(root)
@@ -175,7 +177,7 @@ pub async fn build(
             let fx = code::extract_file(&source, lang);
             for ent in fx.entities {
                 let eid = id_for(ent.kind, &rel_lossy, &ent.name);
-                push_node(
+                let is_new = push_node(
                     &mut graph,
                     &mut node_ids,
                     Node {
@@ -197,10 +199,17 @@ pub async fn build(
                     Confidence::Extracted,
                 );
                 id_file.insert(eid.clone(), rel_lossy.clone());
-                label_index
-                    .entry(ent.name.to_ascii_lowercase())
-                    .or_default()
-                    .push(eid);
+                // Only index a freshly created node. Two entities can share a kind,
+                // file and name — cfg-gated Rust duplicates, Go methods with the same
+                // name on different receivers — and they collapse onto one node id.
+                // Indexing the id twice would make the ambiguity counts below measure
+                // entries rather than distinct entities.
+                if is_new {
+                    label_index
+                        .entry(ent.name.to_ascii_lowercase())
+                        .or_default()
+                        .push(eid);
+                }
             }
             for imp in fx.imports {
                 pending_imports.push((rel_lossy.clone(), imp.raw_path, imp.names));
@@ -240,7 +249,7 @@ pub async fn build(
     }
 
     // ── Resolve import + reference edges (now that all files/entities are known).
-    let crate_roots = crate_roots(&file_set);
+    let crate_roots = crate_roots(root, &file_set);
     for (from_rel, raw_path, names) in &pending_imports {
         let from_file_id = id_for(NodeKind::File, from_rel, from_rel);
         let resolved = resolve_import(from_rel, raw_path, &file_set, &crate_roots);
@@ -330,8 +339,12 @@ pub async fn build(
 
     // ── Deep mode: LLM-inferred semantic edges from doc prose.
     if opts.mode == Mode::Deep {
-        let known_labels: Vec<String> =
-            graph.nodes.iter().map(|n| n.label.clone()).take(400).collect();
+        let known_labels: Vec<String> = graph
+            .nodes
+            .iter()
+            .map(|n| n.label.clone())
+            .take(400)
+            .collect();
         for (file_rel, prose) in &prose_chunks {
             let ctx = SemanticContext {
                 text: prose.clone(),
@@ -380,22 +393,42 @@ pub async fn build(
 
 fn add_edge(
     graph: &mut KnowledgeGraph,
-    seen: &mut HashSet<String>,
+    seen: &mut HashMap<String, usize>,
     kind: EdgeKind,
     src: &str,
     dst: &str,
     conf: Confidence,
 ) {
     let id = edge_id(kind, src, dst);
-    if seen.insert(id.clone()) {
-        graph.edges.push(Edge {
-            id,
-            src: src.to_string(),
-            dst: dst.to_string(),
-            kind,
-            confidence: conf,
-            weight: 1.0,
-        });
+    // The id carries no confidence, so a second write for the same
+    // (kind, src, dst) is the same edge seen with different certainty. Imports
+    // resolve in file order, so the certain write can arrive after the guess:
+    // keep the strongest confidence, not the first one.
+    if let Some(&idx) = seen.get(&id) {
+        let existing = &mut graph.edges[idx];
+        if confidence_rank(conf) > confidence_rank(existing.confidence) {
+            existing.confidence = conf;
+        }
+        return;
+    }
+    seen.insert(id.clone(), graph.edges.len());
+    graph.edges.push(Edge {
+        id,
+        src: src.to_string(),
+        dst: dst.to_string(),
+        kind,
+        confidence: conf,
+        weight: 1.0,
+    });
+}
+
+/// How certain a confidence level is. Higher wins when the same edge is
+/// written twice.
+fn confidence_rank(conf: Confidence) -> u8 {
+    match conf {
+        Confidence::Ambiguous => 0,
+        Confidence::Inferred => 1,
+        Confidence::Extracted => 2,
     }
 }
 
@@ -431,6 +464,11 @@ fn ensure_concept(
 }
 
 fn is_excluded(entry: &walkdir::DirEntry) -> bool {
+    // walkdir applies filter_entry to the root too; rejecting it skips the whole
+    // walk, so a root literally named `build` or `target` would yield nothing.
+    if entry.depth() == 0 {
+        return false;
+    }
     if entry.file_type().is_dir() {
         if let Some(name) = entry.file_name().to_str() {
             return EXCLUDE_DIRS.contains(&name);
@@ -452,16 +490,63 @@ fn rel_path(root: &Path, path: &Path) -> String {
 /// A Rust cross-crate `use` names the crate, never the file. Without this map
 /// no edge ever reaches a crate root, and `graph consumers` reports the core
 /// of the workspace as safe to delete (ADR-2609122048).
-fn crate_roots(files: &HashSet<String>) -> HashMap<String, String> {
-    let mut out = HashMap::new();
+fn crate_roots(root: &Path, files: &HashSet<String>) -> HashMap<String, String> {
+    let mut candidates: Vec<(String, String, String)> = Vec::new();
     for f in files {
-        let Some(dir) = f.strip_suffix("/src/lib.rs") else {
-            continue;
+        // A single-crate project puts its root file at `src/lib.rs`, with no
+        // crate directory in the path to read the name from, so it comes from
+        // the graph root instead. This is the layout `hexa new` scaffolds.
+        let name = match f.strip_suffix("/src/lib.rs") {
+            Some(dir) => dir.rsplit('/').next().unwrap_or(dir).to_string(),
+            None if f == "src/lib.rs" => match root_crate_name(root) {
+                Some(name) => name,
+                None => continue,
+            },
+            None => continue,
         };
-        let name = dir.rsplit('/').next().unwrap_or(dir);
-        out.insert(name.replace('-', "_"), f.clone());
+        candidates.push((name.replace('-', "_"), name, f.clone()));
+    }
+    // Two directories can claim one ident: `services/api` and `tools/api`, or
+    // `foo-bar` and `foo_bar`, which both normalize to `foo_bar`. `files` is a
+    // `HashSet`, whose iteration order std randomizes per process, so letting
+    // the last writer win would move the same repo's Imports edge between
+    // builds. Sort first and keep the best candidate per ident instead.
+    candidates.sort_by(|a, b| crate_root_key(a).cmp(&crate_root_key(b)));
+    let mut out = HashMap::new();
+    for (ident, _, file) in candidates {
+        out.entry(ident).or_insert(file);
     }
     out
+}
+
+/// Sort key that picks one crate root per ident, lowest first. A directory that
+/// already spells the ident (`foo_bar`) beats one that needed `-` to become `_`
+/// (`foo-bar`), because a Rust `use foo_bar::X` names the ident literally. Two
+/// equal claims are a tie no path can break, so the shallowest path wins, then
+/// the first in alphabetical order — arbitrary, but the same on every build.
+fn crate_root_key(cand: &(String, String, String)) -> (&str, u8, usize, &str) {
+    let (ident, dir_name, file) = cand;
+    (
+        ident,
+        u8::from(dir_name.contains('-')),
+        file.matches('/').count(),
+        file,
+    )
+}
+
+/// The directory name of the graph root, which is the crate name of a crate
+/// that sits at the root. `.` and `..` carry no name, so they are resolved.
+fn root_crate_name(root: &Path) -> Option<String> {
+    match root.file_name() {
+        Some(name) => Some(name.to_string_lossy().to_string()),
+        None => Some(
+            root.canonicalize()
+                .ok()?
+                .file_name()?
+                .to_string_lossy()
+                .to_string(),
+        ),
+    }
 }
 
 fn resolve_import(
@@ -492,8 +577,12 @@ fn resolve_import(
 }
 
 /// The `src` directory of the crate owning this file: `a/src/b/c.rs` to `a/src`.
+/// A crate at the graph root has no leading directory: `src/b/c.rs` to `src`.
 fn crate_src_dir(from_rel: &str) -> Option<String> {
-    from_rel.find("/src/").map(|i| from_rel[..i + 4].to_string())
+    if let Some(i) = from_rel.find("/src/") {
+        return Some(from_rel[..i + 4].to_string());
+    }
+    from_rel.starts_with("src/").then(|| "src".to_string())
 }
 
 /// Walk a `::` path from longest prefix to shortest and take the first module
@@ -541,7 +630,7 @@ fn resolve_relative_ts(from_rel: &str, raw: &str, files: &HashSet<String>) -> Op
         .strip_suffix(".js")
         .or_else(|| raw.strip_suffix(".jsx"))
         .unwrap_or(raw);
-    let joined = normalize_join(&base_dir, raw_noext);
+    let joined = normalize_join(&base_dir, raw_noext)?;
 
     let candidates = [
         joined.clone(),
@@ -588,7 +677,12 @@ fn file_stem(rel: &str) -> &str {
 }
 
 /// Lexically join `base` with a relative `rel` (handling `.` and `..`).
-fn normalize_join(base: &str, rel: &str) -> String {
+///
+/// Returns `None` when `rel` climbs above `base`: the target then lies outside
+/// the graph root, so there is no in-root file it could name. Clamping at the
+/// root instead would fabricate an edge to whatever path the escaping suffix
+/// happens to collide with.
+fn normalize_join(base: &str, rel: &str) -> Option<String> {
     let mut parts: Vec<&str> = if base.is_empty() {
         Vec::new()
     } else {
@@ -598,12 +692,12 @@ fn normalize_join(base: &str, rel: &str) -> String {
         match seg {
             "" | "." => {}
             ".." => {
-                parts.pop();
+                parts.pop()?;
             }
             other => parts.push(other),
         }
     }
-    parts.join("/")
+    Some(parts.join("/"))
 }
 
 #[cfg(test)]
@@ -619,7 +713,7 @@ mod resolve_tests {
     #[test]
     fn a_cross_crate_use_reaches_the_crate_root() {
         let f = files(&["hexa-core/src/lib.rs", "hexa-cli/src/commands/analyze.rs"]);
-        let crates = crate_roots(&f);
+        let crates = crate_roots(Path::new("hexa"), &f);
         let got = resolve_import(
             "hexa-cli/src/commands/analyze.rs",
             "hexa_core::domain::Layer",
@@ -627,6 +721,48 @@ mod resolve_tests {
             &crates,
         );
         assert_eq!(got.as_deref(), Some("hexa-core/src/lib.rs"));
+    }
+
+    /// Two directories can spell one crate ident. `files` is a `HashSet`, and
+    /// std randomizes its iteration order per instance, so the pre-fix
+    /// "last writer wins" moved the edge between builds of an unchanged repo.
+    /// Rebuild the set many times: every build must name the same file.
+    #[test]
+    fn a_duplicated_crate_ident_resolves_the_same_way_every_time() {
+        for _ in 0..64 {
+            let f = files(&[
+                "services/api/src/lib.rs",
+                "tools/api/src/lib.rs",
+                "app/src/main.rs",
+            ]);
+            let crates = crate_roots(Path::new("hexa"), &f);
+            assert_eq!(
+                crates.get("api").map(String::as_str),
+                Some("services/api/src/lib.rs")
+            );
+            assert_eq!(
+                resolve_import("app/src/main.rs", "api::Foo", &f, &crates).as_deref(),
+                Some("services/api/src/lib.rs")
+            );
+        }
+    }
+
+    /// `foo-bar` and `foo_bar` both normalize to the ident `foo_bar`. The
+    /// directory that already spells the ident wins, on every build.
+    #[test]
+    fn an_underscore_directory_wins_the_ident_over_a_hyphen_directory() {
+        for _ in 0..64 {
+            let f = files(&[
+                "foo-bar/src/lib.rs",
+                "foo_bar/src/lib.rs",
+                "app/src/main.rs",
+            ]);
+            let crates = crate_roots(Path::new("hexa"), &f);
+            assert_eq!(
+                crates.get("foo_bar").map(String::as_str),
+                Some("foo_bar/src/lib.rs")
+            );
+        }
     }
 
     #[test]
@@ -637,7 +773,7 @@ mod resolve_tests {
             "hexa-cli/src/commands/analyze.rs",
             "hexa-cli/src/main.rs",
         ]);
-        let crates = crate_roots(&f);
+        let crates = crate_roots(Path::new("hexa"), &f);
         let got = resolve_import(
             "hexa-cli/src/main.rs",
             "crate::commands::analyze::run",
@@ -654,7 +790,7 @@ mod resolve_tests {
             "a/src/commands/plan/mod.rs",
             "a/src/commands/analyze.rs",
         ]);
-        let crates = crate_roots(&f);
+        let crates = crate_roots(Path::new("hexa"), &f);
         let got = resolve_import(
             "a/src/commands/plan/mod.rs",
             "super::analyze::Thing",
@@ -667,23 +803,82 @@ mod resolve_tests {
     #[test]
     fn a_third_party_crate_resolves_to_nothing() {
         let f = files(&["hexa-core/src/lib.rs"]);
-        let crates = crate_roots(&f);
+        let crates = crate_roots(Path::new("hexa"), &f);
         assert_eq!(
             resolve_import("hexa-core/src/lib.rs", "serde::Deserialize", &f, &crates),
             None
         );
         assert_eq!(
-            resolve_import("hexa-core/src/lib.rs", "std::collections::HashMap", &f, &crates),
+            resolve_import(
+                "hexa-core/src/lib.rs",
+                "std::collections::HashMap",
+                &f,
+                &crates
+            ),
             None
+        );
+    }
+
+    /// The layout `hexa new` scaffolds: the crate sits at the graph root, so
+    /// every path starts `src/` with no leading crate directory. Before the
+    /// fix, `crate_src_dir` looked for `/src/` and found nothing, so no
+    /// `crate::` import in a scaffolded project ever produced an edge.
+    #[test]
+    fn a_crate_path_resolves_in_a_crate_at_the_graph_root() {
+        let f = files(&[
+            "src/lib.rs",
+            "src/domain/mod.rs",
+            "src/ports/mod.rs",
+            "src/usecases/mod.rs",
+            "src/adapters/secondary/mod.rs",
+        ]);
+        let crates = crate_roots(Path::new("/tmp/counter-app"), &f);
+        for from in [
+            "src/ports/mod.rs",
+            "src/usecases/mod.rs",
+            "src/adapters/secondary/mod.rs",
+        ] {
+            assert_eq!(
+                resolve_import(from, "crate::domain::Count", &f, &crates).as_deref(),
+                Some("src/domain/mod.rs"),
+                "crate::domain from {from}"
+            );
+        }
+    }
+
+    /// A crate at the graph root is still a crate root, so an integration test
+    /// naming it by crate ident reaches `src/lib.rs`.
+    #[test]
+    fn a_crate_at_the_graph_root_is_a_crate_root() {
+        let f = files(&["src/lib.rs", "src/domain/mod.rs", "tests/counter.rs"]);
+        let crates = crate_roots(Path::new("/tmp/counter-app"), &f);
+        assert_eq!(
+            crates.get("counter_app").map(String::as_str),
+            Some("src/lib.rs")
+        );
+        assert_eq!(
+            resolve_import(
+                "tests/counter.rs",
+                "counter_app::domain::Count",
+                &f,
+                &crates
+            )
+            .as_deref(),
+            Some("src/lib.rs")
         );
     }
 
     #[test]
     fn a_file_never_imports_itself() {
         let f = files(&["hexa-core/src/lib.rs", "hexa-core/src/domain.rs"]);
-        let crates = crate_roots(&f);
+        let crates = crate_roots(Path::new("hexa"), &f);
         assert_eq!(
-            resolve_import("hexa-core/src/lib.rs", "hexa_core::domain::Layer", &f, &crates),
+            resolve_import(
+                "hexa-core/src/lib.rs",
+                "hexa_core::domain::Layer",
+                &f,
+                &crates
+            ),
             None
         );
     }

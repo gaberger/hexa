@@ -78,15 +78,18 @@ pub fn context_for(
         graph.nodes.iter().map(|n| (n.id.as_str(), n)).collect();
 
     // Resolve the target to its File node.
-    let start = graph
-        .node(target)
-        .or_else(|| graph.node_by_label(target))?;
+    let start = graph.node(target).or_else(|| graph.node_by_label(target))?;
     // A File node maps to itself; any entity maps to its declaring file.
     let file_rel = start.file.clone();
     let file_id = crate::model::id_for(NodeKind::File, &file_rel, &file_rel);
     let file_node = by_id.get(file_id.as_str()).copied()?;
 
-    let label_of = |id: &str| by_id.get(id).map(|n| n.label.clone()).unwrap_or_else(|| id.to_string());
+    let label_of = |id: &str| {
+        by_id
+            .get(id)
+            .map(|n| n.label.clone())
+            .unwrap_or_else(|| id.to_string())
+    };
 
     let mut truncated: HashMap<String, usize> = HashMap::new();
 
@@ -159,19 +162,27 @@ pub fn context_for(
     let mut community_siblings: Vec<String> = graph
         .nodes
         .iter()
-        .filter(|n| {
-            n.community == community && n.kind == NodeKind::File && n.id != file_id
-        })
+        .filter(|n| n.community == community && n.kind == NodeKind::File && n.id != file_id)
         .map(|n| n.label.clone())
         .collect();
     community_siblings.sort();
 
     cap(&mut defines, "defines", opts.max_each, &mut truncated);
     cap(&mut imports, "imports", opts.max_each, &mut truncated);
-    cap(&mut imported_by, "imported_by", opts.max_each, &mut truncated);
+    cap(
+        &mut imported_by,
+        "imported_by",
+        opts.max_each,
+        &mut truncated,
+    );
     cap(&mut uses, "uses", opts.max_each, &mut truncated);
     cap(&mut used_by, "used_by", opts.max_each, &mut truncated);
-    cap(&mut community_siblings, "community_siblings", opts.max_each, &mut truncated);
+    cap(
+        &mut community_siblings,
+        "community_siblings",
+        opts.max_each,
+        &mut truncated,
+    );
 
     Some(ContextBundle {
         target: file_id,
@@ -240,7 +251,11 @@ pub struct ScoredLesson {
 /// mentions — surfacing the lessons that pertain to the file being worked on
 /// (graph-relevant memory), instead of recency. Returns up to `limit` with
 /// score > 0, most-relevant first. `lessons` is (key, value) pairs.
-pub fn rank_lessons(b: &ContextBundle, lessons: &[(String, String)], limit: usize) -> Vec<ScoredLesson> {
+pub fn rank_lessons(
+    b: &ContextBundle,
+    lessons: &[(String, String)],
+    limit: usize,
+) -> Vec<ScoredLesson> {
     let terms = anchor_terms(b);
     if terms.is_empty() {
         return Vec::new();
@@ -253,7 +268,11 @@ pub fn rank_lessons(b: &ContextBundle, lessons: &[(String, String)], limit: usiz
             if score == 0 {
                 None
             } else {
-                Some(ScoredLesson { key: k.clone(), value: v.clone(), score })
+                Some(ScoredLesson {
+                    key: k.clone(),
+                    value: v.clone(),
+                    score,
+                })
             }
         })
         .collect();
@@ -292,10 +311,18 @@ pub fn render_markdown(b: &ContextBundle) -> String {
             .iter()
             .map(|d| format!("{}({})", d.label, d.kind))
             .collect();
-        out.push_str(&format!("Defines{}: {}\n", more("defines"), items.join(", ")));
+        out.push_str(&format!(
+            "Defines{}: {}\n",
+            more("defines"),
+            items.join(", ")
+        ));
     }
     if !b.imports.is_empty() {
-        out.push_str(&format!("Imports{}: {}\n", more("imports"), b.imports.join(", ")));
+        out.push_str(&format!(
+            "Imports{}: {}\n",
+            more("imports"),
+            b.imports.join(", ")
+        ));
     }
     if !b.imported_by.is_empty() {
         out.push_str(&format!(

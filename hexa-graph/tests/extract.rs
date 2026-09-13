@@ -30,7 +30,10 @@ pub static GLOBAL: u8 = 1;
     assert_eq!(kind_of(&fx, "MAX"), Some(NodeKind::Const));
     assert_eq!(kind_of(&fx, "GLOBAL"), Some(NodeKind::Const));
     // `use crate::a::Bee` → imported name Bee; `mod sibling;` → self::sibling.
-    assert!(fx.imports.iter().any(|i| i.names.iter().any(|n| n == "Bee")));
+    assert!(fx
+        .imports
+        .iter()
+        .any(|i| i.names.iter().any(|n| n == "Bee")));
     assert!(fx.imports.iter().any(|i| i.raw_path == "self::sibling"));
 }
 
@@ -54,8 +57,10 @@ const local = 2;
     assert_eq!(kind_of(&fx, "E"), Some(NodeKind::Enum));
     assert_eq!(kind_of(&fx, "K"), Some(NodeKind::Const));
     assert_eq!(kind_of(&fx, "local"), Some(NodeKind::Const));
-    assert!(fx.imports.iter().any(|i| i.raw_path == "./foo.js"
-        && i.names.iter().any(|n| n == "Foo")));
+    assert!(fx
+        .imports
+        .iter()
+        .any(|i| i.raw_path == "./foo.js" && i.names.iter().any(|n| n == "Foo")));
 }
 
 #[test]
