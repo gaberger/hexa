@@ -61,7 +61,7 @@ substring. Nothing asked it about a tier.
 
 ## Gate
 
-`cargo test -p hexa-infer serves -p hexa-cli tier_coverage` — as two invocations: a model listed by
+`cargo test -p hexa-infer serves && cargo test -p hexa-cli tier_coverage` — as two invocations: a model listed by
 a reachable path is served by it and names it; the same model on an unreachable path is not served;
 a model on no list, with every reachable path enumerated, is not served; an unenumerated reachable
 path makes it unverified rather than either; a claude model is served by a reachable frontier; and
