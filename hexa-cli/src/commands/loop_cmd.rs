@@ -136,16 +136,77 @@ fn session_pid() -> u64 {
     resolve_session(&|k| std::env::var(k).ok(), posix_session()).1
 }
 
-/// A session is live while its process exists. A pid of 0 is unknown and
-/// counts as ended.
-pub fn pid_alive(pid: u64) -> bool {
-    pid != 0 && Path::new(&format!("/proc/{pid}")).exists()
+/// When the process `pid` started, in clock ticks since boot: field 22 of
+/// /proc/{pid}/stat, after the parenthesised command name. `None` when
+/// there is no such process (or no /proc). A pid is recycled; a pid with
+/// its start time is not, so the pair names one process.
+pub fn pid_start(pid: u64) -> Option<u64> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let after = &stat[stat.rfind(')')? + 1..];
+    after.split_whitespace().nth(19)?.parse().ok()
+}
+
+/// A session is live while the process it recorded exists: the pid, and
+/// the start time it was recorded with. A session that ended without a
+/// clear leaves its pid behind, and the kernel hands that pid to whatever
+/// starts next; the start time tells that process from the session's. A
+/// pid of 0 is unknown and counts as ended. An entry from before the start
+/// time was recorded is judged on the pid alone.
+pub fn pid_alive(pid: u64, start: Option<u64>) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    match (pid_start(pid), start) {
+        (None, _) => false,
+        (Some(now), Some(then)) => now == then,
+        (Some(_), None) => true,
+    }
 }
 
 /// The whole file: `{"sessions": {id: entry}}`, or a flat entry from before
-/// ADR-2609131408.
+/// ADR-2609131408. `Ok(None)` when there is no file (or an empty one, which
+/// holds no session to lose); `Err` when there is a file that cannot be read
+/// or parsed. A writer must not mistake the second for the first: treating
+/// a file it cannot read as "no sessions" and writing back only its own
+/// entry is how every other session's ADR, gate, stage and tasks vanish.
+fn read_file_strict(dir: &Path) -> Result<Option<serde_json::Value>, String> {
+    let p = loop_path(dir);
+    let text = match std::fs::read_to_string(&p) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("cannot read {}: {e}", p.display())),
+    };
+    if text.trim().is_empty() {
+        return Ok(None);
+    }
+    serde_json::from_str(&text)
+        .map(Some)
+        .map_err(|e| format!("{} is not valid JSON ({e}); leaving it as it is", p.display()))
+}
+
+/// The whole file for a reader, which has nothing to lose by treating an
+/// unreadable file as absent.
 fn read_file(dir: &Path) -> Option<serde_json::Value> {
-    std::fs::read_to_string(loop_path(dir)).ok().and_then(|s| serde_json::from_str(&s).ok())
+    read_file_strict(dir).ok().flatten()
+}
+
+/// The exclusive hold a writer keeps for its read-modify-write, released when
+/// the handle drops. Advisory, on a sibling lock file rather than on
+/// `loop.json` itself, because `loop.json` is replaced by rename on every
+/// write and removed when the last session clears: a lock on it would name
+/// an inode the next writer never opens. Every session's hooks and harness
+/// write this file, so two writers without the hold lose each other's updates.
+fn lock_for_write(dir: &Path) -> Result<std::fs::File, String> {
+    let p = dir.join(".hexa").join("loop.lock");
+    let f = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&p)
+        .map_err(|e| format!("cannot open {}: {e}", p.display()))?;
+    f.lock().map_err(|e| format!("cannot lock {}: {e}", p.display()))?;
+    Ok(f)
 }
 
 /// The entries by session. A flat pre-ADR file is the entry of whoever asks.
@@ -179,28 +240,49 @@ fn write_entries(dir: &Path, m: serde_json::Map<String, serde_json::Value>) -> R
         return Ok(());
     }
     let text = serde_json::to_string_pretty(&serde_json::json!({ "sessions": m })).map_err(|e| e.to_string())? + "\n";
-    std::fs::write(p, text).map_err(|e| e.to_string())
+    // Written whole and renamed into place, so a reader never sees the file
+    // truncated or half-written between two sessions' writes.
+    let tmp = p.with_file_name(format!("loop.json.{}.tmp", std::process::id()));
+    std::fs::write(&tmp, text).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, &p).map_err(|e| format!("cannot replace {}: {e}", p.display()))
 }
 
-/// Merge `patch` into one session's entry and write the file. Only in a
-/// project that has a `.hexa/` directory; elsewhere there is nothing to
-/// record into.
-pub fn update_entry(dir: &Path, session: &str, pid: u64, patch: serde_json::Value) -> Result<serde_json::Value, String> {
+/// Apply `edit` to one session's entry and write the file, the read, the
+/// edit and the write all under the writer's hold, so what `edit` sees is
+/// what is on disk when its result lands. Only in a project that has a
+/// `.hexa/` directory; elsewhere there is nothing to record into.
+fn edit_entry(
+    dir: &Path,
+    session: &str,
+    pid: u64,
+    edit: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>),
+) -> Result<serde_json::Value, String> {
     if !dir.join(".hexa").is_dir() {
         return Err(format!("{} has no .hexa/ directory; run `hexa init .` first", dir.display()));
     }
-    let mut m = read_file(dir).map(|f| entries(&f, session)).unwrap_or_default();
+    let _hold = lock_for_write(dir)?;
+    let mut m = read_file_strict(dir)?.map(|f| entries(&f, session)).unwrap_or_default();
     let mut state = m.get(session).cloned().unwrap_or_else(|| serde_json::json!({}));
-    if let (Some(obj), Some(p)) = (state.as_object_mut(), patch.as_object()) {
-        for (k, v) in p {
-            obj.insert(k.clone(), v.clone());
-        }
+    if let Some(obj) = state.as_object_mut() {
+        edit(obj);
         obj.insert("pid".to_string(), serde_json::json!(pid));
+        obj.insert("pid_start".to_string(), serde_json::json!(pid_start(pid)));
         obj.insert("updated".to_string(), serde_json::Value::String(chrono::Utc::now().to_rfc3339()));
     }
     m.insert(session.to_string(), state.clone());
     write_entries(dir, m)?;
     Ok(state)
+}
+
+/// Merge `patch` into one session's entry and write the file.
+pub fn update_entry(dir: &Path, session: &str, pid: u64, patch: serde_json::Value) -> Result<serde_json::Value, String> {
+    edit_entry(dir, session, pid, |obj| {
+        if let Some(p) = patch.as_object() {
+            for (k, v) in p {
+                obj.insert(k.clone(), v.clone());
+            }
+        }
+    })
 }
 
 /// Merge `patch` into this session's entry and write it.
@@ -211,7 +293,11 @@ pub fn update_loop(dir: &Path, patch: serde_json::Value) -> Result<serde_json::V
 /// Remove one session's entry; the file goes with the last one. Returns
 /// whether there was an entry.
 pub fn clear_entry(dir: &Path, session: &str) -> Result<bool, String> {
-    let Some(f) = read_file(dir) else { return Ok(false) };
+    if !dir.join(".hexa").is_dir() {
+        return Ok(false);
+    }
+    let _hold = lock_for_write(dir)?;
+    let Some(f) = read_file_strict(dir)? else { return Ok(false) };
     let mut m = entries(&f, session);
     let was = m.remove(session).is_some();
     write_entries(dir, m)?;
@@ -234,15 +320,16 @@ pub struct Other {
     pub updated: String,
 }
 
-/// Every session but `session`, liveness judged by `alive`.
-pub fn others_of(dir: &Path, session: &str, alive: &dyn Fn(u64) -> bool) -> Vec<Other> {
+/// Every session but `session`, liveness judged by `alive` from the pid and
+/// the start time it was recorded with.
+pub fn others_of(dir: &Path, session: &str, alive: &dyn Fn(u64, Option<u64>) -> bool) -> Vec<Other> {
     let Some(f) = read_file(dir) else { return Vec::new() };
     let mut out: Vec<Other> = entries(&f, session)
         .iter()
         .filter(|(id, _)| id.as_str() != session)
         .map(|(id, e)| Other {
             session: id.clone(),
-            alive: alive(e.get("pid").and_then(|v| v.as_u64()).unwrap_or(0)),
+            alive: alive(e.get("pid").and_then(|v| v.as_u64()).unwrap_or(0), e.get("pid_start").and_then(|v| v.as_u64())),
             adr: e.get("adr").and_then(|v| v.as_str()).unwrap_or("none").to_string(),
             gate: e.get("gate").and_then(|v| v.as_str()).unwrap_or("none").to_string(),
             stage: e.get("stage").and_then(|v| v.as_str()).unwrap_or("decide").to_string(),
@@ -266,19 +353,26 @@ pub fn others(dir: &Path) -> Vec<Other> {
 const TOUCHED_CAP: usize = 40;
 
 /// Record that `session` edited `path`: the boundary another session needs
-/// to see. Deduplicated, most recent last, capped.
+/// to see. Deduplicated, most recent last, capped. The list is read and
+/// extended under the writer's hold: a host runs independent edits at once,
+/// so one session's hooks touch concurrently, and a list built from a read
+/// taken before the hold would put back a list missing the other's file.
 pub fn touch_as(dir: &Path, session: &str, pid: u64, path: &str) -> Result<(), String> {
     let rel = Path::new(path).strip_prefix(dir).map(|p| p.display().to_string()).unwrap_or_else(|_| path.to_string());
-    let mut files: Vec<String> = read_entry(dir, session)
-        .and_then(|e| e.get("files").and_then(|v| v.as_array()).cloned())
-        .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
-        .unwrap_or_default();
-    files.retain(|f| f != &rel);
-    files.push(rel);
-    if files.len() > TOUCHED_CAP {
-        files.drain(..files.len() - TOUCHED_CAP);
-    }
-    update_entry(dir, session, pid, serde_json::json!({ "files": files })).map(|_| ())
+    edit_entry(dir, session, pid, |obj| {
+        let mut files: Vec<String> = obj
+            .get("files")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+            .unwrap_or_default();
+        files.retain(|f| f != &rel);
+        files.push(rel);
+        if files.len() > TOUCHED_CAP {
+            files.drain(..files.len() - TOUCHED_CAP);
+        }
+        obj.insert("files".to_string(), serde_json::json!(files));
+    })
+    .map(|_| ())
 }
 
 pub fn touch(dir: &Path, path: &str) -> Result<(), String> {
@@ -286,7 +380,7 @@ pub fn touch(dir: &Path, path: &str) -> Result<(), String> {
 }
 
 /// The live other sessions that have touched `path`.
-pub fn touched_by_others_of(dir: &Path, session: &str, path: &str, alive: &dyn Fn(u64) -> bool) -> Vec<Other> {
+pub fn touched_by_others_of(dir: &Path, session: &str, path: &str, alive: &dyn Fn(u64, Option<u64>) -> bool) -> Vec<Other> {
     let rel = Path::new(path).strip_prefix(dir).map(|p| p.display().to_string()).unwrap_or_else(|_| path.to_string());
     others_of(dir, session, alive).into_iter().filter(|o| o.alive && o.files.iter().any(|f| f == &rel)).collect()
 }
@@ -321,16 +415,29 @@ pub fn awareness_lines(dir: &Path) -> Vec<String> {
         .collect()
 }
 
-/// The ADR file in `docs/adrs/` whose name starts with `id`.
+/// The one ADR file in `docs/adrs/` named `<id>.md` or `<id>-<slug>.md`.
+/// A shortened id that is only a prefix of a real one matches nothing, and
+/// so does an id that names more than one file: `read_dir` order is
+/// unspecified, and evidence must not land in whichever came first.
 fn adr_path(dir: &Path, id: &str) -> Option<PathBuf> {
+    if id.is_empty() {
+        return None;
+    }
     let entries = std::fs::read_dir(dir.join("docs").join("adrs")).ok()?;
-    entries.flatten().map(|e| e.path()).find(|p| {
+    let exact = format!("{id}.md");
+    let slugged = format!("{id}-");
+    let mut matches = entries.flatten().map(|e| e.path()).filter(|p| {
         let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-        name.starts_with(id) && name.ends_with(".md")
-    })
+        name == exact || (name.starts_with(&slugged) && name.ends_with(".md"))
+    });
+    let first = matches.next()?;
+    if matches.next().is_some() {
+        return None;
+    }
+    Some(first)
 }
 
-/// Does `docs/adrs/` hold an ADR whose file name starts with `id`?
+/// Does `docs/adrs/` hold exactly one ADR with the id `id`?
 fn adr_exists(dir: &Path, id: &str) -> bool {
     adr_path(dir, id).is_some()
 }
@@ -339,6 +446,13 @@ fn adr_exists(dir: &Path, id: &str) -> bool {
 /// `## Evidence`, with the command, the commit and the time. A failing
 /// command appends nothing and is an error: evidence comes from a run that
 /// succeeded (ADR-2609131341).
+///
+/// The ADR is shared by every session in the checkout, so its read, edit
+/// and write happen under the writer's hold, taken only once the command
+/// has finished: a command runs for minutes, and a hold across it would
+/// stall every other session's hooks for as long. Without the hold, two
+/// sessions marking done under one ADR each read the text before the
+/// other's block and the second write puts back a file without the first.
 pub fn record_evidence(dir: &Path, adr_id: &str, command: &str) -> Result<PathBuf, String> {
     let path = adr_path(dir, adr_id).ok_or_else(|| format!("no {adr_id} in docs/adrs/ to append evidence to"))?;
     let out = std::process::Command::new("sh")
@@ -358,6 +472,7 @@ pub fn record_evidence(dir: &Path, adr_id: &str, command: &str) -> Result<PathBu
         ));
     }
     let stdout = String::from_utf8_lossy(&out.stdout).trim_end().to_string();
+    let _hold = lock_for_write(dir)?;
     let git = |args: &[&str]| {
         std::process::Command::new("git")
             .args(args)
@@ -376,18 +491,53 @@ pub fn record_evidence(dir: &Path, adr_id: &str, command: &str) -> Result<PathBu
     if !text.ends_with('\n') {
         text.push('\n');
     }
-    if !text.contains("\n## Evidence\n") {
-        text.push_str("\n## Evidence\n");
-    }
-    text.push_str(&format!(
+    let block = format!(
         "\n`{}` at {} on {}:\n\n```text\n{}\n```\n",
         command,
         commit,
         chrono::Utc::now().format("%Y-%m-%d %H:%M UTC"),
         stdout
-    ));
+    );
+    let heading = "\n## Evidence\n";
+    match text.find(heading) {
+        None => {
+            text.push_str(heading);
+            text.push_str(&block);
+        }
+        Some(start) => match next_section_after(&text, start + heading.len()) {
+            None => text.push_str(&block),
+            Some(mut at) => {
+                // Keep the blank line that separates the sections on the
+                // heading's side of the new block.
+                if text[..at].ends_with("\n\n") {
+                    at -= 1;
+                    text.insert_str(at, &block);
+                } else {
+                    text.insert_str(at, &format!("{block}\n"));
+                }
+            }
+        },
+    }
     std::fs::write(&path, text).map_err(|e| e.to_string())?;
     Ok(path)
+}
+
+/// The byte offset of the first `## ` heading line at or after `from`, or
+/// `None` when the section runs to the end of the file. Lines inside a
+/// fenced code block do not count: evidence is verbatim stdout, and stdout
+/// may itself begin a line with `## `.
+fn next_section_after(text: &str, from: usize) -> Option<usize> {
+    let mut in_fence = false;
+    let mut pos = from;
+    for line in text[from..].split_inclusive('\n') {
+        if line.starts_with("```") {
+            in_fence = !in_fence;
+        } else if !in_fence && line.starts_with("## ") {
+            return Some(pos);
+        }
+        pos += line.len();
+    }
+    None
 }
 
 /// One line for the hooks: the state, or what is missing.
@@ -635,7 +785,7 @@ pub async fn run(action: Option<LoopAction>) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod evidence_tests {
-    use super::record_evidence;
+    use super::{adr_exists, lock_for_write, record_evidence};
 
     fn project() -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("hexa-evidence-{}-{:?}", std::process::id(), std::thread::current().id()));
@@ -671,6 +821,112 @@ mod evidence_tests {
         assert!(record_evidence(&dir, "ADR-9", "true").is_err(), "no such ADR");
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    /// Evidence is filed under `## Evidence` even when another section
+    /// follows it. Without the fix the block landed at the end of the file,
+    /// under whichever heading came last, and the heading-exists check kept
+    /// a fresh `## Evidence` from being added, so nothing said so.
+    #[test]
+    fn evidence_lands_under_its_heading_not_under_the_section_that_follows_it() {
+        let dir = project();
+        let path = dir.join("docs/adrs/ADR-1-a-decision.md");
+        std::fs::write(
+            &path,
+            "# ADR-1: a decision\n\n## Evidence\n\n`echo first` at no commit on 2026-09-13 00:00 UTC:\n\n```text\nfirst\n## not a heading\n```\n\n## Consequences\n\nNone yet.\n",
+        )
+        .unwrap();
+
+        record_evidence(&dir, "ADR-1", "echo second").unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        let evidence = text.find("\n## Evidence\n").unwrap();
+        let second = text.find("```text\nsecond\n```").unwrap();
+        let consequences = text.find("\n## Consequences\n").unwrap();
+        assert!(evidence < second && second < consequences, "evidence filed under the wrong section:\n{text}");
+        assert_eq!(text.matches("## Evidence").count(), 1, "{text}");
+        assert!(text.contains("```text\nfirst\n## not a heading\n```\n"), "earlier block left intact: {text}");
+        assert!(text.contains("```\n\n## Consequences\n\nNone yet.\n"), "the following section is untouched and still last: {text}");
+        assert!(text.ends_with("None yet.\n"), "{text}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Two sessions in one checkout mark done under the same ADR. The ADR is
+    /// shared, not per-session, so the second to write must see the first's
+    /// block. Here session A has read the ADR under the writer's hold and is
+    /// about to write; session B's command finishes meanwhile. Without the
+    /// fix B read the text before A's block and wrote the ADR back without
+    /// it. With it, B waits for the hold, reads what A landed, and both
+    /// blocks are there.
+    #[test]
+    fn two_sessions_marking_done_under_one_adr_keep_both_blocks_of_evidence() {
+        let dir = project();
+        let path = dir.join("docs/adrs/ADR-1-a-decision.md");
+
+        // Session A: read under the hold, about to write.
+        let hold = lock_for_write(&dir).unwrap();
+        let read_by_a = std::fs::read_to_string(&path).unwrap();
+
+        // Session B: its command finishes and it records.
+        let b = {
+            let dir = dir.clone();
+            std::thread::spawn(move || record_evidence(&dir, "ADR-1", "echo from-b"))
+        };
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), read_by_a, "B wrote the ADR while A held the writer's hold");
+
+        // A's write lands, then its hold goes.
+        std::fs::write(&path, format!("{read_by_a}\n## Evidence\n\n`echo from-a` at no commit on 2026-09-13 00:00 UTC:\n\n```text\nfrom-a\n```\n")).unwrap();
+        drop(hold);
+
+        b.join().unwrap().unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("```text\nfrom-a\n```"), "A's evidence was discarded by B's write:\n{text}");
+        assert!(text.contains("```text\nfrom-b\n```"), "B's evidence is missing:\n{text}");
+        assert_eq!(text.matches("## Evidence").count(), 1, "{text}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An id must name one ADR exactly. A prefix of a real id
+    /// (`ADR-2609131` against `-1341`, `-1408`, `-1427`) is rejected rather
+    /// than resolved to whichever file `read_dir` yields first, and so is an
+    /// id that two files carry. The full id still resolves, with or without
+    /// a slug.
+    #[test]
+    fn adr_id_must_match_exactly_one_file_not_a_prefix_of_several() {
+        let dir = project();
+        let adrs = dir.join("docs/adrs");
+        for name in ["ADR-2609131341-evidence.md", "ADR-2609131408-sessions.md", "ADR-2609131427-harness.md"] {
+            std::fs::write(adrs.join(name), format!("# {name}\n")).unwrap();
+        }
+        let before: Vec<String> = ["ADR-2609131341-evidence.md", "ADR-2609131408-sessions.md", "ADR-2609131427-harness.md"]
+            .iter()
+            .map(|n| std::fs::read_to_string(adrs.join(n)).unwrap())
+            .collect();
+
+        assert!(!adr_exists(&dir, "ADR-2609131"), "a prefix of three ids is not an ADR");
+        assert!(!adr_exists(&dir, "ADR-26091314"), "a prefix of two ids is not an ADR");
+        assert!(!adr_exists(&dir, "ADR-260913140"), "a prefix of one id is still not that id");
+        assert!(!adr_exists(&dir, ""), "the empty id names nothing");
+        let err = record_evidence(&dir, "ADR-2609131", "echo stray").unwrap_err();
+        assert!(err.contains("ADR-2609131"), "{err}");
+        let after: Vec<String> = ["ADR-2609131341-evidence.md", "ADR-2609131408-sessions.md", "ADR-2609131427-harness.md"]
+            .iter()
+            .map(|n| std::fs::read_to_string(adrs.join(n)).unwrap())
+            .collect();
+        assert_eq!(before, after, "an ambiguous id mutates no ADR");
+
+        assert!(adr_exists(&dir, "ADR-2609131408"), "the full id resolves");
+        let path = record_evidence(&dir, "ADR-2609131408", "echo exact").unwrap();
+        assert!(path.ends_with("ADR-2609131408-sessions.md"), "{}", path.display());
+        assert!(!std::fs::read_to_string(adrs.join("ADR-2609131341-evidence.md")).unwrap().contains("exact"));
+
+        std::fs::write(adrs.join("ADR-7.md"), "# ADR-7\n").unwrap();
+        assert!(adr_exists(&dir, "ADR-7"), "an id without a slug resolves");
+
+        std::fs::write(adrs.join("ADR-7-second-copy.md"), "# ADR-7 again\n").unwrap();
+        assert!(!adr_exists(&dir, "ADR-7"), "an id carried by two files is ambiguous");
+        assert!(record_evidence(&dir, "ADR-7", "true").is_err(), "and records nowhere");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 #[cfg(test)]
@@ -684,7 +940,7 @@ mod sessions_see_each_other {
         dir
     }
 
-    fn live(pid: u64) -> bool {
+    fn live(pid: u64, _start: Option<u64>) -> bool {
         pid == 1
     }
 
@@ -751,8 +1007,42 @@ mod sessions_see_each_other {
         let e = read_entry(&dir, "aaaa").unwrap();
         assert_eq!(e["files"], serde_json::json!(["src/domain/x.rs", "tests/y.rs"]), "relative, deduplicated, in order: {e}");
         assert_eq!(touched_by_others_of(&dir, "bbbb", &f, &live).len(), 1, "seen while live");
-        assert!(touched_by_others_of(&dir, "bbbb", &f, &|_| false).is_empty(), "not seen once ended");
+        assert!(touched_by_others_of(&dir, "bbbb", &f, &|_, _| false).is_empty(), "not seen once ended");
         assert!(touched_by_others_of(&dir, "aaaa", &f, &live).is_empty(), "never one's own");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A pid is recycled. A session that ended without a clear leaves its
+    /// entry with its pid; once the kernel gives that pid to another process
+    /// the entry must not count as live, and its file list must not warn
+    /// anyone. The start time recorded with the pid tells the two apart.
+    #[test]
+    fn a_reused_pid_does_not_make_an_ended_session_live() {
+        let dir = project();
+        let me = u64::from(std::process::id());
+        let f = dir.join("src/domain/x.rs").display().to_string();
+
+        // The session that is still here: its pid, with its start time.
+        touch_as(&dir, "live", me, &f).unwrap();
+        let e = read_entry(&dir, "live").unwrap();
+        assert_eq!(e["pid_start"], serde_json::json!(pid_start(me)), "the start time is recorded with the pid: {e}");
+
+        // The session that ended: the same pid, recorded with a start time
+        // that is not this process's.
+        let stale_start = pid_start(me).unwrap() + 1;
+        let mut m = entries(&read_file(&dir).unwrap(), "gone");
+        m.insert("gone".to_string(), serde_json::json!({"adr": "ADR-GONE", "pid": me, "pid_start": stale_start, "files": ["src/domain/x.rs"]}));
+        write_entries(&dir, m).unwrap();
+
+        let by_id: std::collections::HashMap<String, bool> =
+            others_of(&dir, "bbbb", &pid_alive).into_iter().map(|o| (o.session, o.alive)).collect();
+        assert_eq!(by_id["live"], true, "the session whose process this is");
+        assert_eq!(by_id["gone"], false, "pid {me} was recycled; the session that recorded it has ended");
+        let warned: Vec<String> = touched_by_others_of(&dir, "bbbb", &f, &pid_alive).into_iter().map(|o| o.session).collect();
+        assert_eq!(warned, vec!["live".to_string()], "only the live session's files warn");
+
+        assert!(!pid_alive(0, None));
+        assert!(pid_alive(me, None), "an entry from before the start time was recorded is judged on the pid");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -768,6 +1058,173 @@ mod sessions_see_each_other {
         assert!(clear_entry(&dir, "bbbb").unwrap());
         assert!(!dir.join(".hexa/loop.json").exists(), "the last entry takes the file with it");
         assert!(!clear_entry(&dir, "bbbb").unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A file that does not parse, as one looks mid-write or after a hand
+    /// edit went wrong, is not "no sessions". A writer that read it as such
+    /// would put back a file holding only itself, and every other session's
+    /// ADR, gate, stage and tasks would be gone. It refuses instead, and the
+    /// file is as it was.
+    #[test]
+    fn a_file_that_does_not_parse_is_refused_not_replaced_with_one_session() {
+        let dir = project();
+        let path = dir.join(".hexa/loop.json");
+        update_entry(&dir, "aaaa", 1, serde_json::json!({"adr": "ADR-A", "gate": "cargo test a", "stage": "build"})).unwrap();
+        let whole = std::fs::read_to_string(&path).unwrap();
+        let half = &whole[..whole.len() / 2];
+        std::fs::write(&path, half).unwrap();
+
+        let err = update_entry(&dir, "bbbb", 2, serde_json::json!({"adr": "ADR-B"})).unwrap_err();
+        assert!(err.contains("loop.json"), "{err}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), half, "the file is as it was");
+        assert!(touch_as(&dir, "bbbb", 2, "src/x.rs").is_err(), "the hook's touch is the same write");
+        assert!(clear_entry(&dir, "bbbb").is_err(), "so is a clear");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), half);
+
+        std::fs::write(&path, &whole).unwrap();
+        update_entry(&dir, "bbbb", 2, serde_json::json!({"adr": "ADR-B"})).unwrap();
+        assert_eq!(read_entry(&dir, "aaaa").unwrap()["adr"], "ADR-A", "once the file is whole again, aaaa is still in it");
+        assert_eq!(read_entry(&dir, "bbbb").unwrap()["adr"], "ADR-B");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A write replaces the file whole rather than truncating it in place.
+    /// Truncate-then-write leaves a window in which a reader gets an empty
+    /// or partial file; a fresh file renamed over the old one never does.
+    /// The inode is the tell: in place keeps it, replacement changes it, and
+    /// no stray temp file is left beside it.
+    #[test]
+    fn a_write_replaces_the_file_rather_than_truncating_it_in_place() {
+        use std::os::unix::fs::MetadataExt;
+        let dir = project();
+        let path = dir.join(".hexa/loop.json");
+        update_entry(&dir, "aaaa", 1, serde_json::json!({"adr": "ADR-A"})).unwrap();
+        let before = std::fs::metadata(&path).unwrap().ino();
+        update_entry(&dir, "bbbb", 2, serde_json::json!({"adr": "ADR-B"})).unwrap();
+        let after = std::fs::metadata(&path).unwrap().ino();
+        assert_ne!(before, after, "loop.json was rewritten in place, so a reader can see it truncated");
+        let stray: Vec<String> = std::fs::read_dir(dir.join(".hexa"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.starts_with("loop.json."))
+            .collect();
+        assert!(stray.is_empty(), "temp file left beside loop.json: {stray:?}");
+        assert_eq!(read_entry(&dir, "aaaa").unwrap()["adr"], "ADR-A");
+        assert_eq!(read_entry(&dir, "bbbb").unwrap()["adr"], "ADR-B");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Sessions write at once: each session's hook on every edit, and a
+    /// harness reporting progress. Nothing is lost between them: every
+    /// session's entry is there at the end with every file it touched, and no
+    /// reader ever sees a file it cannot parse.
+    #[test]
+    fn sessions_writing_at_once_lose_no_entries_and_no_touched_files() {
+        let dir = project();
+        let sessions = 8;
+        let rounds = 50;
+        let handles: Vec<_> = (0..sessions)
+            .map(|i| {
+                let dir = dir.clone();
+                std::thread::spawn(move || {
+                    let s = format!("s{i}");
+                    update_entry(&dir, &s, 1, serde_json::json!({"adr": format!("ADR-{i}"), "gate": "cargo test"})).unwrap();
+                    for r in 0..rounds {
+                        touch_as(&dir, &s, 1, &format!("src/{i}/{r}.rs")).unwrap();
+                        let text = std::fs::read_to_string(dir.join(".hexa/loop.json")).unwrap();
+                        assert!(serde_json::from_str::<serde_json::Value>(&text).is_ok(), "a reader saw a partial file: {text:?}");
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        for i in 0..sessions {
+            let s = format!("s{i}");
+            let e = read_entry(&dir, &s).unwrap_or_else(|| panic!("session {s} was dropped by another session's write"));
+            assert_eq!(e["adr"], format!("ADR-{i}"), "{e}");
+            assert_eq!(e["gate"], "cargo test", "{e}");
+            let files: Vec<&str> = e["files"].as_array().unwrap().iter().filter_map(|v| v.as_str()).collect();
+            assert_eq!(files.len(), TOUCHED_CAP, "{s} lost touched files: {files:?}");
+            assert_eq!(files.last().copied(), Some(format!("src/{i}/{}.rs", rounds - 1).as_str()));
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// One session's hooks touch at once: a host runs independent edits in
+    /// parallel, and each edit's post-edit hook is its own process. Every
+    /// touched file is in the list at the end. Without the list being built
+    /// under the hold, two touches read the same list and the second write
+    /// puts back a list without the first's file.
+    #[test]
+    fn one_sessions_parallel_touches_lose_no_files() {
+        let dir = project();
+        let hooks = 4;
+        let per_hook = TOUCHED_CAP / hooks;
+        update_entry(&dir, "aaaa", 1, serde_json::json!({"adr": "ADR-A", "gate": "cargo test a"})).unwrap();
+        let go = std::sync::Arc::new(std::sync::Barrier::new(hooks));
+        let handles: Vec<_> = (0..hooks)
+            .map(|h| {
+                let dir = dir.clone();
+                let go = go.clone();
+                std::thread::spawn(move || {
+                    go.wait();
+                    for n in 0..per_hook {
+                        touch_as(&dir, "aaaa", 1, &format!("src/{h}/{n}.rs")).unwrap();
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        let e = read_entry(&dir, "aaaa").unwrap();
+        assert_eq!(e["adr"], "ADR-A", "{e}");
+        let mut files: Vec<&str> = e["files"].as_array().unwrap().iter().filter_map(|v| v.as_str()).collect();
+        files.sort_unstable();
+        let mut expected: Vec<String> = (0..hooks).flat_map(|h| (0..per_hook).map(move |n| format!("src/{h}/{n}.rs"))).collect();
+        expected.sort_unstable();
+        assert_eq!(files, expected, "a parallel touch lost a file");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A clear reads the map, drops its own entry and, when nothing is left,
+    /// removes the file. Another session's first write can land between that
+    /// read and the removal, and the removal then takes the newcomer's entry
+    /// with it, with no error on either side. So the clear takes the writer's
+    /// hold for the whole of read, drop and remove: while another session is
+    /// mid-write the clear waits, and what it removes is what is there once
+    /// that write has landed.
+    #[test]
+    fn a_clear_waits_for_a_writer_mid_write_and_does_not_take_its_entry_with_the_file() {
+        let dir = project();
+        let path = dir.join(".hexa/loop.json");
+        update_entry(&dir, "aaaa", 1, serde_json::json!({"adr": "ADR-A"})).unwrap();
+
+        // Session bbbb has read the file under its hold and is about to
+        // write its first entry into it.
+        let hold = lock_for_write(&dir).unwrap();
+        let cleared = {
+            let dir = dir.clone();
+            std::thread::spawn(move || clear_entry(&dir, "aaaa"))
+        };
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(path.is_file(), "the clear removed the file while another session held the writer's hold");
+        assert_eq!(read_entry(&dir, "aaaa").unwrap()["adr"], "ADR-A", "the clear wrote while another session held the writer's hold");
+
+        // bbbb's write lands, then its hold goes.
+        let mut m = entries(&read_file(&dir).unwrap(), "bbbb");
+        m.insert("bbbb".to_string(), serde_json::json!({"adr": "ADR-B", "pid": 1}));
+        write_entries(&dir, m).unwrap();
+        drop(hold);
+
+        assert!(cleared.join().unwrap().unwrap(), "aaaa had an entry to clear");
+        assert!(path.is_file(), "bbbb's entry was taken with the file");
+        assert!(read_entry(&dir, "aaaa").is_none());
+        assert_eq!(read_entry(&dir, "bbbb").unwrap()["adr"], "ADR-B", "bbbb's entry is gone");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

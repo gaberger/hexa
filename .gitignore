@@ -32,6 +32,8 @@ Thumbs.db
 
 # Logs and scratch
 *.log
+# The advisory lock the sessions in one checkout take to write .hexa/loop.json
+.hexa/loop.lock
 *.tmp
 tmp/
 test-output/
