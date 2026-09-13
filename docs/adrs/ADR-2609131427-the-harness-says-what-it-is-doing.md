@@ -48,3 +48,14 @@ to say where the work stands, said nothing about a run at all.
 least three beats in 110ms, reports its note and its finish with an elapsed time, and beats no more
 after finishing; the loop's status line renders a running entry with its elapsed time and renders
 nothing once it is cleared.
+
+## Evidence
+
+`(cargo test -p hexa-exec progress && cargo test -p hexa-cli running) 2>&1 | grep -E 'progress_tests|running_and_for_how_long|test result: ok. 1 passed'` at 45ae7b9 with uncommitted changes on 2026-09-13 14:20 UTC:
+
+```text
+test adversarial::progress_tests::a_phase_heartbeats_while_it_waits_and_reports_when_done ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 87 filtered out; finished in 0.17s
+test commands::loop_cmd::sessions_see_each_other::the_status_line_shows_what_is_running_and_for_how_long ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 248 filtered out; finished in 0.00s
+```
