@@ -1,73 +1,81 @@
 {
-  "adr": "ADR-2609122048",
-  "gate": "cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings",
-  "stage": "gate",
-  "tasks": [
-    {
-      "done_at": "2026-09-13T00:50:11.025795806+00:00",
-      "status": "done",
-      "title": "graph: resolve Rust crate, super and cross-crate imports"
-    },
-    {
-      "done_at": "2026-09-13T00:54:10.630557427+00:00",
-      "status": "done",
-      "title": "dev test arch: run the real analyzer or fail loudly"
-    },
-    {
-      "done_at": "2026-09-13T00:56:37.912433487+00:00",
-      "status": "done",
-      "title": "dev test: a missing tool is not a failing test"
-    },
-    {
-      "done_at": "2026-09-13T00:56:37.913970319+00:00",
-      "status": "done",
-      "title": "dev test lint: no TypeScript step in a Rust repo"
-    },
-    {
-      "done_at": "2026-09-13T00:59:42.758593207+00:00",
-      "status": "done",
-      "title": "absence is exit 0: spec list, spec show, adr specs"
-    },
-    {
-      "done_at": "2026-09-13T00:59:42.760202051+00:00",
-      "status": "done",
-      "title": "docs check: warnings do not fail"
-    },
-    {
-      "done_at": "2026-09-13T01:01:32.695906887+00:00",
-      "status": "done",
-      "title": "plan status with no file names the active workplan"
-    },
-    {
-      "done_at": "2026-09-13T00:58:42.907832494+00:00",
-      "status": "done",
-      "title": "clippy: hexa-analysis clean under -D warnings"
-    },
-    {
-      "done_at": "2026-09-13T01:54:49.793863553+00:00",
-      "status": "done",
-      "title": "clippy: the whole workspace clean under -D warnings"
-    },
-    {
-      "done_at": "2026-09-13T02:10:15.902790691+00:00",
-      "status": "done",
-      "title": "verify: no verdict without evidence the tool gathered itself"
-    },
-    {
-      "done_at": "2026-09-13T01:54:49.795463427+00:00",
-      "status": "done",
-      "title": "assets sync --prune removes skills hexa no longer ships"
-    },
-    {
-      "done_at": "2026-09-13T02:10:15.904542296+00:00",
-      "status": "done",
-      "title": "harden commits the tests it writes, not only its target"
-    },
-    {
-      "done_at": "2026-09-13T02:10:15.906238172+00:00",
-      "status": "done",
-      "title": "harden commits under the repo identity, and drops swarm vocabulary"
+  "sessions": {
+    "15e0cf79-70e3-425b-aa08-d2c85df00d10": {
+      "adr": "ADR-2609131948",
+      "evidence": "cargo test -p hexa-cli --test harden_end_to_end 2>&1 | grep -E '^test |^test result'",
+      "gate": "cargo test -p hexa-cli --test harden_end_to_end",
+      "pid": 520445,
+      "pid_start": 2378261,
+      "running": null,
+      "stage": "done",
+      "tasks": [
+        {
+          "done_at": "2026-09-13T00:50:11.025795806+00:00",
+          "status": "done",
+          "title": "graph: resolve Rust crate, super and cross-crate imports"
+        },
+        {
+          "done_at": "2026-09-13T00:54:10.630557427+00:00",
+          "status": "done",
+          "title": "dev test arch: run the real analyzer or fail loudly"
+        },
+        {
+          "done_at": "2026-09-13T00:56:37.912433487+00:00",
+          "status": "done",
+          "title": "dev test: a missing tool is not a failing test"
+        },
+        {
+          "done_at": "2026-09-13T00:56:37.913970319+00:00",
+          "status": "done",
+          "title": "dev test lint: no TypeScript step in a Rust repo"
+        },
+        {
+          "done_at": "2026-09-13T00:59:42.758593207+00:00",
+          "status": "done",
+          "title": "absence is exit 0: spec list, spec show, adr specs"
+        },
+        {
+          "done_at": "2026-09-13T00:59:42.760202051+00:00",
+          "status": "done",
+          "title": "docs check: warnings do not fail"
+        },
+        {
+          "done_at": "2026-09-13T01:01:32.695906887+00:00",
+          "status": "done",
+          "title": "plan status with no file names the active workplan"
+        },
+        {
+          "done_at": "2026-09-13T00:58:42.907832494+00:00",
+          "status": "done",
+          "title": "clippy: hexa-analysis clean under -D warnings"
+        },
+        {
+          "done_at": "2026-09-13T01:54:49.793863553+00:00",
+          "status": "done",
+          "title": "clippy: the whole workspace clean under -D warnings"
+        },
+        {
+          "done_at": "2026-09-13T02:10:15.902790691+00:00",
+          "status": "done",
+          "title": "verify: no verdict without evidence the tool gathered itself"
+        },
+        {
+          "done_at": "2026-09-13T01:54:49.795463427+00:00",
+          "status": "done",
+          "title": "assets sync --prune removes skills hexa no longer ships"
+        },
+        {
+          "done_at": "2026-09-13T02:10:15.904542296+00:00",
+          "status": "done",
+          "title": "harden commits the tests it writes, not only its target"
+        },
+        {
+          "done_at": "2026-09-13T02:10:15.906238172+00:00",
+          "status": "done",
+          "title": "harden commits under the repo identity, and drops swarm vocabulary"
+        }
+      ],
+      "updated": "2026-09-13T19:49:54.873871872+00:00"
     }
-  ],
-  "updated": "2026-09-13T02:10:15.906259332+00:00"
+  }
 }

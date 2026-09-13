@@ -656,7 +656,7 @@ async fn pre_edit(project_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-async fn post_edit(project_dir: &PathBuf) -> Result<()> {
+async fn post_edit(project_dir: &Path) -> Result<()> {
     let tool_input = tool_input_json();
     if let Ok(input) = serde_json::from_str::<serde_json::Value>(&tool_input) {
         if let Some(file_path) = input["file_path"].as_str() {
@@ -1031,7 +1031,7 @@ fn is_host_notification(text: &str) -> bool {
 fn gate_in_flight(project_dir: &Path) -> bool {
     crate::commands::loop_cmd::read_loop(project_dir)
         .map(|st| {
-            let has_gate = st.get("gate").and_then(|g| g.as_str()).map_or(false, |g| !g.is_empty());
+            let has_gate = st.get("gate").and_then(|g| g.as_str()).is_some_and(|g| !g.is_empty());
             let done = st.get("stage").and_then(|s| s.as_str()) == Some("done");
             has_gate && !done
         })

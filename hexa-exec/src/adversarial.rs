@@ -538,9 +538,6 @@ impl Counters {
 }
 "#;
 
-/// What the probe's reviewer must notice for its answer to count.
-const PROBE_EXPECTS: &str = "the read and the write are not under one lock";
-
 /// Whether an empty local review was shown to be worth anything
 /// (ADR-2609131907 §2).
 #[derive(Debug, Clone, PartialEq)]
@@ -568,9 +565,13 @@ impl Calibration {
     }
 }
 
-/// Does a reply show the reviewer noticed the planted defect? Judged on the
-/// finding's own words, not on a count: a reviewer may report it once or
-/// alongside noise.
+/// Does a reply show the reviewer noticed the planted defect?
+///
+/// What must be noticed: **the read and the write are not under one lock.**
+/// That sentence lived in a constant of its own until clippy pointed out
+/// nothing read it — two statements of one expectation, and only this one
+/// decided anything. Judged on the finding's own words, not on a count: a
+/// reviewer may report it once or alongside noise.
 fn probe_found_it(findings: &[Finding]) -> bool {
     findings.iter().any(|f| {
         let t = format!("{} {}", f.title, f.description).to_ascii_lowercase();
@@ -581,12 +582,10 @@ fn probe_found_it(findings: &[Finding]) -> bool {
 
 /// Ask the local reviewer to find the planted defect in [`PROBE_CODE`].
 async fn calibrate(repo_root: &Path) -> Calibration {
-    let prompt = format!(
-        "You are an adversarial code reviewer. Hunt this code for concurrency defects: races, \
+    let prompt = "You are an adversarial code reviewer. Hunt this code for concurrency defects: races, \
          lost updates, work done outside a lock. Report exclusively REAL bugs you can point to. \
          Output ONLY a JSON object: \
-         {{\"findings\":[{{\"title\":\"...\",\"location\":\"file:line or fn\",\"description\":\"the concrete failure\",\"lens\":\"concurrency\"}}]}}"
-    );
+         {\"findings\":[{\"title\":\"...\",\"location\":\"file:line or fn\",\"description\":\"the concrete failure\",\"lens\":\"concurrency\"}]}".to_string();
     let (answer, who) = ask::<FindingsEnvelope>(&prompt, PROBE_CODE, false, repo_root, 600, 1).await;
     // `who` is deliberately not recorded on the report: the probe reviewed a
     // snippet, not the target, and `reviewed_by` names who reviewed the code
@@ -1241,7 +1240,6 @@ mod answered_tests {
         assert!(PROBE_CODE.contains("drop(guard)"), "the guard is released early");
         let after_drop = PROBE_CODE.split("drop(guard)").nth(1).unwrap();
         assert!(after_drop.contains("insert("), "and the write happens after it: {after_drop}");
-        assert!(PROBE_EXPECTS.contains("lock"), "the expectation names what is wrong");
         assert!(PROBE_CODE.lines().count() < 30, "small enough to be the cheapest call the harness makes");
     }
 

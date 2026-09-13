@@ -302,8 +302,8 @@ mod serves_tests {
     #[test]
     fn serves_is_answered_only_from_reachable_enumerated_paths() {
         let tt = path("registered", "tt-gptoss", Some(true), &["openai/gpt-oss-120b"]);
-        assert_eq!(serves(&[tt.clone()], "openai/gpt-oss-120b"), Coverage::Served("tt-gptoss".into()));
-        assert_eq!(serves(&[tt.clone()], "qwen3:4b"), Coverage::NotServed);
+        assert_eq!(serves(std::slice::from_ref(&tt), "openai/gpt-oss-120b"), Coverage::Served("tt-gptoss".into()));
+        assert_eq!(serves(std::slice::from_ref(&tt), "qwen3:4b"), Coverage::NotServed);
 
         let down = path("local", "Ollama", Some(false), &[]);
         assert_eq!(serves(&[down.clone(), tt.clone()], "qwen3:4b"), Coverage::NotServed, "an unreachable path serves nothing");
@@ -328,8 +328,8 @@ mod serves_tests {
     #[test]
     fn a_claude_model_is_served_by_a_reachable_frontier() {
         let claude = path("frontier", "claude", Some(true), &[]);
-        assert_eq!(serves(&[claude.clone()], "claude-opus-5"), Coverage::Served("claude".into()));
-        assert_eq!(serves(&[claude.clone()], "anthropic/claude-sonnet-5"), Coverage::Served("claude".into()));
+        assert_eq!(serves(std::slice::from_ref(&claude), "claude-opus-5"), Coverage::Served("claude".into()));
+        assert_eq!(serves(std::slice::from_ref(&claude), "anthropic/claude-sonnet-5"), Coverage::Served("claude".into()));
         assert_eq!(serves(&[claude], "qwen3:4b"), Coverage::NotServed, "a frontier does not answer for a local model");
     }
 

@@ -489,7 +489,7 @@ pub fn record_evidence(dir: &Path, adr_id: &str, command: &str) -> Result<PathBu
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
     };
     let commit = match git(&["rev-parse", "--short", "HEAD"]) {
-        Some(sha) if git(&["status", "--porcelain"]).map_or(true, |s| s.is_empty()) => sha,
+        Some(sha) if git(&["status", "--porcelain"]).is_none_or(|s| s.is_empty()) => sha,
         Some(sha) => format!("{sha} with uncommitted changes"),
         None => "no commit".to_string(),
     };
@@ -1065,8 +1065,8 @@ mod sessions_see_each_other {
 
         let by_id: std::collections::HashMap<String, bool> =
             others_of(&dir, "bbbb", &pid_alive).into_iter().map(|o| (o.session, o.alive)).collect();
-        assert_eq!(by_id["live"], true, "the session whose process this is");
-        assert_eq!(by_id["gone"], false, "pid {me} was recycled; the session that recorded it has ended");
+        assert!(by_id["live"], "the session whose process this is");
+        assert!(!by_id["gone"], "pid {me} was recycled; the session that recorded it has ended");
         let warned: Vec<String> = touched_by_others_of(&dir, "bbbb", &f, &pid_alive).into_iter().map(|o| o.session).collect();
         assert_eq!(warned, vec!["live".to_string()], "only the live session's files warn");
 
