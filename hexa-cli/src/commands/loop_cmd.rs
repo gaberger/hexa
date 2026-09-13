@@ -98,37 +98,227 @@ fn loop_path(dir: &Path) -> PathBuf {
     dir.join(".hexa").join("loop.json")
 }
 
-/// The recorded loop state, if any.
-pub fn read_loop(dir: &Path) -> Option<serde_json::Value> {
+/// Who is running hexa (ADR-2609131408 §2). The contract is hexa's own:
+/// a host sets `HEXA_SESSION_ID` and `HEXA_SESSION_PID` for the commands
+/// it runs. Claude Code's `CLAUDE_CODE_SESSION_ID` / `CLAUDE_PID` are
+/// recognised natively. A plain terminal is its POSIX session — stable for
+/// the life of the terminal, and its leader is a pid whose liveness can be
+/// checked. Resolved from `env` and `posix_session` so the precedence is
+/// testable without touching the process environment.
+pub fn resolve_session(env: &dyn Fn(&str) -> Option<String>, posix_session: Option<u64>) -> (String, u64) {
+    let get = |k: &str| env(k).filter(|v| !v.is_empty());
+    let pid_of = |k: &str| get(k).and_then(|v| v.parse::<u64>().ok());
+    if let Some(id) = get("HEXA_SESSION_ID") {
+        return (id, pid_of("HEXA_SESSION_PID").or(posix_session).unwrap_or(0));
+    }
+    if let Some(id) = get("CLAUDE_CODE_SESSION_ID").or_else(|| get("CLAUDE_SESSION_ID")) {
+        return (id, pid_of("CLAUDE_PID").or(posix_session).unwrap_or(0));
+    }
+    match posix_session {
+        Some(sid) => (format!("local:{sid}"), sid),
+        None => ("local".to_string(), 0),
+    }
+}
+
+/// The POSIX session id of this process: field 6 of /proc/self/stat, after
+/// the parenthesised command name. `None` where /proc is not available.
+fn posix_session() -> Option<u64> {
+    let stat = std::fs::read_to_string("/proc/self/stat").ok()?;
+    let after = &stat[stat.rfind(')')? + 1..];
+    after.split_whitespace().nth(3)?.parse().ok()
+}
+
+pub fn session_id() -> String {
+    resolve_session(&|k| std::env::var(k).ok(), posix_session()).0
+}
+
+fn session_pid() -> u64 {
+    resolve_session(&|k| std::env::var(k).ok(), posix_session()).1
+}
+
+/// A session is live while its process exists. A pid of 0 is unknown and
+/// counts as ended.
+pub fn pid_alive(pid: u64) -> bool {
+    pid != 0 && Path::new(&format!("/proc/{pid}")).exists()
+}
+
+/// The whole file: `{"sessions": {id: entry}}`, or a flat entry from before
+/// ADR-2609131408.
+fn read_file(dir: &Path) -> Option<serde_json::Value> {
     std::fs::read_to_string(loop_path(dir)).ok().and_then(|s| serde_json::from_str(&s).ok())
 }
 
-/// Merge `patch` into the loop state and write it. Only in a project that has
-/// a `.hexa/` directory; elsewhere there is nothing to record into.
-pub fn update_loop(dir: &Path, patch: serde_json::Value) -> Result<serde_json::Value, String> {
+/// The entries by session. A flat pre-ADR file is the entry of whoever asks.
+fn entries(file: &serde_json::Value, asking: &str) -> serde_json::Map<String, serde_json::Value> {
+    if let Some(m) = file.get("sessions").and_then(|v| v.as_object()) {
+        return m.clone();
+    }
+    let mut m = serde_json::Map::new();
+    if file.as_object().is_some_and(|o| !o.is_empty()) {
+        m.insert(asking.to_string(), file.clone());
+    }
+    m
+}
+
+/// One session's recorded state, if any.
+pub fn read_entry(dir: &Path, session: &str) -> Option<serde_json::Value> {
+    read_file(dir).and_then(|f| entries(&f, session).get(session).cloned())
+}
+
+/// This session's recorded state, if any.
+pub fn read_loop(dir: &Path) -> Option<serde_json::Value> {
+    read_entry(dir, &session_id())
+}
+
+fn write_entries(dir: &Path, m: serde_json::Map<String, serde_json::Value>) -> Result<(), String> {
+    let p = loop_path(dir);
+    if m.is_empty() {
+        if p.is_file() {
+            std::fs::remove_file(&p).map_err(|e| e.to_string())?;
+        }
+        return Ok(());
+    }
+    let text = serde_json::to_string_pretty(&serde_json::json!({ "sessions": m })).map_err(|e| e.to_string())? + "\n";
+    std::fs::write(p, text).map_err(|e| e.to_string())
+}
+
+/// Merge `patch` into one session's entry and write the file. Only in a
+/// project that has a `.hexa/` directory; elsewhere there is nothing to
+/// record into.
+pub fn update_entry(dir: &Path, session: &str, pid: u64, patch: serde_json::Value) -> Result<serde_json::Value, String> {
     if !dir.join(".hexa").is_dir() {
         return Err(format!("{} has no .hexa/ directory; run `hexa init .` first", dir.display()));
     }
-    let mut state = read_loop(dir).unwrap_or_else(|| serde_json::json!({}));
+    let mut m = read_file(dir).map(|f| entries(&f, session)).unwrap_or_default();
+    let mut state = m.get(session).cloned().unwrap_or_else(|| serde_json::json!({}));
     if let (Some(obj), Some(p)) = (state.as_object_mut(), patch.as_object()) {
         for (k, v) in p {
             obj.insert(k.clone(), v.clone());
         }
+        obj.insert("pid".to_string(), serde_json::json!(pid));
         obj.insert("updated".to_string(), serde_json::Value::String(chrono::Utc::now().to_rfc3339()));
     }
-    let text = serde_json::to_string_pretty(&state).map_err(|e| e.to_string())? + "\n";
-    std::fs::write(loop_path(dir), text).map_err(|e| e.to_string())?;
+    m.insert(session.to_string(), state.clone());
+    write_entries(dir, m)?;
     Ok(state)
 }
 
-/// Remove the loop file. Returns whether there was one.
+/// Merge `patch` into this session's entry and write it.
+pub fn update_loop(dir: &Path, patch: serde_json::Value) -> Result<serde_json::Value, String> {
+    update_entry(dir, &session_id(), session_pid(), patch)
+}
+
+/// Remove one session's entry; the file goes with the last one. Returns
+/// whether there was an entry.
+pub fn clear_entry(dir: &Path, session: &str) -> Result<bool, String> {
+    let Some(f) = read_file(dir) else { return Ok(false) };
+    let mut m = entries(&f, session);
+    let was = m.remove(session).is_some();
+    write_entries(dir, m)?;
+    Ok(was)
+}
+
 fn clear_loop(dir: &Path) -> Result<bool, String> {
-    let p = loop_path(dir);
-    if !p.is_file() {
-        return Ok(false);
+    clear_entry(dir, &session_id())
+}
+
+/// Another session's entry, as the awareness lines show it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Other {
+    pub session: String,
+    pub alive: bool,
+    pub adr: String,
+    pub gate: String,
+    pub stage: String,
+    pub files: Vec<String>,
+    pub updated: String,
+}
+
+/// Every session but `session`, liveness judged by `alive`.
+pub fn others_of(dir: &Path, session: &str, alive: &dyn Fn(u64) -> bool) -> Vec<Other> {
+    let Some(f) = read_file(dir) else { return Vec::new() };
+    let mut out: Vec<Other> = entries(&f, session)
+        .iter()
+        .filter(|(id, _)| id.as_str() != session)
+        .map(|(id, e)| Other {
+            session: id.clone(),
+            alive: alive(e.get("pid").and_then(|v| v.as_u64()).unwrap_or(0)),
+            adr: e.get("adr").and_then(|v| v.as_str()).unwrap_or("none").to_string(),
+            gate: e.get("gate").and_then(|v| v.as_str()).unwrap_or("none").to_string(),
+            stage: e.get("stage").and_then(|v| v.as_str()).unwrap_or("decide").to_string(),
+            files: e
+                .get("files")
+                .and_then(|v| v.as_array())
+                .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                .unwrap_or_default(),
+            updated: e.get("updated").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        })
+        .collect();
+    out.sort_by(|a, b| b.updated.cmp(&a.updated));
+    out
+}
+
+pub fn others(dir: &Path) -> Vec<Other> {
+    others_of(dir, &session_id(), &pid_alive)
+}
+
+/// How many files a session's entry remembers.
+const TOUCHED_CAP: usize = 40;
+
+/// Record that `session` edited `path`: the boundary another session needs
+/// to see. Deduplicated, most recent last, capped.
+pub fn touch_as(dir: &Path, session: &str, pid: u64, path: &str) -> Result<(), String> {
+    let rel = Path::new(path).strip_prefix(dir).map(|p| p.display().to_string()).unwrap_or_else(|_| path.to_string());
+    let mut files: Vec<String> = read_entry(dir, session)
+        .and_then(|e| e.get("files").and_then(|v| v.as_array()).cloned())
+        .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    files.retain(|f| f != &rel);
+    files.push(rel);
+    if files.len() > TOUCHED_CAP {
+        files.drain(..files.len() - TOUCHED_CAP);
     }
-    std::fs::remove_file(&p).map_err(|e| e.to_string())?;
-    Ok(true)
+    update_entry(dir, session, pid, serde_json::json!({ "files": files })).map(|_| ())
+}
+
+pub fn touch(dir: &Path, path: &str) -> Result<(), String> {
+    touch_as(dir, &session_id(), session_pid(), path)
+}
+
+/// The live other sessions that have touched `path`.
+pub fn touched_by_others_of(dir: &Path, session: &str, path: &str, alive: &dyn Fn(u64) -> bool) -> Vec<Other> {
+    let rel = Path::new(path).strip_prefix(dir).map(|p| p.display().to_string()).unwrap_or_else(|_| path.to_string());
+    others_of(dir, session, alive).into_iter().filter(|o| o.alive && o.files.iter().any(|f| f == &rel)).collect()
+}
+
+pub fn touched_by_others(dir: &Path, path: &str) -> Vec<Other> {
+    touched_by_others_of(dir, &session_id(), path, &pid_alive)
+}
+
+fn short(id: &str) -> &str {
+    id.get(..8).unwrap_or(id)
+}
+
+/// One line per other session, for the hooks and `hexa loop`: live ones
+/// with what they are under and where they have been; ended ones marked.
+pub fn awareness_lines(dir: &Path) -> Vec<String> {
+    others(dir)
+        .iter()
+        .map(|o| {
+            let files = if o.files.is_empty() {
+                String::new()
+            } else {
+                let shown: Vec<&str> = o.files.iter().rev().take(5).map(String::as_str).collect();
+                let more = o.files.len().saturating_sub(5);
+                format!(" · touched {}{}", shown.join(", "), if more > 0 { format!(" +{more}") } else { String::new() })
+            };
+            if o.alive {
+                format!("also here: session {} · stage {} · ADR {} · gate {}{}", short(&o.session), o.stage, o.adr, o.gate, files)
+            } else {
+                format!("ended: session {} · stage {} · ADR {}{}", short(&o.session), o.stage, o.adr, files)
+            }
+        })
+        .collect()
 }
 
 /// The ADR file in `docs/adrs/` whose name starts with `id`.
@@ -361,6 +551,9 @@ pub async fn run(action: Option<LoopAction>) -> anyhow::Result<()> {
                 }
                 println!("  file    {}", loop_path(&cwd).display());
             }
+            for l in awareness_lines(&cwd) {
+                println!("  {l}");
+            }
         }
         LoopAction::Task { action } => run_task(&cwd, action)?,
         LoopAction::Adr { id } => {
@@ -414,7 +607,7 @@ pub async fn run(action: Option<LoopAction>) -> anyhow::Result<()> {
         }
         LoopAction::Clear => {
             let was = clear_loop(&cwd).map_err(|e| anyhow::anyhow!(e))?;
-            println!("{} {}", "\u{2b21}".yellow(), if was { "loop state cleared" } else { "nothing was recorded" });
+            println!("{} {}", "\u{2b21}".yellow(), if was { "this session's loop state cleared" } else { "nothing was recorded for this session" });
         }
     }
     Ok(())
@@ -456,6 +649,93 @@ mod evidence_tests {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), before, "a failing run appends nothing");
 
         assert!(record_evidence(&dir, "ADR-9", "true").is_err(), "no such ADR");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod sessions_see_each_other {
+    use super::*;
+
+    fn project() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("hexa-sessions-{}-{:?}", std::process::id(), std::thread::current().id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".hexa")).unwrap();
+        dir
+    }
+
+    fn live(pid: u64) -> bool {
+        pid == 1
+    }
+
+    /// The contract is hexa's own; Claude Code's variables are one host's
+    /// spelling of it; a terminal is its POSIX session.
+    #[test]
+    fn the_session_is_hexas_own_variable_then_the_hosts_then_the_terminal() {
+        let env = |vars: &'static [(&'static str, &'static str)]| move |k: &str| vars.iter().find(|(n, _)| *n == k).map(|(_, v)| v.to_string());
+        assert_eq!(resolve_session(&env(&[("HEXA_SESSION_ID", "codex-7"), ("HEXA_SESSION_PID", "4242"), ("CLAUDE_CODE_SESSION_ID", "c1")]), Some(9)), ("codex-7".to_string(), 4242));
+        assert_eq!(resolve_session(&env(&[("CLAUDE_CODE_SESSION_ID", "c1"), ("CLAUDE_PID", "77")]), Some(9)), ("c1".to_string(), 77));
+        assert_eq!(resolve_session(&env(&[("CLAUDE_SESSION_ID", "c2")]), Some(9)), ("c2".to_string(), 9), "no pid from the host: the terminal's session leader");
+        assert_eq!(resolve_session(&env(&[("HEXA_SESSION_ID", "")]), Some(9)), ("local:9".to_string(), 9), "empty is unset");
+        assert_eq!(resolve_session(&env(&[]), None), ("local".to_string(), 0));
+    }
+
+    #[test]
+    fn two_sessions_record_two_adrs_and_each_reads_its_own() {
+        let dir = project();
+        update_entry(&dir, "aaaa", 1, serde_json::json!({"adr": "ADR-A", "gate": "cargo test a", "stage": "build"})).unwrap();
+        update_entry(&dir, "bbbb", 2, serde_json::json!({"adr": "ADR-B", "stage": "gate"})).unwrap();
+        assert_eq!(read_entry(&dir, "aaaa").unwrap()["adr"], "ADR-A");
+        assert_eq!(read_entry(&dir, "bbbb").unwrap()["adr"], "ADR-B");
+        let o = others_of(&dir, "aaaa", &live);
+        assert_eq!(o.len(), 1);
+        assert_eq!(o[0].session, "bbbb");
+        assert!(!o[0].alive, "pid 2 is not live in this test");
+        let o = others_of(&dir, "bbbb", &live);
+        assert!(o[0].alive && o[0].adr == "ADR-A" && o[0].gate == "cargo test a", "{:?}", o);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_flat_file_from_before_reads_as_the_asking_session_and_migrates_on_write() {
+        let dir = project();
+        std::fs::write(dir.join(".hexa/loop.json"), r#"{"adr":"ADR-OLD","gate":"cargo test","stage":"done"}"#).unwrap();
+        assert_eq!(read_entry(&dir, "aaaa").unwrap()["adr"], "ADR-OLD");
+        assert!(others_of(&dir, "aaaa", &live).is_empty());
+        update_entry(&dir, "aaaa", 1, serde_json::json!({"stage": "build"})).unwrap();
+        let file: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(dir.join(".hexa/loop.json")).unwrap()).unwrap();
+        assert_eq!(file["sessions"]["aaaa"]["adr"], "ADR-OLD", "{file}");
+        assert_eq!(file["sessions"]["aaaa"]["stage"], "build");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn touched_files_deduplicate_and_are_seen_from_the_other_session_only_while_it_is_live() {
+        let dir = project();
+        let f = dir.join("src/domain/x.rs").display().to_string();
+        touch_as(&dir, "aaaa", 1, &f).unwrap();
+        touch_as(&dir, "aaaa", 1, &f).unwrap();
+        touch_as(&dir, "aaaa", 1, "tests/y.rs").unwrap();
+        let e = read_entry(&dir, "aaaa").unwrap();
+        assert_eq!(e["files"], serde_json::json!(["src/domain/x.rs", "tests/y.rs"]), "relative, deduplicated, in order: {e}");
+        assert_eq!(touched_by_others_of(&dir, "bbbb", &f, &live).len(), 1, "seen while live");
+        assert!(touched_by_others_of(&dir, "bbbb", &f, &|_| false).is_empty(), "not seen once ended");
+        assert!(touched_by_others_of(&dir, "aaaa", &f, &live).is_empty(), "never one's own");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn clearing_removes_one_entry_and_the_file_only_when_empty() {
+        let dir = project();
+        update_entry(&dir, "aaaa", 1, serde_json::json!({"adr": "ADR-A"})).unwrap();
+        update_entry(&dir, "bbbb", 1, serde_json::json!({"adr": "ADR-B"})).unwrap();
+        assert!(clear_entry(&dir, "aaaa").unwrap());
+        assert!(dir.join(".hexa/loop.json").is_file(), "the other entry keeps the file");
+        assert!(read_entry(&dir, "aaaa").is_none());
+        assert_eq!(read_entry(&dir, "bbbb").unwrap()["adr"], "ADR-B");
+        assert!(clear_entry(&dir, "bbbb").unwrap());
+        assert!(!dir.join(".hexa/loop.json").exists(), "the last entry takes the file with it");
+        assert!(!clear_entry(&dir, "bbbb").unwrap());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

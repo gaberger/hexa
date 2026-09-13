@@ -319,6 +319,9 @@ async fn session_start(project_dir: &Path) -> Result<()> {
     // context. stdout is picked up as session context — never skip this.
     println!("\n{}", fingerprint_block(id, project_dir, &name).await);
     println!("{}", crate::commands::loop_cmd::status_line(project_dir));
+    for l in crate::commands::loop_cmd::awareness_lines(project_dir) {
+        println!("  {l}");
+    }
     let mut st = SessionState::load_or_new();
     st.project = crate::commands::loop_cmd::project_name(project_dir);
     st.name = session_key();
@@ -584,6 +587,20 @@ async fn pre_edit(project_dir: &Path) -> Result<()> {
             // Existing hexa boundary check
             validate_boundary_edit(project_dir, file_path)?;
 
+            // ADR-2609131408: another live session has edited this file.
+            // Say so before the edit; never block — coordination is the
+            // reader's decision, visibility is the tool's job.
+            for o in crate::commands::loop_cmd::touched_by_others(project_dir, file_path) {
+                println!(
+                    "[HEX] {} was edited by session {} (live) under ADR {} · stage {} · last {}. Coordinate before overlapping.",
+                    file_path,
+                    o.session.get(..8).unwrap_or(&o.session),
+                    o.adr,
+                    o.stage,
+                    o.updated.get(11..16).unwrap_or("?")
+                );
+            }
+
             let mode = enforcement_mode(project_dir);
             let state = Some(SessionState::load_or_new());
 
@@ -639,10 +656,12 @@ async fn pre_edit(project_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-async fn post_edit(_project_dir: &PathBuf) -> Result<()> {
+async fn post_edit(project_dir: &PathBuf) -> Result<()> {
     let tool_input = tool_input_json();
     if let Ok(input) = serde_json::from_str::<serde_json::Value>(&tool_input) {
-        if input["file_path"].as_str().is_some() {
+        if let Some(file_path) = input["file_path"].as_str() {
+            // ADR-2609131408: the boundary another session needs to see.
+            let _ = crate::commands::loop_cmd::touch(project_dir, file_path);
             // Nothing to notify; the edit count is the record
             // to the daemon. The counter is local and stays.
             if let Some(mut state) = SessionState::load() {
@@ -877,6 +896,9 @@ async fn route(project_dir: &Path) -> Result<()> {
                     // Worktree branches have a valid task.json — only archive on main.
                     if matches!(tier, Tier::T2MiniPlan | Tier::T3Workplan) {
                         println!("[HEX] {}", crate::commands::loop_cmd::status_line(project_dir));
+                        for l in crate::commands::loop_cmd::awareness_lines(project_dir) {
+                            println!("[HEX] {l}");
+                        }
                         let task_json = project_dir.join(".hexa/task.json");
                         if task_json.exists() {
                             let on_main = std::process::Command::new("git")
