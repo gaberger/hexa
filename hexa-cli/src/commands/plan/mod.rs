@@ -46,10 +46,11 @@ pub enum PlanAction {
     },
     /// List existing workplans
     List,
-    /// Show status of a specific workplan
+    /// Show status of a workplan. With no file, the active one.
     Status {
-        /// Workplan filename (e.g. feat-secrets-plan-b.json)
-        file: String,
+        /// Workplan filename (e.g. feat-secrets-plan-b.json). Omit it to use
+        /// the only active workplan in docs/workplans/.
+        file: Option<String>,
     },
     /// Reconcile workplan step statuses against actual code (check done conditions)
     Reconcile {
@@ -430,7 +431,7 @@ pub async fn run(action: PlanAction) -> anyhow::Result<()> {
         PlanAction::Create { requirements, lang, adr, no_adr } => create_plan(&requirements, &lang, adr.as_deref(), no_adr).await,
         PlanAction::Execute { file } => execute_plan(&file).await,
         PlanAction::List => list_plans().await,
-        PlanAction::Status { file } => show_plan_status(&file).await,
+        PlanAction::Status { file } => show_plan_status(file.as_deref()).await,
         PlanAction::Schema => show_schema().await,
         PlanAction::Reconcile { file, all, update, audit, strict, dry_run, why, force, json } => {
             if all || json {
@@ -1565,9 +1566,53 @@ async fn list_plans() -> anyhow::Result<()> {
 }
 
 /// Show detailed status of a workplan.
-async fn show_plan_status(file: &str) -> anyhow::Result<()> {
-    let path = resolve_workplan_path(file)?;
-    show_plan_file(&path).await
+async fn show_plan_status(file: Option<&str>) -> anyhow::Result<()> {
+    if let Some(name) = file {
+        let path = resolve_workplan_path(name)?;
+        return show_plan_file(&path).await;
+    }
+
+    // No file named. Asking for status is a reasonable thing to do with no
+    // arguments, and erroring out taught agents the verb was broken.
+    let active = active_workplans();
+    match active.len() {
+        0 => {
+            println!("{} No active workplan in docs/workplans/", "\u{2b21}".cyan());
+            println!("  {}", "Draft one with `hexa plan draft <prompt>`.".dimmed());
+            Ok(())
+        }
+        1 => show_plan_file(&active[0]).await,
+        n => {
+            println!("{} {} active workplans. Name one:", "\u{2b21}".cyan(), n);
+            for p in &active {
+                println!("    {}", p.file_name().unwrap_or_default().to_string_lossy());
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Workplan files that are not marked completed, newest first.
+fn active_workplans() -> Vec<std::path::PathBuf> {
+    let dir = std::path::Path::new("docs/workplans");
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut out: Vec<std::path::PathBuf> = entries
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().map(|e| e == "json").unwrap_or(false))
+        .filter(|p| {
+            std::fs::read_to_string(p)
+                .ok()
+                .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+                .and_then(|v| v.get("status").and_then(|s| s.as_str()).map(String::from))
+                .map(|s| s != "completed")
+                .unwrap_or(false)
+        })
+        .collect();
+    out.sort();
+    out.reverse();
+    out
 }
 
 async fn show_plan_file(path: &Path) -> anyhow::Result<()> {

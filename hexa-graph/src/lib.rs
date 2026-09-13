@@ -35,7 +35,9 @@ pub enum Mode {
 }
 
 impl Mode {
-    pub fn from_str(s: &str) -> Self {
+    /// Read a mode from its label. Anything unrecognised is `Ast`, so this
+    /// cannot fail and is not a `FromStr` implementation.
+    pub fn from_label(s: &str) -> Self {
         match s {
             "deep" => Mode::Deep,
             _ => Mode::Ast,
@@ -238,9 +240,10 @@ pub async fn build(
     }
 
     // ── Resolve import + reference edges (now that all files/entities are known).
+    let crate_roots = crate_roots(&file_set);
     for (from_rel, raw_path, names) in &pending_imports {
         let from_file_id = id_for(NodeKind::File, from_rel, from_rel);
-        let resolved = resolve_import(from_rel, raw_path, &file_set);
+        let resolved = resolve_import(from_rel, raw_path, &file_set, &crate_roots);
 
         // File→file import edge when the path resolves inside the project.
         if let Some(target_rel) = &resolved {
@@ -444,14 +447,91 @@ fn rel_path(root: &Path, path: &Path) -> String {
 
 /// Resolve an import path to a known project-relative file, if possible.
 /// Handles TypeScript relative imports and Rust `self::mod` declarations.
-fn resolve_import(from_rel: &str, raw: &str, files: &HashSet<String>) -> Option<String> {
+/// Crate ident (`hexa_core`) to that crate's root file (`hexa-core/src/lib.rs`).
+///
+/// A Rust cross-crate `use` names the crate, never the file. Without this map
+/// no edge ever reaches a crate root, and `graph consumers` reports the core
+/// of the workspace as safe to delete (ADR-2609122048).
+fn crate_roots(files: &HashSet<String>) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    for f in files {
+        let Some(dir) = f.strip_suffix("/src/lib.rs") else {
+            continue;
+        };
+        let name = dir.rsplit('/').next().unwrap_or(dir);
+        out.insert(name.replace('-', "_"), f.clone());
+    }
+    out
+}
+
+fn resolve_import(
+    from_rel: &str,
+    raw: &str,
+    files: &HashSet<String>,
+    crates: &HashMap<String, String>,
+) -> Option<String> {
     if raw.starts_with("./") || raw.starts_with("../") {
         return resolve_relative_ts(from_rel, raw, files);
     }
     if let Some(modname) = raw.strip_prefix("self::") {
         return resolve_rust_mod(from_rel, modname, files);
     }
-    None
+    let resolved = if let Some(rest) = raw.strip_prefix("crate::") {
+        crate_src_dir(from_rel).and_then(|base| resolve_module_in(&base, rest, files))
+    } else if let Some(rest) = raw.strip_prefix("super::") {
+        resolve_rust_super(from_rel, rest, files)
+    } else {
+        // Cross-crate. `hexa_core::domain::Foo` names the crate; the file it
+        // resolves to is that crate's root.
+        raw.split_once("::")
+            .and_then(|(head, _)| crates.get(head))
+            .cloned()
+    };
+    // A file never imports itself.
+    resolved.filter(|target| target != from_rel)
+}
+
+/// The `src` directory of the crate owning this file: `a/src/b/c.rs` to `a/src`.
+fn crate_src_dir(from_rel: &str) -> Option<String> {
+    from_rel.find("/src/").map(|i| from_rel[..i + 4].to_string())
+}
+
+/// Walk a `::` path from longest prefix to shortest and take the first module
+/// file that exists. The trailing segments of a `use` name items, not modules,
+/// and how many is not knowable from the path alone.
+fn resolve_module_in(base: &str, path: &str, files: &HashSet<String>) -> Option<String> {
+    let segs: Vec<&str> = path.split("::").filter(|s| !s.is_empty()).collect();
+    for take in (1..=segs.len()).rev() {
+        let joined = segs[..take].join("/");
+        for cand in [
+            format!("{base}/{joined}.rs"),
+            format!("{base}/{joined}/mod.rs"),
+        ] {
+            if files.contains(&cand) {
+                return Some(cand);
+            }
+        }
+    }
+    // Nothing under the crate matched, so the import reaches the crate root.
+    [format!("{base}/lib.rs"), format!("{base}/main.rs")]
+        .into_iter()
+        .find(|c| files.contains(c))
+}
+
+/// `super::` is the parent module: the directory above for a `mod.rs`, this
+/// directory for any other file.
+fn resolve_rust_super(from_rel: &str, rest: &str, files: &HashSet<String>) -> Option<String> {
+    let parent = parent_dir(from_rel);
+    let stem = file_stem(from_rel);
+    let base = if stem == "mod" || stem == "lib" || stem == "main" {
+        parent_dir(&parent)
+    } else {
+        parent
+    };
+    if base.is_empty() {
+        return None;
+    }
+    resolve_module_in(&base, rest, files)
 }
 
 fn resolve_relative_ts(from_rel: &str, raw: &str, files: &HashSet<String>) -> Option<String> {
@@ -524,4 +604,87 @@ fn normalize_join(base: &str, rel: &str) -> String {
         }
     }
     parts.join("/")
+}
+
+#[cfg(test)]
+mod resolve_tests {
+    use super::*;
+
+    fn files(paths: &[&str]) -> HashSet<String> {
+        paths.iter().map(|p| p.to_string()).collect()
+    }
+
+    /// The defect ADR-2609122048 records: a cross-crate `use` names the crate,
+    /// so before this resolved, every crate root looked unimported.
+    #[test]
+    fn a_cross_crate_use_reaches_the_crate_root() {
+        let f = files(&["hexa-core/src/lib.rs", "hexa-cli/src/commands/analyze.rs"]);
+        let crates = crate_roots(&f);
+        let got = resolve_import(
+            "hexa-cli/src/commands/analyze.rs",
+            "hexa_core::domain::Layer",
+            &f,
+            &crates,
+        );
+        assert_eq!(got.as_deref(), Some("hexa-core/src/lib.rs"));
+    }
+
+    #[test]
+    fn a_crate_path_reaches_the_deepest_module_that_exists() {
+        let f = files(&[
+            "hexa-cli/src/lib.rs",
+            "hexa-cli/src/commands/mod.rs",
+            "hexa-cli/src/commands/analyze.rs",
+            "hexa-cli/src/main.rs",
+        ]);
+        let crates = crate_roots(&f);
+        let got = resolve_import(
+            "hexa-cli/src/main.rs",
+            "crate::commands::analyze::run",
+            &f,
+            &crates,
+        );
+        assert_eq!(got.as_deref(), Some("hexa-cli/src/commands/analyze.rs"));
+    }
+
+    #[test]
+    fn super_resolves_against_the_parent_module() {
+        let f = files(&[
+            "a/src/commands/mod.rs",
+            "a/src/commands/plan/mod.rs",
+            "a/src/commands/analyze.rs",
+        ]);
+        let crates = crate_roots(&f);
+        let got = resolve_import(
+            "a/src/commands/plan/mod.rs",
+            "super::analyze::Thing",
+            &f,
+            &crates,
+        );
+        assert_eq!(got.as_deref(), Some("a/src/commands/analyze.rs"));
+    }
+
+    #[test]
+    fn a_third_party_crate_resolves_to_nothing() {
+        let f = files(&["hexa-core/src/lib.rs"]);
+        let crates = crate_roots(&f);
+        assert_eq!(
+            resolve_import("hexa-core/src/lib.rs", "serde::Deserialize", &f, &crates),
+            None
+        );
+        assert_eq!(
+            resolve_import("hexa-core/src/lib.rs", "std::collections::HashMap", &f, &crates),
+            None
+        );
+    }
+
+    #[test]
+    fn a_file_never_imports_itself() {
+        let f = files(&["hexa-core/src/lib.rs", "hexa-core/src/domain.rs"]);
+        let crates = crate_roots(&f);
+        assert_eq!(
+            resolve_import("hexa-core/src/lib.rs", "hexa_core::domain::Layer", &f, &crates),
+            None
+        );
+    }
 }

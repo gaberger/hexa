@@ -126,71 +126,6 @@ pub fn recent_runs(limit: usize) -> Vec<Value> {
 
 const SPEND: &str = "inference-log.jsonl";
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A fresh directory per test. No env var, so nothing races: cargo runs these in parallel and
-    /// two tests that both `set_var("HEXA_HOME", …)` overwrite each other's answer.
-    fn dir() -> tempfile::TempDir {
-        tempfile::tempdir().expect("tempdir")
-    }
-
-    #[test]
-    fn a_proposal_round_trips_and_carries_its_source() {
-        let d = dir();
-        append_in(
-            d.path(),
-            PROPOSALS,
-            &serde_json::json!({ "id": 1u64, "kind": "file_write", "source": "tool:adr_draft", "status": "open" }),
-        )
-        .unwrap();
-        let all = read_tail_in(d.path(), PROPOSALS, 10);
-        assert_eq!(all.len(), 1);
-        assert_eq!(all[0]["kind"], "file_write");
-        assert_eq!(all[0]["source"], "tool:adr_draft");
-        assert_eq!(all[0]["status"], "open");
-    }
-
-    #[test]
-    fn proposal_ids_are_monotonic_so_a_feed_orders_without_a_database() {
-        let a = propose_id();
-        let b = propose_id();
-        assert!(b >= a, "ids must not go backwards: {} then {}", a, b);
-        assert!(a > 0, "id should be a real timestamp, not zero");
-    }
-
-    #[test]
-    fn reads_are_newest_first_and_bounded() {
-        let d = dir();
-        for i in 0..5 {
-            append_in(d.path(), RUNS, &serde_json::json!({ "n": i })).unwrap();
-        }
-        let got = read_tail_in(d.path(), RUNS, 3);
-        assert_eq!(got.len(), 3, "limit is honoured");
-        assert_eq!(got[0]["n"], 4, "newest first");
-    }
-
-    #[test]
-    fn a_torn_last_line_does_not_hide_the_history_behind_it() {
-        // A process killed mid-append leaves half a line. Failing the whole read there would lose
-        // every earlier record too — so the bad line is skipped, not fatal.
-        let d = dir();
-        append_in(d.path(), RUNS, &serde_json::json!({ "n": 1 })).unwrap();
-        let mut f = OpenOptions::new().append(true).open(d.path().join(RUNS)).unwrap();
-        f.write_all(b"{\"n\": 2, \"tr").unwrap();
-        let got = read_tail_in(d.path(), RUNS, 10);
-        assert_eq!(got.len(), 1, "the intact record survives");
-        assert_eq!(got[0]["n"], 1);
-    }
-
-    #[test]
-    fn an_absent_feed_is_empty_not_an_error() {
-        let d = dir();
-        assert!(read_tail_in(d.path(), RUNS, 10).is_empty());
-    }
-}
-
 // ── memory ────────────────────────────────────────────────────────────────────
 
 const MEMORY: &str = "memory.jsonl";
@@ -319,5 +254,70 @@ pub fn spend_rows(group_by: &str, limit: usize) -> Vec<Value> {
             ])
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A fresh directory per test. No env var, so nothing races: cargo runs these in parallel and
+    /// two tests that both `set_var("HEXA_HOME", …)` overwrite each other's answer.
+    fn dir() -> tempfile::TempDir {
+        tempfile::tempdir().expect("tempdir")
+    }
+
+    #[test]
+    fn a_proposal_round_trips_and_carries_its_source() {
+        let d = dir();
+        append_in(
+            d.path(),
+            PROPOSALS,
+            &serde_json::json!({ "id": 1u64, "kind": "file_write", "source": "tool:adr_draft", "status": "open" }),
+        )
+        .unwrap();
+        let all = read_tail_in(d.path(), PROPOSALS, 10);
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0]["kind"], "file_write");
+        assert_eq!(all[0]["source"], "tool:adr_draft");
+        assert_eq!(all[0]["status"], "open");
+    }
+
+    #[test]
+    fn proposal_ids_are_monotonic_so_a_feed_orders_without_a_database() {
+        let a = propose_id();
+        let b = propose_id();
+        assert!(b >= a, "ids must not go backwards: {} then {}", a, b);
+        assert!(a > 0, "id should be a real timestamp, not zero");
+    }
+
+    #[test]
+    fn reads_are_newest_first_and_bounded() {
+        let d = dir();
+        for i in 0..5 {
+            append_in(d.path(), RUNS, &serde_json::json!({ "n": i })).unwrap();
+        }
+        let got = read_tail_in(d.path(), RUNS, 3);
+        assert_eq!(got.len(), 3, "limit is honoured");
+        assert_eq!(got[0]["n"], 4, "newest first");
+    }
+
+    #[test]
+    fn a_torn_last_line_does_not_hide_the_history_behind_it() {
+        // A process killed mid-append leaves half a line. Failing the whole read there would lose
+        // every earlier record too — so the bad line is skipped, not fatal.
+        let d = dir();
+        append_in(d.path(), RUNS, &serde_json::json!({ "n": 1 })).unwrap();
+        let mut f = OpenOptions::new().append(true).open(d.path().join(RUNS)).unwrap();
+        f.write_all(b"{\"n\": 2, \"tr").unwrap();
+        let got = read_tail_in(d.path(), RUNS, 10);
+        assert_eq!(got.len(), 1, "the intact record survives");
+        assert_eq!(got[0]["n"], 1);
+    }
+
+    #[test]
+    fn an_absent_feed_is_empty_not_an_error() {
+        let d = dir();
+        assert!(read_tail_in(d.path(), RUNS, 10).is_empty());
+    }
 }
 

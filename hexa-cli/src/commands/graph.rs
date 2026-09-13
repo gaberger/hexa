@@ -282,7 +282,7 @@ async fn build(a: BuildArgs) -> anyhow::Result<()> {
         .map(|n| n.to_string_lossy().to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "project".to_string());
-    let mode = Mode::from_str(&a.mode);
+    let mode = Mode::from_label(&a.mode);
 
     let semantic: Box<dyn SemanticExtractor> = if mode == Mode::Deep {
         Box::new(LocalSemanticExtractor { model: a.model.clone() })

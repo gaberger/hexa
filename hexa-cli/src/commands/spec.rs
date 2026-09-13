@@ -171,12 +171,16 @@ struct WorkplanLinkRow {
 // ── Commands ─────────────────────────────────────────────────────────────────
 
 async fn list() -> anyhow::Result<()> {
-    let specs_dir = find_specs_dir()
-        .ok_or_else(|| anyhow::anyhow!("No docs/specs/ directory found"))?;
-    let specs = collect_specs(&specs_dir).await?;
-
     println!("{} Behavioral Specs", "\u{2b21}".cyan());
     println!();
+
+    // No directory means this project has no specs, which is a result, not a
+    // failure (ADR-2609122048). Gate-first projects have none by design.
+    let Some(specs_dir) = find_specs_dir() else {
+        println!("  {}", "No docs/specs/ directory — this project has no specs".dimmed());
+        return Ok(());
+    };
+    let specs = collect_specs(&specs_dir).await?;
 
     if specs.is_empty() {
         println!("  {}", "No specs found".dimmed());
@@ -203,8 +207,10 @@ async fn list() -> anyhow::Result<()> {
 }
 
 async fn show(feature: &str, check: bool) -> anyhow::Result<()> {
-    let specs_dir = find_specs_dir()
-        .ok_or_else(|| anyhow::anyhow!("No docs/specs/ directory found"))?;
+    let Some(specs_dir) = find_specs_dir() else {
+        println!("  {}", "No docs/specs/ directory — this project has no specs".dimmed());
+        return Ok(());
+    };
     let all = collect_specs(&specs_dir).await?;
 
     let query = feature.to_lowercase();
@@ -421,7 +427,11 @@ fn extract_fn_names(text: &str) -> Vec<String> {
 
 async fn workplan(feature: &str) -> anyhow::Result<()> {
     let workplans_dir = find_workplans_dir()
-        .ok_or_else(|| anyhow::anyhow!("No docs/workplans/ directory found"))?;
+        .unwrap_or_else(|| std::path::PathBuf::from("docs/workplans"));
+    if !workplans_dir.is_dir() {
+        println!("  {}", "No docs/workplans/ directory — this project has no workplans".dimmed());
+        return Ok(());
+    }
     let all_wps = collect_workplans(&workplans_dir).await?;
 
     let query = feature.to_lowercase();

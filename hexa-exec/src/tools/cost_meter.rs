@@ -64,7 +64,7 @@ impl Tool for CostMeter {
         // meant asking "what have I spent" required a database that the daemon owned — and after
         // Phase 1 there is no daemon logging inference in the first place. Rows come back in the
         // same [key, input, output, cost, created_at] shape, so the aggregation below is unchanged.
-        let rows_owned: Vec<Value> = crate::local_store::spend_rows(&group_by, 5000);
+        let rows_owned: Vec<Value> = crate::local_store::spend_rows(group_by, 5000);
         let rows = &rows_owned;
 
         // Aggregate in Rust: STDB SQL doesn't have SUM/GROUP BY. Each row is

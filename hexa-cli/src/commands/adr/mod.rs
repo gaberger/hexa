@@ -1421,9 +1421,15 @@ struct SpecRow {
 
 /// `hexa adr specs <ADR-id>` — find specs linked to an ADR through workplans.
 async fn specs_for_adr(adr_id: &str) -> anyhow::Result<()> {
-    let workplans_dir = find_workplans_dir()
-        .ok_or_else(|| anyhow::anyhow!("No docs/workplans/ directory found"))?;
-    let all_wps = collect_workplans(&workplans_dir).await?;
+    // An absent directory means the project has no workplans, which is a
+    // result rather than a failure (ADR-2609122048).
+    let workplans_dir =
+        find_workplans_dir().unwrap_or_else(|| std::path::PathBuf::from("docs/workplans"));
+    let all_wps = if workplans_dir.is_dir() {
+        collect_workplans(&workplans_dir).await?
+    } else {
+        Vec::new()
+    };
 
     let query = adr_id.to_uppercase();
 

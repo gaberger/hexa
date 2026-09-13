@@ -118,6 +118,16 @@ impl TestResults {
         }
     }
 
+    /// Record a tool outcome. A missing tool is skipped with its name, never
+    /// counted as a failure (ADR-2609122048).
+    fn record(&mut self, label: &str, outcome: ToolRun, tool: &str) {
+        match outcome {
+            ToolRun::Passed => self.check(label, true),
+            ToolRun::Failed => self.check(label, false),
+            ToolRun::Missing => self.skip(&format!("{label} ({tool} not installed)")),
+        }
+    }
+
     fn skip(&mut self, label: &str) {
         println!("  {} {} (skipped)", "○".yellow(), label);
         self.skip += 1;
@@ -133,6 +143,17 @@ impl TestResults {
     fn summary(&self) -> bool {
         let total = self.pass + self.fail + self.skip;
         println!();
+        // Nothing ran. A suite that executed no test has not passed, whatever
+        // the reason it could not run (ADR-2609122048).
+        if self.fail == 0 && self.pass == 0 && self.skip > 0 {
+            println!(
+                "  {}: {} skipped, nothing executed (of {})",
+                "NOTHING RAN".yellow().bold(),
+                self.skip,
+                total
+            );
+            return false;
+        }
         if self.fail == 0 {
             println!(
                 "  {}: {} passed, {} skipped, {} failed (of {})",
@@ -283,6 +304,8 @@ pub async fn run(action: TestAction) -> anyhow::Result<()> {
 
     if ok {
         Ok(())
+    } else if results.fail == 0 {
+        anyhow::bail!("nothing ran: {} check(s) skipped", results.skip)
     } else {
         anyhow::bail!("{} test(s) failed", results.fail)
     }
@@ -298,15 +321,10 @@ fn run_unit_tests(r: &mut TestResults) {
     for crate_name in
         &["hexa-core", "hexa-exec", "hexa-infer", "hexa-analysis", "hexa-graph", "hexa-git"]
     {
-        let ok = cargo_test(crate_name, None);
-        r.check(&format!("{} tests pass", crate_name), ok);
+        r.record(&format!("{crate_name} tests pass"), cargo_test(crate_name, None), "cargo");
     }
 
-    {
-        let crate_name = &"hexa-cli";
-        let ok = cargo_check(crate_name);
-        r.check(&format!("{} compiles", crate_name), ok);
-    }
+    r.record("hexa-cli compiles", cargo_check("hexa-cli"), "cargo");
 
 }
 
@@ -316,75 +334,55 @@ async fn run_arch_checks(r: &mut TestResults) {
     println!("{}", "── Architecture Health ──".cyan());
     r.set_category("architecture");
 
-    // Try multiple ways to run hexa analyze
-    let output = find_and_run_hex_analyze();
+    // The analyzer is this binary. A category that cannot run it fails; it
+    // does not quietly pass on something else (ADR-2609122048).
+    let report = match run_own_analyze() {
+        Ok(v) => v,
+        Err(e) => {
+            r.check(&format!("hexa analyze runs ({e})"), false);
+            return;
+        }
+    };
 
-    match output {
-        Some(stdout) => {
-            r.check(
-                "Architecture grade A",
-                stdout.contains("Grade:") && stdout.contains("A"),
-            );
-            r.check(
-                "Zero boundary violations",
-                stdout.contains("Boundary violations") && stdout.contains("| 0"),
-            );
-            r.check(
-                "Zero circular dependencies",
-                stdout.contains("Circular dependencies") && stdout.contains("| 0"),
-            );
-            r.check(
-                "Zero dead exports",
-                stdout.contains("Dead exports") && stdout.contains("| 0"),
-            );
-        }
-        None => {
-            // Fallback: use hexa-core boundary rules directly
-            println!("  {} hexa analyze not in PATH, testing boundary rules directly", "!".yellow());
-            r.check(
-                "hexa-core boundary rules pass",
-                cargo_test("hexa-core", None),
-            );
-        }
+    let count = |key: &str| -> i64 {
+        report
+            .get("score_components")
+            .and_then(|c| c.get(key))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(-1)
+    };
+    let grade = report.get("grade").and_then(|g| g.as_str()).unwrap_or("");
+    let score = report.get("score").and_then(|v| v.as_i64()).unwrap_or(-1);
+
+    r.check(
+        &format!("Architecture grade A or better (got {grade}, score {score})"),
+        grade.starts_with('A'),
+    );
+    for (label, key) in [
+        ("Zero boundary violations", "violations"),
+        ("Zero circular dependencies", "circular_deps"),
+        ("Zero dead exports", "dead_exports"),
+        ("Zero unused ports", "unused_ports"),
+    ] {
+        let n = count(key);
+        r.check(&format!("{label} (got {n})"), n == 0);
     }
 }
 
-/// Try multiple methods to run `hexa analyze .` and return stdout.
-fn find_and_run_hex_analyze() -> Option<String> {
-    // 1. Try `npx hexa analyze .` (npm-installed TS CLI)
-    if let Ok(out) = Command::new("npx")
-        .args(["hexa", "analyze", "."])
+/// Run this binary's own `analyze . --json` and parse it.
+///
+/// `std::env::current_exe()` is the only way that cannot pick up a different
+/// implementation. Locating the analyzer through a package manager, a source
+/// path or PATH is what let this category pass while checking nothing.
+fn run_own_analyze() -> Result<serde_json::Value, String> {
+    let exe = std::env::current_exe().map_err(|e| format!("cannot locate self: {e}"))?;
+    let out = Command::new(&exe)
+        .args(["analyze", ".", "--json"])
+        .env("HEXA_INTERNAL", "1")
         .output()
-    {
-        let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-        if stdout.contains("Grade:") {
-            return Some(stdout);
-        }
-    }
-
-    // 2. Try `bun run --bun src/cli.ts analyze .` (dev mode)
-    if let Ok(out) = Command::new("bun")
-        .args(["run", "--bun", "src/cli.ts", "analyze", "."])
-        .output()
-    {
-        let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-        if stdout.contains("Grade:") {
-            return Some(stdout);
-        }
-    }
-
-    // 3. Try `hexa` directly (if in PATH)
-    if let Ok(out) = Command::new("hexa")
-        .args(["analyze", "."])
-        .output()
-    {
-        let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-        if stdout.contains("Grade:") {
-            return Some(stdout);
-        }
-    }
-
-    None
+        .map_err(|e| format!("cannot run {}: {e}", exe.display()))?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    serde_json::from_str(&stdout).map_err(|e| format!("unreadable analyze output: {e}"))
 }
 
 // ── Inference Tests ─────────────────────────────────
@@ -496,31 +494,24 @@ fn run_lint_checks(r: &mut TestResults) {
     r.set_category("lint");
 
     // Rust workspace clippy
-    let clippy_ok = Command::new("cargo")
-        .args(["clippy", "--workspace", "--", "-D", "warnings"])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-    r.check("cargo clippy (workspace)", clippy_ok);
+    r.record(
+        "cargo clippy (workspace)",
+        run_cargo(&["clippy", "--workspace", "--", "-D", "warnings"]),
+        "cargo",
+    );
 
-
-    // TypeScript type check (if bun available)
-    let tsc_ok = Command::new("bun")
-        .args(["run", "check"])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-    if tsc_ok {
-        r.check("bun run check (TypeScript)", true);
-    } else {
-        // bun may not be installed — skip rather than fail
-        let bun_exists = Command::new("bun").arg("--version").output().is_ok();
-        if bun_exists {
-            r.check("bun run check (TypeScript)", false);
-        } else {
-            r.skip("bun run check (bun not installed)");
-        }
+    // A TypeScript check belongs to a project that has TypeScript. Running it
+    // in a Rust-only repository failed on "Script not found" every time.
+    let root = locate_workspace_root().unwrap_or_else(|| std::path::PathBuf::from("."));
+    if !root.join("package.json").is_file() {
+        return;
     }
+    let tsc = match Command::new("bun").args(["run", "check"]).status() {
+        Ok(st) if st.success() => ToolRun::Passed,
+        Ok(_) => ToolRun::Failed,
+        Err(_) => ToolRun::Missing,
+    };
+    r.record("bun run check (TypeScript)", tsc, "bun");
 }
 
 // ── E2E Browser Tests ──────────────────────────────
@@ -847,25 +838,39 @@ fn load_sessions_with_results(limit: usize) -> Option<Vec<TestSessionWithResults
 
 // ── Helpers ─────────────────────────────────────────
 
-fn cargo_test(crate_name: &str, extra: Option<&str>) -> bool {
-    let mut cmd = Command::new("cargo");
-    cmd.args(["test", "-p", crate_name, "--quiet"]);
-    if let Some(flag) = extra {
-        cmd.arg(flag);
-    }
-    if let Some(root) = locate_workspace_root() {
-        cmd.current_dir(root);
-    }
-    cmd.status().map(|s| s.success()).unwrap_or(false)
+/// A tool that is not installed did not fail. It never ran.
+///
+/// Mapping a spawn error to `false` reported "hexa-core tests fail" seven
+/// times over on a machine without cargo (ADR-2609122048).
+enum ToolRun {
+    Passed,
+    Failed,
+    Missing,
 }
 
-fn cargo_check(crate_name: &str) -> bool {
+fn run_cargo(args: &[&str]) -> ToolRun {
     let mut cmd = Command::new("cargo");
-    cmd.args(["check", "-p", crate_name]);
+    cmd.args(args);
     if let Some(root) = locate_workspace_root() {
         cmd.current_dir(root);
     }
-    cmd.status().map(|s| s.success()).unwrap_or(false)
+    match cmd.status() {
+        Ok(st) if st.success() => ToolRun::Passed,
+        Ok(_) => ToolRun::Failed,
+        Err(_) => ToolRun::Missing,
+    }
+}
+
+fn cargo_test(crate_name: &str, extra: Option<&str>) -> ToolRun {
+    let mut args = vec!["test", "-p", crate_name, "--quiet"];
+    if let Some(flag) = extra {
+        args.push(flag);
+    }
+    run_cargo(&args)
+}
+
+fn cargo_check(crate_name: &str) -> ToolRun {
+    run_cargo(&["check", "-p", crate_name])
 }
 
 // ── Coordination Tests (ADR-2026-03-28-2000) ─────────────────────────────────────

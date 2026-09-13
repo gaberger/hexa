@@ -231,7 +231,7 @@ fn discover_workspace_crates(repo_root: &Path) -> Result<Vec<(String, PathBuf)>,
             for member in members {
                 if let Some(member_path) = member.as_str() {
                     // Extract crate name from member path (e.g., "hexa-cli" from "hexa-cli" or "crates/hexa-cli")
-                    let crate_name = member_path.split('/').last().unwrap_or(member_path);
+                    let crate_name = member_path.split('/').next_back().unwrap_or(member_path);
                     let full_path = repo_root.join(member_path);
                     if full_path.exists() {
                         crates.push((crate_name.to_string(), full_path));

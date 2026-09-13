@@ -67,13 +67,13 @@ pub fn check_frontend(root: &Path) -> Option<FrontendCheckResult> {
         return None;
     }
 
-    let mut rules = Vec::new();
-
-    rules.push(check_f1_single_entry_point(&assets_dir, root));
-    rules.push(check_f2_store_purity(&src_dir, root));
-    rules.push(check_f3_component_fetch_free(&src_dir, root));
-    rules.push(check_f5_no_inline_styles(&src_dir, root));
-    rules.push(check_f7_services_exist(&src_dir));
+    let mut rules = vec![
+        check_f1_single_entry_point(&assets_dir, root),
+        check_f2_store_purity(&src_dir, root),
+        check_f3_component_fetch_free(&src_dir, root),
+        check_f5_no_inline_styles(&src_dir, root),
+        check_f7_services_exist(&src_dir),
+    ];
     rules.push(check_f9_no_hardcoded_colors(&src_dir, root));
 
     let score = compute_score(&rules);
@@ -413,13 +413,11 @@ fn collect_source_files(dir: &Path, out: &mut Vec<PathBuf>) {
         let path = entry.path();
         if path.is_dir() {
             collect_source_files(&path, out);
-        } else if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-            match ext {
-                "ts" | "tsx" | "js" | "jsx" | "svelte" | "vue" => {
-                    out.push(path);
-                }
-                _ => {}
-            }
+        } else if matches!(
+            path.extension().and_then(|e| e.to_str()),
+            Some("ts" | "tsx" | "js" | "jsx" | "svelte" | "vue")
+        ) {
+            out.push(path);
         }
     }
 }

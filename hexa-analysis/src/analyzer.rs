@@ -46,12 +46,9 @@ const EXCLUDE_PATTERNS: &[&str] = &[
 ];
 
 fn matches_exclude(file_path: &str, patterns: &[&str]) -> bool {
-    patterns.iter().any(|p| {
-        if p.starts_with('*') {
-            file_path.ends_with(&p[1..])
-        } else {
-            file_path.contains(p)
-        }
+    patterns.iter().any(|p| match p.strip_prefix('*') {
+        Some(suffix) => file_path.ends_with(suffix),
+        None => file_path.contains(p),
     })
 }
 
@@ -497,12 +494,6 @@ impl ArchAnalysisPort for ArchAnalyzer {
     }
 }
 
-/// Detect port interfaces that have no adapter importing them.
-///
-/// Strategy:
-/// 1. Collect interface/trait exports from ports/ files ending with "Port"
-/// 2. Check if any adapter/usecase imports that name explicitly
-/// 3. (Go/Rust) Structural matching: if adapter methods overlap with port methods
 /// Is this import target inside a ports layer? Matches a file under `ports/`
 /// and a Go package path that ends at `ports`.
 fn is_ports_path(p: &str) -> bool {

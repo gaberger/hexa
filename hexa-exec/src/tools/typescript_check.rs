@@ -246,10 +246,9 @@ fn parse_tsc_diagnostic(line: &str) -> Option<(String, Value)> {
         (&line[..idx], &line[idx..])
     } else if let Some(idx) = line.find(": error") {
         (&line[..idx], &line[idx..])
-    } else if let Some(idx) = line.find(": warning") {
-        (&line[..idx], &line[idx..])
     } else {
-        return None;
+        let idx = line.find(": warning")?;
+        (&line[..idx], &line[idx..])
     };
 
     Some((

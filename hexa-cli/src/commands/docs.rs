@@ -168,13 +168,11 @@ async fn check(
     Ok(())
 }
 
+/// Only an error fails the command. A warning is reported and exits 0, unless
+/// `--strict` asks for the opposite (ADR-2609122048).
 fn exit_code(errors: usize, warnings: usize, strict: bool) -> i32 {
-    if errors > 0 {
+    if errors > 0 || (strict && warnings > 0) {
         2
-    } else if strict && warnings > 0 {
-        2
-    } else if warnings > 0 {
-        1
     } else {
         0
     }
@@ -602,8 +600,8 @@ mod tests {
     }
 
     #[test]
-    fn exit_code_warning_is_one() {
-        assert_eq!(exit_code(0, 3, false), 1);
+    fn exit_code_warning_alone_does_not_fail() {
+        assert_eq!(exit_code(0, 3, false), 0);
     }
 
     #[test]

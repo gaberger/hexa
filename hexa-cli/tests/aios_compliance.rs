@@ -84,7 +84,7 @@ fn s6_new_help() {
 #[test]
 fn s6_new_flags_recognized() {
     let mut cmd = hexa_bin();
-    cmd.args(&["new", "--help"]);
+    cmd.args(["new", "--help"]);
     cmd.env("HEXA_NEXUS_URL", "http://127.0.0.1:1");
 
     let output = cmd.output().expect("hexa new --help should run");

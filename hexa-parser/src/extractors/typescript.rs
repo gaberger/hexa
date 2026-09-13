@@ -214,16 +214,15 @@ fn collect_names(node: Node, source: &str, out: &mut Vec<String>) {
             }
             return;
         }
-        "identifier" => {
+        "identifier"
             // Only collect if parent is NOT namespace_import (handled above)
             if node
                 .parent()
                 .map(|p| p.kind() != "namespace_import")
                 .unwrap_or(true)
-            {
+            => {
                 out.push(node_text(node, source));
             }
-        }
         _ => {}
     }
 

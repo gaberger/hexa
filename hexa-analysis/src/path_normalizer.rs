@@ -4,7 +4,7 @@
 //! Each language has different import semantics:
 //! - TypeScript: relative paths with .js extensions → resolved to .ts
 //! - Go: module paths like "github.com/user/pkg" → kept as-is for external,
-//!        relative paths within project resolved normally
+//!   relative paths within project resolved normally
 //! - Rust: crate paths like "crate::core::ports" → converted to file paths
 //!
 //! Ported from `src/core/usecases/path-normalizer.ts`.

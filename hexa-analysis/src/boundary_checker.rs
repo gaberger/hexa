@@ -20,6 +20,10 @@ pub fn find_violations(edges: &[ImportEdge]) -> Vec<DependencyViolation> {
             continue;
         }
 
+        if declares_own_submodule(&edge.from_file, &edge.to_file) {
+            continue;
+        }
+
         if let Some(rule) = get_violation_rule(edge.from_layer, edge.to_layer) {
             violations.push(DependencyViolation {
                 edge: edge.clone(),
@@ -31,10 +35,45 @@ pub fn find_violations(edges: &[ImportEdge]) -> Vec<DependencyViolation> {
     violations
 }
 
+/// Is this a module declaring something nested inside itself?
+///
+/// `adapters/mod.rs` containing `pub mod secondary;` produces an edge to
+/// `adapters/secondary`. That is structural nesting, not one adapter reaching
+/// for another, and reading it as a violation flags the shipped scaffold
+/// (ADR-2609122048). A rule that flags correct code is worse than no rule.
+fn declares_own_submodule(from_file: &str, to_file: &str) -> bool {
+    let dir = match from_file.rfind('/') {
+        Some(i) => &from_file[..i],
+        None => return false,
+    };
+    if dir.is_empty() {
+        return false;
+    }
+    to_file.strip_prefix(dir).is_some_and(|rest| rest.starts_with('/'))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::layer_classifier::classify_layer;
+
+    #[test]
+    fn a_parent_module_declaring_its_child_is_not_a_violation() {
+        let e = edge("src/adapters/mod.rs", "src/adapters/secondary");
+        assert!(find_violations(&[e]).is_empty());
+    }
+
+    #[test]
+    fn one_adapter_reaching_for_another_is_still_a_violation() {
+        let e = edge("src/adapters/primary/cli.rs", "src/adapters/secondary/db.rs");
+        assert_eq!(find_violations(&[e]).len(), 1);
+    }
+
+    #[test]
+    fn the_domain_reaching_outward_is_still_a_violation() {
+        let e = edge("src/domain/mod.rs", "src/adapters/secondary/db.rs");
+        assert_eq!(find_violations(&[e]).len(), 1);
+    }
 
     fn edge(from: &str, to: &str) -> ImportEdge {
         ImportEdge {

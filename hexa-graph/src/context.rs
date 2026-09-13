@@ -146,7 +146,7 @@ pub fn context_for(
     imported_by.sort();
     imported_by.dedup();
     uses.sort_by(|a, b| a.label.cmp(&b.label));
-    used_by.sort_by(|a, b| (a.file.clone(), a.entity.clone()).cmp(&(b.file.clone(), b.entity.clone())));
+    used_by.sort_by(|a, b| a.file.cmp(&b.file).then_with(|| a.entity.cmp(&b.entity)));
 
     // Community siblings (other files in the same cluster).
     let community = file_node.community;

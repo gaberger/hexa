@@ -32,6 +32,14 @@ const LAYER_PATTERNS: &[(&str, HexLayer)] = &[
     ("/usecases/", HexLayer::Usecases),
     ("/adapters/primary/", HexLayer::AdaptersPrimary),
     ("/adapters/secondary/", HexLayer::AdaptersSecondary),
+    // A flat `adapters/` directory, checked after the two specific ones.
+    // Without it such a file is Unknown, the boundary checker skips the edge,
+    // and the grade scores zero for a violation the same command just printed
+    // (ADR-2609122048). Primary is the permissive of the two roles, so a flat
+    // driving adapter that calls a use case is not flagged as a false
+    // positive; the cost is that a flat driven adapter doing the same is
+    // missed. Rules 1, 4 and 5 hold either way.
+    ("/adapters/", HexLayer::AdaptersPrimary),
     ("/infrastructure/", HexLayer::Infrastructure),
 ];
 
@@ -229,6 +237,7 @@ mod tests {
         assert_eq!(classify_layer("src/ports/state.rs"), HexLayer::Ports);
         assert_eq!(classify_layer("src/usecases/conversation.rs"), HexLayer::Usecases);
         assert_eq!(classify_layer("src/adapters/primary/cli.rs"), HexLayer::AdaptersPrimary);
+        assert_eq!(classify_layer("src/adapters/driver.rs"), HexLayer::AdaptersPrimary);
         assert_eq!(classify_layer("src/adapters/secondary/db.rs"), HexLayer::AdaptersSecondary);
         assert_eq!(classify_layer("src/infrastructure/config.rs"), HexLayer::Infrastructure);
     }

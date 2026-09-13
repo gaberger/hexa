@@ -114,7 +114,7 @@ pub fn compress_messages(messages: &[Value], opts: &CompressOpts) -> Vec<Value> 
                 // Old: collapse every tool_result to a one-line gist.
                 let gists: Vec<Value> = blocks
                     .into_iter()
-                    .map(|b| gist_tool_result(b))
+                    .map(gist_tool_result)
                     .collect();
                 json!({ "role": "user", "content": gists })
             }
@@ -207,7 +207,7 @@ mod tests {
         ];
         // (11 + 400) / 4 ≈ 102
         let t = estimate_tokens(&msgs);
-        assert!(t >= 100 && t <= 105, "got {}", t);
+        assert!((100..=105).contains(&t), "got {}", t);
     }
 
     #[test]

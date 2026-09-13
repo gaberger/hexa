@@ -315,6 +315,34 @@ fn last_path_segment(s: &str) -> String {
         .to_string()
 }
 
+/// Names of every `trait` declared in the tree's Rust files.
+fn declared_traits(root: &Path) -> std::collections::HashSet<String> {
+    let mut parser = Parser::new();
+    let lang: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
+    let mut out = std::collections::HashSet::new();
+    if parser.set_language(&lang).is_err() {
+        return out;
+    }
+    for rel in crate::analyzer::source_files_sync(root).iter().filter(|f| f.ends_with(".rs")) {
+        let Ok(source) = std::fs::read_to_string(root.join(rel)) else { continue };
+        let Some(tree) = parser.parse(&source, None) else { continue };
+        collect_trait_names(tree.root_node(), &source, &mut out);
+    }
+    out
+}
+
+fn collect_trait_names(node: tree_sitter::Node, source: &str, out: &mut std::collections::HashSet<String>) {
+    if node.kind() == "trait_item" {
+        if let Some(n) = node.child_by_field_name("name") {
+            out.insert(n.utf8_text(source.as_bytes()).unwrap_or("").to_string());
+        }
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_trait_names(child, source, out);
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -372,33 +400,5 @@ mod tests {
         assert_eq!(round_4(0.123456789), 0.1235);
         assert_eq!(round_4(1.0), 1.0);
         assert_eq!(round_4(0.0), 0.0);
-    }
-}
-
-/// Names of every `trait` declared in the tree's Rust files.
-fn declared_traits(root: &Path) -> std::collections::HashSet<String> {
-    let mut parser = Parser::new();
-    let lang: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
-    let mut out = std::collections::HashSet::new();
-    if parser.set_language(&lang).is_err() {
-        return out;
-    }
-    for rel in crate::analyzer::source_files_sync(root).iter().filter(|f| f.ends_with(".rs")) {
-        let Ok(source) = std::fs::read_to_string(root.join(rel)) else { continue };
-        let Some(tree) = parser.parse(&source, None) else { continue };
-        collect_trait_names(tree.root_node(), &source, &mut out);
-    }
-    out
-}
-
-fn collect_trait_names(node: tree_sitter::Node, source: &str, out: &mut std::collections::HashSet<String>) {
-    if node.kind() == "trait_item" {
-        if let Some(n) = node.child_by_field_name("name") {
-            out.insert(n.utf8_text(source.as_bytes()).unwrap_or("").to_string());
-        }
-    }
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        collect_trait_names(child, source, out);
     }
 }
