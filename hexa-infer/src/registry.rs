@@ -209,7 +209,7 @@ pub fn save_to(path: &std::path::Path, endpoints: &[Endpoint]) -> Result<(), Str
     // registry, because an unparseable one reads as "no backends at all".
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, text).map_err(|e| format!("{}: {e}", tmp.display()))?;
-    std::fs::rename(&tmp, &path).map_err(|e| format!("{}: {e}", path.display()))
+    std::fs::rename(&tmp, path).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 fn endpoint_to_json(e: &Endpoint) -> serde_json::Value {
