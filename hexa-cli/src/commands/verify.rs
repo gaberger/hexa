@@ -309,6 +309,74 @@ fn check_adr_status(_claim: &str, lower: &str) -> Option<CheckResult> {
 
 // ── LLM-driven adversarial verification ─────────────────────────────────────
 
+/// Words in the claim worth grepping for: backticked spans, quoted strings,
+/// anything with a path separator or an underscore, and CamelCase names.
+/// Ordinary prose is dropped, because grepping for "the" proves nothing.
+fn claim_tokens(claim: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut push = |t: &str| {
+        let t = t.trim_matches(|c: char| !c.is_alphanumeric() && c != '_' && c != '/' && c != '.');
+        if t.len() >= 3 && !out.iter().any(|e| e == t) {
+            out.push(t.to_string());
+        }
+    };
+    // Backticked and quoted spans first: the author marked them as literal.
+    for quote in ['`', '"', '\''] {
+        let parts: Vec<&str> = claim.split(quote).collect();
+        for (i, part) in parts.iter().enumerate() {
+            if i % 2 == 1 {
+                push(part);
+            }
+        }
+    }
+    for w in claim.split_whitespace() {
+        let bare = w.trim_matches(|c: char| !c.is_alphanumeric() && c != '_' && c != '/' && c != '.');
+        let interesting = bare.contains('/')
+            || bare.contains('_')
+            || (bare.contains('.') && !bare.ends_with('.'))
+            || bare.chars().any(|c| c.is_ascii_uppercase());
+        if interesting {
+            push(bare);
+        }
+    }
+    out.truncate(6);
+    out
+}
+
+/// What the repository actually says about those words.
+///
+/// Each line is `path:line:text` from `git grep`, capped. This is the whole
+/// point: the verifier used to send the claim alone to a model with no files
+/// and no tools, and the model either refused or guessed. One answer cited
+/// `cargo graph`, a command that does not exist and was never run
+/// (ADR-2609122048).
+fn gather_evidence(claim: &str) -> (Vec<String>, Vec<String>) {
+    let mut lines = Vec::new();
+    let mut searched = Vec::new();
+    for token in claim_tokens(claim) {
+        let out = Command::new("git")
+            .args(["grep", "-n", "-I", "-F", "--", &token])
+            .output();
+        let Ok(out) = out else { continue };
+        searched.push(token.clone());
+        let text = String::from_utf8_lossy(&out.stdout);
+        let hits: Vec<&str> = text.lines().take(8).collect();
+        if hits.is_empty() {
+            lines.push(format!("git grep -F {token} — no match in tracked files"));
+        } else {
+            let total = text.lines().count();
+            lines.push(format!("git grep -F {token} — {total} match(es):"));
+            for h in hits {
+                lines.push(format!("  {}", h.chars().take(200).collect::<String>()));
+            }
+        }
+        if lines.len() > 40 {
+            break;
+        }
+    }
+    (lines, searched)
+}
+
 async fn verify_via_llm(claim: &str) -> Result<CheckResult> {
     let system = "You are an adversarial verifier evaluating a claim about a software repository. \
                   Output EXACTLY THREE LINES in this format and nothing else:\n\n\
@@ -316,8 +384,10 @@ async fn verify_via_llm(claim: &str) -> Result<CheckResult> {
                   SUMMARY: <one-line reason>\n\
                   EVIDENCE: <file path / ADR id / command name / or the word unknown>\n\n\
                   Use CONFIRMED only if you have actively considered how the claim could be false \
-                  and found no counter-example. Use REFUTED if you can name a specific counter-example. \
-                  Use INCONCLUSIVE if the claim is vague or you lack the data to check.\n\n\
+                  and found no counter-example in the evidence. Use REFUTED if the evidence names a \
+                  specific counter-example. Use INCONCLUSIVE whenever the evidence does not settle it. \
+                  EVIDENCE must quote a line you were given. Never name a command that is not in the \
+                  evidence; you cannot run anything.\n\n\
                   Examples:\n\n\
                   VERDICT: CONFIRMED\n\
                   SUMMARY: zero hub.db references found in tracked source files\n\
@@ -344,14 +414,27 @@ async fn verify_via_llm(claim: &str) -> Result<CheckResult> {
         })?,
     };
 
-    let content = hexa_infer::complete_text(
-        &model,
-        system,
-        &format!("Claim: {}", claim),
-        200,
-    )
-    .await
-    .map_err(|e| anyhow::anyhow!("verification inference: {e}"))?;
+    // Gather first, ask second. A verifier states no verdict it did not earn.
+    let (gathered, searched) = gather_evidence(claim);
+    if gathered.is_empty() {
+        return Ok(CheckResult {
+            verdict: Verdict::Inconclusive,
+            summary: "nothing in the claim was concrete enough to search for".to_string(),
+            evidence: vec![
+                "no file, path, identifier or quoted term to grep".to_string(),
+                "name one, or use a claim shape the deterministic checks cover".to_string(),
+            ],
+            method: "no-evidence",
+        });
+    }
+
+    let user = format!(
+        "Claim: {claim}\n\nEvidence gathered from the repository with git grep.          This is all you have; you cannot run commands. Base the verdict only on          these lines, and cite one of them.\n\n{}",
+        gathered.join("\n")
+    );
+    let content = hexa_infer::complete_text(&model, system, &user, 300)
+        .await
+        .map_err(|e| anyhow::anyhow!("verification inference: {e}"))?;
     let content = Regex::new(r"(?s)<think>.*?</think>")
         .unwrap()
         .replace_all(&content, "")
@@ -372,6 +455,12 @@ async fn verify_via_llm(claim: &str) -> Result<CheckResult> {
         .and_then(|c| c.get(1)).map(|m| m.as_str().trim().to_string())
         .unwrap_or_else(|| "unknown".into());
 
+    let mut shown: Vec<String> = vec![format!("searched: {}", searched.join(", "))];
+    shown.extend(gathered.into_iter().take(6));
+    if !e_str.eq_ignore_ascii_case("unknown") {
+        shown.insert(0, format!("cited: {e_str}"));
+    }
+
     Ok(CheckResult {
         verdict: match v_str.as_str() {
             "CONFIRMED" => Verdict::Confirmed,
@@ -379,7 +468,33 @@ async fn verify_via_llm(claim: &str) -> Result<CheckResult> {
             _           => Verdict::Inconclusive,
         },
         summary: s_str,
-        evidence: vec![e_str],
-        method: "adversarial-llm",
+        evidence: shown,
+        method: "grep-then-judge",
     })
+}
+
+#[cfg(test)]
+mod evidence_tests {
+    use super::*;
+
+    #[test]
+    fn prose_alone_gives_nothing_to_search_for() {
+        assert!(claim_tokens("this thing is mostly good and quite nice").is_empty());
+    }
+
+    #[test]
+    fn a_path_an_identifier_and_a_quoted_term_are_all_picked_up() {
+        let t = claim_tokens("`crate_roots` lives in hexa-graph/src/lib.rs and returns a HashMap");
+        assert!(t.iter().any(|x| x == "crate_roots"), "{t:?}");
+        assert!(t.iter().any(|x| x == "hexa-graph/src/lib.rs"), "{t:?}");
+        assert!(t.iter().any(|x| x == "HashMap"), "{t:?}");
+    }
+
+    /// The defect: with nothing gathered, the verifier used to hand the bare
+    /// claim to a model, which answered REFUTED and cited a command it had
+    /// never run. No evidence now means no verdict (ADR-2609122048).
+    #[test]
+    fn no_searchable_term_means_no_verdict() {
+        assert!(claim_tokens("it works well enough for now").is_empty());
+    }
 }

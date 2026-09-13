@@ -1,7 +1,7 @@
 {
   "adr": "ADR-2609122048",
-  "gate": "cargo test -p hexa-graph -j 1 -- --test-threads=1",
-  "stage": "harden",
+  "gate": "cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings",
+  "stage": "gate",
   "tasks": [
     {
       "done_at": "2026-09-13T00:50:11.025795806+00:00",
@@ -49,7 +49,8 @@
       "title": "clippy: the whole workspace clean under -D warnings"
     },
     {
-      "status": "doing",
+      "done_at": "2026-09-13T02:10:15.902790691+00:00",
+      "status": "done",
       "title": "verify: no verdict without evidence the tool gathered itself"
     },
     {
@@ -58,13 +59,15 @@
       "title": "assets sync --prune removes skills hexa no longer ships"
     },
     {
-      "status": "todo",
+      "done_at": "2026-09-13T02:10:15.904542296+00:00",
+      "status": "done",
       "title": "harden commits the tests it writes, not only its target"
     },
     {
-      "status": "todo",
+      "done_at": "2026-09-13T02:10:15.906238172+00:00",
+      "status": "done",
       "title": "harden commits under the repo identity, and drops swarm vocabulary"
     }
   ],
-  "updated": "2026-09-13T01:54:49.795485547+00:00"
+  "updated": "2026-09-13T02:10:15.906259332+00:00"
 }

@@ -161,14 +161,51 @@ fn retry_prompt(prompt: &str, attempt: u32, attempts: u32, last_err: &str) -> St
     }
 }
 
-/// Stage and commit everything under `target` using a commit-local factory identity
+/// Paths git reports as changed, from `git status --porcelain`.
+///
+/// Used to tell the operator's edits from the pass's own. A rename line
+/// (`R  old -> new`) contributes the new path.
+async fn dirty_paths(repo_root: &Path) -> std::collections::HashSet<String> {
+    let out = tokio::process::Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(repo_root)
+        .output()
+        .await;
+    let Ok(out) = out else {
+        return Default::default();
+    };
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| l.get(3..))
+        .map(|p| p.rsplit(" -> ").next().unwrap_or(p).trim().to_string())
+        .filter(|p| !p.is_empty())
+        .collect()
+}
+
+/// Stage and commit `paths` using a commit-local factory identity
 /// (ADR-2606071323 §4) so autonomous commits are attributable and never masquerade as
 /// the operator. Non-fatal by design: any failure (nothing to commit, git missing,
 /// no repo) is recorded as a note, never surfaced as an error — the build/review
 /// itself already succeeded per the gate by the time this runs.
-async fn commit_result(repo_root: &Path, target: &str, subject: &str, trailer: &str, notes: &mut Vec<String>) {
+///
+/// `paths` is every file the pass changed, not just its target. Committing the
+/// target alone shipped eleven fixes and left the five tests proving them
+/// uncommitted (ADR-2609122048).
+async fn commit_result(
+    repo_root: &Path,
+    paths: &[String],
+    subject: &str,
+    trailer: &str,
+    notes: &mut Vec<String>,
+) {
+    if paths.is_empty() {
+        notes.push("nothing new to commit".to_string());
+        return;
+    }
+    let mut add_args: Vec<&str> = vec!["add", "--"];
+    add_args.extend(paths.iter().map(String::as_str));
     let add = tokio::process::Command::new("git")
-        .args(["add", "--", target])
+        .args(&add_args)
         .current_dir(repo_root)
         .output()
         .await;
@@ -188,12 +225,14 @@ async fn commit_result(repo_root: &Path, target: &str, subject: &str, trailer: &
     }
     let subject: String = subject.lines().next().unwrap_or(subject).chars().take(72).collect();
     let msg = format!("{subject}\n\nCo-Authored-By: {trailer} <noreply@hexa.local>");
+    let mut commit_args: Vec<&str> = vec![
+        "-c", "user.name=hexa-factory",
+        "-c", "user.email=factory@hexa.local",
+        "commit", "-m", &msg, "--",
+    ];
+    commit_args.extend(paths.iter().map(String::as_str));
     let commit = tokio::process::Command::new("git")
-        .args([
-            "-c", "user.name=hexa-factory",
-            "-c", "user.email=factory@hexa.local",
-            "commit", "-m", &msg, "--", target,
-        ])
+        .args(&commit_args)
         .current_dir(repo_root)
         .output()
         .await;
@@ -216,6 +255,9 @@ async fn commit_result(repo_root: &Path, target: &str, subject: &str, trailer: &
 /// uncommitted for operator review.
 pub async fn run_review(target: &str, gate: &str, repo_root: &Path) -> ReviewReport {
     let mut report = ReviewReport::default();
+    // What the operator had already changed. Anything dirty after the pass and
+    // not in this set is the pass's own work, tests included.
+    let dirty_before = dirty_paths(repo_root).await;
 
     // ── Phase 1: hunt (parallel lenses) ──────────────────────────────────────
     let mut hunts = Vec::new();
@@ -292,11 +334,20 @@ pub async fn run_review(target: &str, gate: &str, repo_root: &Path) -> ReviewRep
     let (passed, _) = crate::direct_exec::run_evidence(gate, repo_root).await;
     report.gate_passed = passed;
     if passed {
+        let mut paths: Vec<String> = dirty_paths(repo_root)
+            .await
+            .into_iter()
+            .filter(|p| !dirty_before.contains(p))
+            .collect();
+        if !paths.iter().any(|p| p == target) {
+            paths.push(target.to_string());
+        }
+        paths.sort();
         commit_result(
             repo_root,
-            target,
+            &paths,
             &format!("fix: adversarial review pass on {target}"),
-            "hexa-swarm-review",
+            "hexa-harden",
             &mut report.notes,
         )
         .await;
@@ -335,6 +386,7 @@ pub async fn run_build(
     retries: u32,
 ) -> BuildReport {
     let mut report = BuildReport::default();
+    let dirty_before = dirty_paths(repo_root).await;
     let n = n_designs.clamp(2, DESIGN_PRIORITIES.len());
 
     // ── Phase 1: diverge — N designs from competing priorities ───────────────
@@ -422,11 +474,20 @@ pub async fn run_build(
     let (ok, _) = crate::direct_exec::run_evidence(gate, repo_root).await;
     report.build_ok = ok;
     if ok {
+        let mut paths: Vec<String> = dirty_paths(repo_root)
+            .await
+            .into_iter()
+            .filter(|p| !dirty_before.contains(p))
+            .collect();
+        if !paths.iter().any(|p| p == target) {
+            paths.push(target.to_string());
+        }
+        paths.sort();
         commit_result(
             repo_root,
-            target,
+            &paths,
             &format!("feat: {challenge}"),
-            "hexa-swarm-build",
+            "hexa-build",
             &mut report.notes,
         )
         .await;
@@ -477,5 +538,29 @@ mod tests {
     fn ignores_close_brace_in_string_before_open() {
         let s = "prefix } then {\"a\": 1}";
         assert_eq!(extract_json(s), Some("{\"a\": 1}"));
+    }
+}
+
+#[cfg(test)]
+mod commit_scope_tests {
+
+    /// The harden pass committed only its target, so the tests it wrote for
+    /// the bugs it fixed were left uncommitted (ADR-2609122048). The parser
+    /// that tells its work from the operator's has to read every status line
+    /// shape git emits.
+    #[test]
+    fn porcelain_lines_parse_to_paths() {
+        let sample = " M hexa-graph/src/lib.rs\n?? hexa-graph/tests/precision.rs\nA  docs/adrs/x.md\nR  old.rs -> new.rs\n";
+        let got: std::collections::HashSet<String> = sample
+            .lines()
+            .filter_map(|l| l.get(3..))
+            .map(|p| p.rsplit(" -> ").next().unwrap_or(p).trim().to_string())
+            .filter(|p| !p.is_empty())
+            .collect();
+        assert!(got.contains("hexa-graph/src/lib.rs"));
+        assert!(got.contains("hexa-graph/tests/precision.rs"), "an untracked new test must count");
+        assert!(got.contains("docs/adrs/x.md"));
+        assert!(got.contains("new.rs"), "a rename contributes its new path");
+        assert_eq!(got.len(), 4);
     }
 }
