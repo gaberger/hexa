@@ -45,7 +45,7 @@ impl ServiceStarter {
         let provider = hexa_infer::local_provider();
         let name = provider.display_name.to_string();
 
-        if self.is_port_open(provider.default_port).await && !self.force {
+        if self.is_port_open().await && !self.force {
             return ServiceStatus { name, running: true, pid: self.get_pid(provider.binary), note: None };
         }
         if !self.force && self.is_process_running(provider.binary) {
@@ -88,18 +88,20 @@ impl ServiceStarter {
         // Report what is true, not what was attempted: wait for the port.
         for _ in 0..20 {
             sleep(Duration::from_millis(250)).await;
-            if self.is_port_open(provider.default_port).await {
+            if self.is_port_open().await {
                 return ServiceStatus { name, running: true, pid: self.get_pid(provider.binary), note: None };
             }
         }
         ServiceStatus { name, running: false, pid: None, note: None }
     }
 
-    async fn is_port_open(&self, _port: u16) -> bool {
-        match tokio::net::TcpStream::connect(hexa_infer::local_provider().socket_addr()).await {
-            Ok(_) => true,
-            Err(_) => false,
-        }
+    /// The port is not a parameter: the address comes from the provider.
+    /// This took a `port` argument it never read, so it answered a different
+    /// question than its signature promised (ADR-2609122048).
+    async fn is_port_open(&self) -> bool {
+        tokio::net::TcpStream::connect(hexa_infer::local_provider().socket_addr())
+            .await
+            .is_ok()
     }
 
     fn is_process_running(&self, process_name: &str) -> bool {

@@ -303,31 +303,6 @@ Keep this too. Also mine.
     assert_eq!(before, after, "a second refresh changed the file");
 }
 
-/// Mermaid diagrams must survive GitHub's renderer.
-///
-/// GitHub runs mermaid with `htmlLabels: false` and `securityLevel: strict`.
-/// Under those settings a `<b>` tag inside a node label is not interpreted; it
-/// is printed, so the reader sees the characters `<b>` in the middle of a box.
-/// HTML entities leak the same way: `&lt;` renders as the five characters
-/// `&lt;`, not as `<`.
-///
-/// Neither shows up locally, because `mermaid-cli` defaults to `htmlLabels:
-/// true` and renders all of it correctly. A diagram checked only on a laptop
-/// looks finished and arrives broken, which is the same failure as a gate that
-/// passes for the wrong reason.
-///
-
-/// Diagram labels must be quoted and ASCII.
-///
-/// GitHub's mermaid is stricter than `mermaid-cli`, and the two failures that
-/// actually shipped were not the HTML one. An unquoted label containing a colon
-/// breaks the parser, and a non-ASCII character inside a label can too. Both
-/// rendered locally and neither drew on GitHub.
-///
-/// Quoting every label removes the whole class, so that is what is checked:
-/// not "is this particular character safe", but "is every label quoted and
-/// plain". Subgraphs are refused for the same reason. They add a parser mode
-
 /// Every diagram image referenced by a document must exist in the repository.
 ///
 /// GitHub renders mermaid in a browser with JavaScript. The mobile app does not

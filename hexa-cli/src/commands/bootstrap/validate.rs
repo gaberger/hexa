@@ -77,7 +77,7 @@ impl BootstrapValidator {
         let provider = hexa_infer::local_provider();
         service_checks.push((
             provider.display_name.to_string(),
-            self.check_service_health(provider.default_port).await,
+            self.check_service_health().await,
         ));
 
         // Check the models this project configures — not a hardcoded list.
@@ -123,11 +123,11 @@ impl BootstrapValidator {
         })
     }
 
-    async fn check_service_health(&self, _port: u16) -> bool {
-        match tokio::net::TcpStream::connect(hexa_infer::local_provider().socket_addr()).await {
-            Ok(_) => true,
-            Err(_) => false,
-        }
+    /// The address comes from the provider, never from a port argument.
+    async fn check_service_health(&self) -> bool {
+        tokio::net::TcpStream::connect(hexa_infer::local_provider().socket_addr())
+            .await
+            .is_ok()
     }
 
     fn model_exists(&self, model_name: &str) -> bool {

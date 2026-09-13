@@ -255,7 +255,7 @@ fn classify_status(value: &str) -> Option<&'static str> {
     let matches: Vec<&'static str> = known
         .iter()
         .copied()
-        .filter(|k| words.iter().any(|w| *w == *k))
+        .filter(|k| words.contains(k))
         .collect();
 
     match matches.len() {
@@ -1444,8 +1444,8 @@ fn rev_parse_head(repo: &StdPath) -> anyhow::Result<String> {
 /// new HEAD.
 fn merge_no_ff(repo: &StdPath, branch: &str, finding: &Finding) -> anyhow::Result<()> {
     let msg = format!(
-        "merge: shadow-promote {} for {}",
-        format!("{:?}", finding.kind),
+        "merge: shadow-promote {:?} for {}",
+        finding.kind,
         finding.adr_id
     );
     let out = Command::new("git")
@@ -1618,14 +1618,14 @@ mod tests {
     #[test]
     fn exit_code_warning_is_one_unless_strict() {
         let warn = finding("ADR-001", PathBuf::from("x.md"), FindingKind::StaleProposed, "");
-        assert_eq!(exit_code(&[warn.clone()], false), 1);
+        assert_eq!(exit_code(std::slice::from_ref(&warn), false), 1);
         assert_eq!(exit_code(&[warn], true), 2, "--strict promotes warnings to errors");
     }
 
     #[test]
     fn exit_code_error_is_two() {
         let err = finding("ADR-001", PathBuf::from("x.md"), FindingKind::DuplicateId, "");
-        assert_eq!(exit_code(&[err.clone()], false), 2);
+        assert_eq!(exit_code(std::slice::from_ref(&err), false), 2);
         assert_eq!(exit_code(&[err], true), 2);
     }
 
@@ -2260,7 +2260,7 @@ rewritten because it isn't at the start of a line as a bullet.
         );
         let cfg = cfg_for_routing_test();
         for fix_and_merge in [false, true] {
-            let r = dispatch_fix(&[f.clone()], &cfg, fix_and_merge);
+            let r = dispatch_fix(std::slice::from_ref(&f), &cfg, fix_and_merge);
             assert_eq!(r.len(), 1);
             assert!(
                 matches!(r[0], DispatchResult::C),

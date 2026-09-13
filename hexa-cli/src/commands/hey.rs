@@ -628,7 +628,7 @@ async fn llm_classify(text: &str) -> anyhow::Result<Option<(String, String, Stri
 
 async fn llm_translate_shell_for_host(action: &str, host: Option<&str>) -> anyhow::Result<String> {
     // Look up host context from .hexa/hosts.toml
-    let host_context = host.and_then(|h| read_host_context(h)).unwrap_or_default();
+    let host_context = host.and_then(read_host_context).unwrap_or_default();
     let context_line = if host_context.is_empty() {
         String::new()
     } else {
@@ -661,6 +661,55 @@ async fn llm_translate_shell_for_host(action: &str, host: Option<&str>) -> anyho
         anyhow::bail!("LLM returned empty command");
     }
     Ok(cmd)
+}
+
+
+/// Read host-specific context from .hexa/hosts.toml (if present).
+fn read_host_context(host: &str) -> Option<String> {
+    let contents = std::fs::read_to_string(".hexa/hosts.toml").ok()?;
+    // Simple TOML section extractor — find [host] block and collect key=value lines until next [
+    let marker = format!("[{}]", host);
+    let idx = contents.find(&marker)?;
+    let section = &contents[idx + marker.len()..];
+    let end = section.find("\n[").unwrap_or(section.len());
+    let body = &section[..end];
+    let lines: Vec<String> = body.lines()
+        .filter(|l| !l.trim().is_empty() && !l.trim().starts_with('#'))
+        .map(|l| format!("- {}", l.trim()))
+        .collect();
+    if lines.is_empty() { None } else { Some(lines.join("\n")) }
+}
+
+/// Run one classified intent, now.
+///
+/// `hexa hey` used to hand this to the scheduler daemon's task queue via
+/// `sched::execute_brain_task`. That function carried a liveness-ping special
+/// case that wrote a SpacetimeDB row, a pre/post git-HEAD comparison recorded
+/// to the same database, and a branch that spawned the `hexa-agent` binary when
+/// no Claude session was present. None of those exist (ADR-2608241500).
+///
+/// Three kinds survive the classifier, and each is one subprocess. `hexa` is
+/// resolved as the running executable rather than by PATH lookup — this
+/// process *is* hexa, and a PATH lookup can find a different build.
+async fn execute_intent(kind: &str, payload: &str) -> (bool, String) {
+    let me = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("hexa"));
+    let output = match kind {
+        "hexa-command" => {
+            tokio::process::Command::new(&me).args(payload.split_whitespace()).output().await
+        }
+        "workplan" => {
+            tokio::process::Command::new(&me).args(["plan", "execute", payload]).output().await
+        }
+        "shell" => tokio::process::Command::new("sh").arg("-c").arg(payload).output().await,
+        other => return (false, format!("unknown intent kind '{other}'")),
+    };
+    match output {
+        Ok(o) => {
+            let text = if o.stdout.is_empty() { &o.stderr } else { &o.stdout };
+            (o.status.success(), String::from_utf8_lossy(text).trim().to_string())
+        }
+        Err(e) => (false, format!("{kind}: {e}")),
+    }
 }
 
 #[cfg(test)]
@@ -858,53 +907,5 @@ mod remote_tests {
             }
             other => panic!("expected Workplan, got {:?}", other),
         }
-    }
-}
-
-/// Read host-specific context from .hexa/hosts.toml (if present).
-fn read_host_context(host: &str) -> Option<String> {
-    let contents = std::fs::read_to_string(".hexa/hosts.toml").ok()?;
-    // Simple TOML section extractor — find [host] block and collect key=value lines until next [
-    let marker = format!("[{}]", host);
-    let idx = contents.find(&marker)?;
-    let section = &contents[idx + marker.len()..];
-    let end = section.find("\n[").unwrap_or(section.len());
-    let body = &section[..end];
-    let lines: Vec<String> = body.lines()
-        .filter(|l| !l.trim().is_empty() && !l.trim().starts_with('#'))
-        .map(|l| format!("- {}", l.trim()))
-        .collect();
-    if lines.is_empty() { None } else { Some(lines.join("\n")) }
-}
-
-/// Run one classified intent, now.
-///
-/// `hexa hey` used to hand this to the scheduler daemon's task queue via
-/// `sched::execute_brain_task`. That function carried a liveness-ping special
-/// case that wrote a SpacetimeDB row, a pre/post git-HEAD comparison recorded
-/// to the same database, and a branch that spawned the `hexa-agent` binary when
-/// no Claude session was present. None of those exist (ADR-2608241500).
-///
-/// Three kinds survive the classifier, and each is one subprocess. `hexa` is
-/// resolved as the running executable rather than by PATH lookup — this
-/// process *is* hexa, and a PATH lookup can find a different build.
-async fn execute_intent(kind: &str, payload: &str) -> (bool, String) {
-    let me = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("hexa"));
-    let output = match kind {
-        "hexa-command" => {
-            tokio::process::Command::new(&me).args(payload.split_whitespace()).output().await
-        }
-        "workplan" => {
-            tokio::process::Command::new(&me).args(["plan", "execute", payload]).output().await
-        }
-        "shell" => tokio::process::Command::new("sh").arg("-c").arg(payload).output().await,
-        other => return (false, format!("unknown intent kind '{other}'")),
-    };
-    match output {
-        Ok(o) => {
-            let text = if o.stdout.is_empty() { &o.stderr } else { &o.stdout };
-            (o.status.success(), String::from_utf8_lossy(text).trim().to_string())
-        }
-        Err(e) => (false, format!("{kind}: {e}")),
     }
 }

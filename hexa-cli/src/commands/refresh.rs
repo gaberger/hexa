@@ -52,6 +52,9 @@ pub struct RefreshArgs {
     pub dry_run: bool,
 }
 
+/// A labelled install step: what it writes, and the call that writes it.
+type InstallStep<'a> = (&'a str, Box<dyn Fn() -> Result<()> + 'a>);
+
 pub async fn run(args: RefreshArgs) -> Result<()> {
     let target = PathBuf::from(&args.path)
         .canonicalize()
@@ -65,7 +68,7 @@ pub async fn run(args: RefreshArgs) -> Result<()> {
     // and the daemon statusline they configured (ADR-2608241500). Re-syncing a
     // config that points at a deleted verb is worse than not syncing at all.
     if !args.dry_run {
-        let installs: &[(&str, Box<dyn Fn() -> Result<()>>)] = &[
+        let installs: &[InstallStep] = &[
             (
                 ".claude/settings.json (hooks + permissions)",
                 Box::new(|| super::init::create_claude_settings(&target)),

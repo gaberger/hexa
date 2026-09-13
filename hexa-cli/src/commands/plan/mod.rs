@@ -1477,7 +1477,7 @@ async fn list_plans() -> anyhow::Result<()> {
         let name = path.file_name().unwrap().to_string_lossy();
 
         if path.extension().map(|e| e == "json").unwrap_or(false) {
-            match std::fs::read_to_string(&path) {
+            match std::fs::read_to_string(path) {
                 Ok(contents) => {
                     if let Ok(plan) = serde_json::from_str::<Workplan>(&contents) {
                         let total = plan.total_tasks();
@@ -1671,9 +1671,12 @@ async fn show_plan_file(path: &Path) -> anyhow::Result<()> {
                 step.dependencies.join(", ")
             };
             let git = git_evidence_label(&step.files, &plan.created_at);
-            let verified = if !step.done_command.is_empty() && run_done_command(&step.done_command) {
-                " [verified]".green().to_string()
-            } else if !step.verify.is_empty() && run_done_command(&step.verify) {
+            // `done_command` and `verify` are two names for the same field.
+            // The order is load-bearing: `run_done_command` shells out, so
+            // `verify` must only run when `done_command` did not pass.
+            let ran = (!step.done_command.is_empty() && run_done_command(&step.done_command))
+                || (!step.verify.is_empty() && run_done_command(&step.verify));
+            let verified = if ran {
                 " [verified]".green().to_string()
             } else {
                 String::new()

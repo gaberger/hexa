@@ -179,10 +179,7 @@ static EXEC_LOCK: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::syn
 /// it protects. That limit is real and is why this is a guard against the
 /// crudest case, not a proof of coverage.
 pub(crate) fn evidence_is_vacuous(output: &str) -> bool {
-    match tests_observed(output) {
-        Some(0) => true,
-        _ => false,
-    }
+    matches!(tests_observed(output), Some(0))
 }
 
 /// How many tests the output reports having run, or `None` if no runner we
@@ -670,12 +667,12 @@ pub(crate) fn ground_window(content: &str, instruction: &str) -> String {
     // Hard upper bound (tail-biased): if we kept too much, drop the EARLIEST
     // kept lines until under cap — the test module + append point live at the end.
     let mut budget = keep.iter().filter(|&&k| k).count();
-    for i in 0..lines.len() {
+    for k in keep.iter_mut() {
         if budget <= MAX_GROUND_LINES {
             break;
         }
-        if keep[i] {
-            keep[i] = false;
+        if *k {
+            *k = false;
             budget -= 1;
         }
     }

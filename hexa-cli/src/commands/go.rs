@@ -225,7 +225,7 @@ async fn check_stale_worktrees() -> bool {
             .unwrap_or("");
 
         // Skip the main worktree (bare = true or the repo root)
-        if lines.iter().any(|l| *l == "bare") {
+        if lines.contains(&"bare") {
             continue;
         }
         // Skip the main worktree itself

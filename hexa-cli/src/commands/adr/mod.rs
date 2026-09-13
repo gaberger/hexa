@@ -297,12 +297,11 @@ async fn supersede_adr(adr_id: &str, by: &str, rationale: &str) -> anyhow::Resul
 /// Detection is shared with the sched daemon (ADR-2026-04-27-0800 §1) via
 /// `doctor::run`; the dispatch + rendering live here.
 ///
-///   - `--fix`           → Tier A shadow-promote (no merge),
-///                          Tier B draft on a worktree branch,
-///                          Tier C no-op.
-///   - `--fix-and-merge` → as above but Tier A also `git merge --no-ff`s
-///                          the auto-fix branch back to main. Tier B is
-///                          still left for human review (per §1a).
+/// - `--fix` runs Tier A shadow-promote with no merge, Tier B drafts on a
+///   worktree branch, and Tier C is a no-op.
+/// - `--fix-and-merge` does the same, and Tier A also merges the auto-fix
+///   branch back to main with `--no-ff`. Tier B is still left for human
+///   review, per §1a.
 ///
 /// `--fix-and-merge` implies `--fix`. Without either, doctor stays in
 /// detection-only mode and the dispatcher is never invoked.
@@ -1302,8 +1301,8 @@ fn is_superseded(content: &str) -> bool {
             || lower.starts_with("superseded_by:")
         {
             let v = line
-                .splitn(2, ':')
-                .nth(1)
+                .split_once(':')
+                .map(|(_, rest)| rest)
                 .map(|s| s.trim().trim_matches(|c| c == '*' || c == '"').trim())
                 .unwrap_or("");
             let vl = v.to_lowercase();

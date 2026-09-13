@@ -21,7 +21,7 @@ pub struct SpendArgs {
     pub json: bool,
 }
 
-fn by_key<'a>(rows: &[&'a Value], key: &str) -> BTreeMap<String, Totals> {
+fn by_key(rows: &[&Value], key: &str) -> BTreeMap<String, Totals> {
     let mut out: BTreeMap<String, Vec<Value>> = BTreeMap::new();
     for r in rows {
         let k = r.get(key).and_then(Value::as_str).unwrap_or("unknown").to_string();

@@ -374,11 +374,13 @@ async fn merge(
             // Try to extract tier from branch name (e.g. feat/foo/p0-domain -> 0)
             let tier = b
                 .split('/')
-                .last()
+                .next_back()
                 .and_then(|seg| {
                     let seg_lower = seg.to_lowercase();
                     if seg_lower.starts_with('p') {
-                        seg_lower[1..]
+                        seg_lower
+                            .strip_prefix('p')
+                            .unwrap_or(&seg_lower)
                             .chars()
                             .take_while(|c| c.is_ascii_digit())
                             .collect::<String>()
@@ -679,7 +681,7 @@ async fn cleanup(force: bool) -> anyhow::Result<()> {
 
     let all_to_clean: Vec<(String, String)> = merged_wts
         .into_iter()
-        .chain(stale_wts.into_iter())
+        .chain(stale_wts)
         .collect();
 
     if all_to_clean.is_empty() {

@@ -44,13 +44,27 @@
       "title": "clippy: hexa-analysis clean under -D warnings"
     },
     {
-      "status": "doing",
+      "done_at": "2026-09-13T01:54:49.793863553+00:00",
+      "status": "done",
       "title": "clippy: the whole workspace clean under -D warnings"
     },
     {
-      "status": "todo",
+      "status": "doing",
       "title": "verify: no verdict without evidence the tool gathered itself"
+    },
+    {
+      "done_at": "2026-09-13T01:54:49.795463427+00:00",
+      "status": "done",
+      "title": "assets sync --prune removes skills hexa no longer ships"
+    },
+    {
+      "status": "todo",
+      "title": "harden commits the tests it writes, not only its target"
+    },
+    {
+      "status": "todo",
+      "title": "harden commits under the repo identity, and drops swarm vocabulary"
     }
   ],
-  "updated": "2026-09-13T01:14:52.922513909+00:00"
+  "updated": "2026-09-13T01:54:49.795485547+00:00"
 }

@@ -218,7 +218,7 @@ fn check_secret_in_tree(_claim: &str, lower: &str) -> Option<CheckResult> {
 /// Matches "no X in code" / "no X remains" — grep for literal token X.
 fn check_no_substring(claim: &str, lower: &str) -> Option<CheckResult> {
     let re = Regex::new(r#"no [`"'']?([\w.\-/]{3,})[`"'']? (in|remains|present|exists)"#).ok()?;
-    let cap = re.captures(&lower)?;
+    let cap = re.captures(lower)?;
     let token = cap.get(1)?.as_str().to_string();
     // Skip if the deterministic-secret check already covers it
     if matches!(token.as_str(), "secret" | "secrets" | ".env" | "api" | "key") {
@@ -271,14 +271,15 @@ fn check_adr_status(_claim: &str, lower: &str) -> Option<CheckResult> {
     if !lower.contains("adr") { return None; }
     let entries = std::fs::read_dir("docs/adrs").ok()?;
     let mut totals = std::collections::HashMap::<String, u32>::new();
+    // Handle both `**Status:** Accepted` and `Status: Accepted` (with bold
+    // variants). The trailing `\*\*` after the colon was missing from the
+    // first cut → 0 ADRs matched. Use (?m) so ^ matches each line. Built once:
+    // compiling it per file is the same pattern every time.
+    let re = Regex::new(r"(?im)^\s*\*{0,2}Status\*{0,2}:\s*\*{0,2}\s*(\w+)").ok()?;
     for entry in entries.flatten() {
         let p = entry.path();
         if p.extension().and_then(|e| e.to_str()) != Some("md") { continue; }
         if let Ok(text) = std::fs::read_to_string(&p) {
-            // Handle both `**Status:** Accepted` and `Status: Accepted` (with
-            // bold variants). The trailing `\*\*` after the colon was missing
-            // from the first cut → 0 ADRs matched. Use (?m) so ^ matches each line.
-            let re = Regex::new(r"(?im)^\s*\*{0,2}Status\*{0,2}:\s*\*{0,2}\s*(\w+)").ok()?;
             if let Some(c) = re.captures(&text) {
                 let s = c.get(1)?.as_str().to_lowercase();
                 let bucket = match s.as_str() {
@@ -295,7 +296,7 @@ fn check_adr_status(_claim: &str, lower: &str) -> Option<CheckResult> {
     }
     let summary = {
         let mut parts: Vec<(String, u32)> = totals.iter().map(|(k,v)| (k.clone(), *v)).collect();
-        parts.sort_by(|a,b| b.1.cmp(&a.1));
+        parts.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
         parts.into_iter().map(|(k,v)| format!("{} {}", v, k)).collect::<Vec<_>>().join(", ")
     };
     Some(CheckResult {

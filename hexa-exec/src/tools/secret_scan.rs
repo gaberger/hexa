@@ -33,6 +33,10 @@ impl SecretPattern {
     }
 }
 
+/// One recursive step of the scan. Boxed because the function calls itself.
+type ScanFuture<'a> =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), Box<dyn std::error::Error>>> + Send + 'a>>;
+
 fn build_patterns() -> Vec<SecretPattern> {
     vec![
         SecretPattern::new("aws_access_key", r"AKIA[0-9A-Z]{16}"),
@@ -179,7 +183,7 @@ fn scan_path<'a>(
     max_matches: usize,
     max_output_bytes: usize,
     truncated: &'a mut bool,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), Box<dyn std::error::Error>>> + Send + 'a>> {
+) -> ScanFuture<'a> {
     Box::pin(async move {
     if *files_scanned >= max_files || matches.len() >= max_matches || *output_bytes >= max_output_bytes {
         *truncated = true;

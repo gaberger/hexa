@@ -428,73 +428,6 @@ impl ScaffoldVars {
     }
 }
 
-#[cfg(test)]
-mod scaffold_tests {
-    use super::*;
-
-    #[test]
-    fn every_language_declares_a_gate() {
-        for (lang, gate) in SCAFFOLD_LANGS {
-            assert!(!gate.is_empty(), "{lang} has no gate command");
-            assert_eq!(scaffold_gate(lang), Some(*gate));
-        }
-        assert_eq!(scaffold_gate("cobol"), None);
-    }
-
-    #[test]
-    fn a_hyphenated_name_becomes_a_legal_identifier() {
-        let v = ScaffoldVars::from_name("my-cool-app");
-        assert_eq!(v.name, "my-cool-app", "the name is kept as written");
-        assert_eq!(v.name_snake, "my_cool_app", "the identifier cannot hold a hyphen");
-    }
-
-    #[test]
-    fn an_identifier_never_starts_with_a_digit() {
-        assert_eq!(ScaffoldVars::from_name("2048-game").name_snake, "p_2048_game");
-    }
-
-    #[test]
-    fn an_empty_name_still_yields_an_identifier() {
-        assert_eq!(ScaffoldVars::from_name("").name_snake, "app");
-    }
-
-    #[test]
-    fn the_longer_placeholder_is_substituted_first() {
-        // Replacing `{{name}}` first would leave `_snake` dangling inside
-        // `{{name_snake}}`. Order matters and this pins it.
-        let v = ScaffoldVars::from_name("my-app");
-        assert_eq!(v.render("{{name_snake}}"), "my_app");
-        assert_eq!(v.render("mod {{name_snake}}; // {{name}}"), "mod my_app; // my-app");
-    }
-
-    #[test]
-    fn rendering_is_deterministic() {
-        let a = ScaffoldVars::from_name("demo").render("{{name}}/{{name_snake}}");
-        let b = ScaffoldVars::from_name("demo").render("{{name}}/{{name_snake}}");
-        assert_eq!(a, b);
-    }
-
-    /// Every template must be embedded, and every one must render without
-    /// leaving a placeholder behind — an unsubstituted `{{…}}` in emitted
-    /// source is a syntax error in all three languages.
-    #[test]
-    fn no_template_leaves_a_placeholder() {
-        let vars = ScaffoldVars::from_name("demo-app");
-        let mut seen = 0;
-        for path in crate::assets::Assets::iter() {
-            // Only the language trees. Anything else under `scaffold/` is not
-            // a scaffold template and does not go through this substitution.
-            if !SCAFFOLD_LANGS.iter().any(|(l, _)| path.starts_with(&format!("scaffold/{l}/"))) {
-                continue;
-            }
-            let body = crate::assets::Assets::get_str(&path).expect("embedded");
-            let out = vars.render(&body);
-            assert!(!out.contains("{{"), "{path} still contains a placeholder");
-            seen += 1;
-        }
-        assert!(seen >= 20, "expected the three scaffold trees to be embedded, saw {seen}");
-    }
-}
 
 pub(crate) fn create_adr_rules_toml(target: &Path) -> Result<()> {
     let hexa_dir = target.join(".hexa");
@@ -596,3 +529,70 @@ fn extract_templates(target: &Path) -> std::io::Result<Vec<String>> {
     Ok(created)
 }
 
+#[cfg(test)]
+mod scaffold_tests {
+    use super::*;
+
+    #[test]
+    fn every_language_declares_a_gate() {
+        for (lang, gate) in SCAFFOLD_LANGS {
+            assert!(!gate.is_empty(), "{lang} has no gate command");
+            assert_eq!(scaffold_gate(lang), Some(*gate));
+        }
+        assert_eq!(scaffold_gate("cobol"), None);
+    }
+
+    #[test]
+    fn a_hyphenated_name_becomes_a_legal_identifier() {
+        let v = ScaffoldVars::from_name("my-cool-app");
+        assert_eq!(v.name, "my-cool-app", "the name is kept as written");
+        assert_eq!(v.name_snake, "my_cool_app", "the identifier cannot hold a hyphen");
+    }
+
+    #[test]
+    fn an_identifier_never_starts_with_a_digit() {
+        assert_eq!(ScaffoldVars::from_name("2048-game").name_snake, "p_2048_game");
+    }
+
+    #[test]
+    fn an_empty_name_still_yields_an_identifier() {
+        assert_eq!(ScaffoldVars::from_name("").name_snake, "app");
+    }
+
+    #[test]
+    fn the_longer_placeholder_is_substituted_first() {
+        // Replacing `{{name}}` first would leave `_snake` dangling inside
+        // `{{name_snake}}`. Order matters and this pins it.
+        let v = ScaffoldVars::from_name("my-app");
+        assert_eq!(v.render("{{name_snake}}"), "my_app");
+        assert_eq!(v.render("mod {{name_snake}}; // {{name}}"), "mod my_app; // my-app");
+    }
+
+    #[test]
+    fn rendering_is_deterministic() {
+        let a = ScaffoldVars::from_name("demo").render("{{name}}/{{name_snake}}");
+        let b = ScaffoldVars::from_name("demo").render("{{name}}/{{name_snake}}");
+        assert_eq!(a, b);
+    }
+
+    /// Every template must be embedded, and every one must render without
+    /// leaving a placeholder behind — an unsubstituted `{{…}}` in emitted
+    /// source is a syntax error in all three languages.
+    #[test]
+    fn no_template_leaves_a_placeholder() {
+        let vars = ScaffoldVars::from_name("demo-app");
+        let mut seen = 0;
+        for path in crate::assets::Assets::iter() {
+            // Only the language trees. Anything else under `scaffold/` is not
+            // a scaffold template and does not go through this substitution.
+            if !SCAFFOLD_LANGS.iter().any(|(l, _)| path.starts_with(&format!("scaffold/{l}/"))) {
+                continue;
+            }
+            let body = crate::assets::Assets::get_str(&path).expect("embedded");
+            let out = vars.render(&body);
+            assert!(!out.contains("{{"), "{path} still contains a placeholder");
+            seen += 1;
+        }
+        assert!(seen >= 20, "expected the three scaffold trees to be embedded, saw {seen}");
+    }
+}

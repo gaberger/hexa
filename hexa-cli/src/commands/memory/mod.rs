@@ -145,8 +145,3 @@ pub async fn run(action: MemoryAction) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-}

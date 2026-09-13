@@ -1231,12 +1231,9 @@ async fn discover_openrouter(filter: Option<&str>, min_context: Option<u64>) -> 
     println!();
 
     // Check for API key
-    let api_key = match std::env::var("OPENROUTER_API_KEY") {
-        Ok(key) => key,
-        // The daemon's secrets vault is gone — a key is an environment
-        // variable, which is how it reached the vault in the first place.
-        Err(_) => String::new(),
-    };
+    // The daemon's secrets vault is gone. A key is an environment variable,
+    // which is how it reached the vault in the first place.
+    let api_key = std::env::var("OPENROUTER_API_KEY").unwrap_or_default();
 
     if api_key.is_empty() {
         println!("  {} OPENROUTER_API_KEY not set.", "✗".red());
@@ -1743,8 +1740,8 @@ fn compute_tier(results: &[&BenchResult]) -> (f32, u8, &'static str) {
 
     let overall = code_score * 0.5 + reason_score * 0.3 + latency_score * 0.2;
 
-    let code_raw = codegen.map(|r| raw_quality(&r)).unwrap_or(0);
-    let reason_raw = reasoning.map(|r| raw_quality(&r)).unwrap_or(0);
+    let code_raw = codegen.copied().map(raw_quality).unwrap_or(0);
+    let reason_raw = reasoning.copied().map(raw_quality).unwrap_or(0);
 
     let (tier, label) = if overall >= 0.85 && reason_raw >= 4 {
         (3, "Tier 3 (Opus-equivalent: planning, specs, validation)")

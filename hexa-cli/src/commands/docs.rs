@@ -441,7 +441,7 @@ fn yaml_list(items: &[String]) -> String {
     let parts: Vec<String> = items
         .iter()
         .filter(|s| !s.is_empty())
-        .map(|s| s.clone())
+        .cloned()
         .collect();
     format!("[{}]", parts.join(", "))
 }
@@ -462,10 +462,8 @@ fn adr_id_from_filename(path: &Path) -> String {
     let mut i = 0;
     while i < chars.len() {
         let c = chars[i];
-        if c.is_ascii_digit() {
-            id_part.push(c);
-            i += 1;
-        } else if c == '-' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit() {
+        // A digit, or a dash with a digit on both sides.
+        if c.is_ascii_digit() || (c == '-' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit()) {
             id_part.push(c);
             i += 1;
         } else {

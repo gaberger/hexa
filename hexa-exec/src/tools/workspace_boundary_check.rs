@@ -7,10 +7,15 @@
 
 use async_trait::async_trait;
 use regex::Regex;
+use std::sync::LazyLock;
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::fs;
+
+/// Compiled once. The pattern is the same for every crate and every file.
+static USE_PATTERN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\s*use\s+(hexa_[a-z_]+)::").unwrap());
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use walkdir::WalkDir;
@@ -145,7 +150,8 @@ impl Tool for WorkspaceBoundaryCheck {
             // 2. Scan source files for use statements
             let src_path = crate_path.join("src");
             if src_path.exists() {
-                let use_pattern = Regex::new(r"^\s*use\s+(hexa_[a-z_]+)::").unwrap();
+                // Built once per crate rather than per source file.
+                let use_pattern = &USE_PATTERN;
                 for entry in WalkDir::new(&src_path)
                     .follow_links(false)
                     .into_iter()

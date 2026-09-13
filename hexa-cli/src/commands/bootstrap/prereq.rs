@@ -41,11 +41,9 @@ impl PrereqChecker {
     }
 
     pub async fn check_all(&self) -> anyhow::Result<PrereqReport> {
-        let mut statuses = vec![];
-
         // The inference server, whoever it is. hexa-infer names it; this file
         // must not (founding goal G1).
-        statuses.push(self.check_inference_server());
+        let mut statuses = vec![self.check_inference_server()];
 
         // Check Rust
         statuses.push(self.check_rust());
@@ -67,7 +65,7 @@ impl PrereqChecker {
     fn check_inference_server(&self) -> PrereqStatus {
         let provider = hexa_infer::local_provider();
         let hint = provider.install_hint();
-        self.status(provider.display_name, provider.binary, &hint)
+        self.status(provider.display_name, provider.binary, hint)
     }
 
     fn check_rust(&self) -> PrereqStatus {

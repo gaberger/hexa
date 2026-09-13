@@ -302,13 +302,10 @@ fn run_why(workplan: &Workplan, tasks: &[TaskInfo], task_id: &str) -> anyhow::Re
                 .iter()
                 .find(|(s, _)| s == sym);
             match hit {
-                Some((_, file)) => println!(
-                    "    {} {} — found in {}",
-                    "\u{2705}",
-                    sym,
-                    file.display()
-                ),
-                None => println!("    {} {} — {}", "\u{274c}", sym, "not found".red()),
+                Some((_, file)) => {
+                    println!("    \u{2705} {} — found in {}", sym, file.display())
+                }
+                None => println!("    \u{274c} {} — {}", sym, "not found".red()),
             }
         }
     }
@@ -333,15 +330,13 @@ fn run_why(workplan: &Workplan, tasks: &[TaskInfo], task_id: &str) -> anyhow::Re
     match &verdict {
         reconcile_evidence::VerifyResult::Promote => {
             println!(
-                "  {} Verdict: {} — all evidence rules satisfied",
-                "\u{2705}",
+                "  \u{2705} Verdict: {} — all evidence rules satisfied",
                 "PROMOTE".green().bold()
             );
         }
         reconcile_evidence::VerifyResult::KeepPending { reason } => {
             println!(
-                "  {} Verdict: {} — {}",
-                "\u{274c}",
+                "  \u{274c} Verdict: {} — {}",
                 "KEEP PENDING".red().bold(),
                 reason
             );

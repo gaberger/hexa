@@ -359,7 +359,7 @@ pub async fn run(
         let score_colored = match score {
             95..=100 => format!("{}", score).bright_green().to_string(),
             90..=94 => format!("{}", score).green().to_string(),
-            80..=89 | 70..=79 => format!("{}", score).yellow().to_string(),
+            70..=89 => format!("{}", score).yellow().to_string(),
             60..=69 => format!("{}", score).red().to_string(),
             _ => format!("{}", score).bright_red().to_string(),
         };

@@ -33,6 +33,10 @@ pub enum AssetsAction {
         /// Also update .mcp.json and CLAUDE.md hexa section
         #[arg(long, short)]
         force: bool,
+
+        /// Delete installed skills and hooks that hexa no longer ships
+        #[arg(long)]
+        prune: bool,
     },
 }
 
@@ -43,8 +47,73 @@ pub async fn run(action: AssetsAction) -> Result<()> {
             path,
             dry_run,
             force,
-        } => sync(&path, dry_run, force).await,
+            prune,
+        } => sync(&path, dry_run, force, prune).await,
     }
+}
+
+/// Delete installed skills and hooks this binary does not ship.
+///
+/// `sync` only ever added and updated, so a project kept every skill any older
+/// hexa had ever written into it. blacksheep carried nine describing
+/// SpacetimeDB, HexFlo and swarms, and the agent working there read them
+/// (ADR-2609122048). A skill about a deleted system cannot fail on its own.
+///
+/// Only the two directories hexa owns are touched, and only files that came
+/// from an asset prefix. Anything a person put there by hand is theirs.
+fn prune_unshipped(
+    target: &Path,
+    shipped: &std::collections::BTreeSet<PathBuf>,
+    dry_run: bool,
+) -> Result<Vec<String>> {
+    let mut removed = Vec::new();
+    for &(_, dest_subdir) in SYNC_MAPPINGS {
+        let dir = target.join(dest_subdir);
+        if !dir.is_dir() {
+            continue;
+        }
+        let mut stack = vec![dir.clone()];
+        let mut found: Vec<PathBuf> = Vec::new();
+        while let Some(d) = stack.pop() {
+            for e in fs::read_dir(&d)?.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else {
+                    found.push(p);
+                }
+            }
+        }
+        found.sort();
+        for p in found {
+            if shipped.contains(&p) {
+                continue;
+            }
+            let rel = p
+                .strip_prefix(target)
+                .map(|r| r.display().to_string())
+                .unwrap_or_else(|_| p.display().to_string());
+            if !dry_run {
+                fs::remove_file(&p).with_context(|| format!("Failed to remove {rel}"))?;
+            }
+            removed.push(rel);
+        }
+    }
+    // A skill directory left empty by the above is noise, not content.
+    if !dry_run {
+        for &(_, dest_subdir) in SYNC_MAPPINGS {
+            let dir = target.join(dest_subdir);
+            if let Ok(entries) = fs::read_dir(&dir) {
+                for e in entries.flatten() {
+                    let p = e.path();
+                    if p.is_dir() && fs::read_dir(&p).map(|mut r| r.next().is_none()).unwrap_or(false) {
+                        let _ = fs::remove_dir(&p);
+                    }
+                }
+            }
+        }
+    }
+    Ok(removed)
 }
 
 // ── hexa assets list ──────────────────────────────────────────────────
@@ -81,7 +150,7 @@ const SYNC_MAPPINGS: &[(&str, &str)] = &[
     ("hooks/hexa/", ".claude/hooks/hexa/"),
 ];
 
-async fn sync(path: &str, dry_run: bool, force: bool) -> Result<()> {
+async fn sync(path: &str, dry_run: bool, force: bool, prune: bool) -> Result<()> {
     let target = PathBuf::from(path)
         .canonicalize()
         .unwrap_or_else(|_| PathBuf::from(path));
@@ -106,6 +175,9 @@ async fn sync(path: &str, dry_run: bool, force: bool) -> Result<()> {
     let mut updated: Vec<String> = Vec::new();
     let mut created: Vec<String> = Vec::new();
     let mut unchanged: usize = 0;
+    // Every path this binary ships, so `--prune` can tell a current asset
+    // from one left behind by an older hexa.
+    let mut shipped: std::collections::BTreeSet<PathBuf> = std::collections::BTreeSet::new();
 
     // ── 1. Extract skills, agents, hooks ──────────────────────────
     for &(prefix, dest_subdir) in SYNC_MAPPINGS {
@@ -123,6 +195,7 @@ async fn sync(path: &str, dry_run: bool, force: bool) -> Result<()> {
                 if let Some(file) = Assets::get(&asset_path) {
                     let new_content = &file.data;
                     let display_path = format!("{}{}", dest_subdir, dest_name);
+                    shipped.insert(dest.clone());
 
                     if dest.exists() {
                         let existing = fs::read(&dest).unwrap_or_default();
@@ -154,6 +227,13 @@ async fn sync(path: &str, dry_run: bool, force: bool) -> Result<()> {
             }
         }
     }
+
+    // ── 1b. Remove what hexa no longer ships ──────────────────────
+    let removed = if prune {
+        prune_unshipped(&target, &shipped, dry_run)?
+    } else {
+        Vec::new()
+    };
 
     // ── 2. Merge settings.json ────────────────────────────────────
     let settings_changes = sync_settings(&target, dry_run)?;
@@ -189,7 +269,15 @@ async fn sync(path: &str, dry_run: bool, force: bool) -> Result<()> {
         println!("    {} {}", "\u{2713}".yellow(), line);
     }
 
-    let total_changes = created.len() + updated.len() + settings_changes.len() + extras.len();
+    if !removed.is_empty() {
+        println!("  {} Removed:", "\u{2212}".red());
+        for f in &removed {
+            println!("    {} {}", "\u{2713}".green(), f);
+        }
+    }
+
+    let total_changes =
+        created.len() + updated.len() + settings_changes.len() + extras.len() + removed.len();
     println!();
     if total_changes == 0 {
         println!(
@@ -213,7 +301,7 @@ async fn sync(path: &str, dry_run: bool, force: bool) -> Result<()> {
             "  {} {} created, {} updated, {} unchanged",
             "\u{2713}".green(),
             created.len(),
-            updated.len() + settings_changes.len() + extras.len(),
+            updated.len() + settings_changes.len() + extras.len() + removed.len(),
             unchanged
         );
     }
