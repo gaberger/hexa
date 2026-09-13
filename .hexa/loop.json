@@ -1,7 +1,7 @@
 {
   "adr": "ADR-2609122048",
-  "gate": "cargo test --workspace",
-  "stage": "gate",
+  "gate": "cargo test -p hexa-graph -j 1 -- --test-threads=1",
+  "stage": "harden",
   "tasks": [
     {
       "done_at": "2026-09-13T00:50:11.025795806+00:00",
@@ -46,7 +46,11 @@
     {
       "status": "doing",
       "title": "clippy: the whole workspace clean under -D warnings"
+    },
+    {
+      "status": "todo",
+      "title": "verify: no verdict without evidence the tool gathered itself"
     }
   ],
-  "updated": "2026-09-13T01:01:32.698884921+00:00"
+  "updated": "2026-09-13T01:14:52.922513909+00:00"
 }

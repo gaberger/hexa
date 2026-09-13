@@ -40,6 +40,15 @@ spec show` and `hexa adr specs` exit 1 when their directory is absent, which
 makes "this project has no specs" indistinguishable from a failure. `hexa
 docs check` exits 1 on a warning with zero errors.
 
+**`hexa verify` returns a verdict without reading the repository.** Claims
+that do not match one of five narrow deterministic shapes go to a language
+model with the claim text alone: no files, no grep, no tools. Asked whether
+`hexa-graph/src/lib.rs` defines a function that is in it, it answered
+INCONCLUSIVE, "repository access required". Asked a claim about `graph
+consumers`, it answered REFUTED and cited `cargo graph`, a command it never
+ran and which does not exist. A verdict is the entire output of this
+command, and it is being produced by guessing.
+
 ## Decision
 
 1. **A check that cannot run says so, and does not report a result.** Absent
@@ -61,6 +70,12 @@ docs check` exits 1 on a warning with zero errors.
    is reserved for a question that was asked and answered badly.
 
 5. **A warning does not fail a command.** Only an error sets a non-zero exit.
+
+6. **A verifier states no verdict it did not earn.** `hexa verify` gathers
+   evidence from the repository before asking anything, passes what it found
+   into the question, and returns INCONCLUSIVE when it found nothing.
+   CONFIRMED and REFUTED require at least one piece of evidence the tool
+   collected itself. A cited command must be one that ran.
 
 ## Consequences
 

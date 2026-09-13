@@ -23,8 +23,6 @@ trigger: /hexa-ADR-review
    - **Violation**: changes directly contradict an accepted ADR
    - **New ADR needed**: significant architectural change without an ADR
 
-## Key ADRs to Check
-- ADR-001: Hexagonal architecture boundaries
-- ADR-014: Dependency injection (no mock.module)
-- ADR-025: SpacetimeDB as state backend
-- ADR-042: SpacetimeDB single source of truth
+## Key ADRs to check
+- The project's own ledger: `hexa adr list`
+- The rules every scaffold carries: `.hexa/ADR-rules.toml`

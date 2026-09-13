@@ -3,123 +3,161 @@
   "description": "Claude Code settings template installed by `hexa init`. Configures hooks, permissions, statusline, and announcements for hexa-aware projects.",
   "statusLine": {
     "type": "command",
-    "command": "node scripts/hexa-statusline.cjs"
+    "command": "hexa loop 2>/dev/null | head -1"
   },
   "hooks": {
-    "SessionStart": [{
-      "hooks": [{
-        "type": "command",
-        "command": "hexa hook session-start",
-        "timeout": 10000
-      }]
-    }],
-    "SessionEnd": [{
-      "hooks": [{
-        "type": "command",
-        "command": "hexa hook session-end",
-        "timeout": 5000
-      }]
-    }],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "hexa hook session-start",
+            "timeout": 10000
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "hexa hook session-end",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Write|Edit|MultiEdit",
-        "hooks": [{
-          "type": "command",
-          "command": "hexa hook pre-edit",
-          "timeout": 5000
-        }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "hexa hook pre-edit",
+            "timeout": 5000
+          }
+        ]
       },
       {
         "matcher": "Bash",
-        "hooks": [{
-          "type": "command",
-          "command": "hexa hook pre-bash",
-          "timeout": 3000
-        }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "hexa hook pre-bash",
+            "timeout": 3000
+          }
+        ]
       },
       {
         "matcher": "Agent",
-        "hooks": [{
-          "type": "command",
-          "command": "hexa hook pre-agent",
-          "timeout": 3000
-        }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "hexa hook pre-agent",
+            "timeout": 3000
+          }
+        ]
       },
       {
-        "hooks": [{
-          "type": "command",
-          "command": "hexa hook observe-pre",
-          "blocking": false,
-          "timeout": 500
-        }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "hexa hook observe-pre",
+            "blocking": false,
+            "timeout": 500
+          }
+        ]
       }
     ],
     "PostToolUse": [
       {
         "matcher": "Write|Edit|MultiEdit",
-        "hooks": [{
-          "type": "command",
-          "command": "hexa hook post-edit",
-          "timeout": 5000
-        }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "hexa hook post-edit",
+            "timeout": 5000
+          }
+        ]
       },
       {
         "matcher": "Write|Edit|MultiEdit",
-        "hooks": [{
-          "type": "command",
-          "command": "hexa analyze --file \"$TOOL_INPUT_PATH\" --quiet",
-          "blocking": false,
-          "timeout": 10000
-        }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "hexa analyze --file \"$TOOL_INPUT_PATH\" --quiet",
+            "blocking": false,
+            "timeout": 10000
+          }
+        ]
       },
       {
-        "hooks": [{
-          "type": "command",
-          "command": "hexa hook observe-post",
-          "blocking": false,
-          "timeout": 500
-        }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "hexa hook observe-post",
+            "blocking": false,
+            "timeout": 500
+          }
+        ]
       }
     ],
     "Stop": [
       {
-        "hooks": [{
-          "type": "command",
-          "command": "hexa hook observe-stop",
-          "blocking": false,
-          "timeout": 500
-        }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "hexa hook observe-stop",
+            "blocking": false,
+            "timeout": 500
+          }
+        ]
       },
       {
-        "hooks": [{
-          "type": "command",
-          "command": "hexa analyze --violations-only --exit-code",
-          "blocking": true,
-          "timeout": 30000
-        }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "hexa analyze --violations-only --exit-code",
+            "blocking": true,
+            "timeout": 30000
+          }
+        ]
       }
     ],
-    "SubagentStart": [{
-      "hooks": [{
-        "type": "command",
-        "command": "hexa hook subagent-start",
-        "timeout": 3000
-      }]
-    }],
-    "SubagentStop": [{
-      "hooks": [{
-        "type": "command",
-        "command": "hexa hook subagent-stop",
-        "timeout": 3000
-      }]
-    }],
-    "UserPromptSubmit": [{
-      "hooks": [{
-        "type": "command",
-        "command": "hexa hook route",
-        "timeout": 8000
-      }]
-    }]
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "hexa hook subagent-start",
+            "timeout": 3000
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "hexa hook subagent-stop",
+            "timeout": 3000
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "hexa hook route",
+            "timeout": 8000
+          }
+        ]
+      }
+    ]
   },
   "permissions": {
     "allow": [

@@ -29,7 +29,6 @@ trigger: /hexa-ADR-status
 
    Issues Found:
    - ADR-032 has duplicate numbers (two different files)
-   - ADR-041 has duplicate numbers (review agent + spacetimedb)
    - 3 proposed ADRs older than 30 days
    ```
 

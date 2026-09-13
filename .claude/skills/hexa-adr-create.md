@@ -1,6 +1,6 @@
 ---
 name: hexa-ADR-create
-description: Create a new Architecture Decision Record with auto-numbering, dependency impact analysis, and validation gates. Use when the user asks to "create ADR", "write ADR", "new ADR", or "architecture decision".
+description: Create a new Architecture Decision Record with auto-numbering, dependency impact analysis, and validation gates
 trigger: /hexa-ADR-create
 ---
 
@@ -12,23 +12,19 @@ must include a full consumer dependency map before it can be accepted.
 
 ## Phase 1: Gather Intent
 
-1. Get the next available ADR number and schema:
+1. Get the next available ADR number and schema by running:
    ```bash
    hexa adr schema
    ```
-   This returns the next number — atomically reserved in SpacetimeDB — plus the
-   template, valid statuses, and required sections. Never derive the number by
-   listing `docs/adrs/` and taking the tail: that races against every other agent
-   creating an ADR concurrently, and two agents will pick the same number.
+   This returns the next id, the template, valid statuses, and required sections.
 
 2. Ask the user for:
    - **Title** (required)
    - **Brief context description** — why this decision is needed
    - **Decision type**: one of `add | modify | delete | restructure | migrate`
-   - **Drivers** — what triggered this decision
+   - **Drivers** (what triggered this decision)
 
-3. If a reserved placeholder exists (`ADR-{NNN}-reserved.md`), delete it after
-   creating the real ADR.
+3. If a reserved placeholder exists (`ADR-{NNN}-reserved.md`), delete it after creating the real ADR
 
 ## Phase 2: Dependency Impact Analysis (REQUIRED for modify/delete/restructure/migrate)
 
@@ -50,7 +46,6 @@ Build a **consumer dependency map**:
 ```
 Artifact: <name>
 ├── Direct consumers (import/use/reference):
-│   ├── crate/file:line — how it's used
 │   ├── crate/file:line — how it's used
 │   └── ...
 ├── Transitive consumers (depend on direct consumers):
@@ -75,9 +70,6 @@ grep -r 'pub use.*<artifact>' --include='*.rs' .
 
 # Check conditional compilation
 grep -r 'cfg.*feature.*<artifact>' --include='*.rs' .
-
-# Check auto-generated bindings
-find . -path '*/spacetime_bindings/*' -name '*.rs' | head -20
 ```
 
 ### 2c. Build Verification Gates
@@ -92,13 +84,9 @@ Define explicit gates that the workplan MUST include:
 | Integration tests | Defined per-ADR | Cross-crate |
 
 **CRITICAL**: The workplan derived from this ADR MUST include a validation step that
-runs these gates AFTER every phase that deletes or restructures artifacts. The
-ADR-2026-04-05-0900 migration skipped this, resulting in hexa-agent being broken for an
-entire session.
+runs these gates AFTER every phase that deletes or restructures artifacts.
 
 ### 2d. Blast Radius Classification
-
-Classify each affected artifact:
 
 | Impact | Definition | Action Required |
 |--------|-----------|-----------------|
@@ -109,85 +97,51 @@ Classify each affected artifact:
 
 ## Phase 3: Write the ADR
 
-Copy `docs/adrs/TEMPLATE.md` to `docs/adrs/ADR-{ID}-{kebab-slug}.md`
+Create `docs/adrs/ADR-{NNN}-{kebab-slug}.md` with all sections:
 
-Fill in all sections:
+### Required Sections
 
-```markdown
-# ADR-{ID}: {Title}
+- **Title**: `# ADR-{NNN}: {Title}`
+- **Status**: `**Status:** Proposed`
+- **Date**: today's date (YYYY-MM-DD)
+- **Drivers**: from user input
+- **Context**: problem, forces, constraints, alternatives
+- **Impact Analysis** (for modify/delete/restructure/migrate):
+  - Consumer Dependency Map (from Phase 2a)
+  - Cross-Crate Dependencies (from Phase 2b)
+  - Blast Radius table (from Phase 2d)
+  - Build Verification Gates (from Phase 2c)
+- **Decision**: clear imperative language ("We will...")
+- **Consequences**: positive, negative, mitigations
+- **Implementation**: phased table with validation gate per phase
+- **References**: related ADRs, issues, documents
 
-**Status:** Proposed
-**Date:** {today}
-**Drivers:** {from user input}
+### Schema Reference
 
-## Context
-{Why this decision is needed}
+Valid statuses: `Proposed | Accepted | Deprecated | Superseded | Abandoned`
 
-## Impact Analysis
-
-### Consumer Dependency Map
-{From Phase 2a — every artifact affected, every consumer traced}
-
-### Cross-Crate Dependencies
-{From Phase 2b — feature gates, re-exports, conditional compilation}
-
-### Blast Radius
-| Artifact | Consumers | Impact | Mitigation |
-|----------|-----------|--------|------------|
-{One row per affected artifact}
-
-### Build Verification Gates
-{From Phase 2c — explicit commands that must pass after each phase}
-
-## Decision
-{What was decided and why}
-
-## Consequences
-**Positive:** ...
-**Negative:** ...
-**Mitigations:** ...
-
-## Implementation
-| Phase | Description | Validation Gate | Status |
-|-------|-------------|-----------------|--------|
-{Each phase with its specific validation command}
-
-## References
-{Related ADRs, issues, external docs}
-```
+Required frontmatter: `**Status:**`, `**Date:**`, `**Drivers:**`, `**Supersedes:**` (optional)
 
 ## Phase 4: Validate the ADR
 
-Before marking the ADR as complete:
+Before marking complete:
 
-1. **Cross-reference check**: Every ADR mentioned in "Supersedes" or "References" exists
-2. **Consumer completeness**: Run the grep from Phase 2a and verify every hit is accounted for
+1. **Cross-reference check**: Every ADR in "Supersedes"/"References" exists
+2. **Consumer completeness**: Re-run grep from Phase 2a, verify every hit is accounted for
 3. **Gate completeness**: Every implementation phase has at least one validation gate
 4. **Workplan alignment**: If a workplan will be created, verify it includes all gates
 
 ## Anti-Patterns (Lessons from ADR-2026-04-05-0900)
 
-### Anti-Pattern: Module-Scoped Impact Analysis
-Analyzing impact only within the module being changed (e.g., only checking
-`spacetime-modules/` and `hexa-nexus/`) while missing consumers in other crates
-(`hexa-agent`, `hexa-cli`).
+| Anti-Pattern | Problem | Fix |
+|-------------|---------|-----|
+| Module-scoped impact analysis | Only checked a subset of workspace crates, missed consumers in other crates | Always grep the ENTIRE workspace |
+| Missing validation gates | Workplan had "delete X" but no "verify compile" between phases | Every phase must end with a workspace-wide build check |
+| Documentation-only analysis | Listed docs mentioning a module but not code importing it | Code consumers are CRITICAL; docs are MEDIUM |
 
-**Fix**: Always grep the ENTIRE workspace. Use `--include` filters for file types,
-never path restrictions.
+## Multi-Agent Safety
 
-### Anti-Pattern: Missing Validation Gates in Workplan
-The workplan has "delete X" and "update Y" steps but no "verify everything compiles"
-step between them.
-
-**Fix**: Every workplan phase that modifies/deletes artifacts MUST end with
-`cargo check --workspace` (or equivalent). This is a BLOCKING gate — next phase
-cannot start until the gate passes.
-
-### Anti-Pattern: Documentation-Only Impact Analysis
-Listing which docs mention a module but not which code imports it.
-
-**Fix**: Code consumers are CRITICAL impact. Documentation is MEDIUM. Always
-prioritize code analysis over documentation analysis.
+The `hexa adr schema` command reserves the ADR number atomically via `POST /api/adr/reserve`. This prevents two concurrent agents from creating ADRs with the same number.
 
 ## Quick Reference
 
