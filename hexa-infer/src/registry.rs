@@ -45,7 +45,7 @@ pub fn load() -> Vec<Endpoint> {
 /// Entries carry camelCase keys and a `models` field that is a JSON array
 /// *encoded as a string* — an artifact of the SpacetimeDB row shape they were
 /// written from. Both quirks are absorbed here so nothing downstream knows.
-fn load_from(path: &std::path::Path) -> Vec<Endpoint> {
+pub fn load_from(path: &std::path::Path) -> Vec<Endpoint> {
     let Ok(text) = std::fs::read_to_string(path) else {
         return Vec::new();
     };
@@ -149,23 +149,38 @@ fn models_of(v: &serde_json::Value) -> Vec<String> {
 /// file on the next startup (ADR-2026-04-08-0813). The file was always the
 /// source; the database was a copy of it.
 pub fn upsert(endpoint: Endpoint) -> Result<(), String> {
-    let mut all = load();
+    upsert_in(&registry_path(), endpoint)
+}
+
+/// [`upsert`] against a named file.
+///
+/// The env-based pair exists for the CLI; tests use this. Tests that reached
+/// the file by rewriting `HOME` shared one process-wide variable, so under
+/// cargo's default parallelism they overwrote each other and the round-trip
+/// test read back an empty registry (ADR-2609122048).
+pub fn upsert_in(path: &std::path::Path, endpoint: Endpoint) -> Result<(), String> {
+    let mut all = load_from(path);
     match all.iter_mut().find(|e| e.id == endpoint.id) {
         Some(existing) => *existing = endpoint,
         None => all.push(endpoint),
     }
-    save(&all)
+    save_to(path, &all)
 }
 
 /// Remove an endpoint by id. Returns whether it was there.
 pub fn remove(id: &str) -> Result<bool, String> {
-    let mut all = load();
+    remove_in(&registry_path(), id)
+}
+
+/// [`remove`] against a named file.
+pub fn remove_in(path: &std::path::Path, id: &str) -> Result<bool, String> {
+    let mut all = load_from(path);
     let before = all.len();
     all.retain(|e| e.id != id);
     if all.len() == before {
         return Ok(false);
     }
-    save(&all).map(|_| true)
+    save_to(path, &all).map(|_| true)
 }
 
 /// Write the registry, preserving the on-disk shape.
@@ -175,7 +190,11 @@ pub fn remove(id: &str) -> Result<bool, String> {
 /// this file. Changing its shape to suit the in-memory type would be the
 /// convenience of one process paid for by everything else that opens it.
 pub fn save(endpoints: &[Endpoint]) -> Result<(), String> {
-    let path = registry_path();
+    save_to(&registry_path(), endpoints)
+}
+
+/// [`save`] to a named file.
+pub fn save_to(path: &std::path::Path, endpoints: &[Endpoint]) -> Result<(), String> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
@@ -301,7 +320,7 @@ mod tests {
     #[test]
     fn a_saved_endpoint_reads_back_identically() {
         let dir = tempfile::tempdir().expect("tempdir");
-        std::env::set_var("HOME", dir.path());
+        let path = dir.path().join("inference-servers.json");
         let ep = Endpoint {
             id: "tt".into(),
             url: "https://x/v1".into(),
@@ -315,8 +334,8 @@ mod tests {
             quality_score: 0.5,
             quantization_level: "cloud".into(),
         };
-        save(std::slice::from_ref(&ep)).expect("save");
-        let back = load();
+        save_to(&path, std::slice::from_ref(&ep)).expect("save");
+        let back = load_from(&path);
         assert_eq!(back.len(), 1);
         assert_eq!(back[0], ep);
     }
@@ -324,7 +343,7 @@ mod tests {
     #[test]
     fn upsert_replaces_by_id_and_remove_reports_absence() {
         let dir = tempfile::tempdir().expect("tempdir");
-        std::env::set_var("HOME", dir.path());
+        let path = dir.path().join("inference-servers.json");
         let mk = |id: &str, model: &str| Endpoint {
             id: id.into(),
             url: "http://x".into(),
@@ -338,16 +357,16 @@ mod tests {
             quality_score: 0.0,
             quantization_level: String::new(),
         };
-        upsert(mk("a", "one")).expect("insert");
-        upsert(mk("b", "two")).expect("insert");
-        upsert(mk("a", "rewritten")).expect("replace");
-        let all = load();
+        upsert_in(&path, mk("a", "one")).expect("insert");
+        upsert_in(&path, mk("b", "two")).expect("insert");
+        upsert_in(&path, mk("a", "rewritten")).expect("replace");
+        let all = load_from(&path);
         assert_eq!(all.len(), 2, "an id is replaced, not duplicated");
         assert_eq!(all.iter().find(|e| e.id == "a").unwrap().model, "rewritten");
 
-        assert!(remove("a").expect("remove"));
-        assert!(!remove("a").expect("remove again"), "already gone");
-        assert_eq!(load().len(), 1);
+        assert!(remove_in(&path, "a").expect("remove"));
+        assert!(!remove_in(&path, "a").expect("remove again"), "already gone");
+        assert_eq!(load_from(&path).len(), 1);
     }
 
 }
