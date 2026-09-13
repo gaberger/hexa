@@ -318,6 +318,8 @@ pub struct Other {
     pub stage: String,
     pub files: Vec<String>,
     pub updated: String,
+    /// The run in flight, as `running_line` renders it (ADR-2609131611).
+    pub running: Option<String>,
 }
 
 /// Every session but `session`, liveness judged by `alive` from the pid and
@@ -339,6 +341,7 @@ pub fn others_of(dir: &Path, session: &str, alive: &dyn Fn(u64, Option<u64>) -> 
                 .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
                 .unwrap_or_default(),
             updated: e.get("updated").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            running: running_line(e),
         })
         .collect();
     out.sort_by(|a, b| b.updated.cmp(&a.updated));
@@ -406,10 +409,13 @@ pub fn awareness_lines(dir: &Path) -> Vec<String> {
                 let more = o.files.len().saturating_sub(5);
                 format!(" · touched {}{}", shown.join(", "), if more > 0 { format!(" +{more}") } else { String::new() })
             };
+            // The run is the thing that is happening, so it leads
+            // (ADR-2609131611 §1).
+            let run = o.running.as_ref().map(|r| format!(" · {r}")).unwrap_or_default();
             if o.alive {
-                format!("also here: session {} · stage {} · ADR {} · gate {}{}", short(&o.session), o.stage, o.adr, o.gate, files)
+                format!("also here: session {}{} · stage {} · ADR {} · gate {}{}", short(&o.session), run, o.stage, o.adr, o.gate, files)
             } else {
-                format!("ended: session {} · stage {} · ADR {}{}", short(&o.session), o.stage, o.adr, files)
+                format!("ended: session {}{} · stage {} · ADR {}{}", short(&o.session), run, o.stage, o.adr, files)
             }
         })
         .collect()
@@ -573,18 +579,41 @@ const STAGES: &[&str] = &["decide", "gate", "build", "harden", "done"];
 /// `running harden/verify 4m12s: 3 claims, default refute` while a harness
 /// run is in flight in this session (ADR-2609131427); nothing otherwise.
 pub fn running_line(state: &serde_json::Value) -> Option<String> {
+    running_line_at(state, chrono::Utc::now())
+}
+
+/// Two heartbeats of `hexa_exec::adversarial::HEARTBEAT`. Every phase writes
+/// at least once a heartbeat, so a record older than this is not being
+/// written by anything: the process is gone, or wedged below its own
+/// reporting. Either way it is not news, and reporting it as live on a
+/// number that nothing increments is worse than saying nothing
+/// (ADR-2609131611 §2).
+const STALE_AFTER_SECS: i64 = 60;
+
+/// `running harden/verify 4m12s: 3 claims` while a run reports; once it
+/// stops, `stalled harden/verify, last seen 14:29`; nothing when cleared.
+pub fn running_line_at(state: &serde_json::Value, now: chrono::DateTime<chrono::Utc>) -> Option<String> {
     let r = state.get("running")?.as_object()?;
     let get = |k: &str| r.get(k).and_then(|v| v.as_str()).unwrap_or("?");
-    let elapsed = r
-        .get("started")
-        .and_then(|v| v.as_str())
-        .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+    let at = |k: &str| {
+        r.get(k)
+            .and_then(|v| v.as_str())
+            .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+            .map(|t| t.with_timezone(&chrono::Utc))
+    };
+    let where_ = format!("{}/{}", get("verb"), get("phase"));
+    if let Some(updated) = at("updated") {
+        if (now - updated).num_seconds() > STALE_AFTER_SECS {
+            return Some(format!("stalled {}, last seen {}", where_, updated.format("%H:%M")));
+        }
+    }
+    let elapsed = at("started")
         .map(|t| {
-            let secs = (chrono::Utc::now() - t.with_timezone(&chrono::Utc)).num_seconds().max(0);
+            let secs = (now - t).num_seconds().max(0);
             format!("{}m{:02}s", secs / 60, secs % 60)
         })
         .unwrap_or_else(|| "?".to_string());
-    Some(format!("running {}/{} {}: {}", get("verb"), get("phase"), elapsed, get("message")))
+    Some(format!("running {} {}: {}", where_, elapsed, get("message")))
 }
 
 /// One step of the work. `status` is `todo`, `doing` or `done`.
@@ -1225,6 +1254,89 @@ mod sessions_see_each_other {
         assert!(path.is_file(), "bbbb's entry was taken with the file");
         assert!(read_entry(&dir, "aaaa").is_none());
         assert_eq!(read_entry(&dir, "bbbb").unwrap()["adr"], "ADR-B", "bbbb's entry is gone");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod visible_run {
+    use super::*;
+
+    fn at(mins: i64) -> String {
+        (chrono::Utc::now() - chrono::Duration::minutes(mins)).to_rfc3339()
+    }
+
+    fn project() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("hexa-visible-{}-{:?}", std::process::id(), std::thread::current().id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".hexa")).unwrap();
+        dir
+    }
+
+    /// ADR-2609131611 §1: another session's run is on its awareness line,
+    /// ahead of its ADR, so a second terminal sees what is happening.
+    #[test]
+    fn another_sessions_run_is_on_its_awareness_line_first() {
+        let dir = project();
+        update_entry(&dir, "aaaa", 1, serde_json::json!({"adr": "ADR-A", "gate": "cargo test", "stage": "harden"})).unwrap();
+        update_entry(
+            &dir,
+            "aaaa",
+            1,
+            serde_json::json!({"running": {"verb": "harden", "phase": "fix", "message": "fixing: the lock", "started": at(4), "updated": at(0)}}),
+        )
+        .unwrap();
+        let o = others_of(&dir, "bbbb", &|_, _| true);
+        let line = format!(
+            "also here: session {}{} · stage {} · ADR {} · gate {}",
+            &o[0].session[..4.min(o[0].session.len())],
+            o[0].running.as_ref().map(|r| format!(" · {r}")).unwrap_or_default(),
+            o[0].stage,
+            o[0].adr,
+            o[0].gate
+        );
+        assert!(line.contains("running harden/fix 4m"), "{line}");
+        assert!(line.find("running").unwrap() < line.find("ADR-A").unwrap(), "the run leads: {line}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ADR-2609131611 §2: a record nothing is writing any more is stalled,
+    /// with when it was last seen — never live on a climbing number.
+    #[test]
+    fn a_record_that_stopped_reporting_is_stalled_not_running() {
+        let now = chrono::Utc::now();
+        let running = |updated_mins_ago: i64| {
+            serde_json::json!({"running": {"verb": "harden", "phase": "fix", "message": "fixing: the lock",
+                "started": (now - chrono::Duration::minutes(20)).to_rfc3339(),
+                "updated": (now - chrono::Duration::minutes(updated_mins_ago)).to_rfc3339()}})
+        };
+        let fresh = running_line_at(&running(0), now).unwrap();
+        assert!(fresh.starts_with("running harden/fix 20m"), "{fresh}");
+        let stale = running_line_at(&running(30), now).unwrap();
+        assert!(stale.starts_with("stalled harden/fix, last seen "), "{stale}");
+        assert!(!stale.contains("20m"), "a stalled run does not report elapsed time: {stale}");
+        // Exactly at the bound is still running; past it is not.
+        let edge = running_line_at(
+            &serde_json::json!({"running": {"verb": "v", "phase": "p", "message": "m",
+                "started": (now - chrono::Duration::seconds(90)).to_rfc3339(),
+                "updated": (now - chrono::Duration::seconds(STALE_AFTER_SECS)).to_rfc3339()}}),
+            now,
+        )
+        .unwrap();
+        assert!(edge.starts_with("running "), "{edge}");
+        assert!(running_line_at(&serde_json::json!({"running": null}), now).is_none());
+        assert!(running_line_at(&serde_json::json!({"adr": "ADR-A"}), now).is_none());
+    }
+
+    /// A cleared run is on neither line.
+    #[test]
+    fn a_cleared_run_shows_on_neither_line() {
+        let dir = project();
+        update_entry(&dir, "aaaa", 1, serde_json::json!({"adr": "ADR-A", "running": {"verb": "harden", "phase": "fix", "message": "m", "started": at(1), "updated": at(0)}})).unwrap();
+        assert!(others_of(&dir, "bbbb", &|_, _| true)[0].running.is_some());
+        update_entry(&dir, "aaaa", 1, serde_json::json!({"running": serde_json::Value::Null})).unwrap();
+        assert!(others_of(&dir, "bbbb", &|_, _| true)[0].running.is_none());
+        assert!(!awareness_lines(&dir).iter().any(|l| l.contains("running")), "{:?}", awareness_lines(&dir));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

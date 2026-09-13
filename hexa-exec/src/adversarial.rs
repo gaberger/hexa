@@ -162,8 +162,17 @@ impl Drop for Phase {
     }
 }
 
+/// `1 lens`, `4 lenses`, `3 designs`. A sibilant takes `es`; everything
+/// else this harness counts takes `s`.
 fn plural(n: usize, one: &str) -> String {
-    format!("{n} {one}{}", if n == 1 { "" } else { "s" })
+    let suffix = if n == 1 {
+        ""
+    } else if ["s", "x", "z", "ch", "sh"].iter().any(|e| one.ends_with(e)) {
+        "es"
+    } else {
+        "s"
+    };
+    format!("{n} {one}{suffix}")
 }
 
 /// Spawn one `claude -p` agent in `cwd`, return stdout.
@@ -631,6 +640,15 @@ pub async fn run_build_with(
 mod progress_tests {
     use super::*;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn a_sibilant_is_pluralised_with_es() {
+        assert_eq!(plural(1, "lens"), "1 lens");
+        assert_eq!(plural(4, "lens"), "4 lenses");
+        assert_eq!(plural(3, "design"), "3 designs");
+        assert_eq!(plural(0, "candidate"), "0 candidates");
+        assert_eq!(plural(1, "bug"), "1 bug");
+    }
 
     /// A phase announces itself, repeats itself while it waits, and reports
     /// when it finishes with its elapsed time. Silence never means anything.

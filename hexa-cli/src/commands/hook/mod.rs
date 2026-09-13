@@ -851,6 +851,17 @@ async fn route(project_dir: &Path) -> Result<()> {
         return Ok(());
     }
     let tool_input = tool_input_json();
+    // A host's own notification — a finished background task, a monitor
+    // event — arrives on the prompt channel and is not a person asking for
+    // work. One was sized as a feature and drafted as a workplan
+    // (ADR-2609131611).
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&tool_input) {
+        if let Some(text) = v["prompt"].as_str().or_else(|| v["content"].as_str()) {
+            if is_host_notification(text) {
+                return Ok(());
+            }
+        }
+    }
 
     // ADR-2026-03-30-1200: Refresh architecture fingerprint if key project files have changed
     let _ = refresh_fingerprint_if_stale(project_dir).await;
@@ -1008,6 +1019,14 @@ async fn route(project_dir: &Path) -> Result<()> {
 /// a minimal stub quarantined to `docs/workplans/drafts/` — no worktrees,
 /// no specs, no coder dispatch. The user (or Claude Code) picks it up
 /// via `/hexa-feature-dev` or `hexa plan drafts approve`.
+/// Text the host generated to tell the session something happened, rather
+/// than a person asking for work.
+fn is_host_notification(text: &str) -> bool {
+    const MARKERS: [&str; 4] = ["[SYSTEM NOTIFICATION", "<task-notification>", "<system-reminder>", "<local-command-caveat>"];
+    let head: String = text.chars().take(400).collect();
+    MARKERS.iter().any(|m| head.contains(m))
+}
+
 /// A gate is recorded and the loop has not been marked done.
 fn gate_in_flight(project_dir: &Path) -> bool {
     crate::commands::loop_cmd::read_loop(project_dir)
@@ -1870,7 +1889,18 @@ mod tests {
 
 #[cfg(test)]
 mod loop_reminder_tests {
-    use super::gate_in_flight;
+    use super::{gate_in_flight, is_host_notification};
+
+    /// A host's notification is not work intent; a person's prompt that
+    /// happens to mention one still is.
+    #[test]
+    fn a_host_notification_is_not_work_intent() {
+        assert!(is_host_notification("[SYSTEM NOTIFICATION - NOT USER INPUT]\nbackground task finished"));
+        assert!(is_host_notification("<task-notification>\n<task-id>b1az</task-id>"));
+        assert!(is_host_notification("<system-reminder>\ncontext follows"));
+        assert!(!is_host_notification("add a task notification to the report"));
+        assert!(!is_host_notification("why did the system notification get drafted as a workplan?"));
+    }
 
     fn project_with_loop(body: Option<&str>) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("hexa-loop-reminder-{}-{:?}", std::process::id(), std::thread::current().id()));
