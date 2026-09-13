@@ -113,7 +113,7 @@ pub fn base_url_with(p: &LocalProvider, env: &dyn Fn(&str) -> Option<String>) ->
 }
 
 /// `socket_addr`, with the environment reader injected (ADR-2609131749).
-pub fn socket_addr_with(p: &LocalProvider, env: &dyn Fn(&str) -> Option<String>) -> String {
+fn socket_addr_with(p: &LocalProvider, env: &dyn Fn(&str) -> Option<String>) -> String {
     let url = base_url_with(p, env);
     let rest = url.strip_prefix("http://").or_else(|| url.strip_prefix("https://")).unwrap_or(&url);
     let host_port = rest.split('/').next().unwrap_or(rest);
@@ -129,14 +129,11 @@ pub fn socket_addr_with(p: &LocalProvider, env: &dyn Fn(&str) -> Option<String>)
 /// Empty when `.hexa/project.json` declares none — which is a real answer, and
 /// a caller should say so rather than substitute a guess.
 pub fn configured_tiers() -> Vec<(&'static str, &'static str, String)> {
-    [("T1", "t1"), ("T2", "t2"), ("T2.5", "t2.5")]
-        .into_iter()
-        .filter_map(|(label, key)| crate::tiers::tier_model(key).map(|m| (label, key, m)))
-        .collect()
+    configured_tiers_in(&crate::tiers::project_root())
 }
 
 /// [`configured_tiers`], rooted at an explicit directory (ADR-2609131749).
-pub fn configured_tiers_in(root: &std::path::Path) -> Vec<(&'static str, &'static str, String)> {
+fn configured_tiers_in(root: &std::path::Path) -> Vec<(&'static str, &'static str, String)> {
     [("T1", "t1"), ("T2", "t2"), ("T2.5", "t2.5")]
         .into_iter()
         .filter_map(|(label, key)| crate::tiers::tier_model_in(root, key).map(|m| (label, key, m)))

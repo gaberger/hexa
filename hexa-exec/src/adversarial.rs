@@ -244,12 +244,12 @@ pub struct Progress {
 pub type Reporter = std::sync::Arc<dyn Fn(Progress) + Send + Sync>;
 
 /// A reporter that says nothing, for callers that only want the report.
-pub fn silent() -> Reporter {
+fn silent() -> Reporter {
     std::sync::Arc::new(|_| {})
 }
 
 /// How often a phase that is waiting says so.
-pub const HEARTBEAT: Duration = Duration::from_secs(30);
+const HEARTBEAT: Duration = Duration::from_secs(30);
 
 /// A phase in flight: announced on start, heartbeat while it runs, reported
 /// on finish with its elapsed time. Dropping it stops the heartbeat.
@@ -365,16 +365,16 @@ impl Reviewer {
 /// thinking into this budget before the answer, so the figure is mostly
 /// headroom for that; the envelope asked for is a few hundred tokens
 /// (ADR-2609131835). `HEXA_REVIEW_MAX_TOKENS` overrides it.
-pub const REVIEW_MAX_TOKENS: u32 = 16_384;
+const REVIEW_MAX_TOKENS: u32 = 16_384;
 
 /// How much of a target the local reviewer is shown. A completion has no
 /// way to fetch more, so the cap is the review's field of view and §3
 /// requires it be stated when it bites.
-pub const LOCAL_CONTEXT_CAP: usize = 120_000;
+const LOCAL_CONTEXT_CAP: usize = 120_000;
 
 /// The target's source for a prompt, and whether it was truncated.
 /// A directory contributes its files in name order until the cap.
-pub fn read_target(target: &str, repo_root: &Path) -> (String, bool) {
+fn read_target(target: &str, repo_root: &Path) -> (String, bool) {
     let path = repo_root.join(target);
     let mut out = String::new();
     let mut files: Vec<std::path::PathBuf> = Vec::new();

@@ -7,7 +7,6 @@ members = [
     "hexa-git",
     "hexa-graph",
     "hexa-infer",
-    "hexa-parser",
 ]
 exclude = [
 ]

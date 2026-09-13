@@ -45,7 +45,7 @@ pub fn load() -> Vec<Endpoint> {
 /// Entries carry camelCase keys and a `models` field that is a JSON array
 /// *encoded as a string* — an artifact of the SpacetimeDB row shape they were
 /// written from. Both quirks are absorbed here so nothing downstream knows.
-pub fn load_from(path: &std::path::Path) -> Vec<Endpoint> {
+fn load_from(path: &std::path::Path) -> Vec<Endpoint> {
     let Ok(text) = std::fs::read_to_string(path) else {
         return Vec::new();
     };
@@ -158,7 +158,7 @@ pub fn upsert(endpoint: Endpoint) -> Result<(), String> {
 /// the file by rewriting `HOME` shared one process-wide variable, so under
 /// cargo's default parallelism they overwrote each other and the round-trip
 /// test read back an empty registry (ADR-2609122048).
-pub fn upsert_in(path: &std::path::Path, endpoint: Endpoint) -> Result<(), String> {
+fn upsert_in(path: &std::path::Path, endpoint: Endpoint) -> Result<(), String> {
     let mut all = load_from(path);
     match all.iter_mut().find(|e| e.id == endpoint.id) {
         Some(existing) => *existing = endpoint,
@@ -173,7 +173,7 @@ pub fn remove(id: &str) -> Result<bool, String> {
 }
 
 /// [`remove`] against a named file.
-pub fn remove_in(path: &std::path::Path, id: &str) -> Result<bool, String> {
+fn remove_in(path: &std::path::Path, id: &str) -> Result<bool, String> {
     let mut all = load_from(path);
     let before = all.len();
     all.retain(|e| e.id != id);
@@ -194,7 +194,7 @@ pub fn save(endpoints: &[Endpoint]) -> Result<(), String> {
 }
 
 /// [`save`] to a named file.
-pub fn save_to(path: &std::path::Path, endpoints: &[Endpoint]) -> Result<(), String> {
+fn save_to(path: &std::path::Path, endpoints: &[Endpoint]) -> Result<(), String> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }

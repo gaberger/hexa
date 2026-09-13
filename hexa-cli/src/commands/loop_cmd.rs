@@ -105,7 +105,7 @@ fn loop_path(dir: &Path) -> PathBuf {
 /// the life of the terminal, and its leader is a pid whose liveness can be
 /// checked. Resolved from `env` and `posix_session` so the precedence is
 /// testable without touching the process environment.
-pub fn resolve_session(env: &dyn Fn(&str) -> Option<String>, posix_session: Option<u64>) -> (String, u64) {
+fn resolve_session(env: &dyn Fn(&str) -> Option<String>, posix_session: Option<u64>) -> (String, u64) {
     let get = |k: &str| env(k).filter(|v| !v.is_empty());
     let pid_of = |k: &str| get(k).and_then(|v| v.parse::<u64>().ok());
     if let Some(id) = get("HEXA_SESSION_ID") {
@@ -140,7 +140,7 @@ fn session_pid() -> u64 {
 /// /proc/{pid}/stat, after the parenthesised command name. `None` when
 /// there is no such process (or no /proc). A pid is recycled; a pid with
 /// its start time is not, so the pair names one process.
-pub fn pid_start(pid: u64) -> Option<u64> {
+fn pid_start(pid: u64) -> Option<u64> {
     let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
     let after = &stat[stat.rfind(')')? + 1..];
     after.split_whitespace().nth(19)?.parse().ok()
@@ -152,7 +152,7 @@ pub fn pid_start(pid: u64) -> Option<u64> {
 /// starts next; the start time tells that process from the session's. A
 /// pid of 0 is unknown and counts as ended. An entry from before the start
 /// time was recorded is judged on the pid alone.
-pub fn pid_alive(pid: u64, start: Option<u64>) -> bool {
+fn pid_alive(pid: u64, start: Option<u64>) -> bool {
     if pid == 0 {
         return false;
     }
@@ -222,7 +222,7 @@ fn entries(file: &serde_json::Value, asking: &str) -> serde_json::Map<String, se
 }
 
 /// One session's recorded state, if any.
-pub fn read_entry(dir: &Path, session: &str) -> Option<serde_json::Value> {
+fn read_entry(dir: &Path, session: &str) -> Option<serde_json::Value> {
     read_file(dir).and_then(|f| entries(&f, session).get(session).cloned())
 }
 
@@ -275,7 +275,7 @@ fn edit_entry(
 }
 
 /// Merge `patch` into one session's entry and write the file.
-pub fn update_entry(dir: &Path, session: &str, pid: u64, patch: serde_json::Value) -> Result<serde_json::Value, String> {
+fn update_entry(dir: &Path, session: &str, pid: u64, patch: serde_json::Value) -> Result<serde_json::Value, String> {
     edit_entry(dir, session, pid, |obj| {
         if let Some(p) = patch.as_object() {
             for (k, v) in p {
@@ -292,7 +292,7 @@ pub fn update_loop(dir: &Path, patch: serde_json::Value) -> Result<serde_json::V
 
 /// Remove one session's entry; the file goes with the last one. Returns
 /// whether there was an entry.
-pub fn clear_entry(dir: &Path, session: &str) -> Result<bool, String> {
+fn clear_entry(dir: &Path, session: &str) -> Result<bool, String> {
     if !dir.join(".hexa").is_dir() {
         return Ok(false);
     }
@@ -324,7 +324,7 @@ pub struct Other {
 
 /// Every session but `session`, liveness judged by `alive` from the pid and
 /// the start time it was recorded with.
-pub fn others_of(dir: &Path, session: &str, alive: &dyn Fn(u64, Option<u64>) -> bool) -> Vec<Other> {
+fn others_of(dir: &Path, session: &str, alive: &dyn Fn(u64, Option<u64>) -> bool) -> Vec<Other> {
     let Some(f) = read_file(dir) else { return Vec::new() };
     let mut out: Vec<Other> = entries(&f, session)
         .iter()
@@ -360,7 +360,7 @@ const TOUCHED_CAP: usize = 40;
 /// extended under the writer's hold: a host runs independent edits at once,
 /// so one session's hooks touch concurrently, and a list built from a read
 /// taken before the hold would put back a list missing the other's file.
-pub fn touch_as(dir: &Path, session: &str, pid: u64, path: &str) -> Result<(), String> {
+fn touch_as(dir: &Path, session: &str, pid: u64, path: &str) -> Result<(), String> {
     let rel = Path::new(path).strip_prefix(dir).map(|p| p.display().to_string()).unwrap_or_else(|_| path.to_string());
     edit_entry(dir, session, pid, |obj| {
         let mut files: Vec<String> = obj
@@ -383,7 +383,7 @@ pub fn touch(dir: &Path, path: &str) -> Result<(), String> {
 }
 
 /// The live other sessions that have touched `path`.
-pub fn touched_by_others_of(dir: &Path, session: &str, path: &str, alive: &dyn Fn(u64, Option<u64>) -> bool) -> Vec<Other> {
+fn touched_by_others_of(dir: &Path, session: &str, path: &str, alive: &dyn Fn(u64, Option<u64>) -> bool) -> Vec<Other> {
     let rel = Path::new(path).strip_prefix(dir).map(|p| p.display().to_string()).unwrap_or_else(|_| path.to_string());
     others_of(dir, session, alive).into_iter().filter(|o| o.alive && o.files.iter().any(|f| f == &rel)).collect()
 }
@@ -459,7 +459,7 @@ fn adr_exists(dir: &Path, id: &str) -> bool {
 /// stall every other session's hooks for as long. Without the hold, two
 /// sessions marking done under one ADR each read the text before the
 /// other's block and the second write puts back a file without the first.
-pub fn record_evidence(dir: &Path, adr_id: &str, command: &str) -> Result<PathBuf, String> {
+fn record_evidence(dir: &Path, adr_id: &str, command: &str) -> Result<PathBuf, String> {
     let path = adr_path(dir, adr_id).ok_or_else(|| format!("no {adr_id} in docs/adrs/ to append evidence to"))?;
     let out = std::process::Command::new("sh")
         .arg("-c")
@@ -578,7 +578,7 @@ const STAGES: &[&str] = &["decide", "gate", "build", "harden", "done"];
 
 /// `running harden/verify 4m12s: 3 claims, default refute` while a harness
 /// run is in flight in this session (ADR-2609131427); nothing otherwise.
-pub fn running_line(state: &serde_json::Value) -> Option<String> {
+fn running_line(state: &serde_json::Value) -> Option<String> {
     running_line_at(state, chrono::Utc::now())
 }
 
@@ -592,7 +592,7 @@ const STALE_AFTER_SECS: i64 = 60;
 
 /// `running harden/verify 4m12s: 3 claims` while a run reports; once it
 /// stops, `stalled harden/verify, last seen 14:29`; nothing when cleared.
-pub fn running_line_at(state: &serde_json::Value, now: chrono::DateTime<chrono::Utc>) -> Option<String> {
+fn running_line_at(state: &serde_json::Value, now: chrono::DateTime<chrono::Utc>) -> Option<String> {
     let r = state.get("running")?.as_object()?;
     let get = |k: &str| r.get(k).and_then(|v| v.as_str()).unwrap_or("?");
     let at = |k: &str| {
