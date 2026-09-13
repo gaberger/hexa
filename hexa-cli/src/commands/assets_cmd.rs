@@ -145,10 +145,14 @@ async fn list() -> Result<()> {
 // ── hexa assets sync ──────────────────────────────────────────────────
 
 /// Asset prefix → target subdirectory under `.claude/`
-const SYNC_MAPPINGS: &[(&str, &str)] = &[
-    ("skills/", ".claude/skills/"),
-    ("hooks/hexa/", ".claude/hooks/hexa/"),
-];
+/// Asset prefix to target subdirectory under `.claude/`.
+///
+/// `hooks/hexa/` was here too, installing four YAML files that described
+/// pre-commit checks. Nothing ever read them. The rules they stated are the
+/// ones `hexa analyze` and `.hexa/ADR-rules.toml` actually enforce, and two
+/// statements of a rule where one is dead is worse than one
+/// (ADR-2609122048).
+const SYNC_MAPPINGS: &[(&str, &str)] = &[("skills/", ".claude/skills/")];
 
 async fn sync(path: &str, dry_run: bool, force: bool, prune: bool) -> Result<()> {
     let target = PathBuf::from(path)

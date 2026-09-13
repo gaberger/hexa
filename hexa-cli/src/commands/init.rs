@@ -144,13 +144,9 @@ pub async fn run(args: InitArgs) -> Result<()> {
         Ok(created) => {
             let skills = created.iter().filter(|f| f.contains("/skills/")).count();
             let agents = created.iter().filter(|f| f.contains("/agents/")).count();
-            let hooks = created.iter().filter(|f| f.contains("/hooks/")).count();
-            if skills + agents + hooks > 0 {
+            if skills + agents > 0 {
                 println!("  {} .claude/skills/ ({} skills)", "\u{2713}".green(), skills);
                 println!("  {} .claude/agents/ ({} agents)", "\u{2713}".green(), agents);
-                if hooks > 0 {
-                    println!("  {} .claude/hooks/ ({} hooks)", "\u{2713}".green(), hooks);
-                }
             }
         }
         Err(e) => {
