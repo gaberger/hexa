@@ -66,6 +66,11 @@ pub struct ReviewReport {
     /// it did not fail the gate; it never asked (ADR-2609131646).
     pub gate_run: bool,
     pub notes: Vec<String>,
+    /// Who produced the findings, distinct, in first-use order
+    /// (ADR-2609131702 §2).
+    pub reviewed_by: Vec<String>,
+    /// Whether the local reviewer saw a truncated target (§3).
+    pub truncated: bool,
     /// How many lenses were asked (ADR-2609131646).
     pub lenses: usize,
     /// How many replied with the envelope that was asked for. Zero means
@@ -101,13 +106,29 @@ impl ReviewReport {
         } else {
             String::new()
         };
+        let by = if self.reviewed_by.is_empty() {
+            String::new()
+        } else {
+            format!(" · reviewed by {}", self.reviewed_by.join(", "))
+        };
+        let cut = if self.truncated { " · target truncated" } else { "" };
         format!(
-            "{} candidate(s) → {} confirmed real → {} fixed (gate-passed){}",
+            "{} candidate(s) → {} confirmed real → {} fixed (gate-passed){}{}{}",
             self.candidate,
             self.confirmed.len(),
             self.fixed.len(),
-            scope
+            scope,
+            by,
+            cut
         )
+    }
+
+    /// Record who answered, once each, in the order they first did.
+    fn note_reviewer(&mut self, who: &Reviewer) {
+        let name = who.name();
+        if !matches!(who, Reviewer::None) && !self.reviewed_by.contains(&name) {
+            self.reviewed_by.push(name);
+        }
     }
 }
 
@@ -285,6 +306,129 @@ async fn claude_run(prompt: &str, cwd: &Path, timeout_secs: u64) -> Result<Strin
     }
 }
 
+/// Who produced a reply (ADR-2609131702 §2). A finding from an agent that
+/// walked the repository is not the same claim as one from a completion
+/// shown an excerpt, and a reader deciding what to trust needs to know.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Reviewer {
+    /// The frontier CLI: reads files, follows calls, can edit.
+    Frontier,
+    /// A tier-mapped model, shown only what the prompt carried.
+    Local(String),
+    /// Nothing answered.
+    None,
+}
+
+impl Reviewer {
+    pub fn name(&self) -> String {
+        match self {
+            Reviewer::Frontier => "frontier".to_string(),
+            Reviewer::Local(m) => m.clone(),
+            Reviewer::None => "nothing".to_string(),
+        }
+    }
+}
+
+/// How much of a target the local reviewer is shown. A completion has no
+/// way to fetch more, so the cap is the review's field of view and §3
+/// requires it be stated when it bites.
+pub const LOCAL_CONTEXT_CAP: usize = 120_000;
+
+/// The target's source for a prompt, and whether it was truncated.
+/// A directory contributes its files in name order until the cap.
+pub fn read_target(target: &str, repo_root: &Path) -> (String, bool) {
+    let path = repo_root.join(target);
+    let mut out = String::new();
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
+    if path.is_dir() {
+        let mut stack = vec![path.clone()];
+        while let Some(d) = stack.pop() {
+            let Ok(rd) = std::fs::read_dir(&d) else { continue };
+            let mut entries: Vec<std::path::PathBuf> = rd.flatten().map(|e| e.path()).collect();
+            entries.sort();
+            for e in entries {
+                if e.is_dir() {
+                    stack.push(e);
+                } else if e.extension().is_some_and(|x| x == "rs") {
+                    files.push(e);
+                }
+            }
+        }
+        files.sort();
+    } else {
+        files.push(path);
+    }
+    let mut truncated = false;
+    for f in files {
+        let Ok(text) = std::fs::read_to_string(&f) else { continue };
+        let name = f.strip_prefix(repo_root).unwrap_or(&f).display().to_string();
+        let header = format!("\n// ── {name} ──\n");
+        if out.len() + header.len() + text.len() > LOCAL_CONTEXT_CAP {
+            let room = LOCAL_CONTEXT_CAP.saturating_sub(out.len() + header.len());
+            if room > 0 {
+                out.push_str(&header);
+                out.push_str(&text[..room.min(text.len())]);
+            }
+            truncated = true;
+            break;
+        }
+        out.push_str(&header);
+        out.push_str(&text);
+    }
+    (out, truncated)
+}
+
+/// The tier-mapped model for review work, strongest tier first. `None` when
+/// nothing is configured, which §4 makes a non-answer rather than a silent
+/// skip.
+fn review_model() -> Option<String> {
+    ["t2.5", "t2", "t1"].iter().find_map(|t| hexa_infer::tier_model(t))
+}
+
+/// Ask the tier-mapped model, with the code in the prompt because a
+/// completion cannot go and read it.
+async fn local_run(prompt: &str, code: &str, truncated: bool) -> Result<String, String> {
+    let model = review_model().ok_or_else(|| {
+        "no tier model configured — set inference.tier_models in .hexa/project.json".to_string()
+    })?;
+    let note = if truncated {
+        format!("\n\n(The excerpt below is the first {LOCAL_CONTEXT_CAP} bytes of the target; it is truncated.)")
+    } else {
+        String::new()
+    };
+    let user = format!("{prompt}{note}\n\nTHE CODE UNDER REVIEW:\n```rust\n{code}\n```");
+    hexa_infer::complete_text(
+        &model,
+        "You are a meticulous reviewer. Answer with the exact JSON object asked for and nothing else.",
+        &user,
+        4096,
+    )
+    .await
+    .map_err(|e| format!("{model}: {e}"))
+}
+
+/// Ask the frontier; on any non-answer, ask the tier-mapped model with the
+/// code inline (ADR-2609131702 §1). Returns what came back and who said it.
+async fn ask<T: serde::de::DeserializeOwned>(
+    prompt: &str,
+    code: &str,
+    truncated: bool,
+    cwd: &Path,
+    timeout_secs: u64,
+    attempts: u32,
+) -> (Answer<T>, Reviewer) {
+    let frontier = read_answer::<T>(Ok(claude_run_retry(prompt, cwd, timeout_secs, attempts).await));
+    if let Answer::Answered(v) = frontier {
+        return (Answer::Answered(v), Reviewer::Frontier);
+    }
+    let model = review_model().unwrap_or_else(|| "no tier model".to_string());
+    let local = read_answer::<T>(Ok(local_run(prompt, code, truncated).await));
+    match local {
+        Answer::Answered(v) => (Answer::Answered(v), Reviewer::Local(model)),
+        other => (other, Reviewer::None),
+    }
+}
+
 /// Default attempts for `claude_run` call sites that don't take an explicit retry
 /// count from the caller (e.g. `run_review`, whose CLI surface isn't parametrized).
 const DEFAULT_RETRIES: u32 = 3;
@@ -425,6 +569,14 @@ pub async fn run_review_with(target: &str, gate: &str, repo_root: &Path, reporte
     // not in this set is the pass's own work, tests included.
     let dirty_before = dirty_paths(repo_root).await;
 
+    // The local reviewer cannot go and read the code, so it is read once
+    // here and carried in every prompt (ADR-2609131702 §1).
+    let (code, truncated) = read_target(target, repo_root);
+    report.truncated = truncated;
+    if truncated {
+        report.notes.push(format!("target truncated to {LOCAL_CONTEXT_CAP} bytes for the local reviewer"));
+    }
+
     // ── Phase 1: hunt (parallel lenses) ──────────────────────────────────────
     let hunt = Phase::start(&reporter, "hunt", format!("{} on {target}, in parallel", plural(LENSES.len(), "lens")), HEARTBEAT);
     let mut hunts = Vec::new();
@@ -438,17 +590,26 @@ pub async fn run_review_with(target: &str, gate: &str, repo_root: &Path, reporte
             target = target, focus = lens.focus, key = lens.key
         );
         let root = repo_root.to_path_buf();
-        hunts.push((lens.key, tokio::spawn(async move { claude_run_retry(&prompt, &root, 600, DEFAULT_RETRIES).await })));
+        let code = code.clone();
+        hunts.push((
+            lens.key,
+            tokio::spawn(async move { ask::<FindingsEnvelope>(&prompt, &code, truncated, &root, 600, DEFAULT_RETRIES).await }),
+        ));
     }
     report.lenses = hunts.len();
     for (key, h) in hunts {
-        match read_answer::<FindingsEnvelope>(h.await.map_err(|e| e.to_string())) {
+        let (answer, who) = match h.await {
+            Ok(v) => v,
+            Err(e) => (Answer::Failed(e.to_string()), Reviewer::None),
+        };
+        report.note_reviewer(&who);
+        match answer {
             Answer::Answered(env) => {
                 report.answered += 1;
                 let n = env.findings.len();
                 report.candidate += n;
                 report.confirmed.extend(env.findings); // staged; pruned by verify below
-                hunt.note(format!("{key}: {}", plural(n, "candidate")));
+                hunt.note(format!("{key}: {} ({})", plural(n, "candidate"), who.name()));
             }
             Answer::NotAnswered(why) => {
                 hunt.note(format!("{key}: NO ANSWER — {why}"));
@@ -483,10 +644,19 @@ pub async fn run_review_with(target: &str, gate: &str, repo_root: &Path, reporte
             target = target, title = f.title, loc = f.location, desc = f.description
         );
         let root = repo_root.to_path_buf();
-        checks.push((f, tokio::spawn(async move { claude_run_retry(&prompt, &root, 600, DEFAULT_RETRIES).await })));
+        let code = code.clone();
+        checks.push((
+            f,
+            tokio::spawn(async move { ask::<VerdictEnvelope>(&prompt, &code, truncated, &root, 600, DEFAULT_RETRIES).await }),
+        ));
     }
     for (f, c) in checks {
-        match read_answer::<VerdictEnvelope>(c.await.map_err(|e| e.to_string())) {
+        let (answer, who) = match c.await {
+            Ok(v) => v,
+            Err(e) => (Answer::Failed(e.to_string()), Reviewer::None),
+        };
+        report.note_reviewer(&who);
+        match answer {
             Answer::Answered(v) if v.is_real => {
                 verify.note(format!("real: {}", f.title));
                 report.confirmed.push(f);
@@ -518,8 +688,18 @@ pub async fn run_review_with(target: &str, gate: &str, repo_root: &Path, reporte
              fails without the fix. Make a minimal, correct change. Bug:\ntitle: {title}\nlocation: {loc}\ndescription: {desc}",
             target = target, title = f.title, loc = f.location, desc = f.description
         );
+        // Only the frontier can edit files; a completion has no way to
+        // (ADR-2609131702 §1). And a reply is not an edit: the frontier
+        // exits 0 when it declines, so the tree itself is the evidence.
+        let before = dirty_paths(repo_root).await;
         match claude_run_retry(&prompt, repo_root, 900, DEFAULT_RETRIES).await {
-            Ok(_) => {
+            Ok(reply) => {
+                let after = dirty_paths(repo_root).await;
+                if after == before {
+                    fix.note(format!("NO EDIT — {}: {}", f.title, first_line(&reply)));
+                    report.notes.push(format!("no fix applied for '{}': the tree did not change — {}", f.title, first_line(&reply)));
+                    continue;
+                }
                 fix.note(format!("gate after fix: {gate}"));
                 let (passed, _) = crate::direct_exec::run_evidence(gate, repo_root).await;
                 if passed {
@@ -789,6 +969,77 @@ mod answered_tests {
 
         let whole = ReviewReport { lenses: 4, answered: 4, candidate: 3, gate_passed: true, ..ReviewReport::default() };
         assert!(!whole.verdict_line().contains("lenses answered"), "a full review says nothing about the ratio");
+    }
+
+    /// ADR-2609131702 §2: the verdict line names who reviewed, so a reader
+    /// can tell an agent's finding from a completion's.
+    #[test]
+    fn the_verdict_line_names_the_reviewer_and_any_truncation() {
+        let frontier = ReviewReport {
+            lenses: 4, answered: 4, candidate: 2,
+            reviewed_by: vec!["frontier".into()],
+            ..ReviewReport::default()
+        };
+        assert!(frontier.verdict_line().ends_with("reviewed by frontier"), "{}", frontier.verdict_line());
+
+        let mixed = ReviewReport {
+            lenses: 4, answered: 4, candidate: 2,
+            reviewed_by: vec!["frontier".into(), "openai/gpt-oss-120b".into()],
+            truncated: true,
+            ..ReviewReport::default()
+        };
+        let line = mixed.verdict_line();
+        assert!(line.contains("reviewed by frontier, openai/gpt-oss-120b"), "{line}");
+        assert!(line.ends_with("target truncated"), "{line}");
+    }
+
+    /// A reviewer is recorded once, in the order it first answered, and
+    /// nothing is recorded for a non-answer.
+    #[test]
+    fn reviewers_are_recorded_once_each_and_never_for_a_non_answer() {
+        let mut r = ReviewReport::default();
+        r.note_reviewer(&Reviewer::Frontier);
+        r.note_reviewer(&Reviewer::Local("m".into()));
+        r.note_reviewer(&Reviewer::Frontier);
+        r.note_reviewer(&Reviewer::None);
+        assert_eq!(r.reviewed_by, vec!["frontier".to_string(), "m".to_string()]);
+    }
+
+    /// §3: a target over the cap is truncated and the fact is carried, not
+    /// swallowed; one under it is whole.
+    #[test]
+    fn a_target_over_the_cap_is_truncated_and_says_so() {
+        let dir = std::env::temp_dir().join(format!("hexa-target-{}-{:?}", std::process::id(), std::thread::current().id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+
+        std::fs::write(dir.join("src/small.rs"), "fn a() {}\n").unwrap();
+        let (code, truncated) = read_target("src/small.rs", &dir);
+        assert!(code.contains("fn a() {}"), "{code}");
+        assert!(code.contains("src/small.rs"), "the file is named in the excerpt: {code}");
+        assert!(!truncated);
+
+        std::fs::write(dir.join("src/big.rs"), "x".repeat(LOCAL_CONTEXT_CAP + 5_000)).unwrap();
+        let (code, truncated) = read_target("src/big.rs", &dir);
+        assert!(truncated, "over the cap");
+        assert!(code.len() <= LOCAL_CONTEXT_CAP, "shown {} bytes, cap {}", code.len(), LOCAL_CONTEXT_CAP);
+
+        // A directory gathers its .rs files in name order, and stops at the
+        // cap: here `big.rs` sorts first and fills it, so `small.rs` is
+        // never reached — which is exactly what `truncated` is for.
+        let (code, truncated) = read_target("src", &dir);
+        assert!(truncated, "the directory exceeds the cap");
+        assert!(code.contains("src/big.rs"), "first by name: {}", &code[..80.min(code.len())]);
+        assert!(!code.contains("src/small.rs"), "the cap was reached before it");
+
+        // Without the oversized file, the directory comes through whole.
+        std::fs::remove_file(dir.join("src/big.rs")).unwrap();
+        std::fs::write(dir.join("src/other.rs"), "fn b() {}\n").unwrap();
+        let (code, truncated) = read_target("src", &dir);
+        assert!(!truncated);
+        assert!(code.contains("fn a() {}") && code.contains("fn b() {}"), "{code}");
+        assert!(code.find("other.rs").unwrap() < code.find("small.rs").unwrap(), "name order: {code}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A gate nobody ran is reported as such, never as a failure.
