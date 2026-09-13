@@ -81,7 +81,7 @@ pub async fn run_build(args: BuildArgs) -> anyhow::Result<()> {
         if args.harden { " → hunt → fix" } else { "" }
     );
 
-    let b = hexa_exec::adversarial::run_build(
+    let b = hexa_exec::adversarial::run_build_with(
         &args.challenge,
         &args.target,
         &args.gate,
@@ -89,8 +89,10 @@ pub async fn run_build(args: BuildArgs) -> anyhow::Result<()> {
         &repo_root,
         args.timeout,
         args.retries,
+        reporter("build", &repo_root),
     )
     .await;
+    running_done(&repo_root);
     println!(
         "{} {} designs → {} critiques → spec {}ch → build {}",
         "✓".green().bold(),
@@ -105,9 +107,38 @@ pub async fn run_build(args: BuildArgs) -> anyhow::Result<()> {
 
     if args.harden && b.build_ok {
         println!("{} adversarial pass", "⬡".cyan());
-        print_review(&hexa_exec::adversarial::run_review(&args.target, &args.gate, &repo_root).await, "    ");
+        let r = hexa_exec::adversarial::run_review_with(&args.target, &args.gate, &repo_root, reporter("harden", &repo_root)).await;
+        running_done(&repo_root);
+        print_review(&r, "    ");
     }
     Ok(())
+}
+
+/// Print each phase of a run as it happens and record it in the loop, so a
+/// person at the terminal, a session polling the output, and `hexa loop`
+/// all see the same thing (ADR-2609131427). Flushed per line: a run whose
+/// output is piped to a file must still show progress as it goes.
+fn reporter(verb: &'static str, repo_root: &std::path::Path) -> hexa_exec::adversarial::Reporter {
+    use std::io::Write;
+    let root = repo_root.to_path_buf();
+    let started = chrono::Utc::now().to_rfc3339();
+    std::sync::Arc::new(move |p: hexa_exec::adversarial::Progress| {
+        let secs = p.elapsed.as_secs();
+        println!("  {}  {}: {}", format!("{:>2}m{:02}s", secs / 60, secs % 60).dimmed(), p.phase.cyan(), p.message);
+        let _ = std::io::stdout().flush();
+        let _ = crate::commands::loop_cmd::update_loop(
+            &root,
+            serde_json::json!({ "running": {
+                "verb": verb, "phase": p.phase, "message": p.message,
+                "started": started, "updated": chrono::Utc::now().to_rfc3339(),
+            }}),
+        );
+    })
+}
+
+/// The run is over; the loop no longer shows it running.
+fn running_done(repo_root: &std::path::Path) {
+    let _ = crate::commands::loop_cmd::update_loop(repo_root, serde_json::json!({ "running": serde_json::Value::Null }));
 }
 
 /// `hexa harden` — hunt the target for bugs by lens, verify each finding
@@ -125,7 +156,8 @@ pub async fn run_harden(args: HardenArgs) -> anyhow::Result<()> {
         args.gate.dimmed()
     );
     println!("  hunt → skeptical-verify → fix-loop");
-    let report = hexa_exec::adversarial::run_review(&args.target, &args.gate, &repo_root).await;
+    let report = hexa_exec::adversarial::run_review_with(&args.target, &args.gate, &repo_root, reporter("harden", &repo_root)).await;
+    running_done(&repo_root);
     print_review(&report, "  ");
     Ok(())
 }

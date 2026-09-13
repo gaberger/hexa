@@ -399,6 +399,9 @@ pub fn status_line(dir: &Path) -> String {
             let gate = st.get("gate").and_then(|v| v.as_str()).unwrap_or("none");
             let stage = st.get("stage").and_then(|v| v.as_str()).unwrap_or("decide");
             let mut line = format!("Loop ({project}): stage {stage} · ADR {adr} · gate {gate}");
+            if let Some(r) = running_line(&st) {
+                line.push_str(&format!(" · {r}"));
+            }
             let tasks = task_list(&st);
             if !tasks.is_empty() {
                 let done = tasks.iter().filter(|t| t.status == "done").count();
@@ -416,6 +419,23 @@ pub fn status_line(dir: &Path) -> String {
 }
 
 const STAGES: &[&str] = &["decide", "gate", "build", "harden", "done"];
+
+/// `running harden/verify 4m12s: 3 claims, default refute` while a harness
+/// run is in flight in this session (ADR-2609131427); nothing otherwise.
+pub fn running_line(state: &serde_json::Value) -> Option<String> {
+    let r = state.get("running")?.as_object()?;
+    let get = |k: &str| r.get(k).and_then(|v| v.as_str()).unwrap_or("?");
+    let elapsed = r
+        .get("started")
+        .and_then(|v| v.as_str())
+        .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+        .map(|t| {
+            let secs = (chrono::Utc::now() - t.with_timezone(&chrono::Utc)).num_seconds().max(0);
+            format!("{}m{:02}s", secs / 60, secs % 60)
+        })
+        .unwrap_or_else(|| "?".to_string());
+    Some(format!("running {}/{} {}: {}", get("verb"), get("phase"), elapsed, get("message")))
+}
 
 /// One step of the work. `status` is `todo`, `doing` or `done`.
 #[derive(Debug, Clone)]
@@ -678,6 +698,18 @@ mod sessions_see_each_other {
         assert_eq!(resolve_session(&env(&[("CLAUDE_SESSION_ID", "c2")]), Some(9)), ("c2".to_string(), 9), "no pid from the host: the terminal's session leader");
         assert_eq!(resolve_session(&env(&[("HEXA_SESSION_ID", "")]), Some(9)), ("local:9".to_string(), 9), "empty is unset");
         assert_eq!(resolve_session(&env(&[]), None), ("local".to_string(), 0));
+    }
+
+    /// While a harness runs, the loop says which verb and phase, for how long,
+    /// and what it last reported; when the run ends the line goes.
+    #[test]
+    fn the_status_line_shows_what_is_running_and_for_how_long() {
+        let started = (chrono::Utc::now() - chrono::Duration::seconds(272)).to_rfc3339();
+        let st = serde_json::json!({ "running": { "verb": "harden", "phase": "verify", "message": "3 claims, default refute", "started": started } });
+        let line = running_line(&st).unwrap();
+        assert!(line.starts_with("running harden/verify 4m32s: 3 claims") || line.starts_with("running harden/verify 4m33s: 3 claims"), "{line}");
+        assert!(running_line(&serde_json::json!({ "running": null })).is_none());
+        assert!(running_line(&serde_json::json!({ "adr": "ADR-1" })).is_none());
     }
 
     #[test]

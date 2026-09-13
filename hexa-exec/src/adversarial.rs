@@ -101,6 +101,71 @@ fn extract_json(text: &str) -> Option<&str> {
     None
 }
 
+/// One line of progress from the harness, for whoever is watching
+/// (ADR-2609131427): which phase, what just happened, how long the phase
+/// has run. A phase that is waiting on a model repeats itself every
+/// [`HEARTBEAT`], so silence never means anything.
+#[derive(Debug, Clone)]
+pub struct Progress {
+    pub phase: &'static str,
+    pub message: String,
+    pub elapsed: Duration,
+}
+
+pub type Reporter = std::sync::Arc<dyn Fn(Progress) + Send + Sync>;
+
+/// A reporter that says nothing, for callers that only want the report.
+pub fn silent() -> Reporter {
+    std::sync::Arc::new(|_| {})
+}
+
+/// How often a phase that is waiting says so.
+pub const HEARTBEAT: Duration = Duration::from_secs(30);
+
+/// A phase in flight: announced on start, heartbeat while it runs, reported
+/// on finish with its elapsed time. Dropping it stops the heartbeat.
+pub struct Phase {
+    name: &'static str,
+    started: std::time::Instant,
+    reporter: Reporter,
+    ticker: tokio::task::JoinHandle<()>,
+}
+
+impl Phase {
+    pub fn start(reporter: &Reporter, name: &'static str, message: impl Into<String>, heartbeat: Duration) -> Phase {
+        let started = std::time::Instant::now();
+        let message = message.into();
+        reporter(Progress { phase: name, message: message.clone(), elapsed: Duration::ZERO });
+        let r = reporter.clone();
+        let ticker = tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(heartbeat).await;
+                r(Progress { phase: name, message: format!("still {message}"), elapsed: started.elapsed() });
+            }
+        });
+        Phase { name, started, reporter: reporter.clone(), ticker }
+    }
+
+    pub fn note(&self, message: impl Into<String>) {
+        (self.reporter)(Progress { phase: self.name, message: message.into(), elapsed: self.started.elapsed() });
+    }
+
+    pub fn finish(self, message: impl Into<String>) {
+        self.ticker.abort();
+        (self.reporter)(Progress { phase: self.name, message: message.into(), elapsed: self.started.elapsed() });
+    }
+}
+
+impl Drop for Phase {
+    fn drop(&mut self) {
+        self.ticker.abort();
+    }
+}
+
+fn plural(n: usize, one: &str) -> String {
+    format!("{n} {one}{}", if n == 1 { "" } else { "s" })
+}
+
 /// Spawn one `claude -p` agent in `cwd`, return stdout.
 async fn claude_run(prompt: &str, cwd: &Path, timeout_secs: u64) -> Result<String, String> {
     crate::frontier::budget_check()?;
@@ -254,12 +319,18 @@ async fn commit_result(
 /// shell command that must exit 0). Fixes are applied to the working tree and left
 /// uncommitted for operator review.
 pub async fn run_review(target: &str, gate: &str, repo_root: &Path) -> ReviewReport {
+    run_review_with(target, gate, repo_root, silent()).await
+}
+
+/// [`run_review`], reporting each phase as it happens.
+pub async fn run_review_with(target: &str, gate: &str, repo_root: &Path, reporter: Reporter) -> ReviewReport {
     let mut report = ReviewReport::default();
     // What the operator had already changed. Anything dirty after the pass and
     // not in this set is the pass's own work, tests included.
     let dirty_before = dirty_paths(repo_root).await;
 
     // ── Phase 1: hunt (parallel lenses) ──────────────────────────────────────
+    let hunt = Phase::start(&reporter, "hunt", format!("{} on {target}, in parallel", plural(LENSES.len(), "lens")), HEARTBEAT);
     let mut hunts = Vec::new();
     for lens in LENSES {
         let prompt = format!(
@@ -271,21 +342,30 @@ pub async fn run_review(target: &str, gate: &str, repo_root: &Path) -> ReviewRep
             target = target, focus = lens.focus, key = lens.key
         );
         let root = repo_root.to_path_buf();
-        hunts.push(tokio::spawn(async move { claude_run_retry(&prompt, &root, 600, DEFAULT_RETRIES).await }));
+        hunts.push((lens.key, tokio::spawn(async move { claude_run_retry(&prompt, &root, 600, DEFAULT_RETRIES).await })));
     }
-    for h in hunts {
-        if let Ok(Ok(out)) = h.await {
-            if let Some(js) = extract_json(&out) {
-                if let Ok(env) = serde_json::from_str::<FindingsEnvelope>(js) {
-                    report.candidate += env.findings.len();
-                    report.confirmed.extend(env.findings); // staged; pruned by verify below
+    for (key, h) in hunts {
+        match h.await {
+            Ok(Ok(out)) => {
+                let mut n = 0;
+                if let Some(js) = extract_json(&out) {
+                    if let Ok(env) = serde_json::from_str::<FindingsEnvelope>(js) {
+                        n = env.findings.len();
+                        report.candidate += n;
+                        report.confirmed.extend(env.findings); // staged; pruned by verify below
+                    }
                 }
+                hunt.note(format!("{key}: {}", plural(n, "candidate")));
             }
+            Ok(Err(e)) => hunt.note(format!("{key}: no answer ({e})")),
+            Err(_) => hunt.note(format!("{key}: task failed")),
         }
     }
     let candidates = std::mem::take(&mut report.confirmed);
+    hunt.finish(format!("{} to verify", plural(candidates.len(), "candidate")));
 
     // ── Phase 2: skeptical verify (parallel, default-refute) ─────────────────
+    let verify = Phase::start(&reporter, "verify", format!("{}, default refute, in parallel", plural(candidates.len(), "claim")), HEARTBEAT);
     let mut checks = Vec::new();
     for f in candidates {
         let prompt = format!(
@@ -300,39 +380,57 @@ pub async fn run_review(target: &str, gate: &str, repo_root: &Path) -> ReviewRep
         checks.push((f, tokio::spawn(async move { claude_run_retry(&prompt, &root, 600, DEFAULT_RETRIES).await })));
     }
     for (f, c) in checks {
-        if let Ok(Ok(out)) = c.await {
-            if let Some(js) = extract_json(&out) {
-                if let Ok(v) = serde_json::from_str::<VerdictEnvelope>(js) {
-                    if v.is_real {
+        match c.await {
+            Ok(Ok(out)) => {
+                let verdict = extract_json(&out).and_then(|js| serde_json::from_str::<VerdictEnvelope>(js).ok());
+                match verdict {
+                    Some(v) if v.is_real => {
+                        verify.note(format!("real: {}", f.title));
                         report.confirmed.push(f);
-                    } else {
+                    }
+                    Some(v) => {
+                        verify.note(format!("refuted: {}", f.title));
                         report.notes.push(format!("refuted: {} — {}", f.title, v.reasoning));
                     }
+                    None => verify.note(format!("no verdict: {}", f.title)),
                 }
             }
+            _ => verify.note(format!("no answer: {}", f.title)),
         }
     }
+    verify.finish(format!("{} confirmed real", report.confirmed.len()));
 
     // ── Phase 3: fix-loop (sequential, each fix gated) ───────────────────────
+    let fix = Phase::start(&reporter, "fix", format!("{} to fix, one at a time, each under the gate", plural(report.confirmed.len(), "bug")), HEARTBEAT);
     for f in &report.confirmed {
+        fix.note(format!("fixing: {}", f.title));
         let prompt = format!(
             "Fix this CONFIRMED bug in the code under `{target}`, then add a regression test that \
              fails without the fix. Make a minimal, correct change. Bug:\ntitle: {title}\nlocation: {loc}\ndescription: {desc}",
             target = target, title = f.title, loc = f.location, desc = f.description
         );
-        if claude_run_retry(&prompt, repo_root, 900, DEFAULT_RETRIES).await.is_ok() {
-            let (passed, _) = crate::direct_exec::run_evidence(gate, repo_root).await;
-            if passed {
-                report.fixed.push(f.title.clone());
-            } else {
-                report.notes.push(format!("fix for '{}' did not pass the gate", f.title));
+        match claude_run_retry(&prompt, repo_root, 900, DEFAULT_RETRIES).await {
+            Ok(_) => {
+                fix.note(format!("gate after fix: {gate}"));
+                let (passed, _) = crate::direct_exec::run_evidence(gate, repo_root).await;
+                if passed {
+                    fix.note(format!("gate passed: {}", f.title));
+                    report.fixed.push(f.title.clone());
+                } else {
+                    fix.note(format!("gate FAILED after: {}", f.title));
+                    report.notes.push(format!("fix for '{}' did not pass the gate", f.title));
+                }
             }
+            Err(e) => fix.note(format!("no fix produced for {}: {e}", f.title)),
         }
     }
+    fix.finish(format!("{} fixed", report.fixed.len()));
 
     // ── Final gate ───────────────────────────────────────────────────────────
+    let final_gate = Phase::start(&reporter, "gate", format!("running: {gate}"), HEARTBEAT);
     let (passed, _) = crate::direct_exec::run_evidence(gate, repo_root).await;
     report.gate_passed = passed;
+    final_gate.finish(if passed { "passed" } else { "FAILED" });
     if passed {
         let mut paths: Vec<String> = dirty_paths(repo_root)
             .await
@@ -343,6 +441,7 @@ pub async fn run_review(target: &str, gate: &str, repo_root: &Path) -> ReviewRep
             paths.push(target.to_string());
         }
         paths.sort();
+        let commit = Phase::start(&reporter, "commit", format!("{} as hexa-harden", plural(paths.len(), "path")), HEARTBEAT);
         commit_result(
             repo_root,
             &paths,
@@ -351,6 +450,7 @@ pub async fn run_review(target: &str, gate: &str, repo_root: &Path) -> ReviewRep
             &mut report.notes,
         )
         .await;
+        commit.finish("done");
     }
     report
 }
@@ -385,11 +485,27 @@ pub async fn run_build(
     timeout_secs: u64,
     retries: u32,
 ) -> BuildReport {
+    run_build_with(challenge, target, gate, n_designs, repo_root, timeout_secs, retries, silent()).await
+}
+
+/// [`run_build`], reporting each phase as it happens.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_build_with(
+    challenge: &str,
+    target: &str,
+    gate: &str,
+    n_designs: usize,
+    repo_root: &Path,
+    timeout_secs: u64,
+    retries: u32,
+    reporter: Reporter,
+) -> BuildReport {
     let mut report = BuildReport::default();
     let dirty_before = dirty_paths(repo_root).await;
     let n = n_designs.clamp(2, DESIGN_PRIORITIES.len());
 
     // ── Phase 1: diverge — N designs from competing priorities ───────────────
+    let diverge = Phase::start(&reporter, "diverge", format!("{} from competing priorities, in parallel", plural(n, "design")), HEARTBEAT);
     let mut tasks = Vec::new();
     for prio in DESIGN_PRIORITIES.iter().take(n) {
         let prompt = format!(
@@ -401,18 +517,23 @@ pub async fn run_build(
         tasks.push(tokio::spawn(async move { claude_run_retry(&prompt, &root, timeout_secs, retries).await }));
     }
     let mut designs = Vec::new();
-    for t in tasks {
+    for (i, t) in tasks.into_iter().enumerate() {
         if let Ok(Ok(d)) = t.await {
+            diverge.note(format!("design {i}: {} chars", d.len()));
             designs.push(d);
+        } else {
+            diverge.note(format!("design {i}: no answer"));
         }
     }
     report.designs = designs.len();
+    diverge.finish(plural(designs.len(), "design"));
     if designs.is_empty() {
         report.notes.push("no designs produced".into());
         return report;
     }
 
     // ── Phase 2: red-team each design (adversarial) ──────────────────────────
+    let red = Phase::start(&reporter, "red-team", format!("{} critiqued, in parallel", plural(designs.len(), "design")), HEARTBEAT);
     let mut ctasks = Vec::new();
     for (i, d) in designs.iter().enumerate() {
         let prompt = format!(
@@ -424,14 +545,19 @@ pub async fn run_build(
         ctasks.push(tokio::spawn(async move { claude_run_retry(&prompt, &root, timeout_secs, retries).await }));
     }
     let mut critiques = Vec::new();
-    for t in ctasks {
+    for (i, t) in ctasks.into_iter().enumerate() {
         if let Ok(Ok(c)) = t.await {
+            red.note(format!("critique {i}: {} chars", c.len()));
             critiques.push(c);
+        } else {
+            red.note(format!("critique {i}: no answer"));
         }
     }
     report.critiques = critiques.len();
+    red.finish(plural(critiques.len(), "critique"));
 
     // ── Phase 3: synthesize one build spec ───────────────────────────────────
+    let synth = Phase::start(&reporter, "synthesize", "one spec from the designs and their critiques", HEARTBEAT);
     let designs_block = designs
         .iter()
         .enumerate()
@@ -455,13 +581,16 @@ pub async fn run_build(
     {
         Ok(s) => s,
         Err(e) => {
+            synth.finish(format!("FAILED: {e}"));
             report.notes.push(format!("synthesize failed: {e}"));
             return report;
         }
     };
     report.spec_chars = spec.len();
+    synth.finish(format!("spec of {} chars", spec.len()));
 
     // ── Phase 4: build to the gate ───────────────────────────────────────────
+    let build = Phase::start(&reporter, "build", format!("one agent builds to the gate: {gate}"), HEARTBEAT);
     let build_prompt = format!(
         "Implement the following spec as code under `{target}`. Write the full implementation AND a \
          comprehensive test suite per the spec's test plan. Then run the gate command `{gate}` and ITERATE \
@@ -469,10 +598,13 @@ pub async fn run_build(
          CHALLENGE:\n{challenge}\n\nSPEC:\n{spec}"
     );
     if let Err(e) = claude_run_retry(&build_prompt, repo_root, timeout_secs.saturating_mul(4), retries).await {
+        build.note(format!("build agent error: {e}"));
         report.notes.push(format!("build agent error: {e}"));
     }
+    build.note(format!("gate: {gate}"));
     let (ok, _) = crate::direct_exec::run_evidence(gate, repo_root).await;
     report.build_ok = ok;
+    build.finish(if ok { "gate passed" } else { "gate FAILED" });
     if ok {
         let mut paths: Vec<String> = dirty_paths(repo_root)
             .await
@@ -493,6 +625,40 @@ pub async fn run_build(
         .await;
     }
     report
+}
+
+#[cfg(test)]
+mod progress_tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    /// A phase announces itself, repeats itself while it waits, and reports
+    /// when it finishes with its elapsed time. Silence never means anything.
+    #[test]
+    fn a_phase_heartbeats_while_it_waits_and_reports_when_done() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let seen: Arc<Mutex<Vec<Progress>>> = Arc::new(Mutex::new(Vec::new()));
+            let sink = seen.clone();
+            let reporter: Reporter = Arc::new(move |p| sink.lock().unwrap().push(p));
+            let phase = Phase::start(&reporter, "hunt", "4 lenses", Duration::from_millis(20));
+            tokio::time::sleep(Duration::from_millis(110)).await;
+            phase.note("durability: 2 candidates");
+            phase.finish("5 candidates to verify");
+            tokio::time::sleep(Duration::from_millis(60)).await;
+            let seen = seen.lock().unwrap();
+            assert_eq!(seen[0].message, "4 lenses");
+            assert_eq!(seen[0].elapsed, Duration::ZERO);
+            let beats = seen.iter().filter(|p| p.message == "still 4 lenses").count();
+            assert!(beats >= 3, "{} heartbeats in 110ms at 20ms", beats);
+            let last = seen.last().unwrap();
+            assert_eq!(last.message, "5 candidates to verify");
+            assert!(last.elapsed >= Duration::from_millis(100), "{:?}", last.elapsed);
+            assert!(seen.iter().all(|p| p.phase == "hunt"));
+            let after_finish = seen.iter().position(|p| p.message == "5 candidates to verify").unwrap();
+            assert_eq!(after_finish, seen.len() - 1, "no heartbeat after finish");
+        });
+    }
 }
 
 #[cfg(test)]
