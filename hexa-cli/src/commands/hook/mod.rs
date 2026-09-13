@@ -824,6 +824,13 @@ async fn fingerprint_block(project_id: &str, project_dir: &Path, name: &str) -> 
 }
 
 async fn route(project_dir: &Path) -> Result<()> {
+    // A prompt the harness itself sent to a model — `hexa harden`'s hunt,
+    // verify and fix calls carry HEXA_INTERNAL=1 — is not work intent. It
+    // was being sized as a feature and drafted as a workplan, so a planner
+    // would have picked up "You are an adversarial code reviewer…" as a task.
+    if std::env::var_os("HEXA_INTERNAL").is_some() {
+        return Ok(());
+    }
     let tool_input = tool_input_json();
 
     // ADR-2026-03-30-1200: Refresh architecture fingerprint if key project files have changed
@@ -906,10 +913,16 @@ async fn route(project_dir: &Path) -> Result<()> {
                             // Confirmatory replies fall through silently.
                         }
                         Tier::T2MiniPlan => {
-                            // One-line suggestion, no auto-invocation.
-                            println!(
-                                "[HEX] a change with a shape. Write the gate first (the command that must exit 0), record it with `hexa loop gate '<cmd>'`, build to it, then `hexa analyze .`"
-                            );
+                            // One-line suggestion, no auto-invocation — and
+                            // only while no gate is recorded for work in
+                            // flight. The status line above already says
+                            // where a recorded loop stands; repeating the
+                            // instruction on every prompt after it is noise.
+                            if !gate_in_flight(project_dir) {
+                                println!(
+                                    "[HEX] a change with a shape. Write the gate first (the command that must exit 0), record it with `hexa loop gate '<cmd>'`, build to it, then `hexa analyze .`"
+                                );
+                            }
                         }
                         Tier::T3Workplan => {
                             // Feature-sized intent. In advisory+enabled mode, auto-invoke
@@ -973,6 +986,17 @@ async fn route(project_dir: &Path) -> Result<()> {
 /// a minimal stub quarantined to `docs/workplans/drafts/` — no worktrees,
 /// no specs, no coder dispatch. The user (or Claude Code) picks it up
 /// via `/hexa-feature-dev` or `hexa plan drafts approve`.
+/// A gate is recorded and the loop has not been marked done.
+fn gate_in_flight(project_dir: &Path) -> bool {
+    crate::commands::loop_cmd::read_loop(project_dir)
+        .map(|st| {
+            let has_gate = st.get("gate").and_then(|g| g.as_str()).map_or(false, |g| !g.is_empty());
+            let done = st.get("stage").and_then(|s| s.as_str()) == Some("done");
+            has_gate && !done
+        })
+        .unwrap_or(false)
+}
+
 fn spawn_plan_draft(prompt: &str) -> Result<String> {
     // We run `hexa plan draft --background <prompt>` synchronously here
     // (not via detached spawn) because we need the resulting draft path
@@ -1819,5 +1843,31 @@ mod tests {
         assert!(is_confirmatory_response("lgtm"));
         assert!(!is_confirmatory_response("yes but make it async"));
         assert!(!is_confirmatory_response("this is a much longer response that is not a confirmation"));
+    }
+}
+
+#[cfg(test)]
+mod loop_reminder_tests {
+    use super::gate_in_flight;
+
+    fn project_with_loop(body: Option<&str>) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("hexa-loop-reminder-{}-{:?}", std::process::id(), std::thread::current().id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".hexa")).unwrap();
+        if let Some(b) = body {
+            std::fs::write(dir.join(".hexa/loop.json"), b).unwrap();
+        }
+        dir
+    }
+
+    /// The gate reminder repeats only while nothing is recorded: a
+    /// recorded gate on a loop that is not done means the work is already
+    /// under a gate, and a done loop means there is nothing in flight.
+    #[test]
+    fn a_recorded_gate_on_an_unfinished_loop_silences_the_reminder() {
+        assert!(!gate_in_flight(&project_with_loop(None)), "no loop recorded");
+        assert!(!gate_in_flight(&project_with_loop(Some(r#"{"adr":"ADR-1","stage":"decide"}"#))), "no gate yet");
+        assert!(gate_in_flight(&project_with_loop(Some(r#"{"adr":"ADR-1","gate":"cargo test","stage":"build"}"#))), "gate in flight");
+        assert!(!gate_in_flight(&project_with_loop(Some(r#"{"adr":"ADR-1","gate":"cargo test","stage":"done"}"#))), "loop done");
     }
 }
