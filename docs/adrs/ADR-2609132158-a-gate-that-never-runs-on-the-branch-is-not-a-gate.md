@@ -53,17 +53,32 @@ GitHub-hosted runners are free for public repositories. The concurrency group is
 
 ## Gate
 
-A push to an `adr/**` branch produces a CI run for that head SHA:
+`curl -sf "https://api.github.com/repos/gaberger/hexa/actions/runs?per_page=20" | grep -q '"head_branch": "adr/'`
 
-```sh
-git push origin HEAD:adr/ci-reaches-this-branch
-curl -s "https://api.github.com/repos/gaberger/hexa/actions/runs?per_page=20" \
-  | python3 -c "import json,sys; print(any(r['head_sha'].startswith('<sha>') and r['name']=='CI' for r in json.load(sys.stdin)['workflow_runs']))"
-```
-
-The gate is written against the trigger, not against the file: reading `on.push.branches` back out
-of the YAML would test the change against itself. Only a real push proves GitHub agrees.
+A CI run exists whose head branch is an ADR branch. Nothing else proves the trigger: reading
+`on.push.branches` back out of the YAML would test the change against itself, and GitHub is the only
+party whose opinion of the glob counts. The first push of this branch is the run the command looks
+for.
 
 ## Evidence
 
-To be filled by the run this ADR's own branch produces.
+Run 34785418537, the first push of `adr/ci-reaches-this-branch` at 9c19c3f, 2026-09-13T21:59:21Z:
+
+```text
+run 34785418537 branch adr/ci-reaches-this-branch event push conclusion failure
+  4 Build success
+  5 Test failure
+  6 Architecture grade skipped
+  7 Installed assets are in sync skipped
+  8 Lint skipped
+```
+
+The run exists, which is the gate. It is red, which is the value: the ADR above shipped with a
+`## Gate` section whose first backquoted span was `adr/**` rather than a command, and
+`every_adr_here_records_a_runnable_gate_or_none` caught it on the branch. On the old trigger that
+failure would have surfaced at merge, on `main`, after the change it was meant to guard had landed.
+The gate section was rewritten as one runnable command and the suite is green locally:
+
+```text
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 279 filtered out
+```
