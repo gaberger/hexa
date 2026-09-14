@@ -1591,3 +1591,119 @@ mod commit_scope_tests {
         assert_eq!(got.len(), 4);
     }
 }
+
+#[cfg(test)]
+mod access_tests {
+    use super::{gate_note, target_is_ready, Access};
+    use std::path::Path;
+
+    /// The code, without this module. A test that scans its own file matches
+    /// its own string literals and reports a defect in correct code.
+    fn source() -> &'static str {
+        let whole = include_str!("adversarial.rs");
+        match whole.find("mod access_tests") {
+            Some(i) => &whole[..i],
+            None => whole,
+        }
+    }
+
+    #[test]
+    fn read_only_takes_away_every_route_to_a_write() {
+        let args = Access::ReadOnly.args();
+        // One argument, not two. `--disallowedTools` is variadic: given as two
+        // arguments it eats the prompt that follows it, and the run dies with
+        // "Input must be provided". That is the bug this shape prevents.
+        assert_eq!(args.len(), 1, "the flag must be one `--flag=value` argument: {args:?}");
+        assert!(args[0].starts_with("--disallowedTools="), "{args:?}");
+        for tool in ["Write", "Edit", "NotebookEdit", "Bash", "Task", "Monitor"] {
+            assert!(args[0].contains(tool), "`{tool}` is still a route to a write: {args:?}");
+        }
+        assert!(Access::Write.args().is_empty(), "the writing phases keep the full tool set");
+    }
+
+    /// Only the two phases that produce code may write.
+    ///
+    /// A source check rather than an enum walk, because access is passed at the
+    /// call site here: the phases are their own functions in this harness.
+    #[test]
+    fn only_the_phases_that_produce_code_may_write() {
+        let packed: String = source().chars().filter(|c| !c.is_whitespace()).collect();
+        // In call position — `…, Access::Write)` — so the enum's own `args`
+        // match arm is not counted as a phase.
+        let writes = packed.matches(",Access::Write)").count();
+        let reads = packed.matches(",Access::ReadOnly)").count();
+        assert_eq!(
+            writes, 2,
+            "expected exactly two writing dispatches — the build and the fix — found {writes}"
+        );
+        assert!(
+            reads >= 4,
+            "only {reads} read-only dispatch(es); diverge, red-team, synthesize, hunt and verify all read"
+        );
+    }
+
+    /// Every dispatch carries an access. One that does not has the full tool
+    /// set by default, which is the defect this whole mechanism exists for.
+    #[test]
+    fn every_dispatch_declares_its_access() {
+        let packed: String = source().chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            !packed.contains("retries).await") && !packed.contains("DEFAULT_RETRIES).await"),
+            "a call site dispatches without declaring what it may do"
+        );
+    }
+
+    #[test]
+    fn a_target_with_anything_in_it_is_refused() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let target = dir.path().join("build-here");
+        assert!(target_is_ready(&target).is_ok(), "absent is fine");
+        std::fs::create_dir_all(&target).expect("mkdir");
+        assert!(target_is_ready(&target).is_ok(), "empty is fine");
+
+        std::fs::write(target.join("Cargo.toml"), "[package]").expect("write");
+        let why = target_is_ready(&target).unwrap_err();
+        assert!(why.contains("Cargo.toml"), "the refusal must name what it found: {why}");
+        assert!(why.contains("killed run"), "and why it matters: {why}");
+    }
+
+    #[test]
+    fn a_file_where_a_directory_belongs_is_refused() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let target = dir.path().join("not-a-dir");
+        std::fs::write(&target, "x").expect("write");
+        assert!(target_is_ready(&target).unwrap_err().contains("is a file"));
+    }
+
+    #[test]
+    fn a_passing_gate_needs_no_note() {
+        assert!(gate_note(true, "test result: ok. 9 passed").is_none());
+    }
+
+    #[test]
+    fn a_failing_gate_carries_its_own_last_lines() {
+        let out = "compiling\nsh: -c: line 1: syntax error near unexpected token";
+        let note = gate_note(false, out).expect("a failing gate must explain itself");
+        assert!(note.contains("syntax error"), "the reason must survive: {note}");
+    }
+
+    #[test]
+    fn a_silent_failing_gate_says_it_was_silent() {
+        assert!(gate_note(false, "  \n\n").expect("still a note").contains("no output at all"));
+    }
+
+    #[test]
+    fn the_note_keeps_the_end_not_the_beginning() {
+        // A gate that compiles for a minute then fails buries the reason under
+        // its own progress.
+        let out: String = (1..=40).map(|i| format!("line {i}\n")).collect();
+        let note = gate_note(false, &out).expect("a note");
+        assert!(note.contains("line 40"), "the end was dropped: {note}");
+        assert!(!note.contains("line 1\n"), "the start was kept: {note}");
+    }
+
+    #[test]
+    fn a_path_is_a_path() {
+        let _: &Path = Path::new("/");
+    }
+}

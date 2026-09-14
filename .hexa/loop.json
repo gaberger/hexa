@@ -78,15 +78,22 @@
       "updated": "2026-09-13T21:25:21.784622425+00:00"
     },
     "2d1062c0-b13d-47d8-a748-9033ee1a36e3": {
+      "gate": "true",
+      "gate_result": true,
+      "gate_result_at": "2026-09-14T18:41:12.477544943+00:00",
+      "gate_result_for": "true",
+      "gate_result_head": "3c8848a",
       "grade": "A+",
-      "grade_at": "2026-09-14T18:38:44.820578986+00:00",
+      "grade_at": "2026-09-14T18:43:11.316459665+00:00",
       "grade_edges": 925,
       "grade_files": 144,
-      "grade_head": "6814899",
+      "grade_head": "3c8848a",
       "pid": 4018981,
       "pid_start": 60014992,
+      "running": null,
       "score": 99,
-      "updated": "2026-09-14T18:38:44.822032787+00:00"
+      "stage": "build",
+      "updated": "2026-09-14T18:43:13.433745611+00:00"
     }
   }
 }
