@@ -1,0 +1,20 @@
+[package]
+name = "ringbuf"
+version = "0.1.0"
+edition = "2021"
+description = "A fixed-capacity overwriting ring buffer, in ports-and-adapters style."
+
+[dependencies]
+
+[dev-dependencies]
+
+[features]
+# Test-only accessors. Never turn this on in a real caller.
+internals = []
+
+[lib]
+name = "ringbuf"
+path = "src/lib.rs"
+
+# This example stands alone. It is not a member of the hexa workspace.
+[workspace]
