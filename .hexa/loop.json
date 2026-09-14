@@ -1,28 +1,28 @@
 {
-  "adr": "ADR-2609140927",
-  "gate": "cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings && hexa swarm 'x' --over hexa-cli/src --over hexa-cli/src/commands --gate 'true' ; test $? -ne 0",
+  "adr": "ADR-2609140926",
+  "gate": "exit 1",
   "stage": "done",
   "tasks": [
     {
-      "done_at": "2026-09-14T14:20:00.946934116+00:00",
+      "done_at": "2026-09-14T14:42:27.121332262+00:00",
       "status": "done",
-      "title": "slices expand over the git file list; a glob is matched in hexa, not the shell"
+      "title": "refuse the invalid run first: too few entrants, a vacuous gate, a target that is not empty"
     },
     {
-      "done_at": "2026-09-14T14:20:00.948355706+00:00",
+      "done_at": "2026-09-14T14:42:27.123174749+00:00",
       "status": "done",
-      "title": "overlap refuses the run before any worktree exists"
+      "title": "fan out N entrants into worktrees; the gate eliminates"
     },
     {
-      "done_at": "2026-09-14T14:20:00.950114421+00:00",
+      "done_at": "2026-09-14T14:42:27.124921866+00:00",
       "status": "done",
-      "title": "one worker per slice, isolated, gated"
+      "title": "rank survivors by grade, then by smallest diff"
     },
     {
-      "done_at": "2026-09-14T14:20:00.951577031+00:00",
+      "done_at": "2026-09-14T14:42:27.126651291+00:00",
       "status": "done",
-      "title": "the report names every slice, including the ones that failed"
+      "title": "merge the winner whole; report every entrant's verdict"
     }
   ],
-  "updated": "2026-09-14T14:20:00.953041221+00:00"
+  "updated": "2026-09-14T14:42:27.128362987+00:00"
 }

@@ -1,6 +1,6 @@
 # ADR-2609140926: the arena decides by gate, not by taste
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-09-14
 **Epoch:** hexa
 **Drivers:** A comparison against Cursor's `pstack`, whose `/arena` runs N parallel attempts and takes the best parts of each. `hexa build` diverges on the design and then builds exactly once, so the step with the most variance in it is sampled a single time.

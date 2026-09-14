@@ -6,7 +6,7 @@
 > [`ARCHITECTURE.md`](../../ARCHITECTURE.md); for *why* a decision was made,
 > read the ADR itself.
 
-**8 ADRs** across 1 epochs.
+**9 ADRs** across 1 epochs.
 
 ## Epoch: `single-agent` — **current**
 
@@ -16,10 +16,11 @@ _One gateway-mediated agent loop; code-graph context as the differentiator_
 |-----|--------|-------|---------------|
 | ADR-2609140844 | accepted | ADR-2609140844: a routed intent returns a procedure, not a command |  |
 | ADR-2609140925 | accepted | ADR-2609140925: `hexa bro` says where the work stands, in plain language |  |
-| ADR-2609140926 | proposed | ADR-2609140926: the arena decides by gate, not by taste |  |
-| ADR-2609140927 | proposed | ADR-2609140927: swarm fans out by file boundary, or refuses |  |
+| ADR-2609140926 | accepted | ADR-2609140926: the arena decides by gate, not by taste |  |
+| ADR-2609140927 | accepted | ADR-2609140927: swarm fans out by file boundary, or refuses |  |
 | ADR-2609140928 | proposed | ADR-2609140928: a run leaves a decision trail behind it |  |
 | ADR-2609140929 | proposed | ADR-2609140929: playbooks are learned from runs, not guessed |  |
+| ADR-2609141030 | proposed | ADR-2609141030: the grade counts a copy as a caller |  |
 | ADR-2609121400 | accepted | ADR-2609121400: hexa is a scaffolding system with two gates |  |
 | ADR-2609122048 | accepted | ADR-2609122048: a tool that reports "nothing found" must prove it looked |  |
 

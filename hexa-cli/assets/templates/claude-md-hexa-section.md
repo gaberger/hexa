@@ -22,6 +22,7 @@ needs to be started. Every verb below runs in this process and exits.
 | claim something about the repo | `hexa verify "<claim>"` |
 | lose the thread after a long run | `hexa bro` |
 | fan out by hand and hope they don't collide | `hexa swarm '<task>' --over <slice> --gate '<cmd>'` |
+| settle for the first implementation | `hexa arena '<challenge>' --target <dir> --gate '<cmd>'` |
 
 If the verb you want is missing, **build the verb**. That is how the tool grows.
 

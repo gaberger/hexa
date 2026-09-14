@@ -158,6 +158,8 @@ enum Commands {
     Bro,
     /// Fan out across disjoint file slices, one worker each (ADR-2609140927)
     Swarm(commands::swarm::SwarmArgs),
+    /// Build N implementations of one challenge; the gate eliminates, the grade ranks (ADR-2609140926)
+    Arena(commands::arena::ArenaArgs),
     /// Adversarially verify a claim about the repo — returns CONFIRMED / REFUTED / INCONCLUSIVE
     Verify(commands::verify::VerifyArgs),
     /// Direct executor — task → one agent → evidence → commit (ADR-2026-06-04-1740 Path A)
@@ -390,6 +392,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Hey(args) => commands::hey::run(args).await,
         Commands::Bro => commands::bro::run().await,
         Commands::Swarm(args) => commands::swarm::run(args).await,
+        Commands::Arena(args) => commands::arena::run(args).await,
         Commands::Verify(args) => commands::verify::run(args).await,
         Commands::Do { action } => commands::direct::run(action).await,
         Commands::Bench { action } => commands::bench::run(action).await,

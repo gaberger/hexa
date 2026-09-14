@@ -25,6 +25,7 @@ pub mod test;
 pub mod update;
 pub mod worktree;
 pub mod new;
+pub mod arena;
 pub mod bro;
 pub mod hey;
 pub mod docs;
