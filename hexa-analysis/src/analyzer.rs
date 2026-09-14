@@ -52,6 +52,33 @@ fn matches_exclude(file_path: &str, patterns: &[&str]) -> bool {
     })
 }
 
+/// Should the walk go into this directory?
+///
+/// One rule, written once, because there were two and they disagreed.
+/// `source_files_sync` skipped hidden directories; the async walk that does the
+/// real analysis did not, while its sibling's doc comment claimed "same rules
+/// as the async walk". So a git worktree parked under `.hexa/` was read as part
+/// of the project: 448 files instead of 150, 2808 import edges instead of 940,
+/// and the four real dead exports in `hexa-infer/src/registry.rs` stopped being
+/// reported because the copies of those files inside the worktree counted as
+/// callers of the originals. The grade went from A+ 96 to A+ 100 on
+/// byte-identical code.
+///
+/// A gate that degrades quietly is bad. One that degrades *upward* is worse,
+/// because nobody investigates a better score.
+pub fn should_descend(rel: &str, path: &Path, project_ex: &[&str]) -> bool {
+    // A directory holding `.git` is a different tree that happens to be stored
+    // here — a nested repository, a submodule, or a `git worktree add`. Its
+    // files are not this project's source, and its copies of this project's
+    // files are not callers of anything.
+    if path.join(".git").exists() {
+        return false;
+    }
+    let hidden = path.file_name().map(|n| n.to_string_lossy().starts_with('.')).unwrap_or(false);
+    !hidden && !matches_exclude(rel, EXCLUDE_PATTERNS) && !matches_exclude(rel, project_ex)
+}
+
+
 /// Project-declared exclusions from `.hexa/project.json`:
 ///
 /// ```json
@@ -107,8 +134,9 @@ async fn detect_go_module_prefix(root: &Path) -> Option<String> {
 }
 
 /// The files `hexa analyze` grades, listed synchronously for the display
-/// detectors. Same rules as the async walk: `EXCLUDE_PATTERNS`, the
-/// project's `analyze.exclude`, test files out. Paths are project-relative
+/// detectors. The same rules as the async walk, and now literally so: both
+/// call `should_descend`. This comment used to claim that and it was not true
+/// — see `should_descend` for what the difference cost. Paths are project-relative
 /// with `/` separators, sorted.
 ///
 /// This exists so every detector scans the same tree. Before it, each
@@ -129,6 +157,9 @@ pub fn source_files_sync(root: &Path) -> Vec<String> {
             .unwrap_or(e.path())
             .to_string_lossy()
             .replace('\\', "/");
+        if e.file_type().is_dir() {
+            return should_descend(&rel, e.path(), &project_ex);
+        }
         let hidden = e.file_name().to_string_lossy().starts_with('.');
         !hidden
             && !matches_exclude(&rel, EXCLUDE_PATTERNS)
@@ -188,8 +219,7 @@ async fn collect_source_files(root: &Path) -> Result<Vec<String>, AnalysisError>
                 .replace('\\', "/");
 
             if path.is_dir() {
-                // Skip excluded directories
-                if !matches_exclude(&rel, EXCLUDE_PATTERNS) && !matches_exclude(&rel, &project_ex) {
+                if should_descend(&rel, &path, &project_ex) {
                     stack.push(path);
                 }
             } else if is_source_file(&rel)
@@ -216,7 +246,8 @@ fn is_test_file(path: &str) -> bool {
 async fn collect_test_files(root: &Path) -> Result<Vec<String>, AnalysisError> {
     let mut files = Vec::new();
     let mut stack = vec![root.to_path_buf()];
-    let skip_dirs = ["node_modules", "dist", "examples", "target"];
+    let project_ex_owned = project_excludes(root);
+    let project_ex: Vec<&str> = project_ex_owned.iter().map(String::as_str).collect();
 
     while let Some(dir) = stack.pop() {
         let mut entries = tokio::fs::read_dir(&dir).await?;
@@ -229,7 +260,7 @@ async fn collect_test_files(root: &Path) -> Result<Vec<String>, AnalysisError> {
                 .replace('\\', "/");
 
             if path.is_dir() {
-                if !skip_dirs.iter().any(|d| rel.contains(d)) {
+                if should_descend(&rel, &path, &project_ex) {
                     stack.push(path);
                 }
             } else if is_source_file(&rel) && is_test_file(&rel) {

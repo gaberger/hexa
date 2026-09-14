@@ -1,6 +1,28 @@
 {
-  "adr": "ADR-2609121400",
-  "gate": "printf \"%s\n\" broken | grep -q \"[\"",
-  "stage": "build",
-  "updated": "2026-09-14T16:31:35.650233258+00:00"
+  "adr": "ADR-2609141030",
+  "gate": "cargo test -p hexa-analysis && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings",
+  "stage": "done",
+  "tasks": [
+    {
+      "done_at": "2026-09-14T17:10:08.124784921+00:00",
+      "status": "done",
+      "title": "the differential test: a nested checkout must not change the score"
+    },
+    {
+      "done_at": "2026-09-14T17:10:08.126725648+00:00",
+      "status": "done",
+      "title": "the two walks obey one rule, and it is written once"
+    },
+    {
+      "done_at": "2026-09-14T17:10:08.128518073+00:00",
+      "status": "done",
+      "title": "a nested git worktree or repository is a different tree"
+    },
+    {
+      "done_at": "2026-09-14T17:10:08.130207246+00:00",
+      "status": "done",
+      "title": "the JSON carries files_analysed and import_edges"
+    }
+  ],
+  "updated": "2026-09-14T17:10:08.131902840+00:00"
 }

@@ -108,7 +108,10 @@ Checked by `hexa analyze .`:
 6. The composition root is the ONLY file that imports from adapters.
 7. All relative imports in scaffolded TypeScript MUST use `.js` extensions (NodeNext).
 
-hexa obeys these itself: **A+, 100/100, 0 violations**.
+hexa obeys these itself: **A+, 100/100, 0 violations**, over 149 files and
+938 import edges. The scan size is part of the claim (ADR-2609141030): a
+grade that can move four points depending on what is lying about in the
+working tree must say what it was measured over.
 
 ## File organization
 

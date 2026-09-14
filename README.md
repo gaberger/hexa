@@ -318,7 +318,10 @@ Measure your own with `hexa bench agentic`.
 ## Architecture
 
 Eight crates, one binary, about 51k lines. hexa obeys its own rules: **A+, 100 of
-100, zero boundary violations** on its own analyzer, over all eight crates. The
+100, zero boundary violations** on its own analyzer, over all eight crates —
+149 files and 938 import edges. The scan size is part of the claim: the grade
+once read 100 over 448 files because a git worktree was parked inside the tree
+and its copies counted as callers (ADR-2609141030). The
 only paths it excludes are its embedded scaffold templates, and it declares
 that in `.hexa/project.json` like any other project would. The map is in
 [ARCHITECTURE.md](ARCHITECTURE.md). The decisions are in the append-only

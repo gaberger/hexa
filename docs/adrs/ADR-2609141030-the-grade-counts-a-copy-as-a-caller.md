@@ -1,6 +1,6 @@
 # ADR-2609141030: the grade counts a copy as a caller
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-09-14
 **Epoch:** hexa
 **Drivers:** While building `hexa arena`, this repository graded A+ 100/100 with two entrant worktrees present and A+ 96/100 without them, on byte-identical `hexa-infer` code. The analyser walked into the nested checkouts, and four real dead exports stopped being reported.

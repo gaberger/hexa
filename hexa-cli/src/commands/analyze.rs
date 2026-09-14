@@ -1910,6 +1910,12 @@ async fn run_json(root: &Path, strict: bool, adr_compliance_only: bool) -> anyho
         let mut boundary_errors: Vec<serde_json::Value> = Vec::new();
         if let Ok(deep) = deep_analysis(root).await {
             score = Some(deep.health_score as u64);
+            // What the grade was computed over. A number that can move four
+            // points depending on what is lying about in the working tree must
+            // say how many files it read (ADR-2609141030, decision 4).
+            // "A+ 96 over 150 files" is a claim; "A+ 96" is a rumour.
+            result["files_analysed"] = serde_json::json!(deep.file_count);
+            result["import_edges"] = serde_json::json!(deep.edge_count);
             if !deep.violations.is_empty() {
                 boundary_errors.push(serde_json::json!({"count": deep.violations.len()}));
             }
