@@ -217,7 +217,7 @@ fn announce_review(phase: ReviewPhase, detail: &str, started: std::time::Instant
 }
 
 /// One progress line: which phase, how far in, how long so far.
-pub fn phase_line(phase: Phase, detail: &str, elapsed: std::time::Duration) -> String {
+fn phase_line(phase: Phase, detail: &str, elapsed: std::time::Duration) -> String {
     let secs = elapsed.as_secs();
     let when = if secs >= 60 { format!("{}m{:02}s", secs / 60, secs % 60) } else { format!("{secs}s") };
     let tail = if detail.is_empty() { String::new() } else { format!(" · {detail}") };
