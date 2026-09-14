@@ -1,17 +1,17 @@
 {
   "adr": "ADR-2609140928",
-  "gate": "cargo check -p hexa-git",
+  "gate": "cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings",
   "gate_result": true,
-  "gate_result_at": "2026-09-14T17:53:09.647038090+00:00",
-  "gate_result_for": "cargo check -p hexa-git",
-  "gate_result_head": "c53640f",
+  "gate_result_at": "2026-09-14T18:01:55.869344546+00:00",
+  "gate_result_for": "cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings",
+  "gate_result_head": "af471fc",
   "grade": "A+",
-  "grade_at": "2026-09-14T17:53:07.541007456+00:00",
+  "grade_at": "2026-09-14T18:01:56.884568897+00:00",
   "grade_edges": 949,
   "grade_files": 152,
-  "grade_head": "c53640f",
+  "grade_head": "af471fc",
   "score": 100,
-  "stage": "done",
+  "stage": "gate",
   "tasks": [
     {
       "done_at": "2026-09-14T17:53:30.229903944+00:00",
@@ -39,5 +39,5 @@
       "title": "playbook learn drafts from recorded runs and never installs"
     }
   ],
-  "updated": "2026-09-14T17:53:30.238544223+00:00"
+  "updated": "2026-09-14T18:01:56.885769363+00:00"
 }
