@@ -154,6 +154,8 @@ enum Commands {
     },
     /// Hey Hex — natural language task classifier (ADR-2026-04-14-0000)
     Hey(HeyArgs),
+    /// Where the work stands, in plain language (ADR-2609140925)
+    Bro,
     /// Adversarially verify a claim about the repo — returns CONFIRMED / REFUTED / INCONCLUSIVE
     Verify(commands::verify::VerifyArgs),
     /// Direct executor — task → one agent → evidence → commit (ADR-2026-06-04-1740 Path A)
@@ -384,6 +386,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Go => commands::go::run().await,
         Commands::Graph { action } => commands::graph::run(action).await,
         Commands::Hey(args) => commands::hey::run(args).await,
+        Commands::Bro => commands::bro::run().await,
         Commands::Verify(args) => commands::verify::run(args).await,
         Commands::Do { action } => commands::direct::run(action).await,
         Commands::Bench { action } => commands::bench::run(action).await,
@@ -445,6 +448,7 @@ fn print_getting_started() {
     println!();
     println!("    {}              Do the next right thing (autonomous)", "hexa go".cyan());
     println!("    {}             Route a request to a playbook", "hexa hey".cyan());
+    println!("    {}             Where the work stands, in plain words", "hexa bro".cyan());
     println!("    {}      Workplan lifecycle (create, execute, status)", "hexa plan list".cyan());
     println!("    {}          Configure trust, taste, inference", "hexa config".cyan());
     println!("    {}             Development tools (analyze, test, ci)", "hexa dev".cyan());

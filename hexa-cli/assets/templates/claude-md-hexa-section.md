@@ -20,6 +20,7 @@ needs to be started. Every verb below runs in this process and exits.
 | read a file before editing it blind | `hexa graph context <path>` |
 | a lesson you will forget | `hexa memory store lesson:<topic> "<text>"` |
 | claim something about the repo | `hexa verify "<claim>"` |
+| lose the thread after a long run | `hexa bro` |
 
 If the verb you want is missing, **build the verb**. That is how the tool grows.
 

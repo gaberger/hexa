@@ -172,7 +172,7 @@ pub struct Task {
 }
 
 /// The checklist in a loop state, numbered from 1.
-fn task_list(state: &serde_json::Value) -> Vec<Task> {
+pub fn task_list(state: &serde_json::Value) -> Vec<Task> {
     state
         .get("tasks")
         .and_then(|t| t.as_array())
