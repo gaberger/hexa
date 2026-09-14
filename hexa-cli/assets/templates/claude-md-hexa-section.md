@@ -22,6 +22,7 @@ needs to be started. Every verb below runs in this process and exits.
 | claim something about the repo | `hexa verify "<claim>"` |
 | lose the thread after a long run | `hexa bro` |
 | assume the gate still passes | `hexa loop check` |
+| guess where a run went wrong | `hexa trail show <run>` |
 | fan out by hand and hope they don't collide | `hexa swarm '<task>' --over <slice> --gate '<cmd>'` |
 | settle for the first implementation | `hexa arena '<challenge>' --target <dir> --gate '<cmd>'` |
 

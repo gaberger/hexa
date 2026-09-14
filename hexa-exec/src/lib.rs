@@ -19,6 +19,7 @@ pub mod resource_governor;
 pub mod simple_agent;
 pub mod telegram_notifier;
 pub mod tools;
+pub mod trail;
 
 /// The repository the tools operate on.
 ///

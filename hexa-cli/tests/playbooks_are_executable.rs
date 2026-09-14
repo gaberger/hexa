@@ -214,3 +214,46 @@ fn every_step_title_is_one_short_instruction() {
         long.join("\n  ")
     );
 }
+
+/// The binary's own rules, applied to the shipped playbooks.
+///
+/// ADR-2609140929, decision 2: one definition, two callers. `hexa playbook
+/// check` and this test must agree, or an operator's playbook is held to a
+/// different standard than hexa's own.
+///
+/// The structural tests above stay as the vacuity guard: if `faults` were
+/// hollowed out to return nothing, they would still fail.
+#[test]
+fn the_shipped_playbooks_pass_the_binarys_own_validator() {
+    use hexa_cli::commands::playbook::faults;
+    let mut checked = 0usize;
+    let mut bad: Vec<String> = Vec::new();
+    for (file, pb) in playbook_files() {
+        checked += 1;
+        for f in faults(&pb) {
+            bad.push(format!("{file}: {f}"));
+        }
+    }
+    assert!(checked >= 4, "only {checked} playbooks checked; the walker is broken");
+    assert!(bad.is_empty(), "hexa ships playbooks its own validator refuses:\n  {}", bad.join("\n  "));
+}
+
+/// And the validator is not hollow.
+#[test]
+fn the_validator_refuses_a_playbook_that_proves_nothing() {
+    use hexa_cli::commands::playbook::faults;
+    use hexa_cli::playbook::{Playbook, Step};
+    let pb = Playbook {
+        name: "hollow".into(),
+        summary: "proves nothing".into(),
+        triggers: vec!["hollow".into()],
+        steps: vec![
+            Step { title: "a".into(), run: "hexa status".into(), done_when: "done".into() },
+            Step { title: "b".into(), run: "hexa status".into(), done_when: "done".into() },
+            Step { title: "c".into(), run: "hexa status".into(), done_when: "done".into() },
+        ],
+    };
+    let f = faults(&pb);
+    assert!(f.iter().any(|x| x.contains("no proof step")), "{f:?}");
+    assert!(f.iter().any(|x| x.contains("not the architecture grade")), "{f:?}");
+}

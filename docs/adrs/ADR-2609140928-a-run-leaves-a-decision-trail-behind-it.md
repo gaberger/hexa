@@ -1,6 +1,6 @@
 # ADR-2609140928: a run leaves a decision trail behind it
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-09-14
 **Epoch:** hexa
 **Drivers:** hexa records decisions between tasks and lessons after them. Inside one long run it records nothing, so a run that goes wrong cannot be traced to the step where it went wrong. A comparison against Cursor's `pstack`, whose `/show-me-your-work` logs decisions to a file you commit.

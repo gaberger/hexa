@@ -17,6 +17,8 @@ pub mod spend_cmd;
 pub mod plan;
 pub mod refresh;
 pub mod scaffold;
+pub mod playbook;
+pub mod trail;
 pub mod skill;
 pub mod swarm;
 pub mod status;

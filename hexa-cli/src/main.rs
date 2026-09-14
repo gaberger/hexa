@@ -160,6 +160,16 @@ enum Commands {
     Swarm(commands::swarm::SwarmArgs),
     /// Build N implementations of one challenge; the gate eliminates, the grade ranks (ADR-2609140926)
     Arena(commands::arena::ArenaArgs),
+    /// The decisions a run made, as it made them (ADR-2609140928)
+    Trail {
+        #[command(subcommand)]
+        action: commands::trail::TrailAction,
+    },
+    /// Inspect, check and learn playbooks (ADR-2609140929)
+    Playbook {
+        #[command(subcommand)]
+        action: commands::playbook::PlaybookAction,
+    },
     /// Adversarially verify a claim about the repo — returns CONFIRMED / REFUTED / INCONCLUSIVE
     Verify(commands::verify::VerifyArgs),
     /// Direct executor — task → one agent → evidence → commit (ADR-2026-06-04-1740 Path A)
@@ -393,6 +403,8 @@ async fn main() -> anyhow::Result<()> {
         Commands::Bro => commands::bro::run().await,
         Commands::Swarm(args) => commands::swarm::run(args).await,
         Commands::Arena(args) => commands::arena::run(args).await,
+        Commands::Trail { action } => commands::trail::run(action).await,
+        Commands::Playbook { action } => commands::playbook::run(action).await,
         Commands::Verify(args) => commands::verify::run(args).await,
         Commands::Do { action } => commands::direct::run(action).await,
         Commands::Bench { action } => commands::bench::run(action).await,

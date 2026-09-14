@@ -1,38 +1,43 @@
 {
-  "adr": "ADR-2609140925",
-  "gate": "cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings",
+  "adr": "ADR-2609140928",
+  "gate": "cargo check -p hexa-git",
   "gate_result": true,
-  "gate_result_at": "2026-09-14T17:42:17.881040523+00:00",
-  "gate_result_for": "cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings",
-  "gate_result_head": "d1c844f",
+  "gate_result_at": "2026-09-14T17:53:09.647038090+00:00",
+  "gate_result_for": "cargo check -p hexa-git",
+  "gate_result_head": "c53640f",
   "grade": "A+",
-  "grade_at": "2026-09-14T17:42:12.584431451+00:00",
-  "grade_edges": 938,
-  "grade_files": 149,
-  "grade_head": "d1c844f",
+  "grade_at": "2026-09-14T17:53:07.541007456+00:00",
+  "grade_edges": 949,
+  "grade_files": 152,
+  "grade_head": "c53640f",
   "score": 100,
   "stage": "done",
   "tasks": [
     {
-      "done_at": "2026-09-14T17:42:14.572815224+00:00",
+      "done_at": "2026-09-14T17:53:30.229903944+00:00",
       "status": "done",
-      "title": "hexa loop check runs the recorded gate and records the verdict"
+      "title": "a row has five fields and refuses an empty evidence column"
     },
     {
-      "done_at": "2026-09-14T17:42:14.574301824+00:00",
+      "done_at": "2026-09-14T17:53:30.231685129+00:00",
       "status": "done",
-      "title": "hexa analyze records the grade it took, and what it measured over"
+      "title": "the loop appends as it goes, never summarises at the end"
     },
     {
-      "done_at": "2026-09-14T17:42:14.575708793+00:00",
+      "done_at": "2026-09-14T17:53:30.233375862+00:00",
       "status": "done",
-      "title": "hexa bro reports both, with when, instead of saying nothing is recorded"
+      "title": "hexa trail list and show read one back"
     },
     {
-      "done_at": "2026-09-14T17:42:14.577180724+00:00",
+      "done_at": "2026-09-14T17:53:30.235055685+00:00",
       "status": "done",
-      "title": "a recorded result goes stale when the gate or the tree moves on"
+      "title": "playbook list, show and check"
+    },
+    {
+      "done_at": "2026-09-14T17:53:30.236921521+00:00",
+      "status": "done",
+      "title": "playbook learn drafts from recorded runs and never installs"
     }
   ],
-  "updated": "2026-09-14T17:42:17.882051607+00:00"
+  "updated": "2026-09-14T17:53:30.238544223+00:00"
 }

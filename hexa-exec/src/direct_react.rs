@@ -140,6 +140,10 @@ async fn react_attempts(
 
     let mut prior_successes: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut steps = 0u32;
+    // One trail per run, appended as each decision is made. Never summarised at
+    // the end: a summary written by the model that made the choices is that
+    // model's account of its own reasoning (ADR-2609140928).
+    let run_id = format!("run-{}", chrono::Utc::now().format("%Y%m%dT%H%M%SZ"));
     let mut no_progress = 0u32;
     let opts = CompressOpts::default();
 
@@ -197,7 +201,24 @@ async fn react_attempts(
             if tu.name == "propose_edit" {
                 made_progress = true;
                 tracing::info!(step = steps, args = %serde_json::to_string(&tu.input).unwrap_or_default().chars().take(300).collect::<String>(), "react: propose_edit");
-                match apply_and_verify(&abs_path, repo_root, task, &tu.input, factory, &start_dirty).await {
+                let outcome = apply_and_verify(&abs_path, repo_root, task, &tu.input, factory, &start_dirty).await;
+                let _ = crate::trail::append(
+                    repo_root,
+                    &run_id,
+                    &crate::trail::Row {
+                        at: chrono::Utc::now().to_rfc3339(),
+                        step: steps,
+                        chose: format!("propose_edit {}", task.file),
+                        over: ALLOWED_TOOLS.join(", "),
+                        evidence: match &outcome {
+                            EditOutcome::Committed(h) => format!("gate passed, committed {h}"),
+                            EditOutcome::EvidenceFailed(m) => format!("gate failed: {m}"),
+                            EditOutcome::ApplyFailed(m) => format!("edit could not be applied: {m}"),
+                            EditOutcome::CommitFailed(m) => format!("gate passed, commit failed: {m}"),
+                        },
+                    },
+                );
+                match outcome {
                     EditOutcome::Committed(hash) => {
                         tracing::info!(step = steps, %hash, "react: propose_edit COMMITTED");
                         result.edit_applied = true;
@@ -257,6 +278,33 @@ async fn react_attempts(
             made_progress = true;
             let res = registry.execute(&tu.name, normalized.clone()).await;
             tracing::info!(step = steps, tool = %tu.name, ok = res.ok, args = %serde_json::to_string(&normalized).unwrap_or_default().chars().take(160).collect::<String>(), "react: tool");
+            // What was chosen, what it was chosen over, and what came back.
+            // Written now, because the alternatives are only knowable now.
+            let _ = crate::trail::append(
+                repo_root,
+                &run_id,
+                &crate::trail::Row {
+                    at: chrono::Utc::now().to_rfc3339(),
+                    step: steps,
+                    chose: format!(
+                        "{} {}",
+                        tu.name,
+                        serde_json::to_string(&normalized).unwrap_or_default()
+                    ),
+                    over: ALLOWED_TOOLS
+                        .iter()
+                        .chain(["propose_edit"].iter())
+                        .filter(|t| **t != tu.name)
+                        .copied()
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    evidence: if res.ok {
+                        format!("ok: {}", res.output)
+                    } else {
+                        format!("failed: {}", res.output)
+                    },
+                },
+            );
             if res.ok {
                 prior_successes.insert(sig);
             }

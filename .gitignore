@@ -39,6 +39,9 @@ test-output/
 # Docs: track the ledger, the analyses, the guides and the top-level pages
 docs/*
 !docs/adrs/
+# Decision trails are evidence (ADR-2609140928). A trail that is usually
+# absent is a trail nobody trusts, so they are trackable by default.
+!docs/trails/
 !docs/analysis/
 !docs/guides/
 !docs/reference/

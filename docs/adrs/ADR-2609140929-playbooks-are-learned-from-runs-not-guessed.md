@@ -1,6 +1,6 @@
 # ADR-2609140929: playbooks are learned from runs, not guessed
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-09-14
 **Epoch:** hexa
 **Drivers:** ADR-2609140844 shipped four playbooks written by hand in an afternoon. They are a guess about how work goes here. hexa records how work actually went, and reads none of it. Also: that ADR gave playbooks no verb of their own, so they can be routed to but not listed, shown, or edited.

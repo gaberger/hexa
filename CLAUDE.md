@@ -64,6 +64,8 @@ the top-leaderboard local model scored last on the grid.
    | guessing which model is better | `hexa bench agentic` |
    | losing the thread after a long run | `hexa bro` — where the work stands, in plain words |
    | "did the gate pass?" | `hexa loop check` — runs it and writes the verdict down |
+   | "where did that run go wrong?" | `hexa trail show <run>` — the decisions, as they were made |
+   | writing a playbook and hoping | `hexa playbook check <file>` |
    | parallel work that might collide | `hexa swarm '<task>' --over <slice> --gate '<cmd>'` |
    | one implementation when you want the best of several | `hexa arena '<challenge>' --target <dir> --gate '<cmd>'` |
 
