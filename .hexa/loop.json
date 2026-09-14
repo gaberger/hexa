@@ -1,28 +1,24 @@
 {
-  "adr": "ADR-2609121400",
+  "adr": "ADR-2609122048",
   "gate": "cd examples/game-mines-rs && cargo test && cargo run --quiet -- --demo --seed 42 | grep -qE \"GAME OVER|YOU WIN\"",
   "stage": "build",
   "tasks": [
     {
       "status": "doing",
-      "title": "the gate: tests pass AND the binary plays a seeded game to a terminal state"
+      "title": "every phase of a build announces itself, with its number and elapsed time"
     },
     {
       "status": "todo",
-      "title": "hexa build to the gate"
+      "title": "a long call emits a heartbeat, so alive is distinguishable from hung"
     },
     {
       "status": "todo",
-      "title": "hexa harden the result"
+      "title": "a retry says it is retrying, and why"
     },
     {
       "status": "todo",
-      "title": "README and a start script, so a person can actually play it"
-    },
-    {
-      "status": "todo",
-      "title": "hexa analyze the example"
+      "title": "a test fails if a phase is added without being announced"
     }
   ],
-  "updated": "2026-09-14T14:53:44.116648347+00:00"
+  "updated": "2026-09-14T15:17:30.752011749+00:00"
 }

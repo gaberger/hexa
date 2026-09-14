@@ -133,6 +133,123 @@ const DEFAULT_RETRIES: u32 = 3;
 /// for context. No sleep/backoff — failures here are inference-latency timeouts on a
 /// single long call, not rate limits, so immediate retry is the right shape (mirrors
 /// the bounded-attempt loop in direct_exec.rs rather than time-based backoff).
+/// The phases of a cooperative build, in the order they run.
+///
+/// `run_build` used to be silent. Four phases, up to three retries each, a
+/// build phase with a timeout four times the others', and 566 lines that
+/// printed nothing at all. An operator watching `hexa build` saw two lines of
+/// header and then nothing for as long as it took — with no way to tell a
+/// working run from a hung one. That is not a cosmetic gap: the only available
+/// response to silence is to kill the run and lose everything it has spent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Phase {
+    Diverge,
+    RedTeam,
+    Synthesize,
+    Build,
+    Gate,
+    Commit,
+}
+
+impl Phase {
+    /// Every phase, in order. The list is the contract the coverage test holds.
+    pub fn all() -> &'static [Phase] {
+        &[Phase::Diverge, Phase::RedTeam, Phase::Synthesize, Phase::Build, Phase::Gate, Phase::Commit]
+    }
+
+    /// What this phase is doing, in words an operator does not have to decode.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Phase::Diverge => "diverge — proposing designs",
+            Phase::RedTeam => "red-team — attacking each design",
+            Phase::Synthesize => "synthesize — one spec from the survivors",
+            Phase::Build => "build — writing code until the gate passes",
+            Phase::Gate => "gate — running the command that must exit 0",
+            Phase::Commit => "commit — recording what passed",
+        }
+    }
+
+    /// Its position, counting from one, so "3/6" means something.
+    pub fn ordinal(&self) -> usize {
+        Phase::all().iter().position(|p| p == self).unwrap_or(0) + 1
+    }
+}
+
+/// The phases of an adversarial pass, in the order they run.
+///
+/// `hexa harden` was silent for the same reason `hexa build` was.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReviewPhase {
+    Hunt,
+    Verify,
+    Fix,
+}
+
+impl ReviewPhase {
+    pub fn all() -> &'static [ReviewPhase] {
+        &[ReviewPhase::Hunt, ReviewPhase::Verify, ReviewPhase::Fix]
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            ReviewPhase::Hunt => "hunt — looking for bugs, one lens at a time",
+            ReviewPhase::Verify => "verify — trying to refute each finding",
+            ReviewPhase::Fix => "fix — repairing what survived, under the gate",
+        }
+    }
+
+    pub fn ordinal(&self) -> usize {
+        ReviewPhase::all().iter().position(|p| p == self).unwrap_or(0) + 1
+    }
+}
+
+/// Announce a review phase.
+fn announce_review(phase: ReviewPhase, detail: &str, started: std::time::Instant) {
+    let secs = started.elapsed().as_secs();
+    let when = if secs >= 60 { format!("{}m{:02}s", secs / 60, secs % 60) } else { format!("{secs}s") };
+    let tail = if detail.is_empty() { String::new() } else { format!(" · {detail}") };
+    tracing::info!(
+        "[{}/{}] {}{tail} · {when} elapsed",
+        phase.ordinal(),
+        ReviewPhase::all().len(),
+        phase.label()
+    );
+}
+
+/// One progress line: which phase, how far in, how long so far.
+pub fn phase_line(phase: Phase, detail: &str, elapsed: std::time::Duration) -> String {
+    let secs = elapsed.as_secs();
+    let when = if secs >= 60 { format!("{}m{:02}s", secs / 60, secs % 60) } else { format!("{secs}s") };
+    let tail = if detail.is_empty() { String::new() } else { format!(" · {detail}") };
+    format!("[{}/{}] {}{tail} · {when} elapsed", phase.ordinal(), Phase::all().len(), phase.label())
+}
+
+/// Announce a phase to the operator.
+fn announce(phase: Phase, detail: &str, started: std::time::Instant) {
+    tracing::info!("{}", phase_line(phase, detail, started.elapsed()));
+}
+
+/// Run `f`, logging a heartbeat every 30 seconds until it finishes.
+///
+/// This is the half that answers "is it hung". A phase line at the start tells
+/// you what began; only a heartbeat tells you it is still going.
+async fn with_heartbeat<T>(what: &str, f: impl std::future::Future<Output = T>) -> T {
+    let label = what.to_string();
+    let beat = tokio::spawn(async move {
+        let start = std::time::Instant::now();
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
+        tick.tick().await; // the first tick is immediate; skip it
+        loop {
+            tick.tick().await;
+            let s = start.elapsed().as_secs();
+            tracing::info!("      … {label} still running · {}m{:02}s", s / 60, s % 60);
+        }
+    });
+    let out = f.await;
+    beat.abort();
+    out
+}
+
 async fn claude_run_retry(
     prompt: &str,
     cwd: &Path,
@@ -142,6 +259,11 @@ async fn claude_run_retry(
     let attempts = attempts.clamp(1, 6);
     let mut last_err = String::new();
     for attempt in 1..=attempts {
+        if attempt > 1 {
+            // A silent retry is indistinguishable from a hang that lasts three
+            // times as long.
+            tracing::info!("      retry {attempt}/{attempts} — previous attempt failed: {last_err}");
+        }
         let this_prompt = retry_prompt(prompt, attempt, attempts, &last_err);
         match claude_run(&this_prompt, cwd, timeout_secs).await {
             Ok(out) => return Ok(out),
@@ -255,11 +377,13 @@ async fn commit_result(
 /// uncommitted for operator review.
 pub async fn run_review(target: &str, gate: &str, repo_root: &Path) -> ReviewReport {
     let mut report = ReviewReport::default();
+    let started = std::time::Instant::now();
     // What the operator had already changed. Anything dirty after the pass and
     // not in this set is the pass's own work, tests included.
     let dirty_before = dirty_paths(repo_root).await;
 
     // ── Phase 1: hunt (parallel lenses) ──────────────────────────────────────
+    announce_review(ReviewPhase::Hunt, &format!("{} lens(es), in parallel", LENSES.len()), started);
     let mut hunts = Vec::new();
     for lens in LENSES {
         let prompt = format!(
@@ -273,8 +397,8 @@ pub async fn run_review(target: &str, gate: &str, repo_root: &Path) -> ReviewRep
         let root = repo_root.to_path_buf();
         hunts.push(tokio::spawn(async move { claude_run_retry(&prompt, &root, 600, DEFAULT_RETRIES).await }));
     }
-    for h in hunts {
-        if let Ok(Ok(out)) = h.await {
+    for h in with_heartbeat("hunt", futures_all(hunts)).await {
+        if let Ok(Ok(out)) = h {
             if let Some(js) = extract_json(&out) {
                 if let Ok(env) = serde_json::from_str::<FindingsEnvelope>(js) {
                     report.candidate += env.findings.len();
@@ -286,6 +410,11 @@ pub async fn run_review(target: &str, gate: &str, repo_root: &Path) -> ReviewRep
     let candidates = std::mem::take(&mut report.confirmed);
 
     // ── Phase 2: skeptical verify (parallel, default-refute) ─────────────────
+    announce_review(
+        ReviewPhase::Verify,
+        &format!("{} candidate(s) to refute", report.candidate),
+        started,
+    );
     let mut checks = Vec::new();
     for f in candidates {
         let prompt = format!(
@@ -314,7 +443,13 @@ pub async fn run_review(target: &str, gate: &str, repo_root: &Path) -> ReviewRep
     }
 
     // ── Phase 3: fix-loop (sequential, each fix gated) ───────────────────────
+    announce_review(
+        ReviewPhase::Fix,
+        &format!("{} confirmed finding(s), one gated fix each", report.confirmed.len()),
+        started,
+    );
     for f in &report.confirmed {
+        tracing::info!("      fixing: {} [{}] {}", f.title, f.lens, f.location);
         let prompt = format!(
             "Fix this CONFIRMED bug in the code under `{target}`, then add a regression test that \
              fails without the fix. Make a minimal, correct change. Bug:\ntitle: {title}\nlocation: {loc}\ndescription: {desc}",
@@ -376,6 +511,15 @@ const DESIGN_PRIORITIES: &[&str] = &[
 /// Run the cooperative-design half of the harness: diverge (N designs from competing
 /// priorities) → red-team each → synthesize one spec → build to the gate. Pairs with
 /// [`run_review`] for the full cooperative+adversarial pipeline.
+/// Await every spawned task, in order, and hand back the results.
+async fn futures_all<T>(tasks: Vec<tokio::task::JoinHandle<T>>) -> Vec<Result<T, tokio::task::JoinError>> {
+    let mut out = Vec::with_capacity(tasks.len());
+    for t in tasks {
+        out.push(t.await);
+    }
+    out
+}
+
 pub async fn run_build(
     challenge: &str,
     target: &str,
@@ -386,10 +530,12 @@ pub async fn run_build(
     retries: u32,
 ) -> BuildReport {
     let mut report = BuildReport::default();
+    let started = std::time::Instant::now();
     let dirty_before = dirty_paths(repo_root).await;
     let n = n_designs.clamp(2, DESIGN_PRIORITIES.len());
 
     // ── Phase 1: diverge — N designs from competing priorities ───────────────
+    announce(Phase::Diverge, &format!("{n} design(s), in parallel"), started);
     let mut tasks = Vec::new();
     for prio in DESIGN_PRIORITIES.iter().take(n) {
         let prompt = format!(
@@ -401,8 +547,8 @@ pub async fn run_build(
         tasks.push(tokio::spawn(async move { claude_run_retry(&prompt, &root, timeout_secs, retries).await }));
     }
     let mut designs = Vec::new();
-    for t in tasks {
-        if let Ok(Ok(d)) = t.await {
+    for t in with_heartbeat("diverge", futures_all(tasks)).await {
+        if let Ok(Ok(d)) = t {
             designs.push(d);
         }
     }
@@ -413,6 +559,7 @@ pub async fn run_build(
     }
 
     // ── Phase 2: red-team each design (adversarial) ──────────────────────────
+    announce(Phase::RedTeam, &format!("{} design(s) to attack", designs.len()), started);
     let mut ctasks = Vec::new();
     for (i, d) in designs.iter().enumerate() {
         let prompt = format!(
@@ -424,14 +571,15 @@ pub async fn run_build(
         ctasks.push(tokio::spawn(async move { claude_run_retry(&prompt, &root, timeout_secs, retries).await }));
     }
     let mut critiques = Vec::new();
-    for t in ctasks {
-        if let Ok(Ok(c)) = t.await {
+    for t in with_heartbeat("red-team", futures_all(ctasks)).await {
+        if let Ok(Ok(c)) = t {
             critiques.push(c);
         }
     }
     report.critiques = critiques.len();
 
     // ── Phase 3: synthesize one build spec ───────────────────────────────────
+    announce(Phase::Synthesize, &format!("{} critique(s) to fold in", critiques.len()), started);
     let designs_block = designs
         .iter()
         .enumerate()
@@ -439,7 +587,7 @@ pub async fn run_build(
         .collect::<Vec<_>>()
         .join("\n\n");
     let critiques_block = critiques.join("\n\n--- next critique ---\n\n");
-    let spec = match claude_run_retry(
+    let spec = match with_heartbeat("synthesize", claude_run_retry(
         &format!(
             "You are the lead architect. Given these candidate designs and their adversarial critiques for \
              the challenge:\n{challenge}\n\nSynthesize ONE concrete build spec: the public API, the internal \
@@ -450,7 +598,7 @@ pub async fn run_build(
         repo_root,
         timeout_secs,
         retries,
-    )
+    ))
     .await
     {
         Ok(s) => s,
@@ -462,18 +610,34 @@ pub async fn run_build(
     report.spec_chars = spec.len();
 
     // ── Phase 4: build to the gate ───────────────────────────────────────────
+    // This is the long one: its timeout is four times the others', so say so
+    // rather than letting the operator guess how long "too long" is.
+    announce(
+        Phase::Build,
+        &format!("spec is {} chars · up to {}s per attempt", spec.len(), timeout_secs.saturating_mul(4)),
+        started,
+    );
     let build_prompt = format!(
         "Implement the following spec as code under `{target}`. Write the full implementation AND a \
          comprehensive test suite per the spec's test plan. Then run the gate command `{gate}` and ITERATE \
          — fix compile errors and failing tests — until the gate exits 0. Do not stop until the gate passes.\n\n\
          CHALLENGE:\n{challenge}\n\nSPEC:\n{spec}"
     );
-    if let Err(e) = claude_run_retry(&build_prompt, repo_root, timeout_secs.saturating_mul(4), retries).await {
+    if let Err(e) = with_heartbeat(
+        "build",
+        claude_run_retry(&build_prompt, repo_root, timeout_secs.saturating_mul(4), retries),
+    )
+    .await
+    {
         report.notes.push(format!("build agent error: {e}"));
     }
-    let (ok, _) = crate::direct_exec::run_evidence(gate, repo_root).await;
+
+    announce(Phase::Gate, gate, started);
+    let (ok, _) = with_heartbeat("gate", crate::direct_exec::run_evidence(gate, repo_root)).await;
     report.build_ok = ok;
+    tracing::info!("      gate {}", if ok { "PASSED" } else { "FAILED" });
     if ok {
+        announce(Phase::Commit, "", started);
         let mut paths: Vec<String> = dirty_paths(repo_root)
             .await
             .into_iter()
@@ -497,7 +661,113 @@ pub async fn run_build(
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_json, retry_prompt};
+    use super::{extract_json, retry_prompt, Phase};
+
+    /// The source of this file, read at compile time, so the coverage test
+    /// below cannot drift from the code it is about.
+    const SOURCE: &str = include_str!("adversarial.rs");
+
+    #[test]
+    fn every_phase_has_a_label_and_a_place_in_the_run() {
+        let all = Phase::all();
+        assert!(all.len() >= 4, "only {} phases; the list is broken", all.len());
+        for (i, p) in all.iter().enumerate() {
+            assert!(!p.label().is_empty(), "{p:?} has no label");
+            assert_eq!(p.ordinal(), i + 1, "{p:?} is numbered wrong");
+        }
+        let mut labels: Vec<&str> = all.iter().map(|p| p.label()).collect();
+        labels.sort();
+        let before = labels.len();
+        labels.dedup();
+        assert_eq!(labels.len(), before, "two phases share a label");
+    }
+
+    #[test]
+    fn a_progress_line_says_where_we_are_and_how_long_it_has_been() {
+        let line = super::phase_line(Phase::Build, "spec is 900 chars", std::time::Duration::from_secs(185));
+        assert!(line.contains("[4/6]"), "no position: {line}");
+        assert!(line.contains("build"), "no phase: {line}");
+        assert!(line.contains("spec is 900 chars"), "no detail: {line}");
+        assert!(line.contains("3m05s"), "no elapsed time: {line}");
+    }
+
+    #[test]
+    fn a_short_run_reads_in_seconds_not_zero_minutes() {
+        let line = super::phase_line(Phase::Diverge, "", std::time::Duration::from_secs(7));
+        assert!(line.contains("7s elapsed"), "{line}");
+        assert!(!line.contains("0m"), "{line}");
+    }
+
+    /// A phase that is never announced is a phase the operator cannot see.
+    ///
+    /// This is the whole defect, held shut: `run_build` ran four silent phases
+    /// for as long as it took, and the only signal available to a watching
+    /// operator was the absence of output.
+    #[test]
+    fn every_phase_is_actually_announced_in_the_run() {
+        let unannounced: Vec<String> = Phase::all()
+            .iter()
+            .filter(|p| {
+                let packed: String = SOURCE.chars().filter(|c| !c.is_whitespace()).collect();
+                !packed.contains(&format!("announce(Phase::{p:?}"))
+            })
+            .map(|p| format!("{p:?}"))
+            .collect();
+        assert!(
+            unannounced.is_empty(),
+            "{} phase(s) run without telling anyone:\n  {}",
+            unannounced.len(),
+            unannounced.join("\n  ")
+        );
+    }
+
+    /// And the long calls are wrapped in a heartbeat, which is the half that
+    /// distinguishes "still working" from "hung".
+    ///
+    /// Whitespace is stripped before the search: rustfmt wraps a long call
+    /// across lines, and a test that fails on formatting teaches people to
+    /// format around the test.
+    #[test]
+    fn the_long_calls_emit_a_heartbeat() {
+        let packed: String = SOURCE.chars().filter(|c| !c.is_whitespace()).collect();
+        for what in ["diverge", "red-team", "synthesize", "build", "gate"] {
+            assert!(
+                packed.contains(&format!("with_heartbeat(\"{what}\"")),
+                "`{what}` runs with no heartbeat; a long silence there is indistinguishable from a hang"
+            );
+        }
+    }
+
+    #[test]
+    fn every_review_phase_has_a_label_and_is_announced() {
+        let packed: String = SOURCE.chars().filter(|c| !c.is_whitespace()).collect();
+        let all = super::ReviewPhase::all();
+        assert!(all.len() >= 3, "only {} review phases; the list is broken", all.len());
+        let silent: Vec<String> = all
+            .iter()
+            .enumerate()
+            .filter_map(|(i, p)| {
+                assert!(!p.label().is_empty(), "{p:?} has no label");
+                assert_eq!(p.ordinal(), i + 1, "{p:?} is numbered wrong");
+                (!packed.contains(&format!("announce_review(ReviewPhase::{p:?}")))
+                    .then(|| format!("{p:?}"))
+            })
+            .collect();
+        assert!(
+            silent.is_empty(),
+            "{} review phase(s) run without telling anyone:\n  {}",
+            silent.len(),
+            silent.join("\n  ")
+        );
+    }
+
+    /// A retry that says nothing looks exactly like one call taking three times
+    /// as long.
+    #[test]
+    fn a_retry_announces_itself() {
+        assert!(SOURCE.contains("retry {attempt}/{attempts}"), "retries are silent");
+    }
+
 
     #[test]
     fn retry_prompt_first_attempt_is_unmodified() {

@@ -12,6 +12,10 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[path = "common/register.rs"]
+mod register;
+use register::assert_plain;
+
 fn hexa_bin() -> PathBuf {
     let mut p = std::env::current_exe().expect("test exe");
     p.pop();
@@ -28,29 +32,6 @@ fn workspace_root() -> PathBuf {
 fn bro(dir: &Path) -> (bool, String) {
     let out = Command::new(hexa_bin()).current_dir(dir).arg("bro").output().expect("run hexa bro");
     (out.status.success(), String::from_utf8_lossy(&out.stdout).to_string())
-}
-
-/// The prose sentences of a report.
-///
-/// A line that ends in a full stop is prose. A line that does not is a literal
-/// the report is quoting — a gate command, an ADR title, a commit subject —
-/// and hexa does not get to rewrite those to fit a word count.
-fn sentences(report: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    for line in report.lines() {
-        let t = line.trim();
-        if !t.ends_with('.') {
-            continue;
-        }
-        let body = t.trim_end_matches('.');
-        for piece in body.split(". ") {
-            let s = piece.trim();
-            if !s.is_empty() {
-                out.push(s.to_string());
-            }
-        }
-    }
-    out
 }
 
 /// Every backticked `hexa …` chain in a report, as argument lists.
@@ -90,29 +71,6 @@ fn resolves(chain: &[String]) -> bool {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
-}
-
-const MAX_WORDS: usize = 25;
-
-fn assert_plain(label: &str, report: &str, sentence_floor: usize) {
-    let found = sentences(report);
-    assert!(
-        found.len() >= sentence_floor,
-        "{label}: found only {} sentence(s); a report that says nothing passes \
-         every other check in this file.\n{report}",
-        found.len()
-    );
-    let long: Vec<String> = found
-        .iter()
-        .filter(|s| s.split_whitespace().count() > MAX_WORDS)
-        .map(|s| format!("{} words: {s}", s.split_whitespace().count()))
-        .collect();
-    assert!(
-        long.is_empty(),
-        "{label}: {} sentence(s) over {MAX_WORDS} words:\n  {}",
-        long.len(),
-        long.join("\n  ")
-    );
 }
 
 /// In this repository, where there is a decision, a gate and a checklist.

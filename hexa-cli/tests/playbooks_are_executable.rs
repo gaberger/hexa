@@ -14,6 +14,9 @@ use std::process::Command;
 
 use hexa_cli::playbook::{self, Playbook};
 
+#[path = "common/register.rs"]
+mod register;
+
 fn hexa_bin() -> PathBuf {
     let mut p = std::env::current_exe().expect("test exe");
     p.pop();
@@ -164,4 +167,50 @@ fn every_playbook_file_is_embedded_in_the_binary() {
     let mut disk = on_disk;
     disk.sort();
     assert_eq!(disk, embedded, "the shipped playbooks and the embedded playbooks differ");
+}
+
+/// A playbook is read at the start of a task, by someone deciding what to do.
+///
+/// That is exactly when a forty-word sentence costs most, so the same register
+/// gate `hexa bro` runs under applies here (ADR-2609140925, decision 4). The
+/// `run` line is exempt: it is a command, and hexa does not get to rewrite a
+/// command to fit a word count.
+#[test]
+fn every_playbook_reads_plainly() {
+    for (file, pb) in playbook_files() {
+        let mut prose = String::new();
+        prose.push_str(&pb.summary);
+        if !prose.ends_with('.') {
+            prose.push('.');
+        }
+        prose.push('\n');
+        for step in &pb.steps {
+            prose.push_str(&step.done_when);
+            prose.push('\n');
+        }
+        register::assert_plain(&file, &prose, 4);
+    }
+}
+
+/// And a step's title is an instruction, so it stays short enough to act on.
+#[test]
+fn every_step_title_is_one_short_instruction() {
+    let mut long: Vec<String> = Vec::new();
+    let mut seen = 0usize;
+    for (file, pb) in playbook_files() {
+        for (i, step) in pb.steps.iter().enumerate() {
+            seen += 1;
+            let words = step.title.split_whitespace().count();
+            if words > 12 {
+                long.push(format!("{file} step {}: {words} words — {}", i + 1, step.title));
+            }
+        }
+    }
+    assert!(seen >= 15, "only {seen} steps found; the walker is broken");
+    assert!(
+        long.is_empty(),
+        "{} step title(s) over 12 words. A step is an instruction, not a paragraph:\n  {}",
+        long.len(),
+        long.join("\n  ")
+    );
 }

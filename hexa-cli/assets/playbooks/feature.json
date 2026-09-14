@@ -20,7 +20,7 @@
   ],
   "steps": [
     {
-      "title": "Record the decision if this adds a port, an adapter, or a dependency",
+      "title": "Record an ADR if this adds a port, adapter or dependency",
       "run": "hexa adr list",
       "done_when": "Either an ADR covers this change, or the change adds no port, adapter or dependency."
     },
