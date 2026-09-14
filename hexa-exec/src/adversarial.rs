@@ -102,7 +102,55 @@ fn extract_json(text: &str) -> Option<&str> {
 }
 
 /// Spawn one `claude -p` agent in `cwd`, return stdout.
-async fn claude_run(prompt: &str, cwd: &Path, timeout_secs: u64) -> Result<String, String> {
+/// What a phase is allowed to do to the working tree.
+///
+/// The diverge prompt ends "Output your design as clear prose (no code yet)"
+/// and the agent wrote twenty-seven source files and compiled a binary anyway.
+/// Every step after that was theatre: the red-team attacked a description of
+/// code that already existed, the synthesis specified something already
+/// written, and whichever design agent typed fastest had won with no critique,
+/// no gate and no comparison.
+///
+/// A prompt is a request. This one was explicit and ignored. So the phases that
+/// were only ever supposed to think are spawned unable to write.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Access {
+    /// May read the repository. May not write, edit, or run a shell.
+    ReadOnly,
+    /// The full tool set. Only the phases that produce code need it.
+    Write,
+}
+
+/// The tools a read-only phase must not have.
+///
+/// `Bash` is on the list because a shell is a write tool: `echo x > f` is an
+/// edit with a different spelling. `Task` is on it because a read-only agent
+/// that can start a helper agent is not read-only — asked to write a file
+/// under these restrictions, the agent's own answer was that it could not, but
+/// that it could delegate the job to a subagent with the full tool set.
+/// `Monitor` is on it because the same agent, asked again, named it as another
+/// way to reach a shell. The list is the set of routes to a write, not the set
+/// of tools whose names contain "write".
+const NO_WRITE_TOOLS: &str = "Write,Edit,NotebookEdit,Bash,Task,Monitor";
+
+impl Access {
+    /// The `claude -p` flags this level implies.
+    ///
+    /// One argument, joined with `=`. `--disallowedTools` is variadic, so the
+    /// two-argument form swallows everything after it — including the prompt.
+    /// Passing it as two arguments made `claude -p` parse the prompt's words as
+    /// tool names ("Permission deny rule \"HELLO.\" matches no known tool") and
+    /// then fail with "Input must be provided". It would have broken every
+    /// build, and no unit test on the flag list would have noticed.
+    pub fn args(&self) -> Vec<String> {
+        match self {
+            Access::ReadOnly => vec![format!("--disallowedTools={NO_WRITE_TOOLS}")],
+            Access::Write => Vec::new(),
+        }
+    }
+}
+
+async fn claude_run(prompt: &str, cwd: &Path, timeout_secs: u64, access: Access) -> Result<String, String> {
     crate::frontier::budget_check()?;
     let fut = tokio::process::Command::new(claude_binary())
         .arg("-p")
@@ -112,6 +160,7 @@ async fn claude_run(prompt: &str, cwd: &Path, timeout_secs: u64) -> Result<Strin
         // harden reviewer prompts. `hexa hook` returns early when this is set.
         .env("HEXA_INTERNAL", "1")
         .arg("--dangerously-skip-permissions")
+        .args(access.args())
         .arg(prompt)
         .current_dir(cwd)
         .stdout(std::process::Stdio::piped())
@@ -169,6 +218,14 @@ impl Phase {
         }
     }
 
+    /// What this phase may do. Only the phase that writes code may write.
+    pub fn access(&self) -> Access {
+        match self {
+            Phase::Build => Access::Write,
+            _ => Access::ReadOnly,
+        }
+    }
+
     /// Its position, counting from one, so "3/6" means something.
     pub fn ordinal(&self) -> usize {
         Phase::all().iter().position(|p| p == self).unwrap_or(0) + 1
@@ -195,6 +252,14 @@ impl ReviewPhase {
             ReviewPhase::Hunt => "hunt — looking for bugs, one lens at a time",
             ReviewPhase::Verify => "verify — trying to refute each finding",
             ReviewPhase::Fix => "fix — repairing what survived, under the gate",
+        }
+    }
+
+    /// Only the fix phase writes. Hunting and verifying are reading.
+    pub fn access(&self) -> Access {
+        match self {
+            ReviewPhase::Fix => Access::Write,
+            _ => Access::ReadOnly,
         }
     }
 
@@ -255,6 +320,7 @@ async fn claude_run_retry(
     cwd: &Path,
     timeout_secs: u64,
     attempts: u32,
+    access: Access,
 ) -> Result<String, String> {
     let attempts = attempts.clamp(1, 6);
     let mut last_err = String::new();
@@ -265,7 +331,7 @@ async fn claude_run_retry(
             tracing::info!("      retry {attempt}/{attempts} — previous attempt failed: {last_err}");
         }
         let this_prompt = retry_prompt(prompt, attempt, attempts, &last_err);
-        match claude_run(&this_prompt, cwd, timeout_secs).await {
+        match claude_run(&this_prompt, cwd, timeout_secs, access).await {
             Ok(out) => return Ok(out),
             Err(e) => last_err = e,
         }
@@ -395,7 +461,9 @@ pub async fn run_review(target: &str, gate: &str, repo_root: &Path) -> ReviewRep
             target = target, focus = lens.focus, key = lens.key
         );
         let root = repo_root.to_path_buf();
-        hunts.push(tokio::spawn(async move { claude_run_retry(&prompt, &root, 600, DEFAULT_RETRIES).await }));
+        hunts.push(tokio::spawn(async move {
+            claude_run_retry(&prompt, &root, 600, DEFAULT_RETRIES, ReviewPhase::Hunt.access()).await
+        }));
     }
     for h in with_heartbeat("hunt", futures_all(hunts)).await {
         if let Ok(Ok(out)) = h {
@@ -426,7 +494,12 @@ pub async fn run_review(target: &str, gate: &str, repo_root: &Path) -> ReviewRep
             target = target, title = f.title, loc = f.location, desc = f.description
         );
         let root = repo_root.to_path_buf();
-        checks.push((f, tokio::spawn(async move { claude_run_retry(&prompt, &root, 600, DEFAULT_RETRIES).await })));
+        checks.push((
+            f,
+            tokio::spawn(async move {
+                claude_run_retry(&prompt, &root, 600, DEFAULT_RETRIES, ReviewPhase::Verify.access()).await
+            }),
+        ));
     }
     for (f, c) in checks {
         if let Ok(Ok(out)) = c.await {
@@ -455,7 +528,7 @@ pub async fn run_review(target: &str, gate: &str, repo_root: &Path) -> ReviewRep
              fails without the fix. Make a minimal, correct change. Bug:\ntitle: {title}\nlocation: {loc}\ndescription: {desc}",
             target = target, title = f.title, loc = f.location, desc = f.description
         );
-        if claude_run_retry(&prompt, repo_root, 900, DEFAULT_RETRIES).await.is_ok() {
+        if claude_run_retry(&prompt, repo_root, 900, DEFAULT_RETRIES, ReviewPhase::Fix.access()).await.is_ok() {
             let (passed, _) = crate::direct_exec::run_evidence(gate, repo_root).await;
             if passed {
                 report.fixed.push(f.title.clone());
@@ -498,6 +571,49 @@ pub struct BuildReport {
     pub spec_chars: usize,
     pub build_ok: bool,
     pub notes: Vec<String>,
+    /// Why the run never started, when it never started.
+    ///
+    /// Distinct from `build_ok: false`, which means it ran and the gate did not
+    /// pass. A refusal spends nothing and changes nothing.
+    pub refused: Option<String>,
+}
+
+/// Is this target fit to build into?
+///
+/// A run I killed left a `Cargo.toml` behind, and the next run inherited it
+/// without noticing — 22 seconds older than the process that would go on to
+/// commit it. `dirty_before` is captured at startup, so an orphan from a dead
+/// run counts as the new run's own work and lands in its commit.
+///
+/// So a build starts from nothing, the way `hexa arena` already insists.
+fn target_is_ready(target_abs: &Path) -> Result<(), String> {
+    if !target_abs.exists() {
+        return Ok(());
+    }
+    if !target_abs.is_dir() {
+        return Err(format!("{} is a file, not a directory", target_abs.display()));
+    }
+    let mut leftovers: Vec<String> = std::fs::read_dir(target_abs)
+        .map_err(|e| format!("cannot read {}: {e}", target_abs.display()))?
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .collect();
+    if leftovers.is_empty() {
+        return Ok(());
+    }
+    leftovers.sort();
+    let shown: Vec<String> = leftovers.iter().take(5).cloned().collect();
+    let more = leftovers.len().saturating_sub(shown.len());
+    let tail = if more > 0 { format!(" (and {more} more)") } else { String::new() };
+    Err(format!(
+        "{} already holds {} entr{}: {}{tail}. \
+         A build starts from nothing — otherwise a killed run seeds the next one and its \
+         leftovers are committed as this run's work. Clear it, or build somewhere else.",
+        target_abs.display(),
+        leftovers.len(),
+        if leftovers.len() == 1 { "y" } else { "ies" },
+        shown.join(", ")
+    ))
 }
 
 /// Competing design priorities — the divergence that makes the red-team meaningful.
@@ -530,6 +646,11 @@ pub async fn run_build(
     retries: u32,
 ) -> BuildReport {
     let mut report = BuildReport::default();
+    if let Err(why) = target_is_ready(&repo_root.join(target)) {
+        report.refused = Some(why.clone());
+        report.notes.push(why);
+        return report;
+    }
     let started = std::time::Instant::now();
     let dirty_before = dirty_paths(repo_root).await;
     let n = n_designs.clamp(2, DESIGN_PRIORITIES.len());
@@ -544,7 +665,9 @@ pub async fn run_build(
              concurrency/atomicity strategy, and the main risks. Output your design as clear prose (no code yet)."
         );
         let root = repo_root.to_path_buf();
-        tasks.push(tokio::spawn(async move { claude_run_retry(&prompt, &root, timeout_secs, retries).await }));
+        tasks.push(tokio::spawn(async move {
+            claude_run_retry(&prompt, &root, timeout_secs, retries, Phase::Diverge.access()).await
+        }));
     }
     let mut designs = Vec::new();
     for t in with_heartbeat("diverge", futures_all(tasks)).await {
@@ -568,7 +691,9 @@ pub async fn run_build(
              them concretely.\n\nDESIGN {i}:\n{d}"
         );
         let root = repo_root.to_path_buf();
-        ctasks.push(tokio::spawn(async move { claude_run_retry(&prompt, &root, timeout_secs, retries).await }));
+        ctasks.push(tokio::spawn(async move {
+            claude_run_retry(&prompt, &root, timeout_secs, retries, Phase::RedTeam.access()).await
+        }));
     }
     let mut critiques = Vec::new();
     for t in with_heartbeat("red-team", futures_all(ctasks)).await {
@@ -598,6 +723,7 @@ pub async fn run_build(
         repo_root,
         timeout_secs,
         retries,
+        Phase::Synthesize.access(),
     ))
     .await
     {
@@ -625,7 +751,7 @@ pub async fn run_build(
     );
     if let Err(e) = with_heartbeat(
         "build",
-        claude_run_retry(&build_prompt, repo_root, timeout_secs.saturating_mul(4), retries),
+        claude_run_retry(&build_prompt, repo_root, timeout_secs.saturating_mul(4), retries, Phase::Build.access()),
     )
     .await
     {
@@ -663,9 +789,22 @@ pub async fn run_build(
 mod tests {
     use super::{extract_json, retry_prompt, Phase};
 
-    /// The source of this file, read at compile time, so the coverage test
-    /// below cannot drift from the code it is about.
-    const SOURCE: &str = include_str!("adversarial.rs");
+    /// The source of this file, read at compile time, so the coverage tests
+    /// below cannot drift from the code they are about.
+    const WHOLE_FILE: &str = include_str!("adversarial.rs");
+
+    /// The code, without this test module.
+    ///
+    /// A test that scans its own file will match its own string literals.
+    /// `no_call_site_hardcodes_its_own_access` did exactly that: it looked for
+    /// `retries, Access::Write`, found the copy in its own assertion, and
+    /// reported a defect in code that was correct.
+    fn source() -> &'static str {
+        match WHOLE_FILE.find("#[cfg(test)]") {
+            Some(i) => &WHOLE_FILE[..i],
+            None => WHOLE_FILE,
+        }
+    }
 
     #[test]
     fn every_phase_has_a_label_and_a_place_in_the_run() {
@@ -708,7 +847,7 @@ mod tests {
         let unannounced: Vec<String> = Phase::all()
             .iter()
             .filter(|p| {
-                let packed: String = SOURCE.chars().filter(|c| !c.is_whitespace()).collect();
+                let packed: String = source().chars().filter(|c| !c.is_whitespace()).collect();
                 !packed.contains(&format!("announce(Phase::{p:?}"))
             })
             .map(|p| format!("{p:?}"))
@@ -729,7 +868,7 @@ mod tests {
     /// format around the test.
     #[test]
     fn the_long_calls_emit_a_heartbeat() {
-        let packed: String = SOURCE.chars().filter(|c| !c.is_whitespace()).collect();
+        let packed: String = source().chars().filter(|c| !c.is_whitespace()).collect();
         for what in ["diverge", "red-team", "synthesize", "build", "gate"] {
             assert!(
                 packed.contains(&format!("with_heartbeat(\"{what}\"")),
@@ -740,7 +879,7 @@ mod tests {
 
     #[test]
     fn every_review_phase_has_a_label_and_is_announced() {
-        let packed: String = SOURCE.chars().filter(|c| !c.is_whitespace()).collect();
+        let packed: String = source().chars().filter(|c| !c.is_whitespace()).collect();
         let all = super::ReviewPhase::all();
         assert!(all.len() >= 3, "only {} review phases; the list is broken", all.len());
         let silent: Vec<String> = all
@@ -761,11 +900,78 @@ mod tests {
         );
     }
 
+    #[test]
+    fn only_the_phases_that_write_code_may_write() {
+        use super::{Access, ReviewPhase};
+        let writers: Vec<Phase> =
+            Phase::all().iter().copied().filter(|p| p.access() == Access::Write).collect();
+        assert_eq!(writers, vec![Phase::Build], "the wrong phases may write: {writers:?}");
+
+        let rwriters: Vec<ReviewPhase> =
+            ReviewPhase::all().iter().copied().filter(|p| p.access() == Access::Write).collect();
+        assert_eq!(rwriters, vec![ReviewPhase::Fix], "the wrong review phases may write: {rwriters:?}");
+    }
+
+    #[test]
+    fn read_only_takes_away_every_tool_that_writes() {
+        use super::Access;
+        let args = Access::ReadOnly.args();
+        // One argument, not two. `--disallowedTools` is variadic: given as two
+        // arguments it eats the prompt that follows it, and the run dies with
+        // "Input must be provided". That is the bug this shape prevents.
+        assert_eq!(args.len(), 1, "the flag must be one `--flag=value` argument: {args:?}");
+        assert!(args[0].starts_with("--disallowedTools="), "{args:?}");
+        for tool in ["Write", "Edit", "NotebookEdit", "Bash", "Task", "Monitor"] {
+            assert!(args[0].contains(tool), "`{tool}` is still allowed: {args:?}");
+        }
+        assert!(Access::Write.args().is_empty(), "the writing phases keep the full tool set");
+    }
+
+    /// No call site picks its own access. It comes from the phase, which is
+    /// what the test above pins down.
+    #[test]
+    fn no_call_site_hardcodes_its_own_access() {
+        let packed: String = source().chars().filter(|c| !c.is_whitespace()).collect();
+        for literal in ["retries,Access::Write", "DEFAULT_RETRIES,Access::Write", "retries,Access::ReadOnly"] {
+            assert!(
+                !packed.contains(literal),
+                "a call site passes `{literal}` instead of asking its phase"
+            );
+        }
+        // And every call site does ask.
+        let asks = packed.matches(".access()").count();
+        assert!(asks >= 7, "only {asks} call site(s) ask their phase; expected one per phase");
+    }
+
+    #[test]
+    fn a_target_with_anything_in_it_is_refused() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let target = dir.path().join("build-here");
+        // Absent is fine.
+        assert!(super::target_is_ready(&target).is_ok());
+        // Empty is fine.
+        std::fs::create_dir_all(&target).expect("mkdir");
+        assert!(super::target_is_ready(&target).is_ok());
+        // One orphan file from a killed run is not.
+        std::fs::write(target.join("Cargo.toml"), "[package]").expect("write");
+        let why = super::target_is_ready(&target).unwrap_err();
+        assert!(why.contains("Cargo.toml"), "the refusal must name what it found: {why}");
+        assert!(why.contains("killed run"), "and why it matters: {why}");
+    }
+
+    #[test]
+    fn a_file_where_a_directory_belongs_is_refused() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let target = dir.path().join("not-a-dir");
+        std::fs::write(&target, "x").expect("write");
+        assert!(super::target_is_ready(&target).unwrap_err().contains("is a file"));
+    }
+
     /// A retry that says nothing looks exactly like one call taking three times
     /// as long.
     #[test]
     fn a_retry_announces_itself() {
-        assert!(SOURCE.contains("retry {attempt}/{attempts}"), "retries are silent");
+        assert!(source().contains("retry {attempt}/{attempts}"), "retries are silent");
     }
 
 

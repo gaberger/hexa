@@ -91,6 +91,10 @@ pub async fn run_build(args: BuildArgs) -> anyhow::Result<()> {
         args.retries,
     )
     .await;
+    if let Some(why) = &b.refused {
+        println!("  {} {}", "✗ refused".red().bold(), why);
+        anyhow::bail!("build refused: the target is not empty");
+    }
     println!(
         "{} {} designs → {} critiques → spec {}ch → build {}",
         "✓".green().bold(),

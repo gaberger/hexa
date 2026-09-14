@@ -1,24 +1,28 @@
 {
-  "adr": "ADR-2609122048",
-  "gate": "cd examples/game-mines-rs && cargo test && cargo run --quiet -- --demo --seed 42 | grep -qE \"GAME OVER|YOU WIN\"",
-  "stage": "build",
+  "adr": "ADR-2609121400",
+  "gate": "true",
+  "stage": "done",
   "tasks": [
     {
-      "status": "doing",
-      "title": "every phase of a build announces itself, with its number and elapsed time"
+      "done_at": "2026-09-14T16:01:59.871112374+00:00",
+      "status": "done",
+      "title": "a phase declares what it may do; only build and fix may write"
     },
     {
-      "status": "todo",
-      "title": "a long call emits a heartbeat, so alive is distinguishable from hung"
+      "done_at": "2026-09-14T16:01:59.873027971+00:00",
+      "status": "done",
+      "title": "read-only phases spawn with the write tools disallowed"
     },
     {
-      "status": "todo",
-      "title": "a retry says it is retrying, and why"
+      "done_at": "2026-09-14T16:01:59.874858116+00:00",
+      "status": "done",
+      "title": "a build refuses a target that already has content"
     },
     {
-      "status": "todo",
-      "title": "a test fails if a phase is added without being announced"
+      "done_at": "2026-09-14T16:01:59.876715951+00:00",
+      "status": "done",
+      "title": "no call site hardcodes its own access"
     }
   ],
-  "updated": "2026-09-14T15:17:30.752011749+00:00"
+  "updated": "2026-09-14T16:01:59.878499686+00:00"
 }
