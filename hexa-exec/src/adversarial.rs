@@ -251,6 +251,14 @@ fn silent() -> Reporter {
 /// How often a phase that is waiting says so.
 const HEARTBEAT: Duration = Duration::from_secs(30);
 
+/// What a heartbeat says.
+///
+/// Not the start message again. A heartbeat carries one bit — still going —
+/// and the elapsed time beside it is the part that changes. Repeating the
+/// message meant the build phase reprinted its whole gate command every thirty
+/// seconds, scrolling the lines that carry information off the top.
+const HEARTBEAT_MESSAGE: &str = "still running";
+
 /// A phase in flight: announced on start, heartbeat while it runs, reported
 /// on finish with its elapsed time. Dropping it stops the heartbeat.
 pub struct Phase {
@@ -263,13 +271,12 @@ pub struct Phase {
 impl Phase {
     pub fn start(reporter: &Reporter, name: &'static str, message: impl Into<String>, heartbeat: Duration) -> Phase {
         let started = std::time::Instant::now();
-        let message = message.into();
-        reporter(Progress { phase: name, message: message.clone(), elapsed: Duration::ZERO });
+        reporter(Progress { phase: name, message: message.into(), elapsed: Duration::ZERO });
         let r = reporter.clone();
         let ticker = tokio::spawn(async move {
             loop {
                 tokio::time::sleep(heartbeat).await;
-                r(Progress { phase: name, message: format!("still {message}"), elapsed: started.elapsed() });
+                r(Progress { phase: name, message: HEARTBEAT_MESSAGE.to_string(), elapsed: started.elapsed() });
             }
         });
         Phase { name, started, reporter: reporter.clone(), ticker }
@@ -1484,6 +1491,51 @@ mod progress_tests {
     use super::*;
     use std::sync::{Arc, Mutex};
 
+    /// A heartbeat says the clock moved, not the message again.
+    ///
+    /// It used to repeat the whole start message every thirty seconds. On the
+    /// build phase that is the entire gate command — 110 characters of
+    /// unchanging text, ten times a minute, scrolling the lines that carry
+    /// information off the top of the screen. A heartbeat carries one bit:
+    /// still going. The elapsed time is the part that changes.
+    #[test]
+    fn a_heartbeat_does_not_repeat_the_message() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            async fn beats_of(name: &'static str, message: &'static str) -> Vec<Progress> {
+                let seen: Arc<Mutex<Vec<Progress>>> = Arc::new(Mutex::new(Vec::new()));
+                let sink = seen.clone();
+                let reporter: Reporter = Arc::new(move |p| sink.lock().unwrap().push(p));
+                let phase = Phase::start(&reporter, name, message, Duration::from_millis(20));
+                tokio::time::sleep(Duration::from_millis(70)).await;
+                phase.finish("done");
+                let seen = seen.lock().unwrap();
+                seen[1..seen.len() - 1].to_vec()
+            }
+
+            let long = "one agent builds to the gate: cd examples/ring-rs && cargo test 2>&1 | grep -qE \"…\"";
+            let build = beats_of("build", long).await;
+            let hunt = beats_of("hunt", "4 lenses, in parallel").await;
+
+            assert!(build.len() >= 2, "only {} heartbeat(s)", build.len());
+            assert!(hunt.len() >= 2, "only {} heartbeat(s)", hunt.len());
+
+            // The property: a heartbeat says the same thing whatever the phase
+            // was announced with. It carries one bit — still going — and the
+            // elapsed time beside it is what changes. `still {message}` fails
+            // here, and so does `still {name}`.
+            let all: Vec<&str> = build.iter().chain(hunt.iter()).map(|p| p.message.as_str()).collect();
+            assert!(
+                all.windows(2).all(|w| w[0] == w[1]),
+                "heartbeats vary with what the phase was announced with: {all:?}"
+            );
+            assert!(!all[0].contains("cargo test"), "a heartbeat repeated the message: {}", all[0]);
+
+            // And the clock is the part that moves.
+            assert!(build.last().unwrap().elapsed > build[0].elapsed, "the elapsed time did not advance");
+        });
+    }
+
     #[test]
     fn a_sibilant_is_pluralised_with_es() {
         assert_eq!(plural(1, "lens"), "1 lens");
@@ -1510,7 +1562,7 @@ mod progress_tests {
             let seen = seen.lock().unwrap();
             assert_eq!(seen[0].message, "4 lenses");
             assert_eq!(seen[0].elapsed, Duration::ZERO);
-            let beats = seen.iter().filter(|p| p.message == "still 4 lenses").count();
+            let beats = seen.iter().filter(|p| p.message == HEARTBEAT_MESSAGE).count();
             assert!(beats >= 3, "{} heartbeats in 110ms at 20ms", beats);
             let last = seen.last().unwrap();
             assert_eq!(last.message, "5 candidates to verify");
