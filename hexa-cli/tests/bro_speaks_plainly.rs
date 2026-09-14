@@ -137,15 +137,28 @@ fn an_untouched_directory_is_a_result_not_an_error() {
 }
 
 /// Decision 4: every verb it names exists.
+///
+/// The states are seeded rather than read from this repository. A report names
+/// different verbs depending on what is recorded, so testing against hexa's own
+/// live loop state makes the vacuity floor a coin toss: the run that records
+/// everything names two verbs and the run that records nothing names five.
+/// A loop file with nothing in it fires every "not recorded" branch at once,
+/// which is exactly the surface this test exists to check.
 #[test]
 fn every_verb_the_report_names_exists() {
+    let blank = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir_all(blank.path().join(".hexa")).expect("mkdir .hexa");
+    std::fs::write(blank.path().join(".hexa/loop.json"), "{}").expect("seed empty loop");
+
+    let untouched = tempfile::tempdir().expect("tempdir");
+
     let mut chains: Vec<Vec<String>> = Vec::new();
-    chains.extend(backticked_verbs(&bro(&workspace_root()).1));
-    let dir = tempfile::tempdir().expect("tempdir");
-    chains.extend(backticked_verbs(&bro(dir.path()).1));
+    for dir in [blank.path(), untouched.path(), workspace_root().as_path()] {
+        chains.extend(backticked_verbs(&bro(dir).1));
+    }
 
     assert!(
-        chains.len() >= 3,
+        chains.len() >= 5,
         "found only {} backticked hexa command(s); the extractor is broken",
         chains.len()
     );
@@ -155,6 +168,24 @@ fn every_verb_the_report_names_exists() {
         .map(|c| format!("hexa {}", c.join(" ")))
         .collect();
     assert!(dead.is_empty(), "hexa bro names {} dead verb(s):\n  {}", dead.len(), dead.join("\n  "));
+}
+
+/// A report with nothing recorded still tells the operator what to do.
+///
+/// This is the state a new project is in, and the one where a status tool is
+/// least useful and most needed.
+#[test]
+fn an_empty_record_still_names_the_way_forward() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir_all(dir.path().join(".hexa")).expect("mkdir .hexa");
+    std::fs::write(dir.path().join(".hexa/loop.json"), "{}").expect("seed empty loop");
+
+    let (ok, report) = bro(dir.path());
+    assert!(ok, "hexa bro exited non-zero on an empty record:\n{report}");
+    for missing in ["No decision is recorded", "No gate is recorded", "No stage is recorded"] {
+        assert!(report.contains(missing), "the empty record must say `{missing}`:\n{report}");
+    }
+    assert_plain("empty record", &report, 5);
 }
 
 /// Decision 2: it reads, and it changes nothing.
