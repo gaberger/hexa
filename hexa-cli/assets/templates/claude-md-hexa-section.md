@@ -4,7 +4,9 @@ hexa is one binary. There is no daemon, no database, and no dashboard. Nothing
 needs to be started. Every verb below runs in this process and exits.
 
 `hexa --help` lists the verbs. `hexa go` suggests the next action.
-`hexa hey <intent>` routes natural language to a verb.
+`hexa hey <intent>` routes natural language to a playbook — the ordered
+   steps for that shape of work. Copy its steps verbatim; do not paraphrase
+   them (ADR-2609140844).
 
 ### Route work through hexa where hexa has a verb for it
 
@@ -40,7 +42,9 @@ If the verb you want is missing, **build the verb**. That is how the tool grows.
    `hexa analyze .` names every item and its fix. Clear them, re-run, and
    report the new grade. The grade is a property of the tree, not of your
    diff: an item that predates your change is still yours to clear.
-7. **Prefer `hexa hey <intent>`** when the task maps cleanly to natural language.
+7. **Start with `hexa hey <intent>`** on any non-trivial task. It hands back
+   the playbook for that shape of work — bug-fix, feature, refactor or
+   investigation — and every playbook ends at the two gates.
 
 ## Development pipeline (gate-first)
 

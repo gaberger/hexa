@@ -27,6 +27,10 @@ pub enum TaskIntent {
     /// Classified but rejected by policy (e.g. remote-shell whitelist — P1.2).
     /// `command` is the offending fragment; `reason` is the user-facing message.
     Rejected { command: String, reason: String },
+    /// A procedure, not a command (ADR-2609140844). The request names a shape
+    /// of work — fix a bug, add a feature — which is an ordered sequence of
+    /// verbs, not one of them. `hexa hey` prints the steps and runs nothing.
+    Playbook { name: String },
     Unknown(String),
 }
 
@@ -265,9 +269,9 @@ fn classify_intent(text: &str) -> TaskIntent {
     // Documentation
     if t.contains("documentation") || t.contains("docs") {
         return TaskIntent::HexCommand {
-            args: "brief".into(),
+            args: "docs check".into(),
             destructive: false,
-            description: "Show project documentation briefing".into(),
+            description: "Check documentation freshness and terminology".into(),
         };
     }
     // Security audit / vulnerabilities / dependabot
@@ -276,14 +280,6 @@ fn classify_intent(text: &str) -> TaskIntent {
             cmd: "cargo audit".into(),
             destructive: false,
             description: "Scan dependencies for security vulnerabilities".into(),
-        };
-    }
-    // Audit (developer report)
-    if t.contains("audit") {
-        return TaskIntent::HexCommand {
-            args: "report audit".into(),
-            destructive: false,
-            description: "Show developer audit report for hexa dev sessions".into(),
         };
     }
     // Help / list commands
@@ -315,9 +311,9 @@ fn classify_intent(text: &str) -> TaskIntent {
         || t.contains("validate")
         || t.contains("health") {
         return TaskIntent::HexCommand {
-            args: "brain validate".into(),
+            args: "doctor".into(),
             destructive: false,
-            description: "Run brain self-consistency validation".into(),
+            description: "Verify the installation and the pipeline".into(),
         };
     }
     // Run a workplan
@@ -334,65 +330,9 @@ fn classify_intent(text: &str) -> TaskIntent {
     // Brief
     if t.contains("brief") || t.contains("summary") {
         return TaskIntent::HexCommand {
-            args: "brief".into(),
+            args: "status".into(),
             destructive: false,
-            description: "Show developer briefing".into(),
-        };
-    }
-    // Brain/daemon status - check before general "status" to avoid false match
-    if t.contains("brain") && (t.contains("status") || t.contains("daemon")) {
-        return TaskIntent::HexCommand {
-            args: "sched daemon-status".into(),
-            destructive: false,
-            description: "Show brain scheduler status".into(),
-        };
-    }
-    // Start brain/daemon
-    if (t.contains("start") || t.contains("run") || t.contains("launch")) && (t.contains("brain") || t.contains("daemon")) {
-        return TaskIntent::HexCommand {
-            args: "sched daemon --background".into(),
-            destructive: false,
-            description: "Start the brain scheduler daemon".into(),
-        };
-    }
-    // Stop brain/daemon
-    if t.contains("stop") && (t.contains("brain") || t.contains("daemon")) {
-        return TaskIntent::HexCommand {
-            args: "sched daemon-stop".into(),
-            destructive: false,
-            description: "Stop the brain scheduler daemon".into(),
-        };
-    }
-    // Prime brain (start daemon + discover workplans + seed queue)
-    if t.contains("prime") && t.contains("brain") {
-        return TaskIntent::HexCommand {
-            args: "sched prime".into(),
-            destructive: false,
-            description: "Prime brain: start daemon, discover workplans, seed queue".into(),
-        };
-    }
-    // Validate brain
-    if t.contains("validate") && t.contains("brain") {
-        return TaskIntent::HexCommand {
-            args: "sched validate".into(),
-            destructive: false,
-            description: "Run brain self-diagnostics".into(),
-        };
-    }
-    // Sched watch - watch brain tick events
-    if t.contains("watch") && (t.contains("brain") || t.contains("tick") || t.contains("sched")) {
-        return TaskIntent::HexCommand {
-            args: "sched watch".into(),
-            destructive: false,
-            description: "Watch brain tick events in real-time".into(),
-        };
-    }
-    // Sched queue - show queue
-    if (t.contains("queue") || t.contains("tasks")) && (t.contains("sched") || t.contains("brain")) {
-        return TaskIntent::HexCommand {
-            args: "sched queue list".into(),
-            destructive: false,
-            description: "Show brain task queue".into(),
+            description: "Show project status".into(),
         };
     }
     // Status / what's happening
@@ -422,8 +362,8 @@ fn classify_intent(text: &str) -> TaskIntent {
     }
     // Git status
     if t.contains("git") && (t.contains("status") || t.contains("what") || t.contains("changed")) {
-        return TaskIntent::HexCommand {
-            args: "git status".into(),
+        return TaskIntent::Shell {
+            cmd: "git status --short --branch".into(),
             destructive: false,
             description: "Show git status".into(),
         };
@@ -446,16 +386,16 @@ fn classify_intent(text: &str) -> TaskIntent {
     }
     // Git log
     if t.contains("git") && t.contains("log") {
-        return TaskIntent::HexCommand {
-            args: "git log".into(),
+        return TaskIntent::Shell {
+            cmd: "git log --oneline -20".into(),
             destructive: false,
             description: "Show git commit history".into(),
         };
     }
     // Git diff
     if t.contains("git") && (t.contains("diff") || t.contains("changes")) {
-        return TaskIntent::HexCommand {
-            args: "git diff".into(),
+        return TaskIntent::Shell {
+            cmd: "git diff".into(),
             destructive: false,
             description: "Show uncommitted changes".into(),
         };
@@ -468,21 +408,15 @@ fn classify_intent(text: &str) -> TaskIntent {
             description: "List files in current directory".into(),
         };
     }
-    // Show secrets status
-    if t.contains("show") && t.contains("secret") {
-        return TaskIntent::HexCommand {
-            args: "secrets status".into(),
-            destructive: false,
-            description: "Show secrets backend status".into(),
-        };
-    }
-    // Show inbox
-    if t.contains("inbox") || (t.contains("message") && (t.contains("pending") || t.contains("unread"))) {
-        return TaskIntent::HexCommand {
-            args: "inbox list".into(),
-            destructive: false,
-            description: "Show agent notification inbox".into(),
-        };
+
+    // Nothing here is one command. Before spending a model on the request,
+    // ask whether it names a *shape* of work we already have a procedure for
+    // (ADR-2609140844). A malformed playbook file is reported by `run()`, not
+    // swallowed here.
+    if let Ok(books) = crate::playbook::load() {
+        if let Some((pb, _)) = crate::playbook::best(text, &books) {
+            return TaskIntent::Playbook { name: pb.name.clone() };
+        }
     }
 
     TaskIntent::Unknown(text.to_string())
@@ -515,6 +449,14 @@ pub async fn run(args: HeyArgs) -> anyhow::Result<()> {
             println!("    {}", reason);
             return Ok(());
         }
+        TaskIntent::Playbook { name } => {
+            let books = crate::playbook::load()?;
+            let Some(pb) = books.iter().find(|p| &p.name == name) else {
+                anyhow::bail!("playbook '{name}' matched but is not loadable");
+            };
+            print!("{}", crate::playbook::render(pb));
+            return Ok(());
+        }
         TaskIntent::Unknown(t) => {
             // Remote SSH intent: marker __SSH__<host>__<action>
             if let Some(rest) = t.strip_prefix("__SSH__") {
@@ -539,13 +481,13 @@ pub async fn run(args: HeyArgs) -> anyhow::Result<()> {
                 match llm_classify(t).await {
                     Ok(Some((k, p, d))) => (box_leak_str(k), p, false, d),
                     Ok(None) => {
-                        println!("  {} LLM also couldn't classify. Try:", "✗".red());
-                        println!("    hexa brain enqueue hexa-command -- \"<your-command>\"");
+                        println!("  {} no playbook and no classification.", "✗".red());
+                        print!("{}", crate::playbook::no_match(t, &crate::playbook::load()?));
                         return Ok(());
                     }
                     Err(e) => {
                         println!("  {} LLM fallback failed: {}", "✗".red(), e);
-                        println!("    Try: hexa brain enqueue hexa-command -- \"<your-command>\"");
+                        print!("{}", crate::playbook::no_match(t, &crate::playbook::load()?));
                         return Ok(());
                     }
                 }

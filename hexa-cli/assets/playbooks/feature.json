@@ -1,0 +1,32 @@
+{
+  "name": "feature",
+  "summary": "New or changed behaviour, decided first, built to a gate, hardened before it ships.",
+  "triggers": ["feature", "add", "implement", "new", "support", "introduce", "endpoint", "command"],
+  "steps": [
+    {
+      "title": "Record the decision if this adds a port, an adapter, or a dependency",
+      "run": "hexa adr list",
+      "done_when": "Either an ADR covers this change, or the change adds no port, adapter or dependency."
+    },
+    {
+      "title": "Write the gate before the code, and not derived from it",
+      "run": "hexa loop gate '<command that must exit 0 when the feature works>'",
+      "done_when": "The command is recorded and it fails today. A gate generated from the implementation is the mirror test in a new hat."
+    },
+    {
+      "title": "Diverge, red-team, and build to the gate",
+      "run": "hexa build '<challenge>' --target <dir> --gate '<command that must exit 0>'",
+      "done_when": "The gate exits 0."
+    },
+    {
+      "title": "Run the adversarial pass over what was built",
+      "run": "hexa harden <dir> --gate '<command that must exit 0>'",
+      "done_when": "Every finding is verified or dismissed, and each fix held the gate."
+    },
+    {
+      "title": "Grade the shape you leave behind",
+      "run": "hexa analyze .",
+      "done_when": "The grade is at or above where it was before you started."
+    }
+  ]
+}

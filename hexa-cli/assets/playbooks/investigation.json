@@ -1,0 +1,43 @@
+{
+  "name": "investigation",
+  "summary": "A read-only question. Answer it from the graph and the repository, not from memory.",
+  "triggers": [
+    "how",
+    "why",
+    "what",
+    "where",
+    "which",
+    "investigate",
+    "explain",
+    "understand",
+    "trace",
+    "audit"
+  ],
+  "steps": [
+    {
+      "title": "Build or refresh the map before you read anything",
+      "run": "hexa graph build .",
+      "done_when": "The graph is current for this working tree."
+    },
+    {
+      "title": "Ask the graph, not your memory",
+      "run": "hexa graph consumers <path>",
+      "done_when": "You can name who depends on the thing you are asking about. Use `hexa graph explain` or `hexa graph context` when the question is about one node."
+    },
+    {
+      "title": "Test the claim you are about to make",
+      "run": "hexa verify \"<the claim you are about to state>\"",
+      "done_when": "The verdict is CONFIRMED or REFUTED against gathered evidence. INCONCLUSIVE means you report it as unknown, not as true."
+    },
+    {
+      "title": "Record what you learned, before you forget it",
+      "run": "hexa memory store lesson:<topic> \"<what you learned>\"",
+      "done_when": "The lesson is stored, or the answer was not worth keeping."
+    },
+    {
+      "title": "Prove the investigation changed nothing",
+      "run": "hexa analyze .",
+      "done_when": "The grade is exactly what it was before you started. An investigation that moves the grade edited something."
+    }
+  ]
+}

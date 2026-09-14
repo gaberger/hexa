@@ -64,7 +64,9 @@ the top-leaderboard local model scored last on the grid.
    | guessing which model is better | `hexa bench agentic` |
 
    `hexa --help` lists the verbs. `hexa go` suggests the next action.
-   `hexa hey <intent>` routes natural language to a verb.
+   `hexa hey <intent>` routes natural language to a playbook — the ordered
+   steps for that shape of work. Copy its steps verbatim; do not paraphrase
+   them (ADR-2609140844).
 
 1. **Trace consumers before deleting.** `hexa graph consumers <path>` across the
    *whole* workspace, then `grep` for what the graph cannot see: re-exports at a
@@ -75,7 +77,9 @@ the top-leaderboard local model scored last on the grid.
 3. **Never write a model or provider name outside `hexa-infer`.** Read the tier.
 4. **`founding-goals.md` is the one file you may not touch.** Editing it needs a
    human commit under CODEOWNERS. Retiring a goal needs a Retirement-ADR too.
-5. **Prefer `hexa hey <intent>`** when the task maps cleanly to natural language.
+5. **Start with `hexa hey <intent>`** on any non-trivial task. It hands back
+   the playbook for that shape of work — bug-fix, feature, refactor or
+   investigation — and every playbook ends at the two gates.
 6. **Proactively seek improvements.** Noticed drift or a gap → ADR → workplan.
 7. **Never end with a menu of options.** Ship the highest-value item now; say
    what shipped and what is left.

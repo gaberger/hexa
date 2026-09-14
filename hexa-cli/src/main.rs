@@ -444,7 +444,7 @@ fn print_getting_started() {
     println!("{}", "  Getting started".bold());
     println!();
     println!("    {}              Do the next right thing (autonomous)", "hexa go".cyan());
-    println!("    {}           Structured brief of recent activity", "hexa brief".cyan());
+    println!("    {}             Route a request to a playbook", "hexa hey".cyan());
     println!("    {}      Workplan lifecycle (create, execute, status)", "hexa plan list".cyan());
     println!("    {}          Configure trust, taste, inference", "hexa config".cyan());
     println!("    {}             Development tools (analyze, test, ci)", "hexa dev".cyan());

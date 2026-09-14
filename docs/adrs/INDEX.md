@@ -6,7 +6,7 @@
 > [`ARCHITECTURE.md`](../../ARCHITECTURE.md); for *why* a decision was made,
 > read the ADR itself.
 
-**1 ADRs** across 1 epochs.
+**3 ADRs** across 1 epochs.
 
 ## Epoch: `single-agent` — **current**
 
@@ -14,5 +14,7 @@ _One gateway-mediated agent loop; code-graph context as the differentiator_
 
 | ADR | Status | Title | Superseded-By |
 |-----|--------|-------|---------------|
+| ADR-2609140844 | accepted | ADR-2609140844: a routed intent returns a procedure, not a command |  |
 | ADR-2609121400 | accepted | ADR-2609121400: hexa is a scaffolding system with two gates |  |
+| ADR-2609122048 | accepted | ADR-2609122048: a tool that reports "nothing found" must prove it looked |  |
 

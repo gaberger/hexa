@@ -4,4 +4,5 @@
 
 pub mod assets;
 pub mod fmt;
+pub mod playbook;
 pub mod commands;

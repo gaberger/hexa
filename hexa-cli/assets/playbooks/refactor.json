@@ -1,0 +1,32 @@
+{
+  "name": "refactor",
+  "summary": "A change to structure that must not change behaviour. Consumers first, gate second, move third.",
+  "triggers": ["refactor", "restructure", "rename", "extract", "move", "split", "tidy", "clean", "cleanup", "dedupe", "simplify", "delete", "remove"],
+  "steps": [
+    {
+      "title": "Name every consumer before you move or delete anything",
+      "run": "hexa graph consumers <path>",
+      "done_when": "You have the list for the whole workspace, and you have grepped for crate-root re-exports and feature-gated imports, which the graph cannot see."
+    },
+    {
+      "title": "Pin the behaviour with a gate that passes today",
+      "run": "hexa loop gate '<command that exits 0 now and must still exit 0 after>'",
+      "done_when": "The command is recorded and it exits 0 before you change anything. This is the one gate shape that is allowed to start green."
+    },
+    {
+      "title": "Make the change under the gate",
+      "run": "hexa do run \"<the change>\" --file <path> --evidence '<command that must exit 0>'",
+      "done_when": "The evidence command exits 0 and the change is committed."
+    },
+    {
+      "title": "Prove the behaviour did not move with the code",
+      "run": "hexa verify \"<the claim that behaviour is unchanged>\"",
+      "done_when": "The verdict is CONFIRMED against evidence the tool gathered itself."
+    },
+    {
+      "title": "Grade the shape you leave behind",
+      "run": "hexa analyze .",
+      "done_when": "The grade is at or above where it was before you started. A refactor that lowers the grade is not a refactor."
+    }
+  ]
+}
