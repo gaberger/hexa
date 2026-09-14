@@ -63,6 +63,7 @@ the top-leaderboard local model scored last on the grid.
    | a lesson you will forget | `hexa memory store lesson:<topic> "<text>"` |
    | guessing which model is better | `hexa bench agentic` |
    | losing the thread after a long run | `hexa bro` — where the work stands, in plain words |
+   | "did the gate pass?" | `hexa loop check` — runs it and writes the verdict down |
    | parallel work that might collide | `hexa swarm '<task>' --over <slice> --gate '<cmd>'` |
    | one implementation when you want the best of several | `hexa arena '<challenge>' --target <dir> --gate '<cmd>'` |
 

@@ -291,6 +291,7 @@ pub async fn run(
         // (violations, cycles, dead exports, unused ports): the grade is a
         // sum, and a sum without its components gets a story attached.
         let mut score_components: Option<(usize, usize, Vec<String>, Vec<String>)> = None;
+        let (mut scan_files, mut scan_edges) = (0usize, 0usize);
         let deep_score: Option<u64> = match deep_analysis(&root).await {
             Ok(result) => {
                 // This count used to be printed and then dropped. `--exit-code`
@@ -326,6 +327,8 @@ pub async fn run(
                     result.file_count,
                     result.edge_count
                 );
+                scan_files = result.file_count;
+                scan_edges = result.edge_count;
                 score_components = Some((
                     result.violations.len(),
                     result.circular_deps.len(),
@@ -370,6 +373,23 @@ pub async fn run(
             "\u{2b21}".cyan(),
             letter.bold(),
             score_colored,
+        );
+
+        // Write the grade down. It was computed and thrown away, so `hexa bro`
+        // could only ever say "No grade is recorded" — true, and useless. The
+        // scan size and the commit travel with it: a grade that can move four
+        // points depending on what is in the working tree has to say what it
+        // was measured over, and when (ADR-2609141030, decision 4).
+        let _ = crate::commands::loop_cmd::update_loop(
+            &root,
+            serde_json::json!({
+                "grade": letter,
+                "score": score,
+                "grade_files": scan_files,
+                "grade_edges": scan_edges,
+                "grade_at": chrono::Utc::now().to_rfc3339(),
+                "grade_head": crate::commands::loop_cmd::head_commit(&root),
+            }),
         );
         if let Some((violations, cycles, dead, unused)) = &score_components {
             println!(

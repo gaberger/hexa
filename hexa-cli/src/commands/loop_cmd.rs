@@ -39,6 +39,8 @@ pub enum LoopAction {
     Stage {
         stage: String,
     },
+    /// Run the recorded gate and record what it did
+    Check,
     /// Forget the recorded state
     Clear,
     /// The checklist: the steps this work is made of, checked off as they land
@@ -113,6 +115,71 @@ pub fn update_loop(dir: &Path, patch: serde_json::Value) -> Result<serde_json::V
     let text = serde_json::to_string_pretty(&state).map_err(|e| e.to_string())? + "\n";
     std::fs::write(loop_path(dir), text).map_err(|e| e.to_string())?;
     Ok(state)
+}
+
+
+/// The short commit the working tree is on, if any.
+///
+/// A recorded result is about one gate and one tree. Keeping the commit lets a
+/// reader tell a result that still stands from one that was true three commits
+/// ago — the difference between a fact and a rumour.
+pub fn head_commit(dir: &Path) -> Option<String> {
+    let out = std::process::Command::new("git")
+        .current_dir(dir)
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        .ok()?;
+    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// `hexa loop check` — run the recorded gate and write down what happened.
+///
+/// The loop recorded the gate and never recorded whether it passed, so
+/// `hexa bro` said "hexa has not recorded a result for it" every single time —
+/// honest, and useless. A gate nothing ever runs is a note, not a gate.
+///
+/// Exits with the gate's own code, so this is usable in a script and in CI.
+async fn check() -> anyhow::Result<()> {
+    let dir = std::env::current_dir()?;
+    let Some(state) = read_loop(&dir) else {
+        println!("  {} nothing recorded here. Write a gate with `hexa loop gate`.", "·".dimmed());
+        return Ok(());
+    };
+    let Some(gate) = state.get("gate").and_then(|v| v.as_str()).map(String::from) else {
+        println!("  {} no gate recorded. Write one with `hexa loop gate`.", "·".dimmed());
+        return Ok(());
+    };
+
+    println!("{} {}", "⬡ gate:".cyan().bold(), gate.dimmed());
+    let out = tokio::process::Command::new("sh").arg("-c").arg(&gate).current_dir(&dir).output().await?;
+    let passed = out.status.success();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let _ = update_loop(
+        &dir,
+        serde_json::json!({
+            "gate_result": passed,
+            "gate_result_at": chrono::Utc::now().to_rfc3339(),
+            // What it was a result *about*. Change the gate and the result is
+            // no longer about anything.
+            "gate_result_for": gate,
+            "gate_result_head": head_commit(&dir),
+        }),
+    );
+
+    if passed {
+        println!("  {} the gate passed", "✓".green().bold());
+    } else {
+        println!("  {} the gate failed", "✗".red().bold());
+        for line in text.lines().rev().filter(|l| !l.trim().is_empty()).take(10).collect::<Vec<_>>().into_iter().rev() {
+            println!("    {}", line.dimmed());
+        }
+    }
+    std::process::exit(if passed { 0 } else { 1 });
 }
 
 /// Remove the loop file. Returns whether there was one.
@@ -324,6 +391,7 @@ pub async fn run(action: Option<LoopAction>) -> anyhow::Result<()> {
             update_loop(&cwd, serde_json::json!({ "stage": stage })).map_err(|e| anyhow::anyhow!(e))?;
             println!("{} {}", "\u{2b21}".green(), status_line(&cwd));
         }
+        LoopAction::Check => return check().await,
         LoopAction::Clear => {
             let was = clear_loop(&cwd).map_err(|e| anyhow::anyhow!(e))?;
             println!("{} {}", "\u{2b21}".yellow(), if was { "loop state cleared" } else { "nothing was recorded" });

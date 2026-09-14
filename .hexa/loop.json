@@ -1,28 +1,38 @@
 {
-  "adr": "ADR-2609141030",
-  "gate": "cargo test -p hexa-analysis && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings",
+  "adr": "ADR-2609140925",
+  "gate": "cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings",
+  "gate_result": true,
+  "gate_result_at": "2026-09-14T17:42:17.881040523+00:00",
+  "gate_result_for": "cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings",
+  "gate_result_head": "d1c844f",
+  "grade": "A+",
+  "grade_at": "2026-09-14T17:42:12.584431451+00:00",
+  "grade_edges": 938,
+  "grade_files": 149,
+  "grade_head": "d1c844f",
+  "score": 100,
   "stage": "done",
   "tasks": [
     {
-      "done_at": "2026-09-14T17:10:08.124784921+00:00",
+      "done_at": "2026-09-14T17:42:14.572815224+00:00",
       "status": "done",
-      "title": "the differential test: a nested checkout must not change the score"
+      "title": "hexa loop check runs the recorded gate and records the verdict"
     },
     {
-      "done_at": "2026-09-14T17:10:08.126725648+00:00",
+      "done_at": "2026-09-14T17:42:14.574301824+00:00",
       "status": "done",
-      "title": "the two walks obey one rule, and it is written once"
+      "title": "hexa analyze records the grade it took, and what it measured over"
     },
     {
-      "done_at": "2026-09-14T17:10:08.128518073+00:00",
+      "done_at": "2026-09-14T17:42:14.575708793+00:00",
       "status": "done",
-      "title": "a nested git worktree or repository is a different tree"
+      "title": "hexa bro reports both, with when, instead of saying nothing is recorded"
     },
     {
-      "done_at": "2026-09-14T17:10:08.130207246+00:00",
+      "done_at": "2026-09-14T17:42:14.577180724+00:00",
       "status": "done",
-      "title": "the JSON carries files_analysed and import_edges"
+      "title": "a recorded result goes stale when the gate or the tree moves on"
     }
   ],
-  "updated": "2026-09-14T17:10:08.131902840+00:00"
+  "updated": "2026-09-14T17:42:17.882051607+00:00"
 }

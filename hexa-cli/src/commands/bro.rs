@@ -44,18 +44,32 @@ struct Facts {
     has_record: bool,
     decision: Option<Decision>,
     gate: Option<String>,
-    /// Whether the gate last passed. Nothing in hexa records this yet, so it
-    /// is always `None` — and `hexa bro` says so out loud rather than leaving
-    /// the operator to assume green.
+    /// Whether the gate last passed, when, and what it was a result about.
+    ///
+    /// `hexa loop check` writes these. Before it existed this was always
+    /// `None`, so this report said "hexa has not recorded a result" every
+    /// single time — honest, and useless.
     gate_result: Option<bool>,
+    gate_result_at: Option<String>,
+    /// The gate string the result was about. Change the gate and the result is
+    /// no longer about anything.
+    gate_result_for: Option<String>,
+    /// The commit the result was taken on.
+    gate_result_head: Option<String>,
     stage: Option<String>,
     tasks_done: usize,
     tasks_total: usize,
     doing: Option<String>,
     last_commit: Option<(String, String)>,
     uncommitted: Option<usize>,
-    /// The recorded architecture grade. Nothing records one yet.
+    /// The recorded architecture grade, and what it was measured over.
     grade: Option<String>,
+    score: Option<u64>,
+    grade_files: Option<u64>,
+    grade_at: Option<String>,
+    grade_head: Option<String>,
+    /// The commit the working tree is on now, to compare against the two above.
+    head: Option<String>,
 }
 
 /// Run a git command in `dir` and return its trimmed stdout, or `None`.
@@ -97,6 +111,21 @@ fn read_decision(dir: &Path, id: &str) -> Decision {
     d
 }
 
+/// How long ago, in words. `None` when the timestamp is unreadable.
+///
+/// A recorded result with no date is a rumour. "It passed" and "it passed
+/// three days and eleven commits ago" are different claims.
+fn ago(stamp: &str) -> Option<String> {
+    let then = chrono::DateTime::parse_from_rfc3339(stamp).ok()?;
+    let secs = (chrono::Utc::now() - then.with_timezone(&chrono::Utc)).num_seconds().max(0);
+    Some(match secs {
+        0..=90 => "just now".to_string(),
+        91..=5400 => format!("{} minutes ago", secs / 60),
+        5401..=172_800 => format!("{} hours ago", secs / 3600),
+        _ => format!("{} days ago", secs / 86_400),
+    })
+}
+
 /// Shorten a commit subject so the sentence that carries it stays readable.
 fn short(subject: &str, max: usize) -> String {
     if subject.chars().count() <= max {
@@ -114,6 +143,9 @@ fn gather(dir: &Path) -> Facts {
         decision: None,
         gate: None,
         gate_result: None,
+        gate_result_at: None,
+        gate_result_for: None,
+        gate_result_head: None,
         stage: None,
         tasks_done: 0,
         tasks_total: 0,
@@ -121,7 +153,13 @@ fn gather(dir: &Path) -> Facts {
         last_commit: None,
         uncommitted: None,
         grade: None,
+        score: None,
+        grade_files: None,
+        grade_at: None,
+        grade_head: None,
+        head: None,
     };
+    f.head = git(dir, &["rev-parse", "--short", "HEAD"]);
 
     if let Some(st) = &state {
         f.decision =
@@ -129,7 +167,14 @@ fn gather(dir: &Path) -> Facts {
         f.gate = st.get("gate").and_then(|v| v.as_str()).map(String::from);
         f.stage = st.get("stage").and_then(|v| v.as_str()).map(String::from);
         f.gate_result = st.get("gate_result").and_then(|v| v.as_bool());
+        f.gate_result_at = st.get("gate_result_at").and_then(|v| v.as_str()).map(String::from);
+        f.gate_result_for = st.get("gate_result_for").and_then(|v| v.as_str()).map(String::from);
+        f.gate_result_head = st.get("gate_result_head").and_then(|v| v.as_str()).map(String::from);
         f.grade = st.get("grade").and_then(|v| v.as_str()).map(String::from);
+        f.score = st.get("score").and_then(|v| v.as_u64());
+        f.grade_files = st.get("grade_files").and_then(|v| v.as_u64());
+        f.grade_at = st.get("grade_at").and_then(|v| v.as_str()).map(String::from);
+        f.grade_head = st.get("grade_head").and_then(|v| v.as_str()).map(String::from);
         let tasks = loop_cmd::task_list(st);
         f.tasks_total = tasks.len();
         f.tasks_done = tasks.iter().filter(|t| t.status == "done").count();
@@ -216,9 +261,22 @@ pub fn report(dir: &Path) -> String {
             o.push_str(&format!("    {}\n", g));
             o.push_str("    This command must exit 0 before the work counts.\n");
             match f.gate_result {
-                Some(true) => o.push_str("    hexa recorded it passing.\n"),
-                Some(false) => o.push_str("    hexa recorded it failing. That is the thing to fix.\n"),
-                None => o.push_str("    hexa has not recorded a result for it. Run it to find out.\n"),
+                Some(passed) => {
+                    let when = f.gate_result_at.as_deref().and_then(ago).unwrap_or_else(|| "at some point".into());
+                    if passed {
+                        o.push_str(&format!("    It passed, {}.\n", when));
+                    } else {
+                        o.push_str(&format!("    It failed, {}. That is the thing to fix.\n", when));
+                    }
+                    // A result is about one gate and one tree. Say when it has
+                    // stopped being about either.
+                    if f.gate_result_for.as_deref() != Some(g.as_str()) {
+                        o.push_str("    The gate has changed since. Run `hexa loop check` again.\n");
+                    } else if f.gate_result_head.is_some() && f.gate_result_head != f.head {
+                        o.push_str("    The code has moved on since. That result may be stale.\n");
+                    }
+                }
+                None => o.push_str("    No result is recorded. Run `hexa loop check` to take one.\n"),
             }
         }
         None => o.push_str("    No gate is recorded. Write one with `hexa loop gate`.\n"),
@@ -262,7 +320,19 @@ pub fn report(dir: &Path) -> String {
         None => o.push_str("    hexa cannot read the working tree here.\n"),
     }
     match &f.grade {
-        Some(g) => o.push_str(&format!("    The last recorded architecture grade was {}.\n", g)),
+        Some(g) => {
+            let when = f.grade_at.as_deref().and_then(ago).unwrap_or_else(|| "at some point".into());
+            match (f.score, f.grade_files) {
+                (Some(sc), Some(files)) => o.push_str(&format!(
+                    "    The architecture graded {} at {} of 100, over {} files, {}.\n",
+                    g, sc, files, when
+                )),
+                _ => o.push_str(&format!("    The architecture graded {}, {}.\n", g, when)),
+            }
+            if f.grade_head.is_some() && f.grade_head != f.head {
+                o.push_str("    The code has moved on since. Take the grade again.\n");
+            }
+        }
         None => o.push_str("    No grade is recorded. Take one with `hexa analyze`.\n"),
     }
     o.push('\n');
@@ -334,7 +404,9 @@ mod tests {
             .to_path_buf();
         let out = report(&dir);
         assert!(
-            out.contains("has not recorded a result") || out.contains("hexa recorded it"),
+            out.contains("No result is recorded")
+                || out.contains("It passed,")
+                || out.contains("It failed,"),
             "the gate's result must be stated either way:\n{out}"
         );
     }

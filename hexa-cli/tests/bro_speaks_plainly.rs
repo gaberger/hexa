@@ -185,7 +185,10 @@ fn an_unrecorded_gate_result_is_never_implied_to_be_green() {
     let (ok, report) = bro(root);
     assert!(ok);
     assert!(
-        report.contains("has not recorded a result"),
+        report.contains("No result is recorded"),
         "a gate with no recorded result must say so:\n{report}"
     );
+    // And it must not imply one either way.
+    assert!(!report.contains("It passed"), "an unrecorded gate read as passing:\n{report}");
+    assert!(!report.contains("It failed"), "an unrecorded gate read as failing:\n{report}");
 }
