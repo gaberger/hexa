@@ -20,6 +20,19 @@ const DISPLAY_LAYERS: &[(Layer, &str)] = &[
     (Layer::AdapterSecondary, "Secondary Adapters"),
 ];
 
+/// The four inputs to the architecture grade.
+///
+/// Each field carries its items, not a count: a deduction a reader cannot
+/// trace to a file is a number to argue with rather than work to do. Cycles
+/// were the last one to hold only a count (ADR-2609140020).
+#[derive(Clone)]
+struct ScoreItems {
+    violations: usize,
+    cycles: Vec<Vec<String>>,
+    dead: Vec<String>,
+    unused: Vec<String>,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn run(
     path: &str,
@@ -290,7 +303,12 @@ pub async fn run(
         // registration step. Same `hexa-analysis` engine either way.
         // (violations, cycles, dead exports, unused ports): the grade is a
         // sum, and a sum without its components gets a story attached.
-        let mut score_components: Option<(usize, usize, Vec<String>, Vec<String>)> = None;
+        let mut score_components: Option<ScoreItems> = None;
+        // How many of the scanned files the parser actually read. A tree in
+        // a language hexa has no grammar for scans fine and parses to
+        // nothing, and every boundary claim below is then computed from an
+        // empty edge set (ADR-2609140020).
+        let mut parsed_files: Option<usize> = None;
         let deep_score: Option<u64> = match deep_analysis(&root).await {
             Ok(result) => {
                 // This count used to be printed and then dropped. `--exit-code`
@@ -320,22 +338,23 @@ pub async fn run(
                         println!("        … and {} more", result.violations.len() - 10);
                     }
                 }
+                parsed_files = Some(result.file_count);
                 println!(
                     "    {} Analysed {} files, {} import edges",
-                    "\u{2713}".green(),
+                    if result.file_count == 0 { "\u{26a0}".yellow() } else { "\u{2713}".green() },
                     result.file_count,
                     result.edge_count
                 );
-                score_components = Some((
-                    result.violations.len(),
-                    result.circular_deps.len(),
-                    result
+                score_components = Some(ScoreItems {
+                    violations: result.violations.len(),
+                    cycles: result.circular_deps.clone(),
+                    dead: result
                         .dead_exports
                         .iter()
                         .map(|d| format!("{}:{} {}", d.file, d.line, d.export_name))
                         .collect::<Vec<_>>(),
-                    result.unused_ports.clone(),
-                ));
+                    unused: result.unused_ports.clone(),
+                });
                 Some(result.health_score as u64)
             }
             Err(e) => {
@@ -344,17 +363,35 @@ pub async fn run(
             }
         };
 
-        if all_violation_count == 0 {
+        // "0 boundary violations" is a claim about files that were read.
+        // Saying it over a tree the parser could not open states the one
+        // thing the run does not know (ADR-2609140020).
+        let nothing_parsed = total_files > 0 && parsed_files == Some(0);
+        if all_violation_count == 0 && !nothing_parsed {
             println!("    {} 0 boundary violations", "\u{2713}".green());
         }
 
         // Compute final score and grade. The tree-sitter score wins when the
         // deep pass ran; the offline heuristic is the fallback.
+        if nothing_parsed {
+            println!();
+            println!(
+                "  {} NOT GRADED — {} files scanned, 0 parsed",
+                "\u{2717}".red(),
+                total_files
+            );
+            println!(
+                "    {}",
+                "hexa parses Rust, Go and TypeScript. Nothing here was read, so every boundary result above is computed from an empty graph — including a score of 100. A grade is withheld rather than awarded on no evidence.".yellow()
+            );
+        }
         let score = deep_score.unwrap_or_else(|| {
             let v = all_violation_count as u64;
             if v == 0 { 100 } else { 100u64.saturating_sub(v * 10) }
         });
-        final_score = Some(score);
+        // Left as None so `--grade` bails instead of comparing a floor
+        // against a number nothing produced.
+        final_score = if nothing_parsed { None } else { Some(score) };
         let letter = grade_letter(score);
         let score_colored = match score {
             95..=100 => format!("{}", score).bright_green().to_string(),
@@ -364,21 +401,36 @@ pub async fn run(
             _ => format!("{}", score).bright_red().to_string(),
         };
 
-        println!();
-        println!(
-            "  {} Architecture grade: {} — score {}/100",
-            "\u{2b21}".cyan(),
-            letter.bold(),
-            score_colored,
-        );
-        if let Some((violations, cycles, dead, unused)) = &score_components {
+        // Printing "A+ — 100/100" directly under "NOT GRADED" states both
+        // halves of a contradiction and lets a reader keep the half they
+        // like. The grade block is the claim being withheld, so it goes.
+        if !nothing_parsed {
+            println!();
+            println!(
+                "  {} Architecture grade: {} — score {}/100",
+                "\u{2b21}".cyan(),
+                letter.bold(),
+                score_colored,
+            );
+        }
+        if let Some(ScoreItems { violations, cycles, dead, unused }) = &score_components.clone().filter(|_| !nothing_parsed) {
             println!(
                 "    violations {} · cycles {} · dead exports {} · unused ports {}",
                 violations,
-                cycles,
+                cycles.len(),
                 dead.len(),
                 unused.len()
             );
+            // A cycle costs 15 points, more than any other single item, and
+            // used to be the one deduction printed as a bare number. The
+            // footer below promises that every item names its fix; it did
+            // not hold for the most expensive one (ADR-2609140020).
+            for c in cycles.iter().take(8) {
+                println!("      cycle         {}", c.join(" → "));
+            }
+            if cycles.len() > 8 {
+                println!("      … and {} more cycles", cycles.len() - 8);
+            }
             for d in dead.iter().take(8) {
                 println!("      dead export   {}", d);
             }
@@ -390,7 +442,7 @@ pub async fn run(
             }
             println!("    {}", SCORE_FORMULA.dimmed());
             println!("    {}", GRADE_BANDS.dimmed());
-            if *violations > 0 || *cycles > 0 || !dead.is_empty() || !unused.is_empty() {
+            if *violations > 0 || !cycles.is_empty() || !dead.is_empty() || !unused.is_empty() {
                 // Said here because it was not done: an agent relayed "B, 87,
                 // unchanged" five times and fixed only the two items its own
                 // diff had added. The grade is a property of the tree.
@@ -1922,9 +1974,26 @@ async fn run_json(root: &Path, strict: bool, adr_compliance_only: bool) -> anyho
                 "dead_exports": deep.dead_exports.len(),
                 "unused_ports": deep.unused_ports.len(),
             });
-            // And the items themselves, so a count can be checked.
+            // And the items themselves, so a count can be checked. This
+            // held for two of the four inputs and not for the two that
+            // carry the most weight: `violations` below is the import-scan
+            // list, which found 4 where the authoritative pass found 5, and
+            // cycles were serialized nowhere at all. A JSON consumer was
+            // handed a count it could not reconcile (ADR-2609140020).
             result["unused_ports"] = serde_json::json!(deep.unused_ports);
             result["dead_exports"] = serde_json::json!(deep.dead_exports);
+            result["circular_deps"] = serde_json::json!(deep.circular_deps);
+            result["boundary_violations"] = serde_json::json!(deep
+                .violations
+                .iter()
+                .map(|v| serde_json::json!({
+                    "from_file": v.edge.from_file,
+                    "to_file": v.edge.to_file,
+                    "import_path": v.edge.import_path,
+                    "line": v.edge.line,
+                    "rule": v.rule,
+                }))
+                .collect::<Vec<_>>());
         }
 
         // Compute local score if nexus didn't provide one

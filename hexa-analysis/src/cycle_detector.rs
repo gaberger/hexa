@@ -5,14 +5,30 @@
 //!
 //! ADR-034 Phase 3.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::domain::ImportEdge;
 
-/// Detect all circular dependency chains in the import graph.
+/// Detect all circular dependency clusters in the import graph.
 ///
-/// Returns each cycle as a vector of file paths forming the loop.
-/// A cycle `[A, B, C]` means `A → B → C → A`.
+/// Returns each cluster as a sorted vector of module keys. A cluster
+/// `[A, B, C]` means every one of those modules can reach every other, so
+/// the three cannot be built, tested or reasoned about apart.
+///
+/// This is the strongly connected components of the module graph, not a
+/// walk that collects back-edges. The difference is not academic
+/// (ADR-2609140020): the previous implementation started a DFS from
+/// `HashMap::keys()` and walked neighbours out of a `HashSet`, both of
+/// which Rust seeds randomly per process. On one fixture eight consecutive
+/// runs over unchanged code reported 2, 3, 4 and 5 cycles, and since the
+/// grade subtracts 15 points per cycle the same tree scored anywhere from
+/// 0 to 19. A grade that is a random variable is not a gate.
+///
+/// Order is not the only thing that was wrong. A single DFS with one global
+/// `visited` set finds back-edges on whichever spanning forest it happens to
+/// build, so it cannot enumerate cycles at all — the count depended on entry
+/// order by construction, not merely on the hash seed. Components are
+/// well defined regardless of where the walk starts.
 pub fn detect_cycles(edges: &[ImportEdge]) -> Vec<Vec<String>> {
     // Nodes are modules, keyed per language (see `module_key`). Self-edges
     // are intra-module reuse, not cycles.
@@ -21,61 +37,89 @@ pub fn detect_cycles(edges: &[ImportEdge]) -> Vec<Vec<String>> {
         .map(|e| (module_key(&e.from_file), module_key(&e.to_file)))
         .filter(|(a, b)| a != b)
         .collect();
-    let mut graph: HashMap<&str, HashSet<&str>> = HashMap::new();
+    // BTree, not Hash: iteration order is the input to the result, so it
+    // has to come from the data rather than from a per-process seed.
+    let mut graph: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
     for (from, to) in &keyed {
         graph.entry(from.as_str()).or_default().insert(to.as_str());
+        // A node with no outgoing edges still belongs to the graph, or a
+        // component ending at it is never closed.
+        graph.entry(to.as_str()).or_default();
     }
 
-    let mut cycles = Vec::new();
-    let mut visited = HashSet::new();
-    let mut in_stack = HashSet::new();
-    let mut stack = Vec::new();
-
+    let mut state = Tarjan {
+        graph: &graph,
+        index: BTreeMap::new(),
+        low: BTreeMap::new(),
+        on_stack: BTreeSet::new(),
+        stack: Vec::new(),
+        next: 0,
+        components: Vec::new(),
+    };
     for node in graph.keys() {
-        if !visited.contains(*node) {
-            dfs(
-                node,
-                &graph,
-                &mut visited,
-                &mut in_stack,
-                &mut stack,
-                &mut cycles,
-            );
+        if !state.index.contains_key(*node) {
+            state.walk(node);
         }
     }
 
-    cycles
+    let mut components = state.components;
+    // A component of one node is a module that merely imports others.
+    // Only a mutual reach is a cycle.
+    components.retain(|c| c.len() > 1);
+    for c in &mut components {
+        c.sort();
+    }
+    components.sort();
+    components
 }
 
-fn dfs<'a>(
-    node: &'a str,
-    graph: &HashMap<&'a str, HashSet<&'a str>>,
-    visited: &mut HashSet<&'a str>,
-    in_stack: &mut HashSet<&'a str>,
-    stack: &mut Vec<&'a str>,
-    cycles: &mut Vec<Vec<String>>,
-) {
-    visited.insert(node);
-    in_stack.insert(node);
-    stack.push(node);
+struct Tarjan<'a> {
+    graph: &'a BTreeMap<&'a str, BTreeSet<&'a str>>,
+    index: BTreeMap<&'a str, usize>,
+    low: BTreeMap<&'a str, usize>,
+    on_stack: BTreeSet<&'a str>,
+    stack: Vec<&'a str>,
+    next: usize,
+    components: Vec<Vec<String>>,
+}
 
-    if let Some(neighbors) = graph.get(node) {
-        for &neighbor in neighbors {
-            if !visited.contains(neighbor) {
-                dfs(neighbor, graph, visited, in_stack, stack, cycles);
-            } else if in_stack.contains(neighbor) {
-                // Found a cycle — extract from the stack
-                if let Some(start) = stack.iter().position(|&n| n == neighbor) {
-                    let cycle: Vec<String> =
-                        stack[start..].iter().map(|s| s.to_string()).collect();
-                    cycles.push(cycle);
+impl<'a> Tarjan<'a> {
+    fn walk(&mut self, node: &'a str) {
+        self.index.insert(node, self.next);
+        self.low.insert(node, self.next);
+        self.next += 1;
+        self.stack.push(node);
+        self.on_stack.insert(node);
+
+        if let Some(neighbors) = self.graph.get(node) {
+            for &next in neighbors.iter() {
+                if !self.index.contains_key(next) {
+                    self.walk(next);
+                    let child = self.low[next];
+                    let mine = self.low[node];
+                    self.low.insert(node, mine.min(child));
+                } else if self.on_stack.contains(next) {
+                    let seen = self.index[next];
+                    let mine = self.low[node];
+                    self.low.insert(node, mine.min(seen));
                 }
             }
         }
-    }
 
-    stack.pop();
-    in_stack.remove(node);
+        // A node whose lowlink is its own index is the root of a component:
+        // everything above it on the stack can reach back to it.
+        if self.low[node] == self.index[node] {
+            let mut component = Vec::new();
+            while let Some(top) = self.stack.pop() {
+                self.on_stack.remove(top);
+                component.push(top.to_string());
+                if top == node {
+                    break;
+                }
+            }
+            self.components.push(component);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -135,6 +179,68 @@ mod tests {
     #[test]
     fn empty_graph() {
         assert!(detect_cycles(&[]).is_empty());
+    }
+
+    /// Two loops sharing a node are one knot, not two. `a → b → a` and
+    /// `b → c → b` means all three modules reach each other, and breaking
+    /// one edge does not separate them.
+    ///
+    /// This is the case the old back-edge walk got wrong in both
+    /// directions: it reported two cycles here, and which two depended on
+    /// where the walk started (ADR-2609140020).
+    #[test]
+    fn interlocking_loops_are_one_component() {
+        let edges = vec![
+            edge("a.ts", "b.ts"),
+            edge("b.ts", "a.ts"),
+            edge("b.ts", "c.ts"),
+            edge("c.ts", "b.ts"),
+        ];
+        let cycles = detect_cycles(&edges);
+        assert_eq!(cycles.len(), 1, "one knot, not two: {cycles:?}");
+        assert_eq!(cycles[0], vec!["a.ts", "b.ts", "c.ts"]);
+    }
+
+    /// The score subtracts 15 points per cycle, so the answer has to come
+    /// from the graph and not from the order the edges arrived in. Every
+    /// rotation of the same edge list must give the identical result,
+    /// node order included.
+    #[test]
+    fn the_answer_does_not_depend_on_the_order_of_the_edges() {
+        let edges = vec![
+            edge("src/domain/a.rs", "src/ports/b.rs"),
+            edge("src/ports/b.rs", "src/usecases/c.rs"),
+            edge("src/usecases/c.rs", "src/domain/a.rs"),
+            edge("src/adapters/d.rs", "src/ports/b.rs"),
+            edge("src/usecases/c.rs", "src/adapters/d.rs"),
+            edge("src/adapters/d.rs", "src/usecases/c.rs"),
+        ];
+        let expected = detect_cycles(&edges);
+        assert!(!expected.is_empty(), "the fixture must contain a cycle to be worth checking");
+        for rotation in 1..edges.len() {
+            let mut rotated = edges.clone();
+            rotated.rotate_left(rotation);
+            assert_eq!(detect_cycles(&rotated), expected, "rotation {rotation} disagreed");
+        }
+        let mut reversed = edges.clone();
+        reversed.reverse();
+        assert_eq!(detect_cycles(&reversed), expected, "reversed disagreed");
+    }
+
+    /// Two knots that share nothing stay two, and they come back in a
+    /// stable order rather than whichever the walk reached first.
+    #[test]
+    fn separate_knots_stay_separate_and_come_back_sorted() {
+        let edges = vec![
+            edge("z.ts", "y.ts"),
+            edge("y.ts", "z.ts"),
+            edge("a.ts", "b.ts"),
+            edge("b.ts", "a.ts"),
+        ];
+        let cycles = detect_cycles(&edges);
+        assert_eq!(cycles.len(), 2);
+        assert_eq!(cycles[0], vec!["a.ts", "b.ts"]);
+        assert_eq!(cycles[1], vec!["y.ts", "z.ts"]);
     }
 }
 
