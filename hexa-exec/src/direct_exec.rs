@@ -904,12 +904,66 @@ pub(crate) fn apply_edit(abs_path: &std::path::Path, content: &str, edit: &Edit)
     std::fs::write(abs_path, new_content).map_err(|e| e.to_string())
 }
 
+/// Does this gate defeat itself?
+///
+/// `run_evidence` runs every gate under `set -o pipefail`, which is right: a
+/// gate like `cargo test … | tail` otherwise returns tail's 0 and a failing
+/// test reads as passed. Measured 2026-06-04, a failing test got committed
+/// because of exactly that.
+///
+/// But `pipefail` turns a *reader that stops early* into a failure. `grep -q`
+/// exits the moment it matches and closes the pipe; the writer then dies, and
+/// `pipefail` reports the writer's death. A gate that matched reads as a gate
+/// that failed — the worst direction, because the work was good.
+///
+/// Observed: `cargo test 2>&1 | grep -qE "test result: ok\. [8-9] passed"`
+/// exits 0 on its own and 101 under `pipefail`, on a build whose fifteen tests
+/// all passed.
+///
+/// The exit code cannot always tell the two apart. A simple writer dies of
+/// SIGPIPE and returns 141, which is recognisable; cargo catches the broken
+/// pipe and exits 101, which is indistinguishable from a real test failure. So
+/// the shape is refused rather than the symptom guessed at.
+pub(crate) fn self_defeating(cmd: &str) -> Option<String> {
+    // Only readers that stop before the end. `tail` and plain `grep` read
+    // everything, so they are safe and stay legal — `| tail` is the very case
+    // `pipefail` was added for.
+    const EARLY_STOPPERS: &[(&str, &str)] = &[
+        ("grep -q", "drop the `-q` and redirect instead: `grep -E … >/dev/null`"),
+        ("grep -sq", "drop the `-q` and redirect instead: `grep -E … >/dev/null`"),
+        ("grep -qE", "use `grep -E … >/dev/null`"),
+        ("grep -qs", "use `grep -E … >/dev/null`"),
+        ("grep -m", "count instead: `grep -cE … >/dev/null`"),
+        ("| head", "use `grep -cE … >/dev/null`, or read the whole output"),
+        ("|head", "use `grep -cE … >/dev/null`, or read the whole output"),
+    ];
+    if !cmd.contains('|') {
+        return None;
+    }
+    for (needle, fix) in EARLY_STOPPERS {
+        if cmd.contains(needle) {
+            return Some(format!(
+                "this gate pipes into `{needle}`, which stops reading as soon as it is satisfied. \
+                 The command upstream then dies on the closed pipe, and `set -o pipefail` reports \
+                 that as the gate failing — so a gate that matched reads as a gate that failed. \
+                 {fix}."
+            ));
+        }
+    }
+    None
+}
+
 pub async fn run_evidence(cmd: &str, repo_root: &std::path::Path) -> (bool, String) {
     // CRITICAL: run under bash with `pipefail` so the exit code reflects the FIRST
     // failing command in a pipe, not the last. Without this, an evidence command
     // like `cargo test … | tail` returns tail's 0 and a FAILING test reads as
     // passed — defeating the entire evidence gate (measured 2026-06-04: a failing
     // test got committed because of exactly this).
+    // Refuse the shape before running it. Failing loudly here beats failing
+    // mysteriously twenty minutes into a build.
+    if let Some(why) = self_defeating(cmd) {
+        return (false, format!("gate refused: {why}"));
+    }
     let wrapped = format!("set -o pipefail; {}", cmd);
     let out = tokio::process::Command::new("bash")
         .arg("-c")
@@ -921,6 +975,15 @@ pub async fn run_evidence(cmd: &str, repo_root: &std::path::Path) -> (bool, Stri
         Ok(o) => {
             let mut s = String::from_utf8_lossy(&o.stdout).into_owned();
             s.push_str(&String::from_utf8_lossy(&o.stderr));
+            // 141 is 128 + SIGPIPE: something downstream stopped reading. Say
+            // so, because the output is usually empty and the exit code alone
+            // sends the reader looking for a test failure that never happened.
+            if o.status.code() == Some(141) {
+                s.push_str(
+                    "\n[hexa] the pipeline exited 141 (SIGPIPE): a reader in it closed the pipe \
+                     before the writer finished. Under `set -o pipefail` that reads as failure.",
+                );
+            }
             (o.status.success(), s)
         }
         Err(e) => (false, format!("spawn evidence: {}", e)),
@@ -1147,5 +1210,62 @@ mod commit_snapshot_tests {
         let st = Git::new("git").args(["status", "--porcelain"]).current_dir(dir).output().unwrap();
         assert!(String::from_utf8_lossy(&st.stdout).contains("unrelated.rs"),
             "unrelated WIP must remain uncommitted");
+    }
+}
+
+#[cfg(test)]
+mod gate_shape_tests {
+    use super::{run_evidence, self_defeating};
+
+    #[test]
+    fn a_gate_that_stops_reading_early_is_refused() {
+        // The exact gate that reported a passing build as failed.
+        let g = r#"cd examples/ring-rs && cargo test 2>&1 | grep -qE "test result: ok\. [8-9] passed""#;
+        let why = self_defeating(g).expect("this gate defeats itself");
+        assert!(why.contains("stops reading"), "{why}");
+        assert!(why.contains("grep -E"), "the refusal must name the fix: {why}");
+    }
+
+    #[test]
+    fn the_readers_that_read_everything_stay_legal() {
+        // `| tail` is the case pipefail was added for. Refusing it would undo
+        // that fix while claiming to improve on it.
+        assert!(self_defeating("cargo test | tail -5").is_none());
+        assert!(self_defeating("cargo test 2>&1 | grep -E 'ok' >/dev/null").is_none());
+        assert!(self_defeating("cargo test 2>&1 | grep -cE 'ok' >/dev/null").is_none());
+        assert!(self_defeating("cargo test").is_none(), "no pipe, nothing to defeat");
+        assert!(self_defeating("").is_none());
+    }
+
+    #[test]
+    fn head_and_first_match_are_caught_too() {
+        assert!(self_defeating("cargo test | head -3").is_some());
+        assert!(self_defeating("cargo test |head").is_some());
+        assert!(self_defeating("cargo test | grep -m1 ok").is_some());
+    }
+
+    /// The refusal is a verdict, not a crash: it reports false and says why,
+    /// and it does so without running anything.
+    #[tokio::test]
+    async fn a_refused_gate_reports_why_and_runs_nothing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let marker = dir.path().join("ran.txt");
+        let cmd = format!("touch {} | grep -q x", marker.display());
+        let (ok, why) = run_evidence(&cmd, dir.path()).await;
+        assert!(!ok, "a refused gate must not report success");
+        assert!(why.contains("gate refused"), "{why}");
+        assert!(!marker.exists(), "the gate ran despite being refused");
+    }
+
+    /// And a real pipeline still works, with pipefail still protecting it.
+    #[tokio::test]
+    async fn a_good_gate_still_runs_and_pipefail_still_bites() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (ok, _) = run_evidence("echo 'ok. 9 passed' | grep -E '9 passed' >/dev/null", dir.path()).await;
+        assert!(ok, "a well-formed gate must still pass");
+
+        // The bug pipefail exists for: a failing writer behind a succeeding reader.
+        let (ok, _) = run_evidence("(echo boom; exit 1) | tail -1", dir.path()).await;
+        assert!(!ok, "pipefail stopped protecting the gate");
     }
 }
