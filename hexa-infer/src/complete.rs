@@ -8,6 +8,7 @@
 //! This is that call as a function. Same inputs, same output, one process.
 
 use hexa_core::domain::messages::{ContentBlock, Message, Role};
+use hexa_core::domain::messages::StopReason;
 use hexa_core::ports::inference::{IInferencePort, InferenceRequest, Priority};
 
 use crate::adapters::{
@@ -73,20 +74,83 @@ fn resolve_key(endpoint: &Endpoint) -> String {
     if endpoint.secret_key.is_empty() {
         return String::new();
     }
-    match std::env::var(&endpoint.secret_key) {
-        Ok(v) if !v.is_empty() => v,
-        // A literal key in the field rather than a variable name: tolerated,
-        // because a hand-edited registry is a real thing operators produce.
-        _ if endpoint.secret_key.starts_with("sk-") => endpoint.secret_key.clone(),
-        _ => {
-            tracing::warn!(
-                endpoint = %endpoint.id,
-                variable = %endpoint.secret_key,
-                "no environment value for this endpoint's key reference"
-            );
-            String::new()
+    if let Ok(v) = std::env::var(&endpoint.secret_key) {
+        if !v.is_empty() {
+            return v;
         }
     }
+    // A key that lives in a file is the normal case, not an exotic one
+    // (ADR-2609131811). Read by the tool, into one header; never printed.
+    for path in key_files() {
+        if let Some(v) = value_in_env_file(&path, &endpoint.secret_key) {
+            return v;
+        }
+    }
+    // A literal key in the field rather than a variable name: tolerated,
+    // because a hand-edited registry is a real thing operators produce.
+    if endpoint.secret_key.starts_with("sk-") {
+        return endpoint.secret_key.clone();
+    }
+    tracing::warn!(
+        endpoint = %endpoint.id,
+        variable = %endpoint.secret_key,
+        looked_in = %key_files().iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", "),
+        "no value for this endpoint's key reference, in the environment or any env file"
+    );
+    String::new()
+}
+
+/// Where a named key may live, in the order they are consulted
+/// (ADR-2609131811 §1). A path that does not exist is simply skipped.
+fn key_files() -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    if let Ok(p) = std::env::var("HEXA_ENV_FILE") {
+        if !p.is_empty() {
+            out.push(std::path::PathBuf::from(p));
+        }
+    }
+    // Same way `registry::registry_path` finds home: no new dependency.
+    if let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) {
+        out.push(home.join(".hexa/.env"));
+    }
+    let root = std::env::var("HEXA_PROJECT_ROOT")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
+    out.push(root.join(".env"));
+    out
+}
+
+/// `name`'s value in an env file, if the file has one.
+fn value_in_env_file(path: &std::path::Path, name: &str) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    parse_env_value(&text, name)
+}
+
+/// The ordinary env-file format: `KEY=value` per line, an `export ` prefix
+/// tolerated, surrounding quotes stripped, blanks and `#` comments ignored.
+/// A line that is not a assignment is skipped rather than guessed at.
+fn parse_env_value(text: &str, name: &str) -> Option<String> {
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let line = line.strip_prefix("export ").unwrap_or(line).trim_start();
+        let Some((key, value)) = line.split_once('=') else { continue };
+        if key.trim() != name {
+            continue;
+        }
+        let v = value.trim();
+        let v = v
+            .strip_prefix('"')
+            .and_then(|r| r.strip_suffix('"'))
+            .or_else(|| v.strip_prefix('\'').and_then(|r| r.strip_suffix('\'')))
+            .unwrap_or(v);
+        if !v.is_empty() {
+            return Some(v.to_string());
+        }
+    }
+    None
 }
 
 
@@ -142,8 +206,23 @@ pub async fn complete_text(
 
     // The daemon returned a flat `content` string. Concatenating the text blocks reproduces that
     // exactly for a reply with no tool use, which is all this path ever asks for.
-    let text: String = response
-        .content
+    text_or_truncation(&response.content, response.stop_reason, model, max_tokens)
+}
+
+/// The reply's text, or an error when there is none because the model ran
+/// out of budget (ADR-2609131835 §1).
+///
+/// A reasoning model emits its thinking first and its answer after, into one
+/// budget. When the budget covers only the thinking the reply carries no
+/// content at all, and `Ok("")` makes that indistinguishable from a model
+/// that answered with nothing.
+fn text_or_truncation(
+    content: &[ContentBlock],
+    stop_reason: StopReason,
+    model: &str,
+    max_tokens: u32,
+) -> Result<String, String> {
+    let text: String = content
         .iter()
         .filter_map(|b| match b {
             ContentBlock::Text { text } => Some(text.as_str()),
@@ -152,6 +231,13 @@ pub async fn complete_text(
         .collect::<Vec<_>>()
         .join("");
 
+    if text.trim().is_empty() && stop_reason == StopReason::MaxTokens {
+        return Err(format!(
+            "{model} produced no answer within {max_tokens} tokens — it stopped at the limit, \
+             which a reasoning model does when the budget covers its thinking but not its reply; \
+             raise it with HEXA_REVIEW_MAX_TOKENS"
+        ));
+    }
     Ok(text)
 }
 
@@ -302,5 +388,95 @@ mod tool_tests {
     #[test]
     fn absent_tools_are_legitimately_empty() {
         assert_eq!(parse_tools(&serde_json::Value::Null).unwrap().len(), 0);
+    }
+}
+
+#[cfg(test)]
+mod env_file_tests {
+    use super::parse_env_value;
+
+    /// ADR-2609131811 §2: the ordinary format, and nothing invented.
+    #[test]
+    fn the_ordinary_env_file_format_parses() {
+        let text = "\
+# a comment
+EMPTY=
+
+PLAIN=abc123
+export EXPORTED=def456
+QUOTED=\"ghi789\"
+SINGLE='jkl012'
+  SPACED  =  mno345
+NOT AN ASSIGNMENT
+TRAILING=xyz
+";
+        assert_eq!(parse_env_value(text, "PLAIN").as_deref(), Some("abc123"));
+        assert_eq!(parse_env_value(text, "EXPORTED").as_deref(), Some("def456"), "an export prefix is tolerated");
+        assert_eq!(parse_env_value(text, "QUOTED").as_deref(), Some("ghi789"), "double quotes stripped");
+        assert_eq!(parse_env_value(text, "SINGLE").as_deref(), Some("jkl012"), "single quotes stripped");
+        assert_eq!(parse_env_value(text, "SPACED").as_deref(), Some("mno345"), "whitespace around the name and value");
+        assert_eq!(parse_env_value(text, "TRAILING").as_deref(), Some("xyz"));
+        assert_eq!(parse_env_value(text, "EMPTY"), None, "an empty value is no value");
+        assert_eq!(parse_env_value(text, "MISSING"), None);
+        assert_eq!(parse_env_value(text, "NOT"), None, "a line that is not an assignment is skipped");
+    }
+
+    /// A name that is a prefix of another is not that other.
+    #[test]
+    fn a_name_matches_exactly_never_by_prefix() {
+        let text = "TT_STUDIO_GATEWAY_KEY_OLD=stale\nTT_STUDIO_GATEWAY_KEY=current\n";
+        assert_eq!(parse_env_value(text, "TT_STUDIO_GATEWAY_KEY").as_deref(), Some("current"));
+        assert_eq!(parse_env_value(text, "TT_STUDIO").as_deref(), None);
+    }
+
+    /// The first assignment wins, as a shell would take it on first read.
+    #[test]
+    fn the_first_assignment_wins() {
+        assert_eq!(parse_env_value("K=first\nK=second\n", "K").as_deref(), Some("first"));
+    }
+
+    #[test]
+    fn an_empty_or_malformed_file_yields_nothing_rather_than_panicking() {
+        assert_eq!(parse_env_value("", "K"), None);
+        assert_eq!(parse_env_value("\n\n#only comments\n", "K"), None);
+        assert_eq!(parse_env_value("=novalue\n", "K"), None);
+    }
+}
+
+#[cfg(test)]
+mod truncated_tests {
+    use super::text_or_truncation;
+    use hexa_core::domain::messages::{ContentBlock, StopReason};
+
+    fn text(t: &str) -> Vec<ContentBlock> {
+        vec![ContentBlock::Text { text: t.to_string() }]
+    }
+
+    /// ADR-2609131835 §1: no text plus a max-tokens stop is a truncation,
+    /// named, with the knob to turn. This is the reply gpt-oss-120b sent.
+    #[test]
+    fn no_text_and_a_max_tokens_stop_is_an_error_that_names_the_budget() {
+        let err = text_or_truncation(&[], StopReason::MaxTokens, "openai/gpt-oss-120b", 4096).unwrap_err();
+        assert!(err.contains("openai/gpt-oss-120b"), "{err}");
+        assert!(err.contains("4096"), "names the budget it hit: {err}");
+        assert!(err.contains("HEXA_REVIEW_MAX_TOKENS"), "names the knob: {err}");
+
+        // Whitespace-only is no answer either.
+        assert!(text_or_truncation(&text("  \n "), StopReason::MaxTokens, "m", 10).is_err());
+    }
+
+    /// An ordinary stop with no text is a real, if empty, answer — the
+    /// distinction ADR-2609131646 drew, kept here.
+    #[test]
+    fn no_text_and_an_ordinary_stop_is_an_empty_answer_not_an_error() {
+        assert_eq!(text_or_truncation(&[], StopReason::EndTurn, "m", 4096).unwrap(), "");
+    }
+
+    /// Text is returned whole under either stop: a truncated reply that
+    /// still said something is that something.
+    #[test]
+    fn text_is_returned_under_either_stop() {
+        assert_eq!(text_or_truncation(&text("{\"findings\":[]}"), StopReason::EndTurn, "m", 4096).unwrap(), "{\"findings\":[]}");
+        assert_eq!(text_or_truncation(&text("partial"), StopReason::MaxTokens, "m", 4096).unwrap(), "partial");
     }
 }

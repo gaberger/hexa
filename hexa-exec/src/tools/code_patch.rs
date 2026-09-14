@@ -21,6 +21,12 @@
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
+
+/// The workspace's crates, for inferring which one a path belongs to.
+/// One list rather than a chain of arms that goes stale on every add or
+/// remove (ADR-2609132049 §2).
+const WORKSPACE_CRATES: &[&str] =
+    &["hexa-cli", "hexa-core", "hexa-exec", "hexa-infer", "hexa-analysis", "hexa-graph", "hexa-git"];
 use std::path::Path;
 use std::time::Instant;
 
@@ -39,10 +45,10 @@ impl Tool for CodePatch {
     fn description(&self) -> &'static str {
         "Mutate an existing source file. Three modes: replace_lines \
          (start..=end inclusive), replace_string (must be unique), or \
-         append. Path must be repo-relative under hexa-nexus/src/, \
-         hexa-cli/src/, hexa-core/src/, hexa-agent/src/, hexa-parser/src/, \
-         hexa-analyzer/src/, examples/, scripts/, docs/, or \
-         spacetime-modules/. The action_executor will run cargo_check \
+         append. Path must be repo-relative under the source or tests of a \
+         workspace crate — hexa-cli, hexa-core, hexa-exec, hexa-infer, \
+         hexa-analysis, hexa-graph, hexa-git — or examples/, scripts/, \
+         docs/ or tests/. The action_executor will run cargo_check \
          (or appropriate validator) before the patch lands. Use this to \
          apply ADR/spec mitigations, add new tools, fix bugs."
     }
@@ -92,13 +98,17 @@ impl Tool for CodePatch {
         if rel_path.starts_with('/') || rel_path.contains("..") {
             return ToolResult::err("path must be repo-relative; absolute and `..` rejected", start.elapsed().as_millis() as u64);
         }
+        // The workspace as it is. Five of the crates this list used to name
+        // were removed with HexFlo and the Node host; an allowlist naming
+        // directories that do not exist permits nothing and misleads a
+        // reader about what the workspace contains (ADR-2609132049 §2).
         let allowed_prefixes = [
-            "hexa-nexus/src/", "hexa-cli/src/", "hexa-core/src/", "hexa-agent/src/",
-            "hexa-parser/src/", "hexa-analyzer/src/", "hexa-desktop/src/",
-            "hexa-nexus/tests/", "hexa-cli/tests/", "hexa-core/tests/", "hexa-agent/tests/",
-            "hexa-parser/tests/", "hexa-analyzer/tests/", "hexa-desktop/tests/",
-            "hexa-cli/assets/", "hexa-nexus/assets/",
-            "examples/", "scripts/", "docs/", "spacetime-modules/", "tests/",
+            "hexa-cli/src/", "hexa-core/src/", "hexa-exec/src/", "hexa-infer/src/",
+            "hexa-analysis/src/", "hexa-graph/src/", "hexa-git/src/",
+            "hexa-cli/tests/", "hexa-core/tests/", "hexa-exec/tests/", "hexa-infer/tests/",
+            "hexa-analysis/tests/", "hexa-graph/tests/", "hexa-git/tests/",
+            "hexa-cli/assets/",
+            "examples/", "scripts/", "docs/", "tests/",
         ];
         if !allowed_prefixes.iter().any(|p| rel_path.starts_with(p))
             && !rel_path.ends_with("/Cargo.toml")
@@ -240,23 +250,12 @@ impl Tool for CodePatch {
         // Chain cargo_check for Rust files to catch compile errors immediately
         let cargo_check_result = if rel_path.ends_with(".rs") {
             // Infer crate from path prefix
-            let crate_name = if rel_path.starts_with("hexa-nexus/src/") {
-                "hexa-nexus"
-            } else if rel_path.starts_with("hexa-cli/src/") {
-                "hexa-cli"
-            } else if rel_path.starts_with("hexa-agent/src/") {
-                "hexa-agent"
-            } else if rel_path.starts_with("hexa-core/src/") {
-                "hexa-core"
-            } else if rel_path.starts_with("hexa-parser/src/") {
-                "hexa-parser"
-            } else if rel_path.starts_with("hexa-analyzer/src/") {
-                "hexa-analyzer"
-            } else if rel_path.starts_with("hexa-desktop/src/") {
-                "hexa-desktop"
-            } else {
-                ""
-            };
+            // The crate is the first path segment, when that segment is a
+            // workspace member. A chain of hardcoded arms went stale the
+            // moment a crate was added or removed, and five of its arms
+            // named crates that no longer exist (ADR-2609132049 §2).
+            let first = rel_path.split('/').next().unwrap_or("");
+            let crate_name = if WORKSPACE_CRATES.contains(&first) { first } else { "" };
             
             let check_tool = CargoCheck;
             let check_input = json!({

@@ -396,18 +396,28 @@ mod tests {
 
     #[test]
     fn an_unrecorded_gate_result_is_said_out_loud() {
-        // The repository this test runs in has a gate and no recorded result,
-        // which is the case the operator must never read as green.
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .expect("workspace root")
-            .to_path_buf();
-        let out = report(&dir);
+        // Seeded, not read from the repository this happens to run in. The
+        // first version read the workspace root and passed only while that
+        // root had loop state — in a fresh worktree there is none, so it
+        // asserted against a report that has no gate section at all. A test
+        // that depends on ambient state it does not control is not a gate.
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(dir.path().join(".hexa")).expect("mkdir .hexa");
+        // Seeded through `update_loop`, not by writing the file. Loop state is
+        // session-scoped now, and a test that hand-writes another module's
+        // format is pinned to a shape it does not own.
+        super::loop_cmd::update_loop(
+            dir.path(),
+            serde_json::json!({ "stage": "build", "gate": "cargo test" }),
+        )
+        .expect("seed loop state");
+
+        let out = report(dir.path());
         assert!(
-            out.contains("No result is recorded")
-                || out.contains("It passed,")
-                || out.contains("It failed,"),
-            "the gate's result must be stated either way:\n{out}"
+            out.contains("No result is recorded"),
+            "an unrecorded gate must say so:\n{out}"
         );
+        assert!(!out.contains("It passed"), "an unrecorded gate read as passing:\n{out}");
+        assert!(!out.contains("It failed"), "an unrecorded gate read as failing:\n{out}");
     }
 }

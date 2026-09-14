@@ -58,10 +58,13 @@ if [[ -f package.json ]]; then
 fi
 
 echo "Running cargo check to update Cargo.lock..."
-cargo check -p hexa-cli -p hexa-nexus 2>&1 | tail -5
+cargo check -p hexa-cli 2>&1 | tail -5
 
 echo "Staging changes..."
-git add Cargo.toml Cargo.lock package.json
+# package.json is optional: this workspace has none, and an unguarded add
+# aborts the release after Cargo.toml has already been rewritten.
+git add Cargo.toml Cargo.lock
+[[ -f package.json ]] && git add package.json
 
 echo "Creating release commit..."
 git commit -m "chore(release): bump version to v${VERSION}"

@@ -29,6 +29,9 @@ pub enum AdrAction {
     },
     /// Detect stale/abandoned ADRs
     Abandoned,
+    /// Run the gate every ADR records — the decision record as a
+    /// regression suite (ADR-2609132122)
+    Gates,
     /// Show the ADR schema, template, and next available number
     Schema,
     /// Show behavioral specs linked to an ADR via workplans
@@ -123,6 +126,7 @@ pub enum AdrAction {
 pub async fn run(action: AdrAction) -> anyhow::Result<()> {
     match action {
         AdrAction::List => list().await,
+        AdrAction::Gates => run_gates().await,
         AdrAction::Accept { adr_id, rationale } => set_adr_status(&adr_id, "Accepted", None, &rationale).await,
         AdrAction::Complete { adr_id, rationale, force } => complete_adr(&adr_id, &rationale, force).await,
         AdrAction::Supersede { adr_id, by, rationale } => supersede_adr(&adr_id, &by, &rationale).await,
@@ -1760,5 +1764,181 @@ mod tests {
             parse_superseded_by("**Superseded by:** ADR-001\n").as_deref(),
             Some("ADR-001")
         );
+    }
+}
+
+
+/// What running one ADR's recorded gate established (ADR-2609132122 §2).
+#[derive(Debug, Clone, PartialEq)]
+pub enum GateRun {
+    Passed,
+    Failed(String),
+    /// Not a command this can execute: prose, a placeholder, bad syntax.
+    Unrunnable(String),
+    /// The ADR records no gate.
+    None,
+}
+
+/// The first backquoted command under `## Gate`.
+///
+/// Only the first: an ADR whose gate is two commands in prose has no single
+/// thing to run, and saying so is better than running half of it.
+pub fn gate_command(markdown: &str) -> Option<String> {
+    let after = markdown.split("\n## Gate").nth(1)?;
+    // Stop at the next heading, so a later section's backquotes are not it.
+    let section = after.split("\n## ").next().unwrap_or(after);
+    let start = section.find('`')? + 1;
+    let rest = &section[start..];
+    let end = rest.find('`')?;
+    let cmd = rest[..end].trim();
+    (!cmd.is_empty()).then(|| cmd.to_string())
+}
+
+/// Can this be executed at all? The first word must resolve to something
+/// that exists.
+///
+/// A pattern match on the characters is not enough: "run the suite, then
+/// look at the report" begins with `run`, which is a perfectly good-looking
+/// program name and is not one. Asking the system is the only answer that
+/// means anything.
+fn looks_runnable(cmd: &str) -> bool {
+    program_exists(cmd, &|p| {
+        std::process::Command::new("which")
+            .arg(p)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    })
+}
+
+/// [`looks_runnable`] with the lookup injected, so both directions are
+/// testable without depending on what this machine has installed.
+fn program_exists(cmd: &str, on_path: &dyn Fn(&str) -> bool) -> bool {
+    let Some(first) = cmd.split_whitespace().next() else { return false };
+    if first.is_empty() {
+        return false;
+    }
+    // A path is its own answer; anything else must be on PATH.
+    if first.starts_with('.') || first.starts_with('/') {
+        return std::path::Path::new(first).exists();
+    }
+    on_path(first)
+}
+
+/// `hexa adr gates` — run every recorded gate.
+async fn run_gates() -> anyhow::Result<()> {
+    use colored::Colorize;
+    let dir = std::path::Path::new("docs/adrs");
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+        .map_err(|e| anyhow::anyhow!("no docs/adrs/: {e}"))?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "md") && p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("ADR-")))
+        .collect();
+    files.sort();
+
+    println!("{} the gate of every ADR that records one", "\u{2b21} adr gates".cyan().bold());
+    let root = std::env::current_dir()?;
+    let (mut passed, mut failed, mut unrunnable, mut none) = (0, 0, 0, 0);
+    for f in &files {
+        let name = f.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+        let text = std::fs::read_to_string(f).unwrap_or_default();
+        let outcome = match gate_command(&text) {
+            None => GateRun::None,
+            Some(cmd) if !looks_runnable(&cmd) => GateRun::Unrunnable(cmd),
+            Some(cmd) => {
+                let (ok, out) = hexa_exec::direct_exec::run_evidence(&cmd, &root).await;
+                if ok {
+                    GateRun::Passed
+                } else if out.contains("unexpected argument") || out.contains("Usage: cargo") {
+                    GateRun::Unrunnable(cmd)
+                } else {
+                    GateRun::Failed(cmd)
+                }
+            }
+        };
+        match &outcome {
+            GateRun::Passed => {
+                passed += 1;
+                println!("  {} {}", "\u{2713}".green(), name);
+            }
+            GateRun::Failed(cmd) => {
+                failed += 1;
+                println!("  {} {} — gate failed: {}", "\u{2717}".red(), name, cmd.dimmed());
+            }
+            GateRun::Unrunnable(cmd) => {
+                unrunnable += 1;
+                println!("  {} {} — not a runnable command: {}", "\u{2717}".red(), name, cmd.dimmed());
+            }
+            GateRun::None => {
+                none += 1;
+                println!("  {} {} — records no gate", "\u{25cb}".dimmed(), name);
+            }
+        }
+    }
+    println!("\n  {passed} passed · {failed} failed · {unrunnable} unrunnable · {none} without a gate");
+    if failed + unrunnable > 0 {
+        anyhow::bail!("{} recorded gate(s) did not pass", failed + unrunnable);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod adr_gates {
+    use super::{gate_command, looks_runnable, program_exists};
+
+    /// ADR-2609132122 §1: the first backquoted command under the heading,
+    /// and nothing from a later section.
+    #[test]
+    fn the_gate_command_is_the_first_backquoted_one_under_the_heading() {
+        let md = "# ADR\n\n## Decision\n\nRun `not this one`.\n\n## Gate\n\n`cargo test -p x thing`: what it proves.\n\n## References\n\n`nor this`\n";
+        assert_eq!(gate_command(md).as_deref(), Some("cargo test -p x thing"));
+    }
+
+    #[test]
+    fn an_adr_with_no_gate_section_has_no_command() {
+        assert_eq!(gate_command("# ADR\n\n## Context\n\n`cargo test`\n"), None);
+        assert_eq!(gate_command("# ADR\n\n## Gate\n\nProse with no command.\n"), None);
+        assert_eq!(gate_command("# ADR\n\n## Gate\n\n``\n"), None, "an empty span is no command");
+    }
+
+    /// §2: prose is unrunnable rather than failing, because "we could not
+    /// run it" and "it failed" send a reader to different places.
+    #[test]
+    fn prose_is_not_a_runnable_command() {
+        let path = |p: &str| matches!(p, "cargo" | "bash" | "make");
+        assert!(program_exists("cargo test -p hexa-cli adr_gates", &path));
+        assert!(program_exists("make check", &path));
+        // The case that broke the first cut: a sentence beginning with a
+        // word that looks exactly like a program name.
+        assert!(!program_exists("run the suite, then look at the report", &path), "a sentence is not a command");
+        assert!(!program_exists("Every accepted ADR keeps its gate green", &path));
+        assert!(!program_exists("", &path));
+
+        // And the real thing, against this machine.
+        assert!(looks_runnable("cargo test -p hexa-cli adr_gates"));
+        assert!(!looks_runnable("run the suite, then look at the report"));
+    }
+
+    /// The real thing this was built for: every ADR in this repository
+    /// either records a runnable gate or records none.
+    #[test]
+    fn every_adr_here_records_a_runnable_gate_or_none() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("docs/adrs");
+        let mut checked = 0;
+        for e in std::fs::read_dir(&dir).expect("docs/adrs").flatten() {
+            let p = e.path();
+            if !p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("ADR-")) {
+                continue;
+            }
+            let text = std::fs::read_to_string(&p).unwrap_or_default();
+            if let Some(cmd) = gate_command(&text) {
+                assert!(looks_runnable(&cmd), "{:?} records a gate that is not a command: {cmd:?}", p.file_name().unwrap());
+                checked += 1;
+            }
+        }
+        assert!(checked > 10, "only {checked} ADRs record a gate; expected the bulk of them");
     }
 }

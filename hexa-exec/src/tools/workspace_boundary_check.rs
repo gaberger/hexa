@@ -22,16 +22,24 @@ use walkdir::WalkDir;
 
 use super::{Tool, ToolResult};
 
-/// Canonical workspace boundary rules from ADR-2026-05-09-0000.
+/// Canonical workspace boundary rules from ADR-2026-05-09-0000, rewritten
+/// from the workspace as it is (ADR-2609132049 §3).
+///
+/// The table named seven crates, of which two existed: `hexa-nexus`,
+/// `hexa-analyzer`, `hexa-agent` and `hexa-desktop` went with HexFlo and
+/// `hexa-parser` with the Node host it bound, so this was checking
+/// boundaries between crates that are not there — a rule that cannot fail
+/// is not a rule.
+///
 /// Format: (crate_name, &[allowed_dependencies])
 const RULE_TABLE: &[(&str, &[&str])] = &[
     ("hexa-core", &[]),
-    ("hexa-cli", &["hexa-core"]),
-    ("hexa-nexus", &["hexa-core", "hexa-parser", "hexa-analyzer"]),
-    ("hexa-analyzer", &["hexa-core"]),
-    ("hexa-agent", &["hexa-core", "hexa-nexus"]),
-    ("hexa-parser", &[]),
-    ("hexa-desktop", &["hexa-core"]),
+    ("hexa-git", &[]),
+    ("hexa-graph", &["hexa-core"]),
+    ("hexa-analysis", &["hexa-core", "hexa-graph"]),
+    ("hexa-infer", &["hexa-core"]),
+    ("hexa-exec", &["hexa-core", "hexa-infer"]),
+    ("hexa-cli", &["hexa-core", "hexa-infer", "hexa-exec", "hexa-analysis", "hexa-graph", "hexa-git"]),
 ];
 
 #[derive(Debug, Serialize)]
@@ -283,9 +291,35 @@ mod tests {
             .iter()
             .map(|(k, v)| (*k, v.iter().copied().collect()))
             .collect();
-        assert_eq!(map.get("hexa-core"), Some(&HashSet::new()));
+        assert_eq!(map.get("hexa-core"), Some(&HashSet::new()), "the core depends on nothing");
         assert!(map.get("hexa-cli").unwrap().contains("hexa-core"));
-        assert!(map.get("hexa-nexus").unwrap().contains("hexa-core"));
+        assert!(map.get("hexa-exec").unwrap().contains("hexa-infer"), "the harness reaches inference");
+    }
+
+    /// Every crate the table names must exist (ADR-2609132049 §3).
+    ///
+    /// This assertion is the one that was missing. The previous test pinned
+    /// `hexa-nexus` into the table and went on passing after that crate was
+    /// deleted, so the table named seven crates of which two existed and
+    /// checked boundaries between things that were not there. A rule that
+    /// cannot fail is not a rule, and a test that pins a stale rule keeps
+    /// it stale.
+    #[test]
+    fn every_crate_the_table_names_is_a_real_workspace_member() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("workspace root");
+        let members: HashSet<String> = std::fs::read_to_string(root.join("Cargo.toml"))
+            .expect("workspace manifest")
+            .lines()
+            .filter_map(|l| l.trim().strip_prefix('"')?.strip_suffix("\",")?.to_string().into())
+            .collect();
+        assert!(!members.is_empty(), "parsed no members from the workspace manifest");
+
+        for (name, deps) in RULE_TABLE {
+            assert!(members.contains(*name), "{name} is in the rule table and not in the workspace");
+            for d in *deps {
+                assert!(members.contains(*d), "{name} is allowed to depend on {d}, which is not in the workspace");
+            }
+        }
     }
 
     #[test]

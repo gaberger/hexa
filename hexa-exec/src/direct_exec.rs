@@ -904,7 +904,7 @@ pub(crate) fn apply_edit(abs_path: &std::path::Path, content: &str, edit: &Edit)
     std::fs::write(abs_path, new_content).map_err(|e| e.to_string())
 }
 
-pub(crate) async fn run_evidence(cmd: &str, repo_root: &std::path::Path) -> (bool, String) {
+pub async fn run_evidence(cmd: &str, repo_root: &std::path::Path) -> (bool, String) {
     // CRITICAL: run under bash with `pipefail` so the exit code reflects the FIRST
     // failing command in a pipe, not the last. Without this, an evidence command
     // like `cargo test … | tail` returns tail's 0 and a FAILING test reads as

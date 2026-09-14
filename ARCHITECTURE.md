@@ -97,7 +97,7 @@ Eight crates, one binary. The dependency direction is the architecture:
 | **hexa-exec** | The agent loop, per-run worktree isolation, the adversarial harness, transcript compression, the guarded tool library, the file-backed local store. |
 | **hexa-analysis** | Tree-sitter boundary checking, the layer classifier, dead-export and cycle detection, rule conformance, the architecture fingerprint, six health detectors. Powers `hexa analyze`. |
 | **hexa-graph** | The code knowledge graph: `context_for`, `rank_lessons`, community detection. Builds and reads `graph-out/graph.json`. |
-| **hexa-git** · **hexa-parser** | Git plumbing over libgit2 · parsing utilities. |
+| **hexa-git** | Git plumbing over libgit2. |
 | **hexa-cli** | The binary, and the only composition root. The one place adapters are wired together. |
 
 ## The loop, and the hooks that keep it

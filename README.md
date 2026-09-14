@@ -112,13 +112,48 @@ hexa analyze . --grade A             # fail when the grade is below A
 hexa graph consumers <path>          # who depends on this, before you delete it
 ```
 
+**Review it**
+
+```bash
+# adversarial: hunt the target by lens, verify each finding, fix under the gate
+hexa harden src/domain/merge.rs --gate "cargo test -p mycrate"
+
+# cooperative: diverge, red-team, synthesize, build to the gate
+hexa build "a bounded work queue" --target src/queue --gate "cargo test"
+
+# either one, past any terminal or tool timeout
+hexa harden src/ --gate "cargo test" --detach
+```
+
+A pass reports each phase as it runs, with elapsed time and a heartbeat, and
+names which reviewer answered. If none did — a spend limit, an expired login —
+it says nothing was reviewed rather than reporting a clean file.
+
 **Stay in the loop**
 
 ```bash
-hexa loop gate "cargo test --test add"   # record the gate, before the code
-hexa loop                                 # the ADR, the gate and the stage
+hexa loop adr ADR-2609131800              # the decision, which must already exist
+hexa loop gate "cargo test --test add"    # the command that must exit 0, before the code
+hexa loop evidence "cargo test -- --nocapture"   # the measurement the decision rests on
+hexa loop stage done                      # runs the evidence and writes it into the ADR
+hexa loop                                 # where the work stands, yours and every other session's
 hexa spend                                # tokens and dollars, by source and model
 ```
+
+`stage done` appends the evidence command's own output to the ADR, with the
+commit it ran at. The number in the decision record is the number the tree
+produced. A failing evidence command appends nothing and refuses to close.
+
+**Check the install**
+
+```bash
+hexa doctor                               # exits non-zero when a check fails
+hexa go                                   # the next right thing
+```
+
+`doctor` resolves every configured tier against the backends it can actually
+reach, so a tier naming a model nothing serves fails rather than printing the
+config back.
 
 With the hooks installed, a session opens by printing where the work stands,
 a feature-sized edit with no recorded gate is stopped, and a code-writing
@@ -154,13 +189,17 @@ that `hexa analyze` runs from then on. The scaffold is not a starting point you
 leave behind. It is the contract the project keeps being measured against.
 
 **The loop is recorded, and the hooks read it.** Decide, gate, build, harden.
-`hexa loop` keeps the ADR, the gate and the stage in `.hexa/loop.json`,
-committed with the branch, so a reviewer of the pull request sees which
-decision the work is under and which command proved it. The ADR is the
-durable record; the loop file points at it. `hexa do`, `hexa build` and
-`hexa harden` record their gate as they run. The hooks `hexa init` installs read that record: a session opens
-with it, a feature-sized prompt repeats it, and an edit for feature-sized
-work with no gate recorded is stopped until the gate is written.
+`hexa loop` keeps the ADR, the gate, the evidence and the stage in
+`.hexa/loop.json`, one entry per session, so a reviewer of the pull request
+sees which decision the work is under and which command proved it — and a
+second session in the same checkout sees what the first is doing, including a
+run in flight, rather than silently overwriting it. The ADR is the durable
+record; the loop file points at it, and `hexa loop stage done` writes the
+evidence command's output into it. `hexa do`, `hexa build` and `hexa harden`
+record their gate as they run. The hooks `hexa init` installs read that
+record: a session opens with it, a feature-sized prompt repeats it, and an
+edit for feature-sized work with no gate recorded is stopped until the gate is
+written.
 
 ---
 

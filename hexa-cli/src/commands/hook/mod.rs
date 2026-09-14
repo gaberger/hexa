@@ -319,6 +319,9 @@ async fn session_start(project_dir: &Path) -> Result<()> {
     // context. stdout is picked up as session context — never skip this.
     println!("\n{}", fingerprint_block(id, project_dir, &name).await);
     println!("{}", crate::commands::loop_cmd::status_line(project_dir));
+    for l in crate::commands::loop_cmd::awareness_lines(project_dir) {
+        println!("  {l}");
+    }
     let mut st = SessionState::load_or_new();
     st.project = crate::commands::loop_cmd::project_name(project_dir);
     st.name = session_key();
@@ -584,6 +587,20 @@ async fn pre_edit(project_dir: &Path) -> Result<()> {
             // Existing hexa boundary check
             validate_boundary_edit(project_dir, file_path)?;
 
+            // ADR-2609131408: another live session has edited this file.
+            // Say so before the edit; never block — coordination is the
+            // reader's decision, visibility is the tool's job.
+            for o in crate::commands::loop_cmd::touched_by_others(project_dir, file_path) {
+                println!(
+                    "[HEX] {} was edited by session {} (live) under ADR {} · stage {} · last {}. Coordinate before overlapping.",
+                    file_path,
+                    o.session.get(..8).unwrap_or(&o.session),
+                    o.adr,
+                    o.stage,
+                    o.updated.get(11..16).unwrap_or("?")
+                );
+            }
+
             let mode = enforcement_mode(project_dir);
             let state = Some(SessionState::load_or_new());
 
@@ -639,10 +656,12 @@ async fn pre_edit(project_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-async fn post_edit(_project_dir: &PathBuf) -> Result<()> {
+async fn post_edit(project_dir: &Path) -> Result<()> {
     let tool_input = tool_input_json();
     if let Ok(input) = serde_json::from_str::<serde_json::Value>(&tool_input) {
-        if input["file_path"].as_str().is_some() {
+        if let Some(file_path) = input["file_path"].as_str() {
+            // ADR-2609131408: the boundary another session needs to see.
+            let _ = crate::commands::loop_cmd::touch(project_dir, file_path);
             // Nothing to notify; the edit count is the record
             // to the daemon. The counter is local and stays.
             if let Some(mut state) = SessionState::load() {
@@ -824,7 +843,25 @@ async fn fingerprint_block(project_id: &str, project_dir: &Path, name: &str) -> 
 }
 
 async fn route(project_dir: &Path) -> Result<()> {
+    // A prompt the harness itself sent to a model — `hexa harden`'s hunt,
+    // verify and fix calls carry HEXA_INTERNAL=1 — is not work intent. It
+    // was being sized as a feature and drafted as a workplan, so a planner
+    // would have picked up "You are an adversarial code reviewer…" as a task.
+    if std::env::var_os("HEXA_INTERNAL").is_some() {
+        return Ok(());
+    }
     let tool_input = tool_input_json();
+    // A host's own notification — a finished background task, a monitor
+    // event — arrives on the prompt channel and is not a person asking for
+    // work. One was sized as a feature and drafted as a workplan
+    // (ADR-2609131611).
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&tool_input) {
+        if let Some(text) = v["prompt"].as_str().or_else(|| v["content"].as_str()) {
+            if is_host_notification(text) {
+                return Ok(());
+            }
+        }
+    }
 
     // ADR-2026-03-30-1200: Refresh architecture fingerprint if key project files have changed
     let _ = refresh_fingerprint_if_stale(project_dir).await;
@@ -870,6 +907,9 @@ async fn route(project_dir: &Path) -> Result<()> {
                     // Worktree branches have a valid task.json — only archive on main.
                     if matches!(tier, Tier::T2MiniPlan | Tier::T3Workplan) {
                         println!("[HEX] {}", crate::commands::loop_cmd::status_line(project_dir));
+                        for l in crate::commands::loop_cmd::awareness_lines(project_dir) {
+                            println!("[HEX] {l}");
+                        }
                         let task_json = project_dir.join(".hexa/task.json");
                         if task_json.exists() {
                             let on_main = std::process::Command::new("git")
@@ -906,10 +946,16 @@ async fn route(project_dir: &Path) -> Result<()> {
                             // Confirmatory replies fall through silently.
                         }
                         Tier::T2MiniPlan => {
-                            // One-line suggestion, no auto-invocation.
-                            println!(
-                                "[HEX] a change with a shape. Write the gate first (the command that must exit 0), record it with `hexa loop gate '<cmd>'`, build to it, then `hexa analyze .`"
-                            );
+                            // One-line suggestion, no auto-invocation — and
+                            // only while no gate is recorded for work in
+                            // flight. The status line above already says
+                            // where a recorded loop stands; repeating the
+                            // instruction on every prompt after it is noise.
+                            if !gate_in_flight(project_dir) {
+                                println!(
+                                    "[HEX] a change with a shape. Write the gate first (the command that must exit 0), record it with `hexa loop gate '<cmd>'`, build to it, then `hexa analyze .`"
+                                );
+                            }
                         }
                         Tier::T3Workplan => {
                             // Feature-sized intent. In advisory+enabled mode, auto-invoke
@@ -973,6 +1019,25 @@ async fn route(project_dir: &Path) -> Result<()> {
 /// a minimal stub quarantined to `docs/workplans/drafts/` — no worktrees,
 /// no specs, no coder dispatch. The user (or Claude Code) picks it up
 /// via `/hexa-feature-dev` or `hexa plan drafts approve`.
+/// Text the host generated to tell the session something happened, rather
+/// than a person asking for work.
+fn is_host_notification(text: &str) -> bool {
+    const MARKERS: [&str; 4] = ["[SYSTEM NOTIFICATION", "<task-notification>", "<system-reminder>", "<local-command-caveat>"];
+    let head: String = text.chars().take(400).collect();
+    MARKERS.iter().any(|m| head.contains(m))
+}
+
+/// A gate is recorded and the loop has not been marked done.
+fn gate_in_flight(project_dir: &Path) -> bool {
+    crate::commands::loop_cmd::read_loop(project_dir)
+        .map(|st| {
+            let has_gate = st.get("gate").and_then(|g| g.as_str()).is_some_and(|g| !g.is_empty());
+            let done = st.get("stage").and_then(|s| s.as_str()) == Some("done");
+            has_gate && !done
+        })
+        .unwrap_or(false)
+}
+
 fn spawn_plan_draft(prompt: &str) -> Result<String> {
     // We run `hexa plan draft --background <prompt>` synchronously here
     // (not via detached spawn) because we need the resulting draft path
@@ -1819,5 +1884,42 @@ mod tests {
         assert!(is_confirmatory_response("lgtm"));
         assert!(!is_confirmatory_response("yes but make it async"));
         assert!(!is_confirmatory_response("this is a much longer response that is not a confirmation"));
+    }
+}
+
+#[cfg(test)]
+mod loop_reminder_tests {
+    use super::{gate_in_flight, is_host_notification};
+
+    /// A host's notification is not work intent; a person's prompt that
+    /// happens to mention one still is.
+    #[test]
+    fn a_host_notification_is_not_work_intent() {
+        assert!(is_host_notification("[SYSTEM NOTIFICATION - NOT USER INPUT]\nbackground task finished"));
+        assert!(is_host_notification("<task-notification>\n<task-id>b1az</task-id>"));
+        assert!(is_host_notification("<system-reminder>\ncontext follows"));
+        assert!(!is_host_notification("add a task notification to the report"));
+        assert!(!is_host_notification("why did the system notification get drafted as a workplan?"));
+    }
+
+    fn project_with_loop(body: Option<&str>) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("hexa-loop-reminder-{}-{:?}", std::process::id(), std::thread::current().id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".hexa")).unwrap();
+        if let Some(b) = body {
+            std::fs::write(dir.join(".hexa/loop.json"), b).unwrap();
+        }
+        dir
+    }
+
+    /// The gate reminder repeats only while nothing is recorded: a
+    /// recorded gate on a loop that is not done means the work is already
+    /// under a gate, and a done loop means there is nothing in flight.
+    #[test]
+    fn a_recorded_gate_on_an_unfinished_loop_silences_the_reminder() {
+        assert!(!gate_in_flight(&project_with_loop(None)), "no loop recorded");
+        assert!(!gate_in_flight(&project_with_loop(Some(r#"{"adr":"ADR-1","stage":"decide"}"#))), "no gate yet");
+        assert!(gate_in_flight(&project_with_loop(Some(r#"{"adr":"ADR-1","gate":"cargo test","stage":"build"}"#))), "gate in flight");
+        assert!(!gate_in_flight(&project_with_loop(Some(r#"{"adr":"ADR-1","gate":"cargo test","stage":"done"}"#))), "loop done");
     }
 }

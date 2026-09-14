@@ -1,10 +1,18 @@
 //! `hexa loop` records where a project's work stands, in `.hexa/loop.json`,
-//! so it travels with the branch. The ADR it points at must exist.
+//! one entry per session (ADR-2609131408). The ADR it points at must exist.
 
 use std::process::Command;
 
 fn hexa() -> Command {
     Command::new(env!("CARGO_BIN_EXE_hexa"))
+}
+
+/// The one session's entry in a loop file written by a single session.
+fn only_entry(file: &std::path::Path) -> serde_json::Value {
+    let state: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(file).unwrap()).unwrap();
+    let sessions = state["sessions"].as_object().expect("entries keyed by session");
+    assert_eq!(sessions.len(), 1, "{state}");
+    sessions.values().next().unwrap().clone()
 }
 
 #[test]
@@ -26,15 +34,33 @@ fn the_loop_lives_in_the_repo_and_points_at_a_real_adr() {
     assert!(run(&["loop", "gate", "cargo test --test add"]).0);
     let file = proj.path().join(".hexa/loop.json");
     assert!(file.is_file(), "the loop is a file in the repo");
-    let state: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    let state = only_entry(&file);
     assert_eq!(state["adr"], "ADR-0001");
     assert_eq!(state["gate"], "cargo test --test add");
     assert_eq!(state["stage"], "gate");
 
     let shown = run(&["loop"]).1;
     assert!(shown.contains("ADR ADR-0001") && shown.contains("gate cargo test --test add"), "{shown}");
+
+    // A second, live session records beside the first and each sees the
+    // other as "also here", never as its own state (ADR-2609131408).
+    let other = hexa()
+        .args(["loop", "adr", "ADR-0001"])
+        .env("HEXA_SESSION_ID", "other-host-session")
+        .env("HEXA_SESSION_PID", std::process::id().to_string())
+        .current_dir(proj.path())
+        .output()
+        .unwrap();
+    assert!(other.status.success());
+    let shown = run(&["loop"]).1;
+    assert!(shown.contains("gate cargo test --test add"), "own state first: {shown}");
+    assert!(shown.contains("also here: session other-ho") && shown.contains("ADR ADR-0001"), "{shown}");
+
     assert!(run(&["loop", "clear"]).0);
-    assert!(!file.exists());
+    assert!(file.is_file(), "the other session's entry keeps the file");
+    let state = only_entry(&file);
+    assert_eq!(state["adr"], "ADR-0001");
+    assert!(state["gate"].is_null(), "the other session recorded no gate");
 }
 
 #[test]
@@ -75,7 +101,7 @@ fn the_checklist_is_checked_off_and_advances() {
     let (ok, text) = run(&["loop", "task", "done", "9"]);
     assert!(!ok || text.contains("no step 9"));
 
-    let state: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(proj.path().join(".hexa/loop.json")).unwrap()).unwrap();
+    let state = only_entry(&proj.path().join(".hexa/loop.json"));
     assert_eq!(state["tasks"].as_array().unwrap().len(), 3);
     assert_eq!(state["tasks"][0]["status"], "done");
 }

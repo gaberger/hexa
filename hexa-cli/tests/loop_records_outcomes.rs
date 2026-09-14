@@ -24,11 +24,11 @@ fn hexa_bin() -> PathBuf {
 fn project(gate: &str) -> tempfile::TempDir {
     let dir = tempfile::tempdir().expect("tempdir");
     std::fs::create_dir_all(dir.path().join(".hexa")).expect("mkdir .hexa");
-    std::fs::write(
-        dir.path().join(".hexa/loop.json"),
-        serde_json::json!({ "gate": gate, "stage": "build" }).to_string(),
-    )
-    .expect("seed loop.json");
+    // Through the binary: loop state is session-scoped and written whole.
+    for args in [["loop", "stage", "build"], ["loop", "gate", gate]] {
+        let out = Command::new(hexa_bin()).current_dir(dir.path()).args(args).output().expect("seed");
+        assert!(out.status.success(), "seeding failed: hexa {args:?}");
+    }
     dir
 }
 
@@ -36,9 +36,18 @@ fn run(dir: &Path, args: &[&str]) -> Output {
     Command::new(hexa_bin()).current_dir(dir).args(args).output().expect("run hexa")
 }
 
+/// One session's recorded state, whichever session wrote it.
+///
+/// The file holds an entry per session now. A test that reads the top-level
+/// object is reading the envelope rather than the letter.
 fn state(dir: &Path) -> serde_json::Value {
     let text = std::fs::read_to_string(dir.join(".hexa/loop.json")).expect("read loop.json");
-    serde_json::from_str(&text).expect("parse loop.json")
+    let v: serde_json::Value = serde_json::from_str(&text).expect("parse loop.json");
+    v.get("sessions")
+        .and_then(|s| s.as_object())
+        .and_then(|m| m.values().next())
+        .cloned()
+        .unwrap_or(v)
 }
 
 #[test]
@@ -92,7 +101,8 @@ fn a_result_for_a_different_gate_is_called_stale() {
 fn nothing_to_check_is_not_a_failure() {
     let dir = tempfile::tempdir().expect("tempdir");
     std::fs::create_dir_all(dir.path().join(".hexa")).expect("mkdir");
-    std::fs::write(dir.path().join(".hexa/loop.json"), "{}").expect("seed");
+    let out = Command::new(hexa_bin()).current_dir(dir.path()).args(["loop", "stage", "build"]).output().expect("seed");
+    assert!(out.status.success());
     let out = run(dir.path(), &["loop", "check"]);
     assert!(out.status.success(), "an absent gate is a result, not an error");
     let text = String::from_utf8_lossy(&out.stdout);

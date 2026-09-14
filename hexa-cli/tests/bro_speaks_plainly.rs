@@ -28,6 +28,16 @@ fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("workspace root").to_path_buf()
 }
 
+/// Seed loop state through the binary rather than by writing the file.
+///
+/// Loop state is session-scoped and written whole; a test that hand-writes it
+/// is pinned to a shape it does not own, and breaks the moment that shape
+/// changes for good reasons elsewhere.
+fn seed(dir: &Path, args: &[&str]) {
+    let out = Command::new(hexa_bin()).current_dir(dir).args(args).output().expect("seed");
+    assert!(out.status.success(), "seeding failed: hexa {args:?}");
+}
+
 /// Run `hexa bro` in `dir` and return (exit ok, stdout).
 fn bro(dir: &Path) -> (bool, String) {
     let out = Command::new(hexa_bin()).current_dir(dir).arg("bro").output().expect("run hexa bro");
@@ -73,12 +83,23 @@ fn resolves(chain: &[String]) -> bool {
         .unwrap_or(false)
 }
 
-/// In this repository, where there is a decision, a gate and a checklist.
+/// A project with a decision, a gate and a checklist recorded.
+///
+/// Seeded rather than read from the tree this happens to run in. The first
+/// version graded the workspace root, which passes only while that root has
+/// loop state — in a fresh worktree there is none, the report is four lines
+/// long, and the sentence floor fires on a report that is correct.
 #[test]
 fn the_report_reads_plainly_in_a_live_project() {
-    let (ok, report) = bro(&workspace_root());
-    assert!(ok, "hexa bro exited non-zero in its own repository:\n{report}");
-    assert_plain("live project", &report, 8);
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir_all(dir.path().join(".hexa")).expect("mkdir .hexa");
+    seed(dir.path(), &["loop", "stage", "build"]);
+    seed(dir.path(), &["loop", "gate", "cargo test --workspace"]);
+    seed(dir.path(), &["loop", "task", "add", "the first step"]);
+
+    let (ok, report) = bro(dir.path());
+    assert!(ok, "hexa bro exited non-zero:\n{report}");
+    assert_plain("live project", &report, 6);
 }
 
 /// And in a directory hexa has never touched, which is decision 5.
@@ -106,7 +127,7 @@ fn an_untouched_directory_is_a_result_not_an_error() {
 fn every_verb_the_report_names_exists() {
     let blank = tempfile::tempdir().expect("tempdir");
     std::fs::create_dir_all(blank.path().join(".hexa")).expect("mkdir .hexa");
-    std::fs::write(blank.path().join(".hexa/loop.json"), "{}").expect("seed empty loop");
+    seed(blank.path(), &["loop", "stage", "build"]);
 
     let untouched = tempfile::tempdir().expect("tempdir");
 
@@ -136,7 +157,9 @@ fn every_verb_the_report_names_exists() {
 fn an_empty_record_still_names_the_way_forward() {
     let dir = tempfile::tempdir().expect("tempdir");
     std::fs::create_dir_all(dir.path().join(".hexa")).expect("mkdir .hexa");
-    std::fs::write(dir.path().join(".hexa/loop.json"), "{}").expect("seed empty loop");
+    // An entry that exists and records nothing else. `loop stage` would record
+    // a stage, which is the opposite of what this test is about.
+    seed(dir.path(), &["loop", "task", "add", "something to do"]);
 
     let (ok, report) = bro(dir.path());
     assert!(ok, "hexa bro exited non-zero on an empty record:\n{report}");
@@ -155,8 +178,8 @@ fn the_report_writes_nothing() {
     let dir = tempfile::tempdir().expect("tempdir");
     let root = dir.path();
     std::fs::create_dir_all(root.join(".hexa")).expect("mkdir .hexa");
-    std::fs::write(root.join(".hexa/loop.json"), r#"{"stage":"build","gate":"true"}"#)
-        .expect("seed loop.json");
+    seed(root, &["loop", "stage", "build"]);
+    seed(root, &["loop", "gate", "true"]);
     let before = std::fs::read_to_string(root.join(".hexa/loop.json")).expect("read");
 
     let (ok, _) = bro(root);
@@ -179,8 +202,8 @@ fn an_unrecorded_gate_result_is_never_implied_to_be_green() {
     let dir = tempfile::tempdir().expect("tempdir");
     let root = dir.path();
     std::fs::create_dir_all(root.join(".hexa")).expect("mkdir .hexa");
-    std::fs::write(root.join(".hexa/loop.json"), r#"{"stage":"build","gate":"cargo test"}"#)
-        .expect("seed loop.json");
+    seed(root, &["loop", "stage", "build"]);
+    seed(root, &["loop", "gate", "cargo test"]);
 
     let (ok, report) = bro(root);
     assert!(ok);

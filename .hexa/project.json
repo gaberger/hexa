@@ -6,9 +6,9 @@
   },
   "inference": {
     "tier_models": {
-      "t1": "qwen3:4b",
-      "t2": "gemma4-12b",
-      "t2.5": "devstral-small-2:24b"
+      "t1": "openai/gpt-oss-120b",
+      "t2": "openai/gpt-oss-120b",
+      "t2.5": "openai/gpt-oss-120b"
     },
     "timeout_secs": 600,
     "sop_via_router": true,
