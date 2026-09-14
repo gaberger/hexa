@@ -1,0 +1,20 @@
+[package]
+name = "minesweeper"
+version = "0.1.0"
+edition = "2021"
+description = "Minesweeper for the terminal, in ports-and-adapters style."
+
+[dependencies]
+
+[dev-dependencies]
+
+[lib]
+name = "minesweeper"
+path = "src/lib.rs"
+
+[[bin]]
+name = "minesweeper"
+path = "src/main.rs"
+
+# This example stands alone. It is not a member of the hexa workspace.
+[workspace]
