@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "test": "rm -rf dist && tsc && node --test dist/*.test.js"
+    "test": "rm -rf dist && tsc && node --test dist/*.test.js",
+    "start": "tsc && node dist/main.js"
   },
   "devDependencies": {
     "typescript": "^5.6.0",

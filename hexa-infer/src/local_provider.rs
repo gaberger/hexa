@@ -50,7 +50,15 @@ pub const fn local_provider() -> LocalProvider {
         serve_arg: "serve",
         install_macos: "brew install ollama",
         install_linux: "curl https://ollama.ai/install.sh | sh",
-        host_env: "OLLAMA_HOST",
+        // The hexa-specific spelling, tried before the plain `OLLAMA_HOST`.
+        //
+        // This was `"OLLAMA_HOST"`, which made both halves of every
+        // `[host_env, "OLLAMA_HOST"]` pair read the same variable and the
+        // fallback dead code. `HEXA_OLLAMA_HOST` was therefore ignored here
+        // while `hexa config inference` printed it as the way to point at a
+        // server, and `openai_compat` read it — so an operator following
+        // hexa's own advice still got a probe against localhost.
+        host_env: "HEXA_OLLAMA_HOST",
     }
 }
 
@@ -81,14 +89,7 @@ impl LocalProvider {
     /// server at another machine — reporting "not running" for a server that
     /// was running fine.
     pub fn socket_addr(&self) -> String {
-        let url = self.base_url();
-        let rest = url.strip_prefix("http://").or_else(|| url.strip_prefix("https://")).unwrap_or(&url);
-        let host_port = rest.split('/').next().unwrap_or(rest);
-        if host_port.contains(':') {
-            host_port.to_string()
-        } else {
-            format!("{host_port}:{}", self.default_port)
-        }
+        socket_addr_with(self, &|k| std::env::var(k).ok())
     }
 
     /// The install hint for the platform this binary was built for.
@@ -119,6 +120,20 @@ pub fn base_url_with(p: &LocalProvider, env: &dyn Fn(&str) -> Option<String>) ->
     }
 }
 
+/// `socket_addr`, with the environment reader injected, for the same reason
+/// `base_url_with` exists: a test that reaches for the process environment is
+/// racing every other test in the binary.
+fn socket_addr_with(p: &LocalProvider, env: &dyn Fn(&str) -> Option<String>) -> String {
+    let url = base_url_with(p, env);
+    let rest = url.strip_prefix("http://").or_else(|| url.strip_prefix("https://")).unwrap_or(&url);
+    let host_port = rest.split('/').next().unwrap_or(rest);
+    if host_port.contains(':') {
+        host_port.to_string()
+    } else {
+        format!("{host_port}:{}", p.default_port)
+    }
+}
+
 /// The tiers this project configures, as `(label, tier key, model id)`.
 ///
 /// Empty when `.hexa/project.json` declares none — which is a real answer, and
@@ -140,40 +155,54 @@ mod tests {
         assert_eq!(p.default_base_url(), format!("http://127.0.0.1:{}", p.default_port));
     }
 
+    /// A reader that answers for one variable and nothing else.
+    ///
+    /// These tests used to `set_var` and restore. Two of them did it to the
+    /// same variable, and `cargo test` runs them in parallel, so one read the
+    /// other's value and failed intermittently with
+    /// `OLLAMA_HOST="  " left: "http://gpu-box:9999"`. The provider already
+    /// takes an injected reader; the tests simply were not using it.
+    fn only(key: &'static str, value: &'static str) -> impl Fn(&str) -> Option<String> {
+        move |k: &str| (k == key).then(|| value.to_string())
+    }
+
     /// Both spellings of the override must produce one well-formed URL.
     #[test]
     fn the_host_override_is_normalised_either_way() {
         let p = local_provider();
-        let prev = std::env::var(p.host_env).ok();
         for (set, want) in [
             ("127.0.0.1:9999", "http://127.0.0.1:9999"),
             ("http://box:9999", "http://box:9999"),
             ("  ", ""), // blank falls back to the default
         ] {
-            std::env::set_var(p.host_env, set);
-            let got = p.base_url();
+            let got = base_url_with(&p, &only(p.host_env, set));
             let expected = if want.is_empty() { p.default_base_url() } else { want.to_string() };
-            assert_eq!(got, expected, "OLLAMA_HOST={set:?}");
+            assert_eq!(got, expected, "{}={set:?}", p.host_env);
             assert!(!got.contains("http://http"), "double scheme from {set:?}");
         }
-        match prev {
-            Some(v) => std::env::set_var(p.host_env, v),
-            None => std::env::remove_var(p.host_env),
-        }
+    }
+
+    /// `OLLAMA_HOST` is read only when the hexa-specific variable is absent.
+    #[test]
+    fn the_hexa_variable_wins_over_the_plain_one() {
+        let p = local_provider();
+        let both = |k: &str| match k {
+            "OLLAMA_HOST" => Some("plain:1111".to_string()),
+            k if k == p.host_env => Some("hexa:2222".to_string()),
+            _ => None,
+        };
+        assert_eq!(base_url_with(&p, &both), "http://hexa:2222");
+        assert_eq!(base_url_with(&p, &only("OLLAMA_HOST", "plain:1111")), "http://plain:1111");
     }
 
     #[test]
     fn the_probe_target_follows_the_host_override() {
         let p = local_provider();
-        let prev = std::env::var(p.host_env).ok();
-        std::env::set_var(p.host_env, "http://gpu-box:9999/");
-        assert_eq!(p.socket_addr(), "gpu-box:9999");
-        std::env::set_var(p.host_env, "gpu-box");
-        assert_eq!(p.socket_addr(), format!("gpu-box:{}", p.default_port));
-        match prev {
-            Some(v) => std::env::set_var(p.host_env, v),
-            None => std::env::remove_var(p.host_env),
-        }
+        assert_eq!(socket_addr_with(&p, &only(p.host_env, "http://gpu-box:9999/")), "gpu-box:9999");
+        assert_eq!(
+            socket_addr_with(&p, &only(p.host_env, "gpu-box")),
+            format!("gpu-box:{}", p.default_port)
+        );
     }
 
     #[test]

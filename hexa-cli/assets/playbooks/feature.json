@@ -1,7 +1,23 @@
 {
   "name": "feature",
   "summary": "New or changed behaviour, decided first, built to a gate, hardened before it ships.",
-  "triggers": ["feature", "add", "implement", "new", "support", "introduce", "endpoint", "command"],
+  "triggers": [
+    "feature",
+    "add",
+    "implement",
+    "new",
+    "support",
+    "introduce",
+    "endpoint",
+    "command",
+    "build",
+    "create",
+    "make",
+    "write",
+    "game",
+    "app",
+    "tool"
+  ],
   "steps": [
     {
       "title": "Record the decision if this adds a port, an adapter, or a dependency",

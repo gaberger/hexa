@@ -513,6 +513,27 @@ pub async fn run(args: HeyArgs) -> anyhow::Result<()> {
 
     // There is no queue and no daemon tick to defer to: `hexa hey` acts now.
     let (ok, result) = execute_intent(kind, &payload).await;
+
+    // A command the classifier invented may not parse. `hexa hey "build a 2048
+    // game"` proposed `hexa build 2048` — a real verb, missing both required
+    // arguments — and the failure surfaced as clap's usage text under a red
+    // "failed", which reads like hexa is broken rather than like the classifier
+    // guessed. clap rejects it before any code runs, so nothing happened; the
+    // defect is that hexa reported it as a run.
+    if !ok && result.contains("required arguments were not provided") {
+        println!("  {} the classifier proposed an incomplete command.", "✗".red());
+        println!("    {}", format!("hexa {payload}").dimmed());
+        if let Ok(books) = crate::playbook::load() {
+            if let Some((pb, _)) = crate::playbook::best(&text, &books) {
+                println!("  {} here is the procedure instead:\n", "→".green());
+                print!("{}", crate::playbook::render(pb));
+                return Ok(());
+            }
+        }
+        println!("    Run `hexa --help` for the verbs, or say what you want more plainly.");
+        return Ok(());
+    }
+
     if ok {
         println!("  {} completed", "✓".green());
         if !result.trim().is_empty() {

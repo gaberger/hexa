@@ -1,28 +1,28 @@
 {
-  "adr": "ADR-2609140926",
-  "gate": "exit 1",
-  "stage": "done",
+  "adr": "ADR-2609121400",
+  "gate": "cd examples/game-mines-rs && cargo test && cargo run --quiet -- --demo --seed 42 | grep -qE \"GAME OVER|YOU WIN\"",
+  "stage": "build",
   "tasks": [
     {
-      "done_at": "2026-09-14T14:42:27.121332262+00:00",
-      "status": "done",
-      "title": "refuse the invalid run first: too few entrants, a vacuous gate, a target that is not empty"
+      "status": "doing",
+      "title": "the gate: tests pass AND the binary plays a seeded game to a terminal state"
     },
     {
-      "done_at": "2026-09-14T14:42:27.123174749+00:00",
-      "status": "done",
-      "title": "fan out N entrants into worktrees; the gate eliminates"
+      "status": "todo",
+      "title": "hexa build to the gate"
     },
     {
-      "done_at": "2026-09-14T14:42:27.124921866+00:00",
-      "status": "done",
-      "title": "rank survivors by grade, then by smallest diff"
+      "status": "todo",
+      "title": "hexa harden the result"
     },
     {
-      "done_at": "2026-09-14T14:42:27.126651291+00:00",
-      "status": "done",
-      "title": "merge the winner whole; report every entrant's verdict"
+      "status": "todo",
+      "title": "README and a start script, so a person can actually play it"
+    },
+    {
+      "status": "todo",
+      "title": "hexa analyze the example"
     }
   ],
-  "updated": "2026-09-14T14:42:27.128362987+00:00"
+  "updated": "2026-09-14T14:53:44.116648347+00:00"
 }
