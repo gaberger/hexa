@@ -156,6 +156,8 @@ enum Commands {
     Hey(HeyArgs),
     /// Where the work stands, in plain language (ADR-2609140925)
     Bro,
+    /// Fan out across disjoint file slices, one worker each (ADR-2609140927)
+    Swarm(commands::swarm::SwarmArgs),
     /// Adversarially verify a claim about the repo — returns CONFIRMED / REFUTED / INCONCLUSIVE
     Verify(commands::verify::VerifyArgs),
     /// Direct executor — task → one agent → evidence → commit (ADR-2026-06-04-1740 Path A)
@@ -387,6 +389,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Graph { action } => commands::graph::run(action).await,
         Commands::Hey(args) => commands::hey::run(args).await,
         Commands::Bro => commands::bro::run().await,
+        Commands::Swarm(args) => commands::swarm::run(args).await,
         Commands::Verify(args) => commands::verify::run(args).await,
         Commands::Do { action } => commands::direct::run(action).await,
         Commands::Bench { action } => commands::bench::run(action).await,

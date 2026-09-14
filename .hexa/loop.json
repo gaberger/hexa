@@ -1,28 +1,28 @@
 {
-  "adr": "ADR-2609122048",
-  "gate": "test -f hexa-cli/assets/skills/hexa-adr-create/SKILL.md && ! ls hexa-cli/assets/skills/*.md >/dev/null 2>&1 && hexa skill list | grep -q hexa-adr-create && cargo test --workspace",
+  "adr": "ADR-2609140927",
+  "gate": "cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings && hexa swarm 'x' --over hexa-cli/src --over hexa-cli/src/commands --gate 'true' ; test $? -ne 0",
   "stage": "done",
   "tasks": [
     {
-      "done_at": "2026-09-14T13:54:34.944113216+00:00",
+      "done_at": "2026-09-14T14:20:00.946934116+00:00",
       "status": "done",
-      "title": "the four ADR skills become <name>/SKILL.md, the shape the harness loads"
+      "title": "slices expand over the git file list; a glob is matched in hexa, not the shell"
     },
     {
-      "done_at": "2026-09-14T13:54:34.945646767+00:00",
+      "done_at": "2026-09-14T14:20:00.948355706+00:00",
       "status": "done",
-      "title": "hexa skill list counts only what can load, and names what cannot"
+      "title": "overlap refuses the run before any worktree exists"
     },
     {
-      "done_at": "2026-09-14T13:54:34.947052577+00:00",
+      "done_at": "2026-09-14T14:20:00.950114421+00:00",
       "status": "done",
-      "title": "a test: every shipped skill is loadable and its name matches its directory"
+      "title": "one worker per slice, isolated, gated"
     },
     {
-      "done_at": "2026-09-14T13:54:34.948438816+00:00",
+      "done_at": "2026-09-14T14:20:00.951577031+00:00",
       "status": "done",
-      "title": "CLAUDE.md lists the slash commands that exist"
+      "title": "the report names every slice, including the ones that failed"
     }
   ],
-  "updated": "2026-09-14T13:54:34.949829295+00:00"
+  "updated": "2026-09-14T14:20:00.953041221+00:00"
 }

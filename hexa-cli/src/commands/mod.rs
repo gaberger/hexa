@@ -18,6 +18,7 @@ pub mod plan;
 pub mod refresh;
 pub mod scaffold;
 pub mod skill;
+pub mod swarm;
 pub mod status;
 pub mod build;
 pub mod test;

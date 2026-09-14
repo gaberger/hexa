@@ -1,6 +1,6 @@
 # ADR-2609140927: swarm fans out by file boundary, or refuses
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-09-14
 **Epoch:** hexa
 **Drivers:** CLAUDE.md has carried the rule "parallelize by file boundary, serialize by file overlap" since the adversarial review that produced it. Nothing in the binary implements it, checks it, or can even compute it. A lesson with no verb behind it is a lesson you will break.

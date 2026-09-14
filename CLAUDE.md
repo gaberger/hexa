@@ -63,6 +63,7 @@ the top-leaderboard local model scored last on the grid.
    | a lesson you will forget | `hexa memory store lesson:<topic> "<text>"` |
    | guessing which model is better | `hexa bench agentic` |
    | losing the thread after a long run | `hexa bro` — where the work stands, in plain words |
+   | parallel work that might collide | `hexa swarm '<task>' --over <slice> --gate '<cmd>'` |
 
    `hexa --help` lists the verbs. `hexa go` suggests the next action.
    `hexa hey <intent>` routes natural language to a playbook — the ordered

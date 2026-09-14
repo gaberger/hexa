@@ -21,6 +21,7 @@ needs to be started. Every verb below runs in this process and exits.
 | a lesson you will forget | `hexa memory store lesson:<topic> "<text>"` |
 | claim something about the repo | `hexa verify "<claim>"` |
 | lose the thread after a long run | `hexa bro` |
+| fan out by hand and hope they don't collide | `hexa swarm '<task>' --over <slice> --gate '<cmd>'` |
 
 If the verb you want is missing, **build the verb**. That is how the tool grows.
 
