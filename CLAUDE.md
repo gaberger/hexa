@@ -23,7 +23,7 @@ operator's manual.
 | **hexa-exec** | The agent loop, the guarded tool library, the adversarial harness, and the file-backed local store. |
 | **hexa-infer** | Every inference adapter, the endpoint registry, tier resolution. The single place a provider or model may be named. |
 | **hexa-core** | The contract surface. Zero runtime dependencies. |
-| **hexa-graph** · **hexa-analysis** · **hexa-git** · **hexa-parser** | Code knowledge graph · boundary checking and health detectors · git plumbing · parsing. |
+| **hexa-graph** · **hexa-analysis** · **hexa-git** | Code knowledge graph · boundary checking and health detectors · git plumbing. |
 
 All state is files: `~/.hexa/*.jsonl`, `~/.hexa/inference-servers.json`,
 `graph-out/graph.json`, `.hexa/project.json`, `docs/`.
@@ -127,7 +127,6 @@ hexa-core/         contract surface — zero runtime deps
 hexa-graph/        code knowledge graph
 hexa-analysis/     boundary checking + health detectors
 hexa-git/          git plumbing
-hexa-parser/       parsing utilities
 
 docs/{adrs,specs,workplans,analysis,benchmarks}/
 examples/  scripts/  .claude/{skills,agents}/

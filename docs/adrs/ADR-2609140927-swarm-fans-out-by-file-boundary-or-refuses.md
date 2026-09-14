@@ -85,8 +85,8 @@ The gate, written before the code, in two halves that must both hold:
 
 ```
 # fans out and reports every slice
-hexa swarm 'add a module doc comment' --over 'hexa-git/src' 'hexa-parser/src' \
-  --gate 'cargo check -p hexa-git -p hexa-parser'
+hexa swarm 'add a module doc comment' --over 'hexa-git/src' 'hexa-core/src' \
+  --gate 'cargo check -p hexa-git -p hexa-core'
 
 # and refuses overlap, before starting anything
 hexa swarm 'add a module doc comment' --over 'hexa-cli/src' 'hexa-cli/src/commands' \

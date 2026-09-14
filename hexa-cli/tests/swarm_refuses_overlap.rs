@@ -105,7 +105,7 @@ fn disjoint_slices_plan_and_plan_alone_starts_nothing() {
         "--over",
         "hexa-git/src",
         "--over",
-        "hexa-parser/src",
+        "hexa-core/src",
         "--gate",
         "true",
         "--plan",
@@ -114,7 +114,7 @@ fn disjoint_slices_plan_and_plan_alone_starts_nothing() {
 
     let t = text(&out);
     assert!(t.contains("2 slice(s), no overlap"), "{t}");
-    for spec in ["hexa-git/src", "hexa-parser/src"] {
+    for spec in ["hexa-git/src", "hexa-core/src"] {
         assert!(t.contains(spec), "the plan must name every slice; `{spec}` is missing:\n{t}");
     }
     assert_eq!(worktrees(), before, "--plan created a worktree");
@@ -123,7 +123,7 @@ fn disjoint_slices_plan_and_plan_alone_starts_nothing() {
 /// One slice runs, and says the simpler verb exists (decision 6).
 #[test]
 fn one_slice_names_the_simpler_verb() {
-    let out = swarm(&["x", "--over", "hexa-parser/src", "--gate", "true", "--plan"]);
+    let out = swarm(&["x", "--over", "hexa-core/src", "--gate", "true", "--plan"]);
     assert!(out.status.success(), "{}", text(&out));
     let t = text(&out);
     assert!(t.contains("hexa do run"), "a single-slice swarm should point at `hexa do run`:\n{t}");
