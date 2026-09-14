@@ -1036,6 +1036,35 @@ fn package_prefix(repo_root: &std::path::Path, file: &str) -> String {
     }
 }
 
+/// The paths a commit may carry: the target, plus the pre-run dirty files that
+/// belong to the same package.
+///
+/// Pure, so the scoping rule has tests rather than a comment claiming it works.
+/// The comment claimed it: "exclude anything dirtied concurrently, so neither
+/// unrelated dirty files nor concurrent changes get swept". The code did the
+/// opposite whenever `pkg` came back empty — `p.starts_with("")` is true of
+/// every path, so the whole repository became the package.
+///
+/// Observed: `hexa do run "nothing" --file README.md` committed 120 lines of
+/// unrelated work in progress under the title `feat(direct): nothing`. README
+/// is at the repository root, so it belongs to no package, and "no package"
+/// read as "all of them".
+///
+/// An empty prefix now means what it says: this file is in no package, so
+/// nothing travels with it.
+fn commit_paths(file: &str, pkg: &str, start_dirty: &[String], exists: &dyn Fn(&str) -> bool) -> Vec<String> {
+    let mut paths = vec![file.to_string()];
+    if pkg.is_empty() {
+        return paths;
+    }
+    for p in start_dirty {
+        if p != file && !paths.contains(p) && p.starts_with(pkg) && exists(p) {
+            paths.push(p.clone());
+        }
+    }
+    paths
+}
+
 pub(crate) async fn commit(
     repo_root: &std::path::Path,
     file: &str,
@@ -1050,16 +1079,7 @@ pub(crate) async fn commit(
     // unrelated dirty files nor concurrent changes get swept (preserves the 2026-06-04
     // review-swarm fix).
     let pkg = package_prefix(repo_root, file);
-    let mut paths: Vec<String> = vec![file.to_string()];
-    for p in start_dirty {
-        if p != file
-            && !paths.contains(p)
-            && p.starts_with(&pkg)
-            && repo_root.join(p).exists()
-        {
-            paths.push(p.clone());
-        }
-    }
+    let paths = commit_paths(file, &pkg, start_dirty, &|p| repo_root.join(p).exists());
     let add = tokio::process::Command::new("git")
         .arg("add")
         .arg("--")
@@ -1154,12 +1174,19 @@ mod commit_snapshot_tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
         init_repo(dir);
-        std::fs::write(dir.join("support.rs"), "// spec the evidence needs").unwrap();
+        // Inside a package, because that is where source lives. The fixture
+        // used to put loose `.rs` files at the root of a repository with no
+        // manifest, which is the one shape where sweeping is dangerous —
+        // `package_prefix` returns "" and "no package" used to read as "all of
+        // them". See `a_file_in_no_package_carries_nothing_with_it`.
+        std::fs::create_dir_all(dir.join("crate-a/src")).unwrap();
+        std::fs::write(dir.join("crate-a/Cargo.toml"), "[package]\nname=\"crate-a\"").unwrap();
+        std::fs::write(dir.join("crate-a/src/support.rs"), "// spec the evidence needs").unwrap();
         let start_dirty = dirty_paths(dir).await;
-        assert!(start_dirty.iter().any(|p| p == "support.rs"),
+        assert!(start_dirty.iter().any(|p| p == "crate-a/src/support.rs"),
             "start snapshot must see the supporting file, got {start_dirty:?}");
-        std::fs::write(dir.join("target.rs"), "fn t() {}").unwrap();
-        commit(dir, "target.rs", "add target", false, &start_dirty).await.unwrap();
+        std::fs::write(dir.join("crate-a/src/target.rs"), "fn t() {}").unwrap();
+        commit(dir, "crate-a/src/target.rs", "add target", false, &start_dirty).await.unwrap();
         let st = Git::new("git").args(["status", "--porcelain"]).current_dir(dir).output().unwrap();
         assert!(String::from_utf8_lossy(&st.stdout).trim().is_empty(),
             "tree must be clean — support.rs should have been committed with the target");
@@ -1267,5 +1294,68 @@ mod gate_shape_tests {
         // The bug pipefail exists for: a failing writer behind a succeeding reader.
         let (ok, _) = run_evidence("(echo boom; exit 1) | tail -1", dir.path()).await;
         assert!(!ok, "pipefail stopped protecting the gate");
+    }
+}
+
+#[cfg(test)]
+mod commit_scope_tests {
+    use super::commit_paths;
+
+    fn all_exist(_: &str) -> bool {
+        true
+    }
+
+    #[test]
+    fn a_file_in_no_package_carries_nothing_with_it() {
+        // README.md is at the repository root, so `package_prefix` returns "".
+        // `p.starts_with("")` is true of every path, which is how a run named
+        // "nothing" committed 120 lines of unrelated work in progress.
+        let dirty = vec![
+            "hexa-exec/src/direct_exec.rs".to_string(),
+            "hexa-cli/src/main.rs".to_string(),
+            ".hexa/loop.json".to_string(),
+        ];
+        assert_eq!(commit_paths("README.md", "", &dirty, &all_exist), vec!["README.md"]);
+    }
+
+    #[test]
+    fn a_file_in_a_package_carries_that_packages_dirty_files() {
+        // The case this exists for: the evidence needed a supporting file that
+        // was already dirty, and committing only the target leaves a broken
+        // state.
+        let dirty = vec![
+            "hexa-core/src/ports.rs".to_string(),
+            "hexa-cli/src/main.rs".to_string(),
+        ];
+        let got = commit_paths("hexa-core/src/lib.rs", "hexa-core/", &dirty, &all_exist);
+        assert_eq!(got, vec!["hexa-core/src/lib.rs", "hexa-core/src/ports.rs"]);
+    }
+
+    #[test]
+    fn a_dirty_file_in_another_package_is_never_swept() {
+        let dirty = vec!["hexa-cli/src/main.rs".to_string()];
+        assert_eq!(
+            commit_paths("hexa-core/src/lib.rs", "hexa-core/", &dirty, &all_exist),
+            vec!["hexa-core/src/lib.rs"]
+        );
+    }
+
+    #[test]
+    fn a_deleted_file_is_not_added_back() {
+        let dirty = vec!["hexa-core/src/gone.rs".to_string()];
+        let exists = |p: &str| p != "hexa-core/src/gone.rs";
+        assert_eq!(
+            commit_paths("hexa-core/src/lib.rs", "hexa-core/", &dirty, &exists),
+            vec!["hexa-core/src/lib.rs"]
+        );
+    }
+
+    #[test]
+    fn the_target_appears_once_even_if_it_was_already_dirty() {
+        let dirty = vec!["hexa-core/src/lib.rs".to_string()];
+        assert_eq!(
+            commit_paths("hexa-core/src/lib.rs", "hexa-core/", &dirty, &all_exist),
+            vec!["hexa-core/src/lib.rs"]
+        );
     }
 }

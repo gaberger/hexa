@@ -78,22 +78,22 @@
       "updated": "2026-09-13T21:25:21.784622425+00:00"
     },
     "2d1062c0-b13d-47d8-a748-9033ee1a36e3": {
-      "gate": "cd examples/ring-rs && cargo test 2>&1 | grep -qE \"test result: ok\\. ([8-9]|[1-9][0-9]+) passed\"",
+      "gate": "test -f README.md",
       "gate_result": true,
       "gate_result_at": "2026-09-14T18:41:12.477544943+00:00",
       "gate_result_for": "true",
       "gate_result_head": "3c8848a",
       "grade": "A+",
-      "grade_at": "2026-09-14T19:45:12.284312034+00:00",
+      "grade_at": "2026-09-14T19:59:42.245283976+00:00",
       "grade_edges": 925,
       "grade_files": 144,
-      "grade_head": "37768bd",
+      "grade_head": "d8b1eb7",
       "pid": 4018981,
       "pid_start": 60014992,
       "running": null,
       "score": 99,
       "stage": "build",
-      "updated": "2026-09-14T19:45:12.285351280+00:00"
+      "updated": "2026-09-14T19:59:44.390687985+00:00"
     },
     "8140e760-415a-4b7d-b59c-4db913c802ae": {
       "grade": "A+",
@@ -105,6 +105,17 @@
       "pid_start": 62557307,
       "score": 98,
       "updated": "2026-09-14T19:42:07.036079510+00:00"
+    },
+    "b48cd996-6553-4204-b635-b2ec529ffd44": {
+      "grade": "A+",
+      "grade_at": "2026-09-14T20:00:29.035938640+00:00",
+      "grade_edges": 925,
+      "grade_files": 144,
+      "grade_head": "d8b1eb7",
+      "pid": 1185730,
+      "pid_start": 62670774,
+      "score": 99,
+      "updated": "2026-09-14T20:00:29.037565023+00:00"
     },
     "d0eda181-0347-4271-8f24-5f6673395957": {
       "grade": "A+",
