@@ -1,28 +1,6 @@
 {
   "adr": "ADR-2609121400",
-  "gate": "true",
-  "stage": "done",
-  "tasks": [
-    {
-      "done_at": "2026-09-14T16:01:59.871112374+00:00",
-      "status": "done",
-      "title": "a phase declares what it may do; only build and fix may write"
-    },
-    {
-      "done_at": "2026-09-14T16:01:59.873027971+00:00",
-      "status": "done",
-      "title": "read-only phases spawn with the write tools disallowed"
-    },
-    {
-      "done_at": "2026-09-14T16:01:59.874858116+00:00",
-      "status": "done",
-      "title": "a build refuses a target that already has content"
-    },
-    {
-      "done_at": "2026-09-14T16:01:59.876715951+00:00",
-      "status": "done",
-      "title": "no call site hardcodes its own access"
-    }
-  ],
-  "updated": "2026-09-14T16:01:59.878499686+00:00"
+  "gate": "printf \"%s\n\" broken | grep -q \"[\"",
+  "stage": "build",
+  "updated": "2026-09-14T16:31:35.650233258+00:00"
 }

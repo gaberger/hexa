@@ -1,0 +1,20 @@
+[package]
+name = "connect-four"
+version = "0.1.0"
+edition = "2021"
+description = "Connect Four for the terminal, in ports-and-adapters style."
+
+[dependencies]
+
+[dev-dependencies]
+
+[lib]
+name = "connect_four"
+path = "src/lib.rs"
+
+[[bin]]
+name = "connect-four"
+path = "src/main.rs"
+
+# This example stands alone. It is not a member of the hexa workspace.
+[workspace]

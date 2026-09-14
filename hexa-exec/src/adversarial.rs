@@ -616,6 +616,29 @@ fn target_is_ready(target_abs: &Path) -> Result<(), String> {
     ))
 }
 
+/// What to record about a gate that did not pass.
+///
+/// `run_build` threw the gate's output away — `let (ok, _) = run_evidence(…)`
+/// — and reported "build FAILED" with nothing else. A Connect Four build here
+/// was reported failed while the code was correct and every clause of the
+/// intended gate passed: the gate *string* had been mangled before it reached
+/// hexa, and `sh` was saying so on stderr the whole time. One line of that
+/// output would have answered it instantly.
+///
+/// A gate that fails and explains nothing sends you to read the code. The code
+/// was fine.
+fn gate_note(ok: bool, output: &str) -> Option<String> {
+    if ok {
+        return None;
+    }
+    let tail: Vec<&str> = output.lines().rev().filter(|l| !l.trim().is_empty()).take(12).collect();
+    if tail.is_empty() {
+        return Some("gate failed and produced no output at all".to_string());
+    }
+    let body: Vec<&str> = tail.into_iter().rev().collect();
+    Some(format!("gate failed. Its last lines:\n    {}", body.join("\n    ")))
+}
+
 /// Competing design priorities — the divergence that makes the red-team meaningful.
 const DESIGN_PRIORITIES: &[&str] = &[
     "durability-and-correctness-first: crash-safety, persistence, recovery, and provable invariants are paramount",
@@ -759,9 +782,14 @@ pub async fn run_build(
     }
 
     announce(Phase::Gate, gate, started);
-    let (ok, _) = with_heartbeat("gate", crate::direct_exec::run_evidence(gate, repo_root)).await;
+    let (ok, gate_output) =
+        with_heartbeat("gate", crate::direct_exec::run_evidence(gate, repo_root)).await;
     report.build_ok = ok;
     tracing::info!("      gate {}", if ok { "PASSED" } else { "FAILED" });
+    if let Some(note) = gate_note(ok, &gate_output) {
+        tracing::info!("{note}");
+        report.notes.push(note);
+    }
     if ok {
         announce(Phase::Commit, "", started);
         let mut paths: Vec<String> = dirty_paths(repo_root)
@@ -965,6 +993,34 @@ mod tests {
         let target = dir.path().join("not-a-dir");
         std::fs::write(&target, "x").expect("write");
         assert!(super::target_is_ready(&target).unwrap_err().contains("is a file"));
+    }
+
+    #[test]
+    fn a_passing_gate_needs_no_note() {
+        assert!(super::gate_note(true, "test result: ok. 9 passed").is_none());
+    }
+
+    #[test]
+    fn a_failing_gate_carries_its_own_last_lines() {
+        let out = "compiling\nsh: -c: line 1: syntax error near unexpected token\nsh: -c: line 1: `\"'";
+        let note = super::gate_note(false, out).expect("a failing gate must explain itself");
+        assert!(note.contains("syntax error"), "the reason must survive: {note}");
+    }
+
+    #[test]
+    fn a_silent_failing_gate_says_it_was_silent() {
+        let note = super::gate_note(false, "   \n\n").expect("still a note");
+        assert!(note.contains("no output at all"), "{note}");
+    }
+
+    #[test]
+    fn the_note_keeps_the_end_not_the_beginning() {
+        // A gate that compiles for a minute and then fails buries the reason
+        // under its own progress. The last lines are the ones that matter.
+        let out: String = (1..=40).map(|i| format!("line {i}\n")).collect();
+        let note = super::gate_note(false, &out).expect("a note");
+        assert!(note.contains("line 40"), "the end was dropped: {note}");
+        assert!(!note.contains("line 1\n"), "the start was kept: {note}");
     }
 
     /// A retry that says nothing looks exactly like one call taking three times
