@@ -1052,6 +1052,59 @@ fn gate_note(ok: bool, output: &str) -> Option<String> {
     Some(format!("gate failed. Its last lines:\n    {}", body.join("\n    ")))
 }
 
+/// Did the build agent commit work that the gate then refused?
+///
+/// The build agent has a shell, so it commits its own work part-way through
+/// the build phase — before the gate has run. Observed: a run reported
+/// `build FAILED` and its output was already in history, committed by the
+/// agent with a message of its own. `commit_result` below is careful to commit
+/// only when the gate passes, and it was guarding a door the work had already
+/// walked through.
+///
+/// The gate is the only authority on whether work counts. A commit made before
+/// it spoke has not earned its place.
+fn commits_are_unearned(before: Option<&str>, after: Option<&str>, gate_ok: bool) -> bool {
+    if gate_ok {
+        return false;
+    }
+    match (before, after) {
+        (Some(b), Some(a)) => b != a,
+        // No git, or no commit yet: there is nothing to undo, and guessing
+        // would be worse than doing nothing.
+        _ => false,
+    }
+}
+
+/// The commit `HEAD` points at, short, or `None` when there is not one.
+async fn head_of(repo_root: &Path) -> Option<String> {
+    let out = tokio::process::Command::new("git")
+        .current_dir(repo_root)
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        .await
+        .ok()?;
+    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// Move `HEAD` back, keeping every change staged.
+///
+/// `--soft`, deliberately. Nothing the agent wrote is lost: the work sits in
+/// the index for the operator to read and commit on purpose. Undoing the
+/// *claim* is the point, not undoing the work.
+async fn unwind_to(repo_root: &Path, commit: &str) -> Result<(), String> {
+    let out = tokio::process::Command::new("git")
+        .current_dir(repo_root)
+        .args(["reset", "--soft", commit])
+        .output()
+        .await
+        .map_err(|e| format!("git reset: {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
 /// Competing design priorities — the divergence that makes the red-team meaningful.
 const DESIGN_PRIORITIES: &[&str] = &[
     "durability-and-correctness-first: crash-safety, persistence, recovery, and provable invariants are paramount",
@@ -1187,6 +1240,9 @@ pub async fn run_build_with(
     synth.finish(format!("spec of {} chars", spec.len()));
 
     // ── Phase 4: build to the gate ───────────────────────────────────────────
+    // Where history stood before the agent touched it. The agent has a shell
+    // and commits its own work; the gate has not spoken yet.
+    let head_before = head_of(repo_root).await;
     let build = Phase::start(&reporter, "build", format!("one agent builds to the gate: {gate}"), HEARTBEAT);
     let build_prompt = format!(
         "Implement the following spec as code under `{target}`. Write the full implementation AND a \
@@ -1205,6 +1261,22 @@ pub async fn run_build_with(
     }
     report.build_ok = ok;
     build.finish(if ok { "gate passed" } else { "gate FAILED" });
+
+    let head_after = head_of(repo_root).await;
+    if commits_are_unearned(head_before.as_deref(), head_after.as_deref(), ok) {
+        let to = head_before.clone().unwrap_or_default();
+        match unwind_to(repo_root, &to).await {
+            Ok(()) => report.notes.push(format!(
+                "the agent committed before the gate ran, and the gate refused it. \
+                 History is back at {to}; every change is staged and nothing is lost."
+            )),
+            Err(e) => report.notes.push(format!(
+                "the agent committed before the gate ran and the gate refused it, \
+                 and history could not be moved back to {to}: {e}"
+            )),
+        }
+    }
+
     if ok {
         let mut paths: Vec<String> = dirty_paths(repo_root)
             .await
@@ -1657,6 +1729,58 @@ mod access_tests {
             Some(i) => &whole[..i],
             None => whole,
         }
+    }
+
+    #[test]
+    fn a_commit_the_gate_refused_is_unearned() {
+        use super::commits_are_unearned;
+        // The case that happened: the agent committed, then the gate said no.
+        assert!(commits_are_unearned(Some("aaa1111"), Some("bbb2222"), false));
+        // The gate passed, so whatever landed had permission.
+        assert!(!commits_are_unearned(Some("aaa1111"), Some("bbb2222"), true));
+        // The gate failed and nothing landed. Nothing to undo.
+        assert!(!commits_are_unearned(Some("aaa1111"), Some("aaa1111"), false));
+        // No git, or a repository with no commit yet. Guessing would be worse
+        // than doing nothing.
+        assert!(!commits_are_unearned(None, Some("bbb2222"), false));
+        assert!(!commits_are_unearned(Some("aaa1111"), None, false));
+        assert!(!commits_are_unearned(None, None, false));
+    }
+
+    /// Undoing the claim must not undo the work.
+    #[test]
+    fn unwinding_keeps_every_change_staged() {
+        use super::{head_of, unwind_to};
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let repo = dir.path();
+            let git = |args: &[&str]| {
+                std::process::Command::new("git").current_dir(repo).args(args).output().expect("git")
+            };
+            git(&["init", "-q"]);
+            git(&["config", "user.email", "t@example.com"]);
+            git(&["config", "user.name", "t"]);
+            std::fs::write(repo.join("first.txt"), "one").expect("write");
+            git(&["add", "-A"]);
+            git(&["commit", "-qm", "first"]);
+            let before = head_of(repo).await.expect("a commit");
+
+            // The agent's own commit, made before the gate ran.
+            std::fs::write(repo.join("agent.rs"), "fn main() {}").expect("write");
+            git(&["add", "-A"]);
+            git(&["commit", "-qm", "the agent's own message"]);
+            let after = head_of(repo).await.expect("a commit");
+            assert_ne!(before, after);
+
+            unwind_to(repo, &before).await.expect("unwind");
+
+            assert_eq!(head_of(repo).await.as_deref(), Some(before.as_str()), "history did not move back");
+            assert!(repo.join("agent.rs").is_file(), "the work was destroyed; --soft keeps it");
+            let staged = git(&["diff", "--cached", "--name-only"]);
+            let staged = String::from_utf8_lossy(&staged.stdout);
+            assert!(staged.contains("agent.rs"), "the work is not staged for the operator: {staged}");
+        });
     }
 
     #[test]
