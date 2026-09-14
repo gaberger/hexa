@@ -1,0 +1,19 @@
+{
+  "name": "game-connect4-ts-vacuous",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Connect Four behind four gates. One proves something; three do not.",
+  "scripts": {
+    "build": "rm -rf dist && tsc",
+    "test": "npm run test:real",
+    "test:real": "npm run build --silent && node gates/real.mjs",
+    "test:empty": "npm run build --silent && node gates/empty.mjs",
+    "test:silent": "node gates/silent.mjs",
+    "test:lying": "node gates/lying.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "@types/node": "^22.0.0"
+  }
+}

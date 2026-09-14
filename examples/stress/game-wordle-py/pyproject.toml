@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "game-wordle-py"
+version = "0.1.0"
+description = "A hexagonal Wordle in Python - a stress fixture for hexa analyze"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[project.scripts]
+wordle = "src.composition_root:main"
+
+[tool.setuptools]
+packages = [
+    "src",
+    "src.domain",
+    "src.ports",
+    "src.usecases",
+    "src.adapters",
+    "src.adapters.primary",
+    "src.adapters.secondary",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

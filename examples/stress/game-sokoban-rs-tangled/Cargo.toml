@@ -1,0 +1,12 @@
+[package]
+name = "game-sokoban-rs-tangled"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+
+[dev-dependencies]
+
+# This example stands alone. It is not a member of the hexa workspace.
+[workspace]
