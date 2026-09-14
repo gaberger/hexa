@@ -1,7 +1,6 @@
 ---
-name: hexa-ADR-review
+name: hexa-adr-review
 description: Review code changes against existing Architecture Decision Records
-trigger: /hexa-ADR-review
 ---
 
 # Review Code Against ADRs

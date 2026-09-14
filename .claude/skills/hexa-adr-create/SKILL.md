@@ -1,7 +1,6 @@
 ---
-name: hexa-ADR-create
+name: hexa-adr-create
 description: Create a new Architecture Decision Record with auto-numbering, dependency impact analysis, and validation gates
-trigger: /hexa-ADR-create
 ---
 
 # Create New ADR

@@ -168,9 +168,14 @@ then found three real bugs its own passing tests missed.
 
 ## Skills & agents
 
-**Slash commands**: `/hexa-feature-dev`, `/hexa-scaffold`, `/hexa-generate`,
-`/hexa-summarize`, `/hexa-analyze-deps`, `/hexa-analyze-arch`, `/hexa-validate`,
-`/cargo-fast`.
+**Slash commands**, one per shipped skill:
+`/hexa-adr-create`, `/hexa-adr-review`, `/hexa-adr-search`, `/hexa-adr-status`,
+`/hexa-analyze-arch`, `/hexa-analyze-deps`, `/hexa-generate`, `/hexa-inference`,
+`/hexa-project-output`, `/hexa-review-gate`, `/hexa-scaffold`, `/hexa-summarize`.
+
+A skill lives at `.claude/skills/<name>/SKILL.md`. A bare `<name>.md` in the
+skills root is never loaded, whatever its frontmatter says.
+`hexa-cli/tests/every_shipped_skill_can_load.rs` holds that line.
 
 
 ## Key lessons (from adversarial review)

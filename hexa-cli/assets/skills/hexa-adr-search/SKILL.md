@@ -1,7 +1,6 @@
 ---
-name: hexa-ADR-search
+name: hexa-adr-search
 description: Search Architecture Decision Records by keyword, status, or date
-trigger: /hexa-ADR-search
 ---
 
 # Search ADRs
