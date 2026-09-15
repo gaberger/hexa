@@ -192,6 +192,38 @@ cargo test -p hexa-cli --lib latest_release_tests
 Expected: `4 passed`. Two tags pushed together once left the older one marked
 latest; the old code would have downgraded every machine. Same case study.
 
+## Every cited ADR id resolves to a file
+
+**Claim.** `hexa adr doctor` fails on an `ADR-…` id cited in code, docs,
+`CODEOWNERS` or `.hexa/*.toml` that has no file under `docs/adrs/` or
+`docs/adrs/historical/`, and `--stub-orphans` writes a Historical stub for
+each orphan that records what the citing lines say.
+
+```bash
+cargo test -p hexa-cli --lib adr_citations
+hexa adr doctor --strict
+```
+
+Expected: `5 passed`, then `No findings`. On 2026-09-15 the first doctor run
+with this check reported 539 errors across 114 orphan ids; the stubs under
+`docs/adrs/historical/` are what resolved them (ADR-2609151930 §2).
+
+## The gate runner says why a gate did not run
+
+**Claim.** `hexa adr gates` prefixes PATH with `~/.cargo/bin`, reports a cargo
+that cannot read the lock file or an unreachable host as "cannot run here"
+rather than "gate failed", prints the last ten lines of a real failure, and
+treats a gate that exited 0 having run zero tests as failed.
+
+```bash
+cargo test -p hexa-cli --lib adr_gates_classify
+PATH=/usr/bin:/bin hexa adr gates
+```
+
+Expected: `7 passed`, then a suite in which no cargo gate reads "cannot run
+here" because the prefix found rustup's cargo. Before this, the same PATH
+produced `0 passed · 21 failed` with no reason given (ADR-2609151930 §6).
+
 ## The standalone gate
 
 ```bash

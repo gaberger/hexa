@@ -1,6 +1,6 @@
 ---
 id: ADR-2609151930
-status: Proposed
+Status: Accepted
 date: 2026-09-15
 ---
 # ADR-2609151930: An accepted decision is append-only, and memory knows it
@@ -71,13 +71,20 @@ beyond three filenames at session start.
   accept, one flag on `memory store`, and a backfill of `Applies-To` that is
   its own workplan.
 
+## Gate
+
+`cargo test -p hexa-cli --lib adr_citations && cargo test -p hexa-cli --lib adr_gates_classify && hexa adr doctor --strict`
+
+Items 1 and 2 (built 2026-09-15, commits 6976a92, 7d2c054, f736c2c, 6eff063).
+Items 3 to 5 extend this line with `adr_ledger` and `lesson_prefix_filter`
+when they land; a filter that matches no test is caught by the runner as a
+vacuous pass.
+
 ## Implementation
 
-Gate, written before the code:
-
-```bash
-cargo test -p hexa-cli --lib adr_ledger && cargo test -p hexa-cli --lib adr_citations && cargo test -p hexa-exec --lib lesson_prefix_filter
-```
+The gate above was written before the code. Its original form named all
+five modules; the runner would have reported the three unbuilt ones as
+vacuous, which is the guard §6 adds.
 
 Ordered by value per change:
 
