@@ -310,6 +310,16 @@ Eighteen came from dead exports elsewhere in the project that the refactor did
 not touch. The detector defect is recorded in
 [`docs/analysis/2609120500-refactoring-trial.md`](docs/analysis/2609120500-refactoring-trial.md).
 
+**Fixing itself.** On 2026-09-15 hexa's own run feed reported an 8% pass rate.
+Every real run had passed; the feed was counting subagent hook events as failed
+runs. The fix went through `hexa do run` against a test written first and shown
+failing, and the release that carried it exposed a second bug: two tags pushed
+together left the older one marked latest, so self-update would have downgraded
+every machine. Both fixes gated, both recorded as ADRs, both shipped in
+v26.9.12. The grade penalised the first fix for two dead exports and was right.
+[`docs/analysis/2609151730-the-dashboard-lied-case-study.md`](docs/analysis/2609151730-the-dashboard-lied-case-study.md)
+keeps the misses in.
+
 Every number above has a command that checks it in
 [`docs/EVIDENCE.md`](docs/EVIDENCE.md).
 

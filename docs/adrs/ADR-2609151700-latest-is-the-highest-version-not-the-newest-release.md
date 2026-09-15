@@ -1,3 +1,14 @@
+---
+id: ADR-2609151700
+status: accepted
+date: 2026-09-15
+supersedes: []
+superseded_by: null
+depends_on: []
+components: []
+modules: []
+---
+
 # ADR-2609151700: Latest is the highest version, not the newest release
 
 **Status:** Accepted

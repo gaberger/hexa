@@ -166,6 +166,32 @@ Each was built by `hexa scaffold` or `hexa build` from one sentence.
 `linkstore-svc` binds a real port and writes a real SQLite file. Breaking its
 HTTP status fails 4 tests. Breaking a domain rule fails 3 more.
 
+## The run feed counts runs, not hook events
+
+**Claim.** `hexa do runs` counts only rows written by `hexa do run`. Subagent
+lifecycle rows that the Claude Code hooks append to the same log are not runs
+and do not appear as failures.
+
+```bash
+cargo test -p hexa-exec --lib runs_feed_tests
+```
+
+Expected: `3 passed`. Before the fix the feed reported 8% pass over a log in
+which every real run had passed. The session is written up in
+[`analysis/2609151730-the-dashboard-lied-case-study.md`](analysis/2609151730-the-dashboard-lied-case-study.md).
+
+## Self-update picks the highest version, not GitHub's "latest"
+
+**Claim.** `hexa self-update` installs the highest published `vX.Y.Z` and never
+moves backwards unless `--version` names a tag.
+
+```bash
+cargo test -p hexa-cli --lib latest_release_tests
+```
+
+Expected: `4 passed`. Two tags pushed together once left the older one marked
+latest; the old code would have downgraded every machine. Same case study.
+
 ## The standalone gate
 
 ```bash

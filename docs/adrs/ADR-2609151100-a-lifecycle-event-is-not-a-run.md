@@ -1,3 +1,14 @@
+---
+id: ADR-2609151100
+status: accepted
+date: 2026-09-15
+supersedes: []
+superseded_by: null
+depends_on: []
+components: []
+modules: []
+---
+
 # ADR-2609151100: A lifecycle event is not a run
 
 **Status:** Accepted
