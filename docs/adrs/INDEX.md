@@ -6,7 +6,7 @@
 > [`ARCHITECTURE.md`](../../ARCHITECTURE.md); for *why* a decision was made,
 > read the ADR itself.
 
-**1 ADRs** across 1 epochs.
+**26 ADRs** across 1 epochs.
 
 ## Epoch: `single-agent` — **current**
 
@@ -14,5 +14,30 @@ _One gateway-mediated agent loop; code-graph context as the differentiator_
 
 | ADR | Status | Title | Superseded-By |
 |-----|--------|-------|---------------|
+| ADR-2609151100 | accepted | ADR-2609151100: A lifecycle event is not a run |  |
+| ADR-2609140020 | accepted | ADR-2609140020: A grade is a claim about files that were read |  |
+| ADR-2609131341 | accepted | ADR-2609131341: Evidence is captured, not copied |  |
+| ADR-2609131408 | accepted | ADR-2609131408: Sessions in one checkout see each other |  |
+| ADR-2609131427 | accepted | ADR-2609131427: The harness says what it is doing while it does it |  |
+| ADR-2609131611 | accepted | ADR-2609131611: A run is visible to everyone and outlives the session that started it |  |
+| ADR-2609131617 | accepted | ADR-2609131617: A tier that names a model must name one something can serve |  |
+| ADR-2609131646 | accepted | ADR-2609131646: An unanswered hunt is not a clean one |  |
+| ADR-2609131655 | accepted | ADR-2609131655: A registered endpoint gets the same URL treatment as a configured one |  |
+| ADR-2609131702 | accepted | ADR-2609131702: The harness reviews with whatever can answer, and says which |  |
+| ADR-2609131749 | accepted | ADR-2609131749: A test never writes the process environment |  |
+| ADR-2609131800 | accepted | ADR-2609131800: Say what was checked |  |
+| ADR-2609131811 | accepted | ADR-2609131811: An endpoint's key may live in a file |  |
+| ADR-2609131822 | accepted | ADR-2609131822: A local backend is asked one question at a time |  |
+| ADR-2609131835 | accepted | ADR-2609131835: A reasoning model needs room to answer, and an empty reply must say why |  |
+| ADR-2609131907 | accepted | ADR-2609131907: An empty review is a claim that needs calibrating |  |
+| ADR-2609131948 | accepted | ADR-2609131948: The harness is driven end to end against a double |  |
+| ADR-2609132018 | accepted | ADR-2609132018: A gate needs the tool that runs it, and doctor checks for it |  |
+| ADR-2609132049 | accepted | ADR-2609132049: The parser crate goes with the host it bound |  |
+| ADR-2609132059 | accepted | ADR-2609132059: Done means the gate ran, and passed on something |  |
+| ADR-2609132122 | accepted | ADR-2609132122: A recorded gate is run, or it is prose |  |
+| ADR-2609132158 | accepted | ADR-2609132158: A gate that never runs on the branch is not a gate |  |
 | ADR-2609121400 | accepted | ADR-2609121400: hexa is a scaffolding system with two gates |  |
+| ADR-2609121710 | proposed | ADR-2609121710: Registered local providers must be able to authenticate, and `test` must prove it |  |
+| ADR-2609121843 | proposed | ADR-2609121843: `hexa build` must prove it built something |  |
+| ADR-2609122048 | accepted | ADR-2609122048: a tool that reports "nothing found" must prove it looked |  |
 

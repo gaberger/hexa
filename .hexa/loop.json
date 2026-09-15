@@ -76,6 +76,14 @@
         }
       ],
       "updated": "2026-09-13T21:25:21.784622425+00:00"
+    },
+    "27287875-fffc-4ab0-ad71-2c122d2fd477": {
+      "adr": "ADR-2609151100",
+      "gate": "cargo test -p hexa-exec --lib runs_feed_tests",
+      "pid": 4193848,
+      "pid_start": 26669617,
+      "stage": "gate",
+      "updated": "2026-09-15T16:38:09.686571795+00:00"
     }
   }
 }
