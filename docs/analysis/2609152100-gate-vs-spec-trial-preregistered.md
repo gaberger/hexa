@@ -25,6 +25,15 @@ not write, on tasks they did not choose, against a spec-first arm run the way
 people actually run it, with the ground truth held out from both arms and the
 reviewer blind to which arm produced what.
 
+**Amendment 2, 2026-09-15, before any task.** The task design was wrong for
+the claim. Ten bug-fix issues measure repair, and this project's claim is not
+about repair: it is that *the architecture of what gets built holds up as the
+system grows*. A single-file fix cannot show that, and the pilot run
+(`2609151930-gate-vs-spec-pilot-run.md`) demonstrated exactly that emptiness by
+returning 3-of-3 ties on two of three measures. The trial is therefore split
+into two task types, and the architecture type carries the weight. See
+"Task type A" and "Task type B" below.
+
 ## The claim under test
 
 A gate written before the code, and enforced by the tool that makes the
@@ -34,7 +43,64 @@ gate detects it and the spec does not.
 
 Two claims, two measures. Both are pre-registered below.
 
-## Subject
+## Task type A: architecture under growth (the weighted type)
+
+Three systems, each built once per arm and then grown by five successive
+change requests delivered in a fixed order. This is where the claim lives.
+
+**The build.** One challenge, one gate, stated identically to every arm. Each
+system must need at least two primary adapters and two secondary adapters, so
+that boundaries are load-bearing rather than decorative. Candidates, fixed
+now: a link shortener with an HTTP API and a CLI over a file store and an
+in-memory cache; a rate limiter with an HTTP middleware and a library API over
+Redis-shaped and in-memory backends; a job runner with a CLI and an HTTP
+status endpoint over a filesystem queue and a stub notifier.
+
+**The five changes**, written before the build and not derived from any arm's
+design, each delivered to every arm in the same words:
+
+1. Add a second secondary adapter behind an existing port.
+2. Replace a secondary adapter with a different implementation. Nothing in
+   the domain may change.
+3. Add a primary adapter that reuses an existing use case unchanged.
+4. Add a domain rule that every primary adapter must now enforce.
+5. Remove a feature end to end.
+
+**Measures for type A**, in order of weight:
+
+1. **Boundary integrity after each change.** `hexa analyze --json` run by the
+   operator on every arm's tree after every change. Violations, cycles, and
+   the grade, as a time series over six points. This is the primary measure.
+   Note the asymmetry under test: the gate-first arm may run the analyzer
+   during development, the spec-driven arms may not, because their methods do
+   not prescribe it. That asymmetry *is* the claim. The analyzer is the
+   measuring instrument for all three arms regardless.
+2. **Change 2 in isolation.** Did the domain diff stay empty when the adapter
+   was swapped? Binary. A method that requires touching the domain to change
+   a database has not delivered ports and adapters whatever its file layout
+   says.
+3. **Blast radius.** Files touched per change, and how many lie outside the
+   layer the change belongs to.
+4. **The gate still passes** after each change, and the suite is green.
+5. **Cost and wall clock** per arm per change.
+
+A method wins type A if its grade never falls below its own build-time grade
+across all five changes and it has strictly fewer total violations than the
+others at the final point.
+
+## Task type B: repair in unfamiliar code (the secondary type)
+
+The ten-issue SWE-bench-shaped design, kept as written below, demoted to
+secondary. It measures whether a method can make a correct small change. The
+pilot suggests it will not discriminate much, and it is retained because a
+method that wins type A while failing type B would be worth knowing about.
+
+Subject selection, task selection, and held-out ground truth for type B are
+unchanged and specified in the next two sections.
+
+## Subject and tasks for type B
+
+### Repository, chosen by rule
 
 A public repository, chosen by rule rather than by taste, so the choice
 cannot favour the tool:
@@ -52,26 +118,6 @@ Selection rule: sort GitHub search results for the language by stars, take
 the first repository that satisfies every criterion above, record the search
 query and the date. If it is later disqualified for a reason not on this list,
 the disqualification and the reason go into the results document.
-
-## Tasks
-
-Ten issues from the subject, chosen by rule:
-
-- Closed by exactly one merged pull request.
-- That pull request added or changed at least one test.
-- The issue text alone is enough for a maintainer to know what to do. Judged
-  by one person before the run, blind to the fix, and recorded.
-- Selected as the ten most recent that qualify. No cherry-picking.
-
-For each issue, the ground truth is the tests the maintainer's pull request
-added or changed, checked out from after the merge and run against the
-pre-merge tree with each arm's change applied. Neither arm sees those tests.
-Neither arm sees the pull request. Both arms see the issue text and the
-repository at the parent commit of the merge.
-
-This is the SWE-bench shape. It is used because it is the accepted way to
-judge a change against what the maintainers actually wanted, and because it
-gives a pass or fail that nobody in this project decides.
 
 ## What is actually different
 
@@ -141,7 +187,7 @@ something the gate arm needs, that is recorded as a finding against hexa and
 the operator does it by hand, timed. If a spec-driven method's documented
 step cannot be completed on the subject, that is recorded the same way.
 
-## Measures, in order of weight
+## Measures for type B, in order of weight
 
 1. **Held-out pass.** Do the maintainer's tests pass against the arm's
    change? Binary per task. The primary measure.
@@ -170,11 +216,21 @@ step cannot be completed on the subject, that is recorded the same way.
 
 ## What counts as a result
 
-- **Gate-first wins** if arm G's held-out pass count is at least each
+Type A decides. Type B is reported alongside and cannot overturn it.
+
+- **Type A** is decided by the rule stated in its own section: grade never
+  below build-time grade across all five changes, and strictly fewer total
+  violations at the final point. Change 2, the adapter swap with an untouched
+  domain, is reported separately for every arm whatever the overall result.
+- **Gate-first wins type B** if arm G's held-out pass count is at least each
   spec-driven arm's and arm G has strictly fewer surviving defects than each,
   summed over the ten tasks.
-- **A spec-driven method wins** if it beats arm G on both measures the same
-  way. Each is scored separately; BMAD and Spec Kit are not pooled.
+- **A spec-driven method wins type B** if it beats arm G on both measures the
+  same way. Each is scored separately; BMAD and Spec Kit are not pooled.
+- **An arm terminated by anything other than the time cap** (a spend limit, a
+  crashed host, a revoked key) scores *no result* for that task, for every
+  arm, and the task is rerun or dropped. The pilot needed this rule and did
+  not have it.
 - **No result** otherwise, and the document says so.
 
 Drift detection is reported separately. It tests the second claim and is
@@ -198,15 +254,18 @@ Recorded now so they cannot be discovered later as excuses:
 
 ## What this trial does not show
 
-It does not show that gate-first is better for greenfield work; both arms
-start from an existing codebase. It does not show anything about teams; one
+Type B does not show anything about greenfield work; it starts from an
+existing codebase. Type A is greenfield by construction and shows nothing
+about arriving in a large unfamiliar system. It does not show anything about teams; one
 operator runs both arms. It does not show that hexa is the best tool for
 gate-first; it shows whether the method beats the other method with the tool
 that exists.
 
 ## Costs
 
-Thirty runs of up to 90 minutes, a harden pass per arm per task, and three
+Type A: three systems times three arms times six deliveries (build plus five
+changes) is 54 agent runs, the dominant cost. Type B: thirty runs of up to 90
+minutes, a harden pass per arm per task, and three
 mutation runs per arm per task. The spec-driven arms will spend more, since
 their methods run more roles; the spend is reported per arm and is itself a
 finding. Inference cost is recorded per task from
