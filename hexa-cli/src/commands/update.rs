@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const GITHUB_RELEASES_API: &str =
-    "https://api.github.com/repos/gaberger/hexa/releases/latest";
+    "https://api.github.com/repos/gaberger/hexa/releases?per_page=30";
 const GITHUB_RELEASES_BASE: &str =
     "https://github.com/gaberger/hexa/releases/download";
 
@@ -20,6 +20,7 @@ pub async fn run(check_only: bool, version: Option<String>, yes: bool) -> anyhow
         .build()?;
 
     // 1. Determine target version
+    let explicit_version = version.is_some();
     let latest_tag = match version {
         Some(ref v) => v.clone(),
         None => fetch_latest_tag(&client).await?,
@@ -38,6 +39,24 @@ pub async fn run(check_only: bool, version: Option<String>, yes: bool) -> anyhow
     if CURRENT_VERSION == latest_ver {
         println!("\n  {} Already up to date.", "✓".green());
         return Ok(());
+    }
+
+    // Downgrade guard: GitHub's "latest" flag races on tags pushed together,
+    // so an unnamed update must never move backwards (ADR-2609151700).
+    if !explicit_version {
+        if let (Some(latest), Some(current)) =
+            (parse_version(&latest_tag), parse_version(CURRENT_VERSION))
+        {
+            if latest < current {
+                println!(
+                    "\n  {} Installed version {} is newer than the newest published release {}; nothing to do.",
+                    "✓".green(),
+                    CURRENT_VERSION,
+                    latest_ver
+                );
+                return Ok(());
+            }
+        }
     }
 
     if check_only {
@@ -156,6 +175,35 @@ pub async fn run(check_only: bool, version: Option<String>, yes: bool) -> anyhow
     Ok(())
 }
 
+/// Parse a release tag such as `v26.9.11` or `26.9.11` into a comparable
+/// `(major, minor, patch)` triple. Exactly three numeric parts are required.
+pub(crate) fn parse_version(s: &str) -> Option<(u64, u64, u64)> {
+    let s = s.strip_prefix('v').unwrap_or(s);
+    let mut parts = s.split('.');
+    let major = parts.next()?.parse::<u64>().ok()?;
+    let minor = parts.next()?.parse::<u64>().ok()?;
+    let patch = parts.next()?.parse::<u64>().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((major, minor, patch))
+}
+
+/// Pick the published release with the highest semantic version, ignoring
+/// drafts, prereleases, and tags that do not parse as `vX.Y.Z`.
+pub(crate) fn newest_release_tag(releases: &[serde_json::Value]) -> Option<String> {
+    releases
+        .iter()
+        .filter(|r| !r["draft"].as_bool().unwrap_or(false))
+        .filter(|r| !r["prerelease"].as_bool().unwrap_or(false))
+        .filter_map(|r| {
+            let tag = r["tag_name"].as_str()?;
+            parse_version(tag).map(|v| (v, tag.to_string()))
+        })
+        .max_by_key(|(v, _)| *v)
+        .map(|(_, tag)| tag)
+}
+
 async fn fetch_latest_tag(client: &reqwest::Client) -> anyhow::Result<String> {
     let resp = client
         .get(GITHUB_RELEASES_API)
@@ -168,12 +216,11 @@ async fn fetch_latest_tag(client: &reqwest::Client) -> anyhow::Result<String> {
     }
 
     let json: serde_json::Value = resp.json().await?;
-    let tag = json["tag_name"]
-        .as_str()
-        .context("No tag_name in GitHub release response")?
-        .to_string();
+    let releases = json
+        .as_array()
+        .context("GitHub releases response was not a JSON array")?;
 
-    Ok(tag)
+    newest_release_tag(releases).context("no published release found")
 }
 
 async fn download_bytes(client: &reqwest::Client, url: &str) -> anyhow::Result<Vec<u8>> {
@@ -240,4 +287,50 @@ fn detect_platform() -> anyhow::Result<&'static str> {
         all(target_os = "linux", target_arch = "aarch64"),
     )))]
     bail!("Unsupported platform — use install.sh manually")
+}
+
+#[cfg(test)]
+mod latest_release_tests {
+    //! GitHub's "latest" flag is the most recently *created* release, not the
+    //! highest version. Two tags pushed together race, and the older one can
+    //! win the flag. self-update must pick the highest version itself and must
+    //! never downgrade unless a version was named (ADR-2609151700).
+    use super::{newest_release_tag, parse_version};
+    use serde_json::json;
+
+    fn rel(tag: &str, draft: bool, pre: bool) -> serde_json::Value {
+        json!({ "tag_name": tag, "draft": draft, "prerelease": pre })
+    }
+
+    #[test]
+    fn version_parses_tag_with_or_without_v() {
+        assert_eq!(parse_version("v26.9.11"), Some((26, 9, 11)));
+        assert_eq!(parse_version("26.9.11"), Some((26, 9, 11)));
+        assert_eq!(parse_version("26.10.0"), Some((26, 10, 0)));
+        assert_eq!(parse_version("nightly"), None);
+    }
+
+    #[test]
+    fn highest_version_wins_regardless_of_list_order() {
+        let rels = vec![rel("v26.9.10", false, false), rel("v26.9.11", false, false), rel("v26.9.9", false, false)];
+        assert_eq!(newest_release_tag(&rels).as_deref(), Some("v26.9.11"));
+    }
+
+    #[test]
+    fn numeric_not_lexical_ordering() {
+        let rels = vec![rel("v26.9.9", false, false), rel("v26.10.0", false, false), rel("v26.9.11", false, false)];
+        assert_eq!(newest_release_tag(&rels).as_deref(), Some("v26.10.0"));
+    }
+
+    #[test]
+    fn drafts_prereleases_and_unparseable_tags_are_skipped() {
+        let rels = vec![
+            rel("v27.0.0", true, false),
+            rel("v26.12.0", false, true),
+            rel("nightly", false, false),
+            rel("v26.9.11", false, false),
+        ];
+        assert_eq!(newest_release_tag(&rels).as_deref(), Some("v26.9.11"));
+        assert_eq!(newest_release_tag(&[]), None);
+    }
 }
