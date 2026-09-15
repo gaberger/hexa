@@ -76,6 +76,9 @@ pub enum AdrAction {
         /// Promote warnings to errors — exit 2 on any finding (CI gate).
         #[arg(long)]
         strict: bool,
+        /// Write a Historical stub under docs/adrs/historical/ for every cited ADR id that has no file (ADR-2609151930 §2), then re-run the checks
+        #[arg(long = "stub-orphans")]
+        stub_orphans: bool,
     },
     /// Set an ADR to Accepted (the decision is approved).
     Accept {
@@ -141,7 +144,8 @@ pub async fn run(action: AdrAction) -> anyhow::Result<()> {
             fix_and_merge,
             json,
             strict,
-        } => doctor_run(fix, fix_and_merge, json, strict).await,
+            stub_orphans,
+        } => doctor_run(fix, fix_and_merge, json, strict, stub_orphans).await,
         AdrAction::Reindex { dry_run, json } => reindex(dry_run, json).await,
     }
 }
@@ -314,7 +318,25 @@ async fn doctor_run(
     fix_and_merge: bool,
     json: bool,
     strict: bool,
+    stub_orphans: bool,
 ) -> anyhow::Result<()> {
+    if stub_orphans {
+        // ADR-2609151930 §2: an id the code cites is a decision that was
+        // made; give it a file before the checks look for one.
+        let adr_dir = find_adr_dir().ok_or_else(|| anyhow::anyhow!("No docs/adrs/ directory found"))?;
+        let root = adr_dir
+            .parent()
+            .and_then(|d| d.parent())
+            .map(|p| p.to_path_buf())
+            .ok_or_else(|| anyhow::anyhow!("docs/adrs/ has no repository root above it"))?;
+        let o = doctor::orphans(&root, &adr_dir);
+        let n = doctor::write_orphan_stubs(&adr_dir, &o);
+        println!(
+            "{} wrote {n} historical stub(s) under docs/adrs/historical/ for {} orphan id(s)",
+            "\u{2b21}".cyan(),
+            o.len()
+        );
+    }
     let findings = doctor::run().await?;
 
     let dispatch: Option<Vec<doctor::DispatchResult>> = if fix || fix_and_merge {
@@ -1827,6 +1849,82 @@ fn program_exists(cmd: &str, on_path: &dyn Fn(&str) -> bool) -> bool {
     on_path(first)
 }
 
+/// What a gate's run means once it has run (ADR-2609151930 §6).
+///
+/// "It failed" and "this machine cannot run it" send a reader to different
+/// places, so they are different variants. `Failed` carries the tail of the
+/// output; `UnrunnableHere` carries a one-line reason.
+#[derive(Debug)]
+pub(crate) enum GateOutcome {
+    Passed,
+    Failed(String),
+    UnrunnableHere(String),
+}
+
+/// The last `n` lines of `out`, joined with `\n` and ending in a single
+/// `\n`. Input with fewer than `n` lines is returned unchanged.
+pub(crate) fn failure_tail(out: &str, n: usize) -> String {
+    let lines: Vec<&str> = out.lines().collect();
+    if lines.len() < n {
+        return out.to_string();
+    }
+    let mut tail = lines[lines.len() - n..].join("\n");
+    tail.push('\n');
+    tail
+}
+
+/// Sort a non-zero exit into "the gate failed" or "this machine cannot run
+/// the gate", by what the output says.
+pub(crate) fn classify_gate(ok: bool, out: &str) -> GateOutcome {
+    if ok {
+        return GateOutcome::Passed;
+    }
+    const CARGO: [&str; 4] = [
+        "failed to parse lock file",
+        "lock file version",
+        "-Znext-lockfile-bump",
+        "error: no such command",
+    ];
+    const HOST: [&str; 6] = [
+        "Could not resolve host",
+        "Failed to connect",
+        "Network is unreachable",
+        "curl: (6)",
+        "curl: (7)",
+        "curl: (28)",
+    ];
+    for line in out.lines() {
+        if CARGO.iter().any(|m| line.contains(m)) {
+            return GateOutcome::UnrunnableHere(format!(
+                "cargo on PATH cannot build this workspace: {}",
+                line.trim()
+            ));
+        }
+        if line.contains("command not found") {
+            return GateOutcome::UnrunnableHere(format!("program not found: {}", line.trim()));
+        }
+        if HOST.iter().any(|m| line.contains(m)) {
+            return GateOutcome::UnrunnableHere(format!("host unreachable: {}", line.trim()));
+        }
+    }
+    GateOutcome::Failed(failure_tail(out, 10))
+}
+
+/// The PATH gates run under: `<home>/.cargo/bin` first when it exists and
+/// is not already present, so a rustup toolchain wins over a distro cargo
+/// that cannot read this workspace's lockfile.
+pub(crate) fn gate_path(home: Option<&Path>, current: &str, exists: &dyn Fn(&Path) -> bool) -> String {
+    let Some(home) = home else { return current.to_string() };
+    let cargo_bin = home.join(".cargo/bin");
+    if !exists(&cargo_bin) {
+        return current.to_string();
+    }
+    if current.split(':').any(|e| Path::new(e) == cargo_bin) {
+        return current.to_string();
+    }
+    format!("{}:{}", cargo_bin.display(), current)
+}
+
 /// `hexa adr gates` — run every recorded gate.
 async fn run_gates() -> anyhow::Result<()> {
     use colored::Colorize;
@@ -1841,7 +1939,14 @@ async fn run_gates() -> anyhow::Result<()> {
 
     println!("{} the gate of every ADR that records one", "\u{2b21} adr gates".cyan().bold());
     let root = std::env::current_dir()?;
-    let (mut passed, mut failed, mut unrunnable, mut none) = (0, 0, 0, 0);
+    // Computed once: the PATH every gate runs under (ADR-2609151930 §6).
+    // Passed to the shell, never set on this process.
+    let path = gate_path(
+        std::env::var_os("HOME").map(PathBuf::from).as_deref(),
+        &std::env::var("PATH").unwrap_or_default(),
+        &|p| p.is_dir(),
+    );
+    let (mut passed, mut failed, mut unrunnable, mut here, mut none) = (0, 0, 0, 0, 0);
     for f in &files {
         let name = f.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
         let text = std::fs::read_to_string(f).unwrap_or_default();
@@ -1849,13 +1954,23 @@ async fn run_gates() -> anyhow::Result<()> {
             None => GateRun::None,
             Some(cmd) if !looks_runnable(&cmd) => GateRun::Unrunnable(cmd),
             Some(cmd) => {
-                let (ok, out) = hexa_exec::direct_exec::run_evidence(&cmd, &root).await;
-                if ok {
-                    GateRun::Passed
-                } else if out.contains("unexpected argument") || out.contains("Usage: cargo") {
-                    GateRun::Unrunnable(cmd)
-                } else {
-                    GateRun::Failed(cmd)
+                let shell = format!("export PATH={:?}; {}", path, cmd);
+                let (ok, out) = hexa_exec::direct_exec::run_evidence(&shell, &root).await;
+                match classify_gate(ok, &out) {
+                    GateOutcome::Passed => GateRun::Passed,
+                    GateOutcome::Failed(tail) => {
+                        failed += 1;
+                        println!("  {} {} — gate failed: {}", "\u{2717}".red(), name, cmd);
+                        for line in tail.lines() {
+                            println!("      {}", line.dimmed());
+                        }
+                        continue;
+                    }
+                    GateOutcome::UnrunnableHere(reason) => {
+                        here += 1;
+                        println!("  {} {} — cannot run here: {}", "\u{2717}".red(), name, reason);
+                        continue;
+                    }
                 }
             }
         };
@@ -1878,9 +1993,21 @@ async fn run_gates() -> anyhow::Result<()> {
             }
         }
     }
-    println!("\n  {passed} passed · {failed} failed · {unrunnable} unrunnable · {none} without a gate");
-    if failed + unrunnable > 0 {
-        anyhow::bail!("{} recorded gate(s) did not pass", failed + unrunnable);
+    println!(
+        "\n  {passed} passed · {failed} failed · {unrunnable} unrunnable · {here} cannot run here · {none} without a gate"
+    );
+    if failed + unrunnable + here > 0 {
+        let mut parts = Vec::new();
+        if failed > 0 {
+            parts.push(format!("{failed} failed"));
+        }
+        if unrunnable > 0 {
+            parts.push(format!("{unrunnable} not a runnable command"));
+        }
+        if here > 0 {
+            parts.push(format!("{here} cannot run here"));
+        }
+        anyhow::bail!("recorded gate(s) did not pass: {}", parts.join(", "));
     }
     Ok(())
 }
@@ -1943,7 +2070,7 @@ mod adr_gates {
     }
 }
 
-#[cfg(all(test, any()))] // re-enabled by run B
+#[cfg(test)]
 mod adr_gates_classify {
     //! ADR-2609151930 §6: a gate that cannot run on this machine is not a
     //! failed decision, and a real failure shows its output.
