@@ -119,6 +119,10 @@ jobs:
           name: hexa ${{ needs.version.outputs.tag }}
           body_path: notes.md
           prerelease: ${{ github.event.inputs.prerelease || false }}
+          # GitHub's "latest" is the most recently created release, not the
+          # highest version. Two tags pushed together race for it; say it
+          # explicitly so a stable release always takes the flag (ADR-2609151700).
+          make_latest: ${{ github.event.inputs.prerelease && 'false' || 'true' }}
           generate_release_notes: true
           files: |
             artifacts/*.tar.gz

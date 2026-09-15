@@ -6,7 +6,7 @@
 > [`ARCHITECTURE.md`](../../ARCHITECTURE.md); for *why* a decision was made,
 > read the ADR itself.
 
-**26 ADRs** across 1 epochs.
+**27 ADRs** across 1 epochs.
 
 ## Epoch: `single-agent` — **current**
 
@@ -15,6 +15,7 @@ _One gateway-mediated agent loop; code-graph context as the differentiator_
 | ADR | Status | Title | Superseded-By |
 |-----|--------|-------|---------------|
 | ADR-2609151100 | accepted | ADR-2609151100: A lifecycle event is not a run |  |
+| ADR-2609151700 | accepted | ADR-2609151700: Latest is the highest version, not the newest release |  |
 | ADR-2609140020 | accepted | ADR-2609140020: A grade is a claim about files that were read |  |
 | ADR-2609131341 | accepted | ADR-2609131341: Evidence is captured, not copied |  |
 | ADR-2609131408 | accepted | ADR-2609131408: Sessions in one checkout see each other |  |

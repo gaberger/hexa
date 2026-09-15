@@ -366,7 +366,7 @@ pub fn runs_snapshot() -> Vec<DirectRun> {
 ///
 /// The display id is assigned here instead, newest highest, counting only the
 /// rows that survive the filter.
-pub fn runs_from_rows(rows: Vec<Value>) -> Vec<DirectRun> {
+pub(crate) fn runs_from_rows(rows: Vec<Value>) -> Vec<DirectRun> {
     let is_run = |v: &Value| {
         v.get("kind").and_then(|k| k.as_str()) != Some("subagent")
             && v.get("agent").and_then(|a| a.as_str()).is_some()
@@ -406,7 +406,7 @@ pub fn runs_summary() -> Value {
 
 /// Count `runs` into the monitor-header shape: total, passed, failed,
 /// committed, pass_rate.
-pub fn summary_of(runs: &[DirectRun]) -> Value {
+pub(crate) fn summary_of(runs: &[DirectRun]) -> Value {
     let total = runs.len();
     let passed = runs.iter().filter(|r| r.ok).count();
     let committed = runs.iter().filter(|r| r.committed.is_some()).count();
