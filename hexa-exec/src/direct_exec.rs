@@ -339,6 +339,23 @@ fn persist_run_async(run: DirectRun) {
 /// empty on every read and `hexa do runs` reported 0 while
 /// `~/.hexa/agent-runs.jsonl` held every run that had ever happened.
 ///
+/// The log is also shared with the Claude Code subagent hooks, which append
+/// lifecycle rows (`{kind:"subagent", event:"start"|"stop", ...}`) to the same
+/// file. A lifecycle event is not a run: mapping it as one produced a failed
+/// run with an empty instruction for every hook firing, and `hexa do runs`
+/// reported 8% pass over 5 real runs. `runs_from_rows` drops those rows
+/// before assigning display ids, so ids number only real runs
+/// (ADR-2609151100).
+pub fn runs_snapshot() -> Vec<DirectRun> {
+    runs_from_rows(crate::local_store::recent_runs(RUN_HISTORY))
+}
+
+/// Map raw newest-first log rows into `DirectRun`s, skipping non-run rows.
+///
+/// A row is a run only if it carries an `agent` string field; subagent hook
+/// rows (`kind == "subagent"`) carry `agent_id`/`agent_type` instead and are
+/// filtered out here, along with anything else that lacks `agent`.
+///
 /// The rows are mapped field by field rather than through
 /// `serde_json::from_value::<DirectRun>`, because the two shapes disagree and
 /// always have: the persisted `id` is the string `<started_at>#<seq>` — unique
@@ -347,9 +364,14 @@ fn persist_run_async(run: DirectRun) {
 /// and `hydrate_feed` swallowed that with `.ok()`. So the feed was broken
 /// twice over: never called, and wrong if it had been.
 ///
-/// The display id is assigned here instead, newest highest.
-pub fn runs_snapshot() -> Vec<DirectRun> {
-    let rows = crate::local_store::recent_runs(RUN_HISTORY);
+/// The display id is assigned here instead, newest highest, counting only the
+/// rows that survive the filter.
+pub fn runs_from_rows(rows: Vec<Value>) -> Vec<DirectRun> {
+    let is_run = |v: &Value| {
+        v.get("kind").and_then(|k| k.as_str()) != Some("subagent")
+            && v.get("agent").and_then(|a| a.as_str()).is_some()
+    };
+    let rows: Vec<Value> = rows.into_iter().filter(is_run).collect();
     let n = rows.len() as u64;
     rows.into_iter()
         .enumerate()
@@ -379,7 +401,12 @@ pub fn runs_snapshot() -> Vec<DirectRun> {
 
 /// Aggregate counters for an at-a-glance monitor header.
 pub fn runs_summary() -> Value {
-    let runs = runs_snapshot();
+    summary_of(&runs_snapshot())
+}
+
+/// Count `runs` into the monitor-header shape: total, passed, failed,
+/// committed, pass_rate.
+pub fn summary_of(runs: &[DirectRun]) -> Value {
     let total = runs.len();
     let passed = runs.iter().filter(|r| r.ok).count();
     let committed = runs.iter().filter(|r| r.committed.is_some()).count();
@@ -1147,5 +1174,54 @@ mod commit_snapshot_tests {
         let st = Git::new("git").args(["status", "--porcelain"]).current_dir(dir).output().unwrap();
         assert!(String::from_utf8_lossy(&st.stdout).contains("unrelated.rs"),
             "unrelated WIP must remain uncommitted");
+    }
+}
+
+#[cfg(test)]
+mod runs_feed_tests {
+    //! The runs log is shared with the Claude Code subagent hooks, which append
+    //! lifecycle events to the same file. A lifecycle event is not a run, and the
+    //! feed must not count one as a failed run (ADR-2609151100).
+    use super::{runs_from_rows, summary_of};
+    use serde_json::json;
+
+    fn do_run(ok: bool) -> serde_json::Value {
+        json!({
+            "id": "2026-09-14T15:57:00+00:00#1", "agent": "direct-react",
+            "started_at": "2026-09-14T15:57:00+00:00", "instruction": "add f()",
+            "file": "src/lib.rs", "model": "m", "ok": ok, "attempts": 1, "steps": 3,
+            "evidence_passed": ok, "committed": if ok { Some("abc123") } else { None },
+            "duration_ms": 10, "error": if ok { None } else { Some("evidence exit 1") },
+        })
+    }
+    fn hook_event(event: &str) -> serde_json::Value {
+        json!({ "kind": "subagent", "event": event, "agent_id": "a1",
+                "agent_type": "", "ts": "2026-09-12T20:55:01+00:00" })
+    }
+
+    #[test]
+    fn subagent_hook_events_are_not_runs() {
+        let rows = vec![hook_event("start"), do_run(true), hook_event("stop"), do_run(false)];
+        let runs = runs_from_rows(rows);
+        assert_eq!(runs.len(), 2, "two do-runs, zero hook events");
+        assert!(runs.iter().all(|r| !r.instruction.is_empty()));
+    }
+
+    #[test]
+    fn summary_counts_only_runs() {
+        let rows = vec![hook_event("start"), hook_event("stop"), do_run(true), hook_event("stop")];
+        let s = summary_of(&runs_from_rows(rows));
+        assert_eq!(s["total"], 1);
+        assert_eq!(s["passed"], 1);
+        assert_eq!(s["failed"], 0);
+        assert_eq!(s["committed"], 1);
+        assert_eq!(s["pass_rate"], 1.0);
+    }
+
+    #[test]
+    fn display_ids_number_only_runs_newest_highest() {
+        let rows = vec![do_run(true), hook_event("stop"), do_run(false)];
+        let ids: Vec<u64> = runs_from_rows(rows).iter().map(|r| r.id).collect();
+        assert_eq!(ids, vec![2, 1]);
     }
 }
