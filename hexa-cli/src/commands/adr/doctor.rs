@@ -614,11 +614,18 @@ pub(crate) fn cited_adr_ids(text: &str) -> Vec<(usize, String)> {
     out
 }
 
+/// A citing file relative to the repo root, its 1-based line, and the
+/// trimmed line text.
+pub(crate) type CitingSite = (PathBuf, usize, String);
+
+/// A cited id with no file on disk, and every site that cites it.
+pub(crate) type OrphanSites = (String, Vec<CitingSite>);
+
 /// Walk `root` and collect every ADR citation in source, docs, config and
 /// CODEOWNERS. Paths are relative to `root`. `docs/adrs/historical/` and
 /// `docs/adrs/INDEX.md` are skipped: the former is where orphan stubs live,
 /// the latter is generated from the corpus.
-pub(crate) fn scan_repo_citations(root: &Path) -> Vec<(PathBuf, usize, String)> {
+pub(crate) fn scan_repo_citations(root: &Path) -> Vec<CitingSite> {
     const SKIP_DIRS: &[&str] = &["target", ".git", "node_modules", "graph-out"];
     const EXTS: &[&str] = &["rs", "md", "toml", "yml", "yaml", "json"];
     let historical = Path::new("docs").join("adrs").join("historical");
@@ -677,7 +684,7 @@ pub(crate) fn known_adr_ids(adr_dir: &Path) -> HashSet<String> {
 
 /// One `DanglingCitation` finding per citing site whose id is not on disk.
 pub(crate) fn dangling_citations(
-    cited: &[(PathBuf, usize, String)],
+    cited: &[CitingSite],
     known: &HashSet<String>,
 ) -> Vec<Finding> {
     cited
@@ -696,9 +703,9 @@ pub(crate) fn dangling_citations(
 
 /// Dangling ids grouped by id, sorted by id. Each site carries the trimmed
 /// text of the citing line so a stub can record what the code says.
-pub(crate) fn orphans(root: &Path, adr_dir: &Path) -> Vec<(String, Vec<(PathBuf, usize, String)>)> {
+pub(crate) fn orphans(root: &Path, adr_dir: &Path) -> Vec<OrphanSites> {
     let known = known_adr_ids(adr_dir);
-    let mut by_id: std::collections::BTreeMap<String, Vec<(PathBuf, usize, String)>> =
+    let mut by_id: std::collections::BTreeMap<String, Vec<CitingSite>> =
         std::collections::BTreeMap::new();
     let mut file_cache: HashMap<PathBuf, Vec<String>> = HashMap::new();
     for (rel, line, id) in scan_repo_citations(root) {
@@ -717,7 +724,7 @@ pub(crate) fn orphans(root: &Path, adr_dir: &Path) -> Vec<(String, Vec<(PathBuf,
 }
 
 /// The Historical stub written for an orphaned id (ADR-2609151930 §2).
-pub(crate) fn orphan_stub(id: &str, sites: &[(PathBuf, usize, String)]) -> String {
+pub(crate) fn orphan_stub(id: &str, sites: &[CitingSite]) -> String {
     // The gate (`adr_citations::a_stub_is_historical_and_names_every_citing_site`)
     // requires the file to open with the H1, so the YAML metadata block
     // follows the title rather than preceding it.
@@ -770,7 +777,7 @@ pub(crate) fn orphan_stub(id: &str, sites: &[(PathBuf, usize, String)]) -> Strin
 /// many files were written.
 pub(crate) fn write_orphan_stubs(
     adr_dir: &Path,
-    orphans: &[(String, Vec<(PathBuf, usize, String)>)],
+    orphans: &[OrphanSites],
 ) -> usize {
     let dir = adr_dir.join("historical");
     if std::fs::create_dir_all(&dir).is_err() {
