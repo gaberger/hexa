@@ -60,6 +60,8 @@ pub enum FindingKind {
     StaleProposed,
     /// `Status: Superseded` without a `Superseded by:` field.
     SupersededUnlinked,
+    /// An ADR id cited in code, docs, CODEOWNERS or .hexa/*.toml has no file under docs/adrs/ or docs/adrs/historical/
+    DanglingCitation,
 }
 
 /// What the daemon is allowed to do without human consent (ADR-2026-04-27-0800 §1a).
@@ -103,6 +105,7 @@ const RULE_TABLE: &[(FindingKind, AutoFixTier, Severity)] = &[
     (FindingKind::DanglingDependency,  AutoFixTier::C, Severity::Warning),
     (FindingKind::StaleProposed,       AutoFixTier::B, Severity::Warning),
     (FindingKind::SupersededUnlinked,  AutoFixTier::B, Severity::Warning),
+    (FindingKind::DanglingCitation,    AutoFixTier::C, Severity::Error),
 ];
 
 /// Look up the (tier, severity) for a given finding kind. Panics if the rule
@@ -137,7 +140,16 @@ pub async fn run() -> anyhow::Result<Vec<Finding>> {
         .ok_or_else(|| anyhow::anyhow!("No docs/adrs/ directory found"))?;
     let adrs = collect_adrs(&adr_dir).await?;
     let now = chrono::Local::now().date_naive();
-    Ok(scan(&adrs, now))
+    let mut findings = scan(&adrs, now);
+    // ADR-2609151930 §2: every id cited anywhere in the repo must resolve.
+    // docs/adrs -> docs -> repo root.
+    let root = adr_dir
+        .parent()
+        .and_then(Path::parent)
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    findings.extend(dangling_citations(&scan_repo_citations(&root), &known_adr_ids(&adr_dir)));
+    Ok(findings)
 }
 
 /// Pure detection over a pre-loaded ADR corpus. Split out from [`run`] so tests
@@ -577,6 +589,206 @@ fn detect_dangling_dependencies(adrs: &[(PathBuf, String)]) -> Vec<Finding> {
     findings
 }
 
+// ── Repo-wide citation check (ADR-2609151930 §2) ──────────────────────────────
+
+/// Every `ADR-…` id cited in `text`, as `(1-based line, id)`.
+///
+/// Shapes, longest first: `ADR-YYYY-MM-DD-HHMM`, `ADR-YYYY-MM-DD`,
+/// `ADR-<10 digits>`, `ADR-<3 digits>`. A match must not be followed by a
+/// digit, so a longer numeric run is never truncated into a shorter id.
+pub(crate) fn cited_adr_ids(text: &str) -> Vec<(usize, String)> {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| {
+        Regex::new(r"ADR-\d{4}-\d{2}-\d{2}-\d{4}|ADR-\d{4}-\d{2}-\d{2}|ADR-\d{10}|ADR-\d{3}").unwrap()
+    });
+    let mut out = Vec::new();
+    for (i, line) in text.lines().enumerate() {
+        for m in re.find_iter(line) {
+            let next = line[m.end()..].chars().next();
+            if next.is_some_and(|c| c.is_ascii_digit()) {
+                continue;
+            }
+            out.push((i + 1, m.as_str().to_string()));
+        }
+    }
+    out
+}
+
+/// Walk `root` and collect every ADR citation in source, docs, config and
+/// CODEOWNERS. Paths are relative to `root`. `docs/adrs/historical/` and
+/// `docs/adrs/INDEX.md` are skipped: the former is where orphan stubs live,
+/// the latter is generated from the corpus.
+pub(crate) fn scan_repo_citations(root: &Path) -> Vec<(PathBuf, usize, String)> {
+    const SKIP_DIRS: &[&str] = &["target", ".git", "node_modules", "graph-out"];
+    const EXTS: &[&str] = &["rs", "md", "toml", "yml", "yaml", "json"];
+    let historical = Path::new("docs").join("adrs").join("historical");
+    let index = Path::new("docs").join("adrs").join("INDEX.md");
+
+    let mut out = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        let mut entries: Vec<PathBuf> = rd.flatten().map(|e| e.path()).collect();
+        entries.sort();
+        for path in entries {
+            let rel = path.strip_prefix(root).unwrap_or(&path).to_path_buf();
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if path.is_dir() {
+                if SKIP_DIRS.contains(&name) || rel == historical {
+                    continue;
+                }
+                stack.push(path);
+                continue;
+            }
+            if !path.is_file() || rel == index {
+                continue;
+            }
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            if name != "CODEOWNERS" && !EXTS.contains(&ext) {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else { continue };
+            for (line, id) in cited_adr_ids(&text) {
+                out.push((rel.clone(), line, id));
+            }
+        }
+    }
+    out
+}
+
+/// The id prefix of every `ADR-*.md` filename in `adr_dir` and `adr_dir/historical`.
+pub(crate) fn known_adr_ids(adr_dir: &Path) -> HashSet<String> {
+    let mut known = HashSet::new();
+    for dir in [adr_dir.to_path_buf(), adr_dir.join("historical")] {
+        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        for entry in rd.flatten() {
+            let path = entry.path();
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if !path.is_file() || !name.starts_with("ADR-") || !name.ends_with(".md") {
+                continue;
+            }
+            if let Some((_, id)) = cited_adr_ids(name).into_iter().next() {
+                known.insert(id);
+            }
+        }
+    }
+    known
+}
+
+/// One `DanglingCitation` finding per citing site whose id is not on disk.
+pub(crate) fn dangling_citations(
+    cited: &[(PathBuf, usize, String)],
+    known: &HashSet<String>,
+) -> Vec<Finding> {
+    cited
+        .iter()
+        .filter(|(_, _, id)| !known.contains(id))
+        .map(|(path, line, id)| {
+            finding(
+                id.clone(),
+                path.clone(),
+                FindingKind::DanglingCitation,
+                format!("{}:{} cites {}, which has no file under docs/adrs/", path.display(), line, id),
+            )
+        })
+        .collect()
+}
+
+/// Dangling ids grouped by id, sorted by id. Each site carries the trimmed
+/// text of the citing line so a stub can record what the code says.
+pub(crate) fn orphans(root: &Path, adr_dir: &Path) -> Vec<(String, Vec<(PathBuf, usize, String)>)> {
+    let known = known_adr_ids(adr_dir);
+    let mut by_id: std::collections::BTreeMap<String, Vec<(PathBuf, usize, String)>> =
+        std::collections::BTreeMap::new();
+    let mut file_cache: HashMap<PathBuf, Vec<String>> = HashMap::new();
+    for (rel, line, id) in scan_repo_citations(root) {
+        if known.contains(&id) {
+            continue;
+        }
+        let lines = file_cache.entry(rel.clone()).or_insert_with(|| {
+            std::fs::read_to_string(root.join(&rel))
+                .map(|t| t.lines().map(|l| l.trim().to_string()).collect())
+                .unwrap_or_default()
+        });
+        let text = lines.get(line.wrapping_sub(1)).cloned().unwrap_or_default();
+        by_id.entry(id).or_default().push((rel, line, text));
+    }
+    by_id.into_iter().collect()
+}
+
+/// The Historical stub written for an orphaned id (ADR-2609151930 §2).
+pub(crate) fn orphan_stub(id: &str, sites: &[(PathBuf, usize, String)]) -> String {
+    // The gate (`adr_citations::a_stub_is_historical_and_names_every_citing_site`)
+    // requires the file to open with the H1, so the YAML metadata block
+    // follows the title rather than preceding it.
+    let mut s = String::new();
+    s.push_str(&format!("# {id}: Decision text not carried into this repository\n"));
+    s.push('\n');
+    s.push_str("---\n");
+    s.push_str(&format!("id: {id}\n"));
+    s.push_str("status: historical\n");
+    s.push_str("date: 2026-09-15\n");
+    s.push_str("supersedes: []\n");
+    s.push_str("superseded_by: null\n");
+    s.push_str("depends_on: []\n");
+    s.push_str("components: []\n");
+    s.push_str("---\n");
+    s.push('\n');
+    s.push_str("**Status:** Historical\n");
+    s.push_str("**Date:** 2026-09-15\n");
+    s.push_str(&format!(
+        "**Drivers:** Cited {} time(s) in this repository; the ADR itself predates the 2026-09-12 history and was not carried over (ADR-2609151930 §2).\n",
+        sites.len()
+    ));
+    s.push('\n');
+    s.push_str("## What the code says\n");
+    s.push('\n');
+    for (path, line, text) in sites {
+        s.push_str(&format!("- `{}:{}` — {}\n", path.display(), line, text));
+    }
+    s.push('\n');
+    s.push_str("## Decision\n");
+    s.push('\n');
+    s.push_str("Unknown. This stub exists so the citation resolves. Replace it with a real ADR if the decision is rediscovered, or rewrite the citations to the ADR that now governs.\n");
+    s.push('\n');
+    s.push_str("## Consequences\n");
+    s.push('\n');
+    s.push_str("The citing sites resolve to this file instead of to nothing.\n");
+    s.push('\n');
+    s.push_str("## Implementation\n");
+    s.push('\n');
+    s.push_str("None; this stub records citations only.\n");
+    s.push('\n');
+    s.push_str("## References\n");
+    s.push('\n');
+    s.push_str("ADR-2609151930 §2, which requires every cited id to resolve to a file.\n");
+    s
+}
+
+/// Write `historical/<id>.md` for each orphan that has no file yet. An
+/// existing stub is the operator's and is never overwritten. Returns how
+/// many files were written.
+pub(crate) fn write_orphan_stubs(
+    adr_dir: &Path,
+    orphans: &[(String, Vec<(PathBuf, usize, String)>)],
+) -> usize {
+    let dir = adr_dir.join("historical");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return 0;
+    }
+    let mut written = 0;
+    for (id, sites) in orphans {
+        let path = dir.join(format!("{id}.md"));
+        if path.exists() {
+            continue;
+        }
+        if std::fs::write(&path, orphan_stub(id, sites)).is_ok() {
+            written += 1;
+        }
+    }
+    written
+}
+
 // ── Auto-fix patch generation (P2.1, ADR-2026-04-27-0800 §1a) ─────────────────
 
 /// A regex-based text transformation emitted by [`Finding::auto_fix_patch`]
@@ -976,6 +1188,7 @@ fn kind_slug(kind: FindingKind) -> &'static str {
         FindingKind::DanglingDependency => "dangling-dependency",
         FindingKind::StaleProposed => "stale-proposed",
         FindingKind::SupersededUnlinked => "superseded-unlinked",
+        FindingKind::DanglingCitation => "dangling-citation",
     }
 }
 
@@ -1573,6 +1786,7 @@ mod tests {
             FindingKind::DanglingDependency,
             FindingKind::StaleProposed,
             FindingKind::SupersededUnlinked,
+            FindingKind::DanglingCitation,
         ];
         for k in all {
             let _ = rule_for(k);
@@ -1589,6 +1803,7 @@ mod tests {
         assert_eq!(rule_for(FindingKind::DanglingDependency).1,   Severity::Warning);
         assert_eq!(rule_for(FindingKind::StaleProposed).1,        Severity::Warning);
         assert_eq!(rule_for(FindingKind::SupersededUnlinked).1,   Severity::Warning);
+        assert_eq!(rule_for(FindingKind::DanglingCitation).1,     Severity::Error);
     }
 
     #[test]
@@ -1598,6 +1813,7 @@ mod tests {
         assert_eq!(rule_for(FindingKind::StaleProposed).0,        AutoFixTier::B);
         assert_eq!(rule_for(FindingKind::DuplicateId).0,          AutoFixTier::C);
         assert_eq!(rule_for(FindingKind::MissingRequiredField).0, AutoFixTier::C);
+        assert_eq!(rule_for(FindingKind::DanglingCitation).0,     AutoFixTier::C);
     }
 
     #[test]
@@ -2369,5 +2585,73 @@ rewritten because it isn't at the start of a line as a bullet.
             }
             Outcome::Applied { .. } => panic!("must abort on non-Tier-B"),
         }
+    }
+}
+
+#[cfg(test)]
+mod adr_citations {
+    //! ADR-2609151930 §2: every `ADR-…` id cited anywhere in the repository
+    //! must resolve to a file, and an orphan gets a Historical stub that
+    //! records what the citing code says the decision was.
+    use super::{cited_adr_ids, dangling_citations, orphan_stub, write_orphan_stubs, FindingKind, Severity};
+    use std::collections::HashSet;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn every_id_scheme_is_found_and_never_truncated() {
+        let text = "see ADR-001 and ADR-2026-04-15-0100 (§2), also ADR-2609121400; not ADR- alone\nADR-2026-05-09 too";
+        let ids: Vec<String> = cited_adr_ids(text).into_iter().map(|(_, id)| id).collect();
+        assert_eq!(ids, vec!["ADR-001", "ADR-2026-04-15-0100", "ADR-2609121400", "ADR-2026-05-09"]);
+    }
+
+    #[test]
+    fn line_numbers_are_one_based() {
+        let hits = cited_adr_ids("a\nb ADR-047\nc");
+        assert_eq!(hits, vec![(2, "ADR-047".to_string())]);
+    }
+
+    #[test]
+    fn a_citation_with_no_file_is_an_error_finding() {
+        let known: HashSet<String> = ["ADR-2609121400".to_string()].into_iter().collect();
+        let cited = vec![
+            (PathBuf::from("hexa-exec/src/x.rs"), 7, "ADR-001".to_string()),
+            (PathBuf::from("hexa-exec/src/x.rs"), 9, "ADR-2609121400".to_string()),
+            (PathBuf::from("CODEOWNERS"), 1, "ADR-001".to_string()),
+        ];
+        let f = dangling_citations(&cited, &known);
+        assert_eq!(f.len(), 2, "one finding per citing site, none for a resolved id");
+        assert!(f.iter().all(|x| x.kind == FindingKind::DanglingCitation));
+        assert!(f.iter().all(|x| x.severity == Severity::Error));
+        assert!(f.iter().all(|x| x.adr_id == "ADR-001"));
+        assert!(f[1].detail.contains("CODEOWNERS:1"));
+    }
+
+    #[test]
+    fn a_stub_is_historical_and_names_every_citing_site() {
+        let sites = vec![
+            (PathBuf::from("hexa-exec/src/x.rs"), 7, "// per ADR-001 the loop commits on green".to_string()),
+            (PathBuf::from("docs/EVIDENCE.md"), 40, "ADR-001 made this a gate".to_string()),
+        ];
+        let s = orphan_stub("ADR-001", &sites);
+        assert!(s.starts_with("# ADR-001: "), "H1 carries the id");
+        assert!(s.contains("**Status:** Historical"));
+        assert!(s.contains("hexa-exec/src/x.rs:7"));
+        assert!(s.contains("docs/EVIDENCE.md:40"));
+        assert!(s.contains("the loop commits on green"));
+    }
+
+    #[test]
+    fn stubs_land_under_historical_and_never_overwrite() {
+        let d = tempfile::tempdir().unwrap();
+        let sites = vec![(PathBuf::from("a.rs"), 1, "ADR-001 x".to_string())];
+        let written = write_orphan_stubs(d.path(), &[("ADR-001".to_string(), sites.clone())]);
+        assert_eq!(written, 1);
+        let p = d.path().join("historical").join("ADR-001.md");
+        assert!(p.is_file());
+        std::fs::write(&p, "hand-edited").unwrap();
+        let again = write_orphan_stubs(d.path(), &[("ADR-001".to_string(), sites)]);
+        assert_eq!(again, 0, "an existing stub is the operator's; leave it");
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "hand-edited");
+        let _ = Path::new("unused");
     }
 }

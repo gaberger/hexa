@@ -1942,3 +1942,61 @@ mod adr_gates {
         assert!(checked > 10, "only {checked} ADRs record a gate; expected the bulk of them");
     }
 }
+
+#[cfg(all(test, any()))] // re-enabled by run B
+mod adr_gates_classify {
+    //! ADR-2609151930 §6: a gate that cannot run on this machine is not a
+    //! failed decision, and a real failure shows its output.
+    use super::{classify_gate, failure_tail, gate_path, GateOutcome};
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn exit_zero_is_a_pass_whatever_the_output() {
+        assert!(matches!(classify_gate(true, "warning: something"), GateOutcome::Passed));
+    }
+
+    #[test]
+    fn a_cargo_that_cannot_read_the_lockfile_is_unrunnable_here() {
+        let out = "error: failed to parse lock file at: /x/Cargo.lock\n\nCaused by:\n  lock file version 4 requires `-Znext-lockfile-bump`\n";
+        match classify_gate(false, out) {
+            GateOutcome::UnrunnableHere(reason) => assert!(reason.to_lowercase().contains("cargo"), "{reason}"),
+            other => panic!("expected UnrunnableHere, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_missing_program_or_unreachable_host_is_unrunnable_here() {
+        for out in [
+            "bash: line 1: bun: command not found\n",
+            "curl: (6) Could not resolve host: api.github.com\n",
+            "curl: (7) Failed to connect to api.github.com port 443\n",
+        ] {
+            assert!(matches!(classify_gate(false, out), GateOutcome::UnrunnableHere(_)), "{out}");
+        }
+    }
+
+    #[test]
+    fn a_real_failure_carries_the_last_ten_lines() {
+        let out: String = (1..=30).map(|i| format!("line {i}\n")).collect();
+        match classify_gate(false, &out) {
+            GateOutcome::Failed(tail) => {
+                assert!(tail.starts_with("line 21"), "{tail}");
+                assert!(tail.trim_end().ends_with("line 30"));
+                assert_eq!(tail.lines().count(), 10);
+            }
+            other => panic!("expected Failed, got {other:?}"),
+        }
+        assert_eq!(failure_tail("a\nb\n", 10), "a\nb\n");
+    }
+
+    #[test]
+    fn the_gate_path_prefixes_rustup_cargo_once_when_present() {
+        let home = PathBuf::from("/home/t");
+        let exists = |p: &Path| p == Path::new("/home/t/.cargo/bin");
+        assert_eq!(gate_path(Some(&home), "/usr/bin:/bin", &exists), "/home/t/.cargo/bin:/usr/bin:/bin");
+        assert_eq!(gate_path(Some(&home), "/home/t/.cargo/bin:/usr/bin", &exists), "/home/t/.cargo/bin:/usr/bin");
+        let absent = |_: &Path| false;
+        assert_eq!(gate_path(Some(&home), "/usr/bin", &absent), "/usr/bin");
+        assert_eq!(gate_path(None, "/usr/bin", &exists), "/usr/bin");
+    }
+}
