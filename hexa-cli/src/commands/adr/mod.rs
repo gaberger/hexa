@@ -1877,6 +1877,13 @@ pub(crate) fn failure_tail(out: &str, n: usize) -> String {
 /// the gate", by what the output says.
 pub(crate) fn classify_gate(ok: bool, out: &str) -> GateOutcome {
     if ok {
+        // A vacuous gate is a failed gate: exit 0 with zero tests observed
+        // proves nothing.
+        if hexa_exec::direct_exec::tests_observed(out) == Some(0) {
+            return GateOutcome::Failed(
+                "the command exited 0 but ran 0 tests (vacuous gate)\n".to_string(),
+            );
+        }
         return GateOutcome::Passed;
     }
     const CARGO: [&str; 4] = [
@@ -1910,19 +1917,28 @@ pub(crate) fn classify_gate(ok: bool, out: &str) -> GateOutcome {
     GateOutcome::Failed(failure_tail(out, 10))
 }
 
-/// The PATH gates run under: `<home>/.cargo/bin` first when it exists and
-/// is not already present, so a rustup toolchain wins over a distro cargo
-/// that cannot read this workspace's lockfile.
+/// The PATH gates run under: `<home>/.cargo/bin` first when it exists, so a
+/// rustup toolchain wins over a distro cargo that cannot read this
+/// workspace's lockfile. If it is already first, PATH is unchanged; if it is
+/// present later, it is moved to the front; if absent, it is prefixed.
 pub(crate) fn gate_path(home: Option<&Path>, current: &str, exists: &dyn Fn(&Path) -> bool) -> String {
     let Some(home) = home else { return current.to_string() };
     let cargo_bin = home.join(".cargo/bin");
     if !exists(&cargo_bin) {
         return current.to_string();
     }
-    if current.split(':').any(|e| Path::new(e) == cargo_bin) {
+    let mut entries = current.split(':');
+    if entries.next().is_some_and(|e| Path::new(e) == cargo_bin) {
         return current.to_string();
     }
-    format!("{}:{}", cargo_bin.display(), current)
+    let rest: Vec<&str> = current
+        .split(':')
+        .filter(|e| Path::new(e) != cargo_bin)
+        .collect();
+    if rest.is_empty() {
+        return cargo_bin.display().to_string();
+    }
+    format!("{}:{}", cargo_bin.display(), rest.join(":"))
 }
 
 /// `hexa adr gates` — run every recorded gate.
@@ -2125,5 +2141,24 @@ mod adr_gates_classify {
         let absent = |_: &Path| false;
         assert_eq!(gate_path(Some(&home), "/usr/bin", &absent), "/usr/bin");
         assert_eq!(gate_path(None, "/usr/bin", &exists), "/usr/bin");
+    }
+
+    #[test]
+    fn the_gate_path_moves_rustup_cargo_to_the_front_when_it_is_later() {
+        let home = PathBuf::from("/home/t");
+        let exists = |p: &Path| p == Path::new("/home/t/.cargo/bin");
+        assert_eq!(
+            gate_path(Some(&home), "/usr/bin:/home/t/.cargo/bin:/bin", &exists),
+            "/home/t/.cargo/bin:/usr/bin:/bin"
+        );
+    }
+
+    #[test]
+    fn a_gate_that_ran_zero_tests_is_a_failure_not_a_pass() {
+        let out = "running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out\n";
+        match classify_gate(true, out) {
+            GateOutcome::Failed(why) => assert!(why.contains("0 tests") || why.to_lowercase().contains("vacuous"), "{why}"),
+            other => panic!("expected Failed, got {other:?}"),
+        }
     }
 }
