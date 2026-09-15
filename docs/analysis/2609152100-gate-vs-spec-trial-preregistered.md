@@ -1,6 +1,17 @@
 # Gate-first versus spec-first: pre-registered trial
 
-Written before the run. Not edited after. The run is a separate document.
+Written before the run. Not edited after the first task starts. The run is a
+separate document.
+
+**Amendment 1, 2026-09-15, before any task.** The spec arm was first written
+as a homemade Given/When/Then spec. That would have been a straw man. The
+comparison the project actually needs to win is against the published
+spec-driven methods people use with agents today: BMAD-METHOD, GitHub's Spec
+Kit, and the requirements/design/tasks shape Kiro popularised. The arms
+section below is rewritten to run those methods as their authors document
+them, including their own test and QA steps. The measures gained one row,
+test independence, because those methods do produce tests and the trial has
+to say what is different about a gate.
 
 ## Why this document exists
 
@@ -62,34 +73,73 @@ This is the SWE-bench shape. It is used because it is the accepted way to
 judge a change against what the maintainers actually wanted, and because it
 gives a pass or fail that nobody in this project decides.
 
-## The two arms
+## What is actually different
 
-Same model, same tier configuration, same wall-clock cap of 45 minutes per
-task, same token budget recorded from `hexa spend`. Run on the same machine,
-alternating arms per task so drift in the model or the machine does not favour
-one side.
+Spec-driven methods are not "no tests". BMAD has a QA agent and stories that
+call for tests; Spec Kit's tasks include test tasks; Kiro's tasks do too. The
+trial therefore does not compare tests against no tests. It isolates three
+properties of the gate-first method and measures each:
 
-**Arm S, spec-first.** The operator writes a behavioural spec for the issue in
-the project's existing style, Given/When/Then, before any code. An agent is
-given the spec and the repository and asked to implement it. The operator
-reviews the result by reading the diff and the spec side by side, and may send
-it back once. The spec is the guidance artifact. Nothing runs it.
+1. **The guiding artifact runs.** A gate is a command. A PRD, an
+   architecture document, a story file, a spec.md, a requirements.md: none
+   of them can be executed, so none of them can go red when the code
+   drifts.
+2. **The test is written before the implementation and not derived from
+   it.** In the spec-driven methods, tests are written by the implementing
+   agent during or after implementation, from the same understanding that
+   produced the code. That is the mirror-test failure: the test encodes the
+   same misreading as the code and passes anyway.
+3. **The tool refuses the commit.** `hexa do run` reverts on a red gate.
+   The spec-driven methods rely on a review step, human or agent, reading
+   the result against the documents.
 
-This is how spec-driven development is practised with an agent today. The
-arm is not hexa's retired workplan pipeline; using that would be arguing
-against a tool nobody uses.
+If the trial finds no difference, one or more of these properties does not
+matter as much as this project believes. That is a result.
+
+## The arms
+
+Same model, same tier configuration, same wall-clock cap of 90 minutes per
+task for every arm (raised from 45 because the spec-driven methods run
+several agent roles in sequence and a shorter cap would penalise them for
+their shape rather than their output), same token budget recorded from
+`hexa spend`. Run on the same machine, arms rotated per task so drift in the
+model or the machine does not favour one.
+
+Each spec-driven arm is run as its authors document it, at a version pinned
+and recorded in the results document, using its brownfield workflow where it
+has one, with every role and step it prescribes including its own review, QA
+and test steps. The operator follows the method's documentation and does not
+add gate-first practices to it. Where the method leaves a choice to the
+operator, the operator takes the method's default or recommended path and
+records the choice.
+
+**Arm B, BMAD-METHOD.** The method's brownfield flow: document the existing
+project, produce the planning artifacts it calls for, shard into stories,
+implement each story with its developer role, and pass through its QA role.
+The story files and QA output are the guidance artifacts.
+
+**Arm K, Spec Kit.** GitHub's spec-driven workflow: constitution if the
+method calls for one, specify, plan, tasks, implement. The spec, plan and
+task files are the guidance artifacts.
 
 **Arm G, gate-first.** The operator writes a gate for the issue before any
-code: a test, or a command, that fails on the parent commit and would pass if
-the issue were fixed. It is written from the issue, not from the maintainer's
-fix, which the operator has not seen. The change is made with `hexa do run`
-where one file suffices and `hexa build` where it does not, against that gate.
-Then `hexa harden` runs on the result. The gate is the guidance artifact. It
-runs.
+code: a test, or a command, that fails on the parent commit and would pass
+if the issue were fixed. It is written from the issue, not from the
+maintainer's fix, which the operator has not seen. The change is made with
+`hexa do run` where one file suffices and `hexa build` where it does not,
+against that gate. Then `hexa harden` runs on the result. The gate is the
+guidance artifact.
 
-Both arms may use any tool for localisation. If a hexa verb is missing for
+Kiro's requirements/design/tasks shape is not a separate arm. Spec Kit's
+artifacts are close enough in kind that a third spec-driven arm would add
+cost without adding a distinct claim. If Spec Kit and BMAD disagree with each
+other on the primary measure, that disagreement is reported and a Kiro arm
+is added in a follow-up.
+
+All arms may use any tool for localisation. If a hexa verb is missing for
 something the gate arm needs, that is recorded as a finding against hexa and
-the operator does it by hand, timed.
+the operator does it by hand, timed. If a spec-driven method's documented
+step cannot be completed on the subject, that is recorded the same way.
 
 ## Measures, in order of weight
 
@@ -109,14 +159,22 @@ the operator does it by hand, timed.
    mutation on a re-read.
 4. **Time to runnable.** Minutes from task start until a stranger could check
    out the branch and run the suite green.
-5. **Guidance written.** Lines of spec versus lines of gate. Reported, not
-   weighted.
+5. **Guidance written.** Lines of planning and spec artifacts versus lines of
+   gate. Reported, not weighted.
+6. **Test independence.** For every test in an arm's final diff: was it
+   written before the implementation, and by something other than the
+   implementing step? Recorded per test from the session transcript. This
+   is the direct measure of property 2. A spec-driven arm can score well
+   here if its method genuinely front-loads tests; the trial records what
+   happened, not what the method's documentation says should happen.
 
 ## What counts as a result
 
-- **Gate-first wins** if arm G's held-out pass count is at least arm S's and
-  arm G has strictly fewer surviving defects summed over the ten tasks.
-- **Spec-first wins** if the reverse holds.
+- **Gate-first wins** if arm G's held-out pass count is at least each
+  spec-driven arm's and arm G has strictly fewer surviving defects than each,
+  summed over the ten tasks.
+- **A spec-driven method wins** if it beats arm G on both measures the same
+  way. Each is scored separately; BMAD and Spec Kit are not pooled.
 - **No result** otherwise, and the document says so.
 
 Drift detection is reported separately. It tests the second claim and is
@@ -148,14 +206,16 @@ that exists.
 
 ## Costs
 
-Twenty runs of up to 45 minutes, two harden passes per task, and three
-mutation runs per arm per task. Inference cost is recorded per task from
+Thirty runs of up to 90 minutes, a harden pass per arm per task, and three
+mutation runs per arm per task. The spec-driven arms will spend more, since
+their methods run more roles; the spend is reported per arm and is itself a
+finding. Inference cost is recorded per task from
 `hexa spend` and published with the results.
 
 ## Publication
 
 The results go in `docs/analysis/` next to this file, with the per-task
-table, the selection query, the ten issue numbers, every gate and every spec
-as written, the reviewer's defect lists, and the arm that lost on any
+table, the selection query, the ten issue numbers, the pinned version of each
+spec-driven method, every gate and every planning artifact as written, the reviewer's defect lists, and the arm that lost on any
 measure. If the trial is abandoned, the reason is published in the same
 place.
