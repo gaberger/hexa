@@ -7,18 +7,30 @@ before the real trial, on a subject the operator is not blind to.
 
 ## Result, stated first
 
-**Gate-first did not win. By the pre-registered rule, both spec-driven arms
-did.**
+**No result for the task. One finding against gate-first that the termination
+does not explain.**
 
-All three arms passed the held-out check. Both spec-driven arms finished with
-a clean test suite. The gate-first arm finished with a failing test in its own
-crate and a diff more than twice the size of either. The rule says a
-spec-driven method wins if it matches gate-first on held-out pass and has
-strictly fewer surviving defects. BMAD and Spec Kit each satisfy that.
+Applying the pre-registered rule to the committed states, both spec-driven
+arms win: all three passed the held-out check, both spec arms finished with a
+clean suite, and the gate-first arm finished with a failing test and a diff
+more than twice the size of either.
 
-This is a pilot with one task and a terminated arm, so it settles nothing
-about the method. It is published because a pre-registration that only gets
-published when it wins is not a pre-registration.
+That verdict is not claimed here, because the gate-first arm was killed by an
+API spend limit at about 31 minutes, mid-harden. The pre-registration lists
+what invalidates a task and an externally terminated arm is not on the list,
+which means the rule was never written to cover this. Scoring a killed arm as
+a loss would be choosing an interpretation after seeing the outcome. **The
+task is recorded as no result.**
+
+One finding survives that reasoning. The test that fails was added by harden's
+own commit, `b641f19`, and harden's gate was a single `hexa-cli` integration
+test while the broken test is in `hexa-exec`. The gate could not have run it
+at any point. More time would not have caught it. That is a defect traceable
+to a gate-scope decision the arm made at minute five, independent of when the
+arm died.
+
+Published because a pre-registration that only gets published when it wins is
+not a pre-registration.
 
 ## Setup
 
@@ -95,10 +107,11 @@ report ties for ten tasks running.
 
 **The thing that separated the arms was scope discipline, and gate-first lost
 it.** Gate-first produced 2.5 times the diff of either spec arm and the only
-failing test. The cause is visible: the adversarial pass is unbounded by the
-issue, and the gate that was supposed to catch its mistakes was narrower than
-the code it was allowed to change. That is this project's own lesson about
-narrow gates, demonstrated against the project.
+failing test. The cause is visible and is not the termination: the adversarial
+pass is unbounded by the issue, and the gate that was supposed to catch its
+mistakes covered a different crate from the one it was rewriting. A gate that
+cannot run the test it breaks is not protecting anything. That is this
+project's own lesson about narrow gates, demonstrated against the project.
 
 **Test-independence did not separate them either.** Gate-first wrote its test
 before the implementation, from the issue, by a different step. But so did
@@ -112,8 +125,14 @@ Recorded rather than argued:
 
 - **The gate-first arm was killed** by an API spend limit at about 31 minutes,
   mid-harden. Its final state is whatever harden last committed, not a state
-  it chose. The failing test may be something harden's own fix loop would have
-  caught had it been allowed to finish. The other two arms ran to completion.
+  it chose. This is why the task is scored as no result. It does not explain
+  the failing test, for the reason given at the top, but it does confound
+  everything else about that arm: diff size, elapsed time, and how many more
+  real bugs harden would have found. The other two arms ran to completion.
+- **The measurements themselves are direct.** Every number in the table is
+  the output of a command run against the arm's committed tree after it
+  stopped: the held-out script, `cargo test`, `cargo clippy`, `git diff
+  --shortstat`, and the mutation harness. None is estimated or recalled.
 - **One task, and it is hexa's own bug.** The operator wrote the gate, the
   issue and the held-out check, and knows the shipped fix. Not blind, not
   independent, not generalisable.
