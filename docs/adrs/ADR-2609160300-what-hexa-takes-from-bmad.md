@@ -1,11 +1,11 @@
 ---
 id: ADR-2609160300
-status: proposed
+status: accepted
 date: 2026-09-16
 ---
 # ADR-2609160300: What hexa takes from BMAD
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-09-16
 **Drivers:** In a head-to-head build (docs/analysis/2609152230), BMAD-METHOD reached 2 probed defects in 29 minutes for $0 metered, against hexa's 0 defects in 72 minutes for $24.56 and rising. BMAD's review also found a class of fault hexa has no verb for: a stated requirement that nothing verifies.
 
@@ -91,9 +91,45 @@ Adopt three things from BMAD and fix the accounting.
 - Item 4 is the precondition for every other cost claim this project makes.
   Until it lands, no benchmark in this repository can say what it paid for.
 
+## Built, 2026-09-16, and one claim corrected
+
+Items 4 and 1 are built; 2 and 3 are not. What the build learned:
+
+**Item 1 does not do what this ADR said it would.** The ADR claimed deletion
+coverage was "the runnable form of the question BMAD asked by reading",
+citing the cache adapter the gate could not see. That is wrong, and running it
+proved so. Deleting a file breaks the import that names it, so the gate fails
+and the module reads as covered. Verified directly: removing
+`caching-link-store.ts` from the Spec Kit tree makes the server fail to start.
+
+The original case needed the component **unwired** from the composition root,
+not deleted. Deletion coverage answers "does anything the gate runs need this
+file", which is a real and different question. A behaviourally redundant
+decorator that is still imported is invisible to it. Catching that needs a
+wiring mutation — replace a component with a pass-through in the composition
+root — which is not built and is not this verb.
+
+**What it did find**, on its first run against the Spec Kit arm: the only two
+modules whose deletion the gate survived were its two ports. Both are
+TypeScript interface files, erased before the program runs, so the gate could
+never have depended on them. That is a property of the language, not a hole,
+and reporting it as one was noise. The verb now classifies type-only modules
+separately and only counts runtime modules as holes. On that tree it now
+reports 0 of 9 runtime modules verified by nothing, and exits 0.
+
+**A second defect, found by building this.** `hexa adr gates` judged a gate
+naming a relative script as "not a command", because the runnability check
+resolved the path from the process's working directory while the runner
+executes gates from the repository root. This ADR's own sibling,
+ADR-2609160100, records `./bench/selftest.sh` and was failing that check.
+Fixed: the check now resolves against the root the gate will run in.
+
 ## Gate
 
-`cargo test -p hexa-cli --lib gate_coverage && cargo test -p hexa-exec --lib harden_lens_order && cargo test -p hexa-infer --lib spend_names_a_model`
+`cargo test -p hexa-cli --lib gate_coverage && cargo test -p hexa-infer --lib spend_names_a_model && cargo test -p hexa-cli --lib adr_gates`
+
+The `harden_lens_order` clause is removed until item 2 is built; a filter that
+matches no test is a vacuous pass, which this project rejects.
 
 Each module must exist and fail before the code that satisfies it.
 
