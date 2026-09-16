@@ -6,40 +6,74 @@ CLI), two secondary adapters behind one port (file store, in-memory cache),
 and state that survives a restart. One challenge, one black-box gate, the
 seven hexagonal rules stated identically to every arm.
 **Arms:** gate-first (hexa verbs), GitHub Spec Kit, BMAD-METHOD.
-**Status:** Spec Kit and BMAD complete and independently verified. The
-gate-first arm had not reported when this was written; its section is marked
-pending and will be amended, including if it wins.
+**Status:** Complete. All three arms finished and were verified by the
+operator, not taken on their reports.
 
 ## Findings, stated first
 
-1. **Both spec-driven methods built a working system quickly.** Spec Kit in
-   13 minutes, BMAD in 29. Both gates verified by the operator, not taken on
-   the arms' word. Eleven checks each, including restart persistence.
-2. **Both scored F on the architecture grade, and the grade is not usable.**
-   Every violation in both arms, 6 of 6 and 12 of 12, is the single rule class
-   my own challenge text contradicted. Excluding that class, both arms are
-   clean: zero violations, zero cycles, zero dead exports. **The architecture
-   measure found no difference between the methods except one I created.**
-3. **The gate was written before the code, as the method prescribes, and it
-   did not check a requirement the challenge stated.** I deleted the entire
-   cache adapter from the Spec Kit arm and the gate still reported PASS. BMAD's
-   review found this hole by reading the specification. The gate could not have
-   found it, because the hole was in the gate.
+1. **All three methods built a working system.** Every gate verified by the
+   operator. Spec Kit 13 minutes, BMAD 29, gate-first 72.
+2. **The architecture measure found nothing.** All three arms graded below A,
+   and every violation in all three is the single rule class my own challenge
+   text contradicted. Excluding it, all three are identical: zero violations,
+   zero cycles, zero dead exports, 100 out of 100. **A three-way tie.**
+3. **What separated the arms was whether an adversarial review step ran, not
+   which method ran it.** Probed for six specific defects, drawn evenhandedly
+   from both adversarial passes: gate-first 1 defect, BMAD 1, Spec Kit 4. The
+   two arms that ran an adversarial step tie. The arm that did not has four
+   times their defects.
+4. **Each adversarial pass caught what it looked for and missed what the other
+   found.** hexa's harden found a URL class that permanently breaks codes, which
+   BMAD shipped. BMAD's review found silent store corruption with data loss,
+   which hexa shipped. Neither is a superset of the other.
+5. **The gate I wrote before the code missed a stated requirement.** Deleting
+   the entire cache adapter leaves it green, demonstrated.
+6. **Gate-first wrote every test after the implementation.** Reported by the
+   arm itself and provable from file mtimes. Its oracle was the adversarial
+   hunt, not a test suite.
 
 ## Verification, run by the operator
 
-| | Spec Kit | BMAD | Gate-first |
+| | Gate-first | Spec Kit | BMAD |
 |---|---|---|---|
-| Gate (`./gate.sh`) | **PASS**, 11/11 | **PASS**, 11/11 | pending |
-| Wall clock | 13 min | 29 min | pending |
-| Architecture grade, as measured | F, 40/100 | F, 0/100 | pending |
-| Violations, all of one class | 6 | 12 | pending |
-| Violations outside that class | **0** | **0** | pending |
-| Grade with that class excluded | **A+, 100** | **A+, 100** | pending |
-| Cycles / dead exports / unused ports | 0 / 0 / 0 | 0 / 0 / 0 | pending |
-| Source | 12 files, 606 lines | 12 files, 675 lines | pending |
-| Test files | 6 | 7 | pending |
-| Method artifacts | 20 documents | 15 documents | pending |
+| Gate | **PASS** 11/11 | **PASS** 11/11 | **PASS** 11/11 |
+| Wall clock | 72 min | **13 min** | 29 min |
+| Grade as measured | B, 80 | F, 40 | F, 0 |
+| Violations, all one disputed class | 2 | 6 | 12 |
+| Violations outside that class | **0** | **0** | **0** |
+| Grade with that class excluded | **100** | **100** | **100** |
+| Source lines | 838 | 606 | 675 |
+| Tests passing | 88 | 41 | 59 |
+| Tests written before their subject | **none** | 2 of 6 files | all |
+| **Defects found by cross-probe** | **1** | **4** | **1** |
+
+## The defect probe
+
+Six defects, three taken from hexa's harden report and three from BMAD's
+review report, written into two scripts by the operator after both had
+reported, and run identically against all three arms. Sourcing from both
+adversarial passes is what makes it symmetric; a probe built only from
+harden's findings would have been rigged for hexa.
+
+| Defect | Gate-first | Spec Kit | BMAD |
+|---|---|---|---|
+| URL above U+00FF: 201 then 500 forever, code permanently dead | ok | **DEFECT** | **DEFECT** |
+| Body cap bypassed by chunked encoding | ok | **DEFECT** | ok |
+| Whitespace URL corrupts the Location invariant | ok | ok | ok |
+| `GET /%` returns 500 instead of 404 | ok | **DEFECT** | ok |
+| Corrupt store read as empty, then overwritten: data loss | **DEFECT** | **DEFECT** | ok |
+| Empty `STORE_DIR` writes into the working directory | ok | ok | ok |
+| **Total** | **1** | **4** | **1** |
+
+Every one of these sat behind a green gate. Spec Kit's four sat behind a green
+gate and 41 passing tests.
+
+**Finding 4 is the one worth keeping.** The two arms that ran an adversarial
+pass each shipped exactly one defect, and it was the one the other's pass had
+caught. hexa's harden reasons from the code and found an input-domain fault
+BMAD missed. BMAD's review reasons from the specification and found a
+durability fault hexa missed. The evidence here supports running an
+adversarial pass, and does not support a preference between these two.
 
 ## Finding 2 in detail: the measure measured my mistake
 
@@ -125,9 +159,12 @@ My gate passed a system with several of those defects present.
 
 ## What this trial does not show
 
-- **The gate-first arm has not reported.** Every comparative statement here is
-  between two spec-driven methods. The headline claim is untested until that
-  arm lands.
+- **The probe is six defects, not a census.** It was built from what two
+  adversarial passes happened to report. Defects no pass found are invisible
+  to it, and all three arms certainly still have some.
+- **Gate-first cost 5.5x the fastest arm's wall clock** for one fewer defect
+  than Spec Kit and the same count as BMAD. On this task that is a poor trade;
+  17 of its first 30 minutes produced no code at all.
 - **One task, one operator, no blind review.** I wrote the challenge, the gate
   and the analysis, and I am not blind to any arm.
 - **The architecture measure is unproven, not disproven.** It returned no
