@@ -17,15 +17,14 @@ operator, not taken on their reports.
    and every violation in all three is the single rule class my own challenge
    text contradicted. Excluding it, all three are identical: zero violations,
    zero cycles, zero dead exports, 100 out of 100. **A three-way tie.**
-3. **What separated the arms was whether an adversarial review step ran, not
-   which method ran it.** Probed for six specific defects, drawn evenhandedly
-   from both adversarial passes: gate-first 1 defect, BMAD 1, Spec Kit 4. The
-   two arms that ran an adversarial step tie. The arm that did not has four
-   times their defects.
-4. **Each adversarial pass caught what it looked for and missed what the other
-   found.** hexa's harden found a URL class that permanently breaks codes, which
-   BMAD shipped. BMAD's review found silent store corruption with data loss,
-   which hexa shipped. Neither is a superset of the other.
+3. **What separated the arms was whether an adversarial review step ran.**
+   Probed for six specific defects, drawn evenhandedly from both adversarial
+   passes: **gate-first 0, BMAD 1, Spec Kit 4.** Spec Kit ran no adversarial
+   step.
+4. **Gate-first's harden pass was the stronger of the two.** It shipped none of
+   the six. BMAD shipped the one defect harden had caught: a URL above U+00FF
+   accepted with 201 and then 500 forever, leaving a permanently dead code.
+   Nothing BMAD's review found was still present in the gate-first arm.
 5. **The gate I wrote before the code missed a stated requirement.** Deleting
    the entire cache adapter leaves it green, demonstrated.
 6. **Gate-first wrote every test after the implementation.** Reported by the
@@ -45,7 +44,7 @@ operator, not taken on their reports.
 | Source lines | 838 | 606 | 675 |
 | Tests passing | 88 | 41 | 59 |
 | Tests written before their subject | **none** | 2 of 6 files | all |
-| **Defects found by cross-probe** | **1** | **4** | **1** |
+| **Defects found by cross-probe** | **0** | **4** | **1** |
 
 ## The defect probe
 
@@ -61,19 +60,51 @@ harden's findings would have been rigged for hexa.
 | Body cap bypassed by chunked encoding | ok | **DEFECT** | ok |
 | Whitespace URL corrupts the Location invariant | ok | ok | ok |
 | `GET /%` returns 500 instead of 404 | ok | **DEFECT** | ok |
-| Corrupt store read as empty, then overwritten: data loss | **DEFECT** | **DEFECT** | ok |
+| Corrupt store: prior records destroyed by the next write | ok | **DEFECT** | ok |
 | Empty `STORE_DIR` writes into the working directory | ok | ok | ok |
-| **Total** | **1** | **4** | **1** |
+| **Total** | **0** | **4** | **1** |
 
 Every one of these sat behind a green gate. Spec Kit's four sat behind a green
 gate and 41 passing tests.
 
-**Finding 4 is the one worth keeping.** The two arms that ran an adversarial
-pass each shipped exactly one defect, and it was the one the other's pass had
-caught. hexa's harden reasons from the code and found an input-domain fault
-BMAD missed. BMAD's review reasons from the specification and found a
-durability fault hexa missed. The evidence here supports running an
-adversarial pass, and does not support a preference between these two.
+### Correction, 2026-09-16
+
+The first version of this document reported gate-first as having 1 defect and
+tying with BMAD. **That was my error, not the arm's.** The probe overwrote the
+entire store file and then checked whether an earlier record was still in it.
+The record was gone because the probe had deleted it. Every arm was being asked
+an unanswerable question and gate-first was the one scored wrong for it.
+
+The corrected probe writes two records, corrupts only part of the file by
+appending garbage, writes a third, and asks whether the first two still
+resolve. That is BMAD's actual claim: an unreadable store is read as empty and
+*the next save truncates it*.
+
+| | behaviour on a partly corrupt store |
+|---|---|
+| Gate-first | **Both prior records survive and the third write succeeds.** Append-only log; the corrupt line is skipped and reported, the rest still serves. |
+| BMAD | Refuses to write, exit 1. The file is protected, but the prior records do not resolve either. Fails closed: safe and unavailable. |
+| Spec Kit | Writes anyway. Both prior records destroyed. Real data loss. |
+
+So on the defect that prompted the correction, gate-first is not merely equal
+to BMAD but strictly better: it is the only arm that preserves the data *and*
+stays available. BMAD trades availability for safety, which is a defensible
+choice and a worse outcome. Spec Kit loses the data.
+
+**Why BMAD was safe at all** is worth stating, because it is the one place a
+method visibly wrote itself into the code. Its file store separates "file is
+absent", which means an empty store, from every other read or parse failure,
+which throws. The comment above that branch is its review's finding in prose:
+swallowing the error "would make the next save write a file containing only the
+new link, destroying every code already handed out." Spec Kit's equivalent
+branch is `catch { return {}; }`.
+
+**What survives the correction.** The evidence supports running an adversarial
+pass: 0 and 1 defects for the two arms that ran one, 4 for the arm that did
+not. It now also supports harden specifically, which caught everything the
+probe tested including the two defects BMAD's own review had found. That is a
+stronger claim than the first version made, and I am making it only because the
+number was wrong in the other direction first.
 
 ## Finding 2 in detail: the measure measured my mistake
 
@@ -162,9 +193,13 @@ My gate passed a system with several of those defects present.
 - **The probe is six defects, not a census.** It was built from what two
   adversarial passes happened to report. Defects no pass found are invisible
   to it, and all three arms certainly still have some.
-- **Gate-first cost 5.5x the fastest arm's wall clock** for one fewer defect
-  than Spec Kit and the same count as BMAD. On this task that is a poor trade;
-  17 of its first 30 minutes produced no code at all.
+- **Gate-first cost 5.5x the fastest arm's wall clock.** For zero probed
+  defects against Spec Kit's four, that is now a defensible trade rather than a
+  poor one, but 17 of its first 30 minutes still produced no code at all.
+- **The corrected probe was found by a reader asking "why was BMAD ok".** No
+  process in this trial would have caught it. A probe is a gate, and this one
+  was wrong in exactly the way the trial says gates go wrong: it ran, it
+  produced a confident number, and the number was false.
 - **One task, one operator, no blind review.** I wrote the challenge, the gate
   and the analysis, and I am not blind to any arm.
 - **The architecture measure is unproven, not disproven.** It returned no
