@@ -23,11 +23,29 @@ pub(crate) struct Coverage {
     /// True when the gate still passed with this module deleted, which means
     /// nothing the gate runs depends on it.
     pub(crate) gate_survived: bool,
+    /// True when the module contributes nothing at runtime, so the gate
+    /// surviving its deletion is a property of the language rather than a
+    /// hole. A TypeScript interface is erased before the program runs; no
+    /// gate, however complete, can notice its absence at runtime.
+    pub(crate) type_only: bool,
 }
 
-/// The module names of every row the gate survived, in the order given.
+/// The module names of every row that is a real hole: the gate survived the
+/// deletion, and the module was not erased by the compiler anyway.
 pub(crate) fn uncovered(rows: &[Coverage]) -> Vec<String> {
-    rows.iter().filter(|r| r.gate_survived).map(|r| r.module.clone()).collect()
+    rows.iter()
+        .filter(|r| r.gate_survived && !r.type_only)
+        .map(|r| r.module.clone())
+        .collect()
+}
+
+/// The module names the gate survived only because the module is type-only.
+/// Expected, and reported apart from the holes so it does not read as one.
+fn erased_by_the_compiler(rows: &[Coverage]) -> Vec<String> {
+    rows.iter()
+        .filter(|r| r.gate_survived && r.type_only)
+        .map(|r| r.module.clone())
+        .collect()
 }
 
 /// The files worth deleting one at a time. Source only; never the composition
@@ -57,6 +75,75 @@ pub(crate) fn candidate_modules(files: &[PathBuf], composition_root: &str) -> Ve
         out.push(rel);
     }
     out
+}
+
+/// True when every statement in `source` is erased before the program runs:
+/// type imports, type aliases, interface declarations and type re-exports.
+/// Deleting such a file cannot change behaviour, so a gate that survives its
+/// deletion has not missed anything.
+///
+/// Conservative by construction. The first line that could run anything —
+/// a const, a function, a class, a call, an assignment — returns false. An
+/// empty file is not type-only; there is nothing in it to be a type.
+pub(crate) fn is_type_only(source: &str) -> bool {
+    let mut considered = 0usize;
+    // Brace depth inside a declaration whose body is entirely type syntax.
+    let mut depth = 0i32;
+
+    for raw in source.lines() {
+        let line = raw.trim();
+        if line.is_empty() {
+            continue;
+        }
+        // Comments carry no runtime meaning in any of these languages.
+        if line.starts_with("//")
+            || line.starts_with("/*")
+            || line.starts_with('*')
+            || line.starts_with("*/")
+        {
+            continue;
+        }
+        considered += 1;
+
+        // Inside an interface or object type body: every line is type syntax.
+        if depth > 0 {
+            depth += brace_delta(line);
+            continue;
+        }
+
+        // A type alias or an interface may open a body that spans lines; the
+        // brace depth carries the rest of it.
+        let opens_a_type_body = line.starts_with("export type")
+            || starts_a_type_alias(line)
+            || line.starts_with("interface ")
+            || line.starts_with("export interface ");
+
+        if opens_a_type_body {
+            depth += brace_delta(line);
+        } else if line.starts_with("import type")
+            || line.starts_with("export {")
+            || line == "}"
+            || line == "};"
+        {
+            // Erased outright, and closes nothing that is still open.
+        } else {
+            return false;
+        }
+    }
+
+    considered > 0 && depth == 0
+}
+
+/// `type X = ...` — a type alias, which is erased. Not `typeof`, and not an
+/// identifier that merely begins with the letters.
+fn starts_a_type_alias(line: &str) -> bool {
+    line.starts_with("type ") && line.contains('=')
+}
+
+/// Braces opened minus braces closed on one line.
+fn brace_delta(line: &str) -> i32 {
+    line.chars().filter(|c| *c == '{').count() as i32
+        - line.chars().filter(|c| *c == '}').count() as i32
 }
 
 /// Restores a deleted file when it goes out of scope, however it goes out of
@@ -121,17 +208,27 @@ pub(crate) async fn measure(
             Ok(b) => b,
             Err(_) => continue,
         };
+        // Read the source before it is gone: whether a surviving deletion is
+        // a hole depends on whether the file could have run at all.
+        let ext = Path::new(&module).extension().and_then(|e| e.to_str()).unwrap_or("");
+        let type_only = if matches!(ext, "rs" | "go") {
+            // Rust and Go types are not erased; a deleted one is a real hole.
+            false
+        } else {
+            std::str::from_utf8(&bytes).map(is_type_only).unwrap_or(false)
+        };
+
         let guard = Restore { path: path.clone(), bytes };
         std::fs::remove_file(&path)?;
         let (ok, _out) = hexa_exec::direct_exec::run_evidence(gate, root).await;
         drop(guard);
-        rows.push(Coverage { module, gate_survived: ok });
+        rows.push(Coverage { module, gate_survived: ok, type_only });
     }
     Ok(rows)
 }
 
 /// `hexa gate coverage` — name every module the gate does not verify.
-pub(crate) async fn run(
+pub async fn run(
     target: String,
     gate: String,
     composition_root: Option<String>,
@@ -152,26 +249,52 @@ pub(crate) async fn run(
 
     println!("{} {}", "deletion coverage of".bold(), gate.cyan());
 
-    for row in &rows {
-        if row.gate_survived {
-            println!(
-                "  {} {} {}",
-                "✗".red(),
-                row.module,
-                "— the gate passes without it".dimmed()
-            );
-        } else {
-            println!("  {} {}", "✓".green(), row.module);
+    let needed: Vec<&str> =
+        rows.iter().filter(|r| !r.gate_survived).map(|r| r.module.as_str()).collect();
+    let erased = erased_by_the_compiler(&rows);
+    let missed = uncovered(&rows);
+
+    if !needed.is_empty() {
+        println!("\n{}", "the gate needs these modules".bold());
+        for module in &needed {
+            println!("  {} {}", "✓".green(), module);
         }
     }
 
-    let missed = uncovered(&rows);
-    println!("{} of {} modules are verified by nothing", missed.len(), rows.len());
+    if !erased.is_empty() {
+        println!(
+            "\n{} {}",
+            "the gate survives deleting these, and that is expected".bold(),
+            "— type-only, erased before the program runs, so not a hole".dimmed()
+        );
+        for module in &erased {
+            println!("  {} {}", "–".dimmed(), module);
+        }
+    }
+
+    if !missed.is_empty() {
+        println!("\n{}", "runtime modules the gate never needs — these are the holes".bold());
+        for module in &missed {
+            println!(
+                "  {} {} {}",
+                "✗".red(),
+                module,
+                "— the gate passes without it".dimmed()
+            );
+        }
+    }
+
+    let runtime_modules = rows.len() - erased.len();
+    println!(
+        "\n{} of {} runtime modules are verified by nothing",
+        missed.len(),
+        runtime_modules
+    );
 
     if missed.is_empty() {
         Ok(())
     } else {
-        anyhow::bail!("{} modules are verified by nothing", missed.len())
+        anyhow::bail!("{} runtime modules are verified by nothing", missed.len())
     }
 }
 
@@ -183,7 +306,7 @@ mod gate_coverage {
     use std::path::PathBuf;
 
     fn cov(m: &str, survived: bool) -> Coverage {
-        Coverage { module: m.to_string(), gate_survived: survived }
+        Coverage { module: m.to_string(), gate_survived: survived, type_only: false }
     }
 
     #[test]
@@ -225,6 +348,29 @@ mod gate_coverage {
             "src/adapters/secondary/store.ts".to_string(),
             "src/domain/link.ts".to_string(),
         ], "the composition root is the wiring, tests are the gate, neither is a subject");
+    }
+
+    #[test]
+    fn a_type_only_module_is_reported_apart_from_a_runtime_one() {
+        // TypeScript types are erased before the program runs, so deleting an
+        // interface file cannot change behaviour and the gate passes. That is
+        // a property of the language, not a hole in the gate. Measured
+        // 2026-09-16: both of the Spec Kit arm's ports flagged this way.
+        assert!(super::is_type_only("export interface LinkStore {\n  get(): void;\n}\n"));
+        assert!(super::is_type_only("import type { X } from \"./x.js\";\nexport type Y = X;\n"));
+        assert!(!super::is_type_only("export class Store {\n  get() {}\n}\n"));
+        assert!(!super::is_type_only("export const MAX = 8192;\n"));
+    }
+
+    #[test]
+    fn only_runtime_modules_count_as_holes_in_the_gate() {
+        let rows = vec![
+            Coverage { module: "src/ports/link-store.ts".into(), gate_survived: true, type_only: true },
+            Coverage { module: "src/adapters/secondary/cache.ts".into(), gate_survived: true, type_only: false },
+            Coverage { module: "src/domain/link.ts".into(), gate_survived: false, type_only: false },
+        ];
+        assert_eq!(uncovered(&rows), vec!["src/adapters/secondary/cache.ts".to_string()],
+            "a type-only module is not a hole; a runtime module the gate never needs is");
     }
 
     #[test]

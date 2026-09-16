@@ -121,6 +121,24 @@ enum DevGroupAction {
 }
 
 #[derive(Subcommand)]
+enum GateAction {
+    /// Delete each module in turn, run the gate, and report every module whose
+    /// deletion the gate survives — those are verified by nothing.
+    Coverage {
+        /// Directory to measure (repo-relative)
+        #[arg(default_value = ".")]
+        target: String,
+        /// The gate: a shell command that must exit 0
+        #[arg(long)]
+        gate: String,
+        /// The composition root, which is wiring rather than a subject.
+        /// Inferred from the tree when omitted.
+        #[arg(long = "composition-root")]
+        composition_root: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
 enum Commands {
     // ════════════════════════════════════════════════════════════════════
     // Grouped parent commands (P2/P3/P4)
@@ -194,6 +212,11 @@ enum Commands {
     Adr {
         #[command(subcommand)]
         action: AdrAction,
+    },
+    /// Gate quality — which stated requirement is verified by nothing (ADR-2609160300)
+    Gate {
+        #[command(subcommand)]
+        action: GateAction,
     },
     /// Behavioral specs (docs/specs/)
     Spec {
@@ -395,6 +418,11 @@ async fn main() -> anyhow::Result<()> {
         Commands::Loop { action } => commands::loop_cmd::run(action).await,
         Commands::Spend(args) => commands::spend_cmd::run(args).await,
         Commands::Adr { action } => commands::adr::run(action).await,
+        Commands::Gate { action } => match action {
+            GateAction::Coverage { target, gate, composition_root } => {
+                commands::gate::run(target, gate, composition_root).await
+            }
+        },
         Commands::Spec { action } => commands::spec::run(action).await,
         Commands::Plan { action } => commands::plan::run(action).await,
         Commands::Hook { event } => commands::hook::run(event).await,
