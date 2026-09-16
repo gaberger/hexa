@@ -1823,8 +1823,8 @@ fn gate_command(markdown: &str) -> Option<String> {
 /// look at the report" begins with `run`, which is a perfectly good-looking
 /// program name and is not one. Asking the system is the only answer that
 /// means anything.
-fn looks_runnable(cmd: &str) -> bool {
-    program_exists(cmd, &|p| {
+fn looks_runnable(cmd: &str, root: &std::path::Path) -> bool {
+    program_exists(cmd, root, &|p| {
         std::process::Command::new("which")
             .arg(p)
             .stdout(std::process::Stdio::null())
@@ -1837,14 +1837,23 @@ fn looks_runnable(cmd: &str) -> bool {
 
 /// [`looks_runnable`] with the lookup injected, so both directions are
 /// testable without depending on what this machine has installed.
-fn program_exists(cmd: &str, on_path: &dyn Fn(&str) -> bool) -> bool {
+///
+/// `root` is the directory the gate will run from. `run_gates` hands every
+/// gate to the shell with the repository root as its working directory, so a
+/// relative script like `./bench/selftest.sh` must be resolved against that
+/// root and not against wherever this process happens to be standing —
+/// otherwise the check calls a gate "not a command" that the runner executes
+/// without trouble. An absolute first word is unaffected: `Path::join` on an
+/// absolute path discards the base and yields the path itself.
+fn program_exists(cmd: &str, root: &std::path::Path, on_path: &dyn Fn(&str) -> bool) -> bool {
     let Some(first) = cmd.split_whitespace().next() else { return false };
     if first.is_empty() {
         return false;
     }
-    // A path is its own answer; anything else must be on PATH.
+    // A path is its own answer, read from where the gate will run; anything
+    // else must be on PATH.
     if first.starts_with('.') || first.starts_with('/') {
-        return std::path::Path::new(first).exists();
+        return root.join(first).exists();
     }
     on_path(first)
 }
@@ -1968,7 +1977,7 @@ async fn run_gates() -> anyhow::Result<()> {
         let text = std::fs::read_to_string(f).unwrap_or_default();
         let outcome = match gate_command(&text) {
             None => GateRun::None,
-            Some(cmd) if !looks_runnable(&cmd) => GateRun::Unrunnable(cmd),
+            Some(cmd) if !looks_runnable(&cmd, &root) => GateRun::Unrunnable(cmd),
             Some(cmd) => {
                 let shell = format!("export PATH={:?}; {}", path, cmd);
                 let (ok, out) = hexa_exec::direct_exec::run_evidence(&shell, &root).await;
@@ -2052,24 +2061,28 @@ mod adr_gates {
     #[test]
     fn prose_is_not_a_runnable_command() {
         let path = |p: &str| matches!(p, "cargo" | "bash" | "make");
-        assert!(program_exists("cargo test -p hexa-cli adr_gates", &path));
-        assert!(program_exists("make check", &path));
+        // The root every gate runs from, so a relative script is judged the
+        // way the runner will judge it.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        assert!(program_exists("cargo test -p hexa-cli adr_gates", root, &path));
+        assert!(program_exists("make check", root, &path));
         // The case that broke the first cut: a sentence beginning with a
         // word that looks exactly like a program name.
-        assert!(!program_exists("run the suite, then look at the report", &path), "a sentence is not a command");
-        assert!(!program_exists("Every accepted ADR keeps its gate green", &path));
-        assert!(!program_exists("", &path));
+        assert!(!program_exists("run the suite, then look at the report", root, &path), "a sentence is not a command");
+        assert!(!program_exists("Every accepted ADR keeps its gate green", root, &path));
+        assert!(!program_exists("", root, &path));
 
         // And the real thing, against this machine.
-        assert!(looks_runnable("cargo test -p hexa-cli adr_gates"));
-        assert!(!looks_runnable("run the suite, then look at the report"));
+        assert!(looks_runnable("cargo test -p hexa-cli adr_gates", root));
+        assert!(!looks_runnable("run the suite, then look at the report", root));
     }
 
     /// The real thing this was built for: every ADR in this repository
     /// either records a runnable gate or records none.
     #[test]
     fn every_adr_here_records_a_runnable_gate_or_none() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("docs/adrs");
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let dir = root.join("docs/adrs");
         let mut checked = 0;
         for e in std::fs::read_dir(&dir).expect("docs/adrs").flatten() {
             let p = e.path();
@@ -2078,7 +2091,7 @@ mod adr_gates {
             }
             let text = std::fs::read_to_string(&p).unwrap_or_default();
             if let Some(cmd) = gate_command(&text) {
-                assert!(looks_runnable(&cmd), "{:?} records a gate that is not a command: {cmd:?}", p.file_name().unwrap());
+                assert!(looks_runnable(&cmd, root), "{:?} records a gate that is not a command: {cmd:?}", p.file_name().unwrap());
                 checked += 1;
             }
         }
