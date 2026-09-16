@@ -3,7 +3,7 @@
 // bench self-test: a probe that passes against this file is vacuous and
 // selftest.sh fails it (ADR-2609160100).
 // Each defect is tagged DEFECT-Pn for the probe that must catch it.
-import { mkdirSync, readFileSync, appendFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, readFileSync, appendFileSync, writeFileSync, existsSync, openSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
 const MAX_BODY = 8192;
@@ -30,8 +30,25 @@ function load(): Map<string, string> {
   }
   return m;
 }
+// DEFECT-P7: the append handle is opened once and cached by path. If the store
+// file is replaced underneath a running process (a cleanup, another instance),
+// the cached descriptor still points at the orphaned inode. Writes are then
+// acknowledged and are invisible to every other process and after a restart.
+let cachedFd: number | null = null;
+function appendFd(): number {
+  if (cachedFd === null) {
+    mkdirSync(storeDir(), { recursive: true });
+    cachedFd = openSync(logPath(), "a");
+  }
+  return cachedFd;
+}
+
 function save(code: string, url: string): void {
   mkdirSync(storeDir(), { recursive: true });
+  if (process.env.HEXA_BENCH_SERVER === "1") {
+    writeSync(appendFd(), JSON.stringify({ c: code, u: url }) + "\n");
+    return;
+  }
   // DEFECT-P5: rewrites the whole file from the loaded view, so a load that
   // silently returned empty destroys every code already handed out.
   const all = load(); all.set(code, url);
@@ -97,6 +114,7 @@ function serve(port: number): void {
 
 const [cmd, ...rest] = process.argv.slice(2);
 if (cmd === "serve") {
+  process.env.HEXA_BENCH_SERVER = "1";
   const i = rest.indexOf("--port");
   serve(i >= 0 ? Number(rest[i + 1]) : 3000);
 } else if (cmd === "shorten") {
