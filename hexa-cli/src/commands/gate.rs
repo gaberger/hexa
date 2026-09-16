@@ -89,6 +89,9 @@ pub(crate) fn is_type_only(source: &str) -> bool {
     let mut considered = 0usize;
     // Brace depth inside a declaration whose body is entirely type syntax.
     let mut depth = 0i32;
+    // Set while a type alias started on an earlier line is still open; every
+    // line until it ends is type text, not a statement.
+    let mut in_alias = false;
 
     for raw in source.lines() {
         let line = raw.trim();
@@ -111,8 +114,24 @@ pub(crate) fn is_type_only(source: &str) -> bool {
             continue;
         }
 
+        // A type alias with no body can still span lines — a union written one
+        // member per line. Those lines are type text; they end the alias at the
+        // terminating `;`, or when the next top-level declaration begins.
+        if in_alias {
+            if starts_a_top_level_declaration(line) {
+                in_alias = false;
+            } else {
+                depth += brace_delta(line);
+                if depth == 0 && line.ends_with(';') {
+                    in_alias = false;
+                }
+                continue;
+            }
+        }
+
         // A type alias or an interface may open a body that spans lines; the
         // brace depth carries the rest of it.
+        let alias = line.starts_with("export type ") || starts_a_type_alias(line);
         let opens_a_type_body = line.starts_with("export type")
             || starts_a_type_alias(line)
             || line.starts_with("interface ")
@@ -120,6 +139,11 @@ pub(crate) fn is_type_only(source: &str) -> bool {
 
         if opens_a_type_body {
             depth += brace_delta(line);
+            // An alias whose statement does not finish on this line carries on
+            // into the lines below it.
+            if alias && depth == 0 && !line.ends_with(';') {
+                in_alias = true;
+            }
         } else if line.starts_with("import type")
             || line.starts_with("export {")
             || line == "}"
@@ -132,6 +156,21 @@ pub(crate) fn is_type_only(source: &str) -> bool {
     }
 
     considered > 0 && depth == 0
+}
+
+/// True when the line opens a new top-level declaration — which ends any type
+/// alias still open above it, so a runtime statement after an alias is still
+/// seen as runtime.
+fn starts_a_top_level_declaration(line: &str) -> bool {
+    const KEYWORDS: [&str; 12] = [
+        "import", "export", "interface", "type", "const", "let", "var", "function", "class",
+        "async", "enum", "declare",
+    ];
+    let word: String = line
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '$')
+        .collect();
+    KEYWORDS.contains(&word.as_str())
 }
 
 /// `type X = ...` — a type alias, which is erased. Not `typeof`, and not an
@@ -360,6 +399,34 @@ mod gate_coverage {
         assert!(super::is_type_only("import type { X } from \"./x.js\";\nexport type Y = X;\n"));
         assert!(!super::is_type_only("export class Store {\n  get() {}\n}\n"));
         assert!(!super::is_type_only("export const MAX = 8192;\n"));
+    }
+
+    #[test]
+    fn a_multi_line_type_alias_is_still_type_only() {
+        // Found 2026-09-16 by running the verb against the hexa arm: a union
+        // type split over several lines was read as runtime code, so a file
+        // containing nothing but types was reported as a hole in the gate.
+        let src = concat!(
+            "export type ShortenResult =\n",
+            "  | { readonly ok: true; readonly code: string }\n",
+            "  | { readonly ok: false; readonly reason: \"invalid-url\" };\n",
+            "\n",
+            "export interface LinkService {\n",
+            "  shorten(raw: unknown): Promise<ShortenResult>;\n",
+            "}\n",
+        );
+        assert!(super::is_type_only(src), "a multi-line union type is not runtime code");
+    }
+
+    #[test]
+    fn a_type_alias_does_not_swallow_the_runtime_code_after_it() {
+        let src = concat!(
+            "export type A =\n",
+            "  | { a: 1 }\n",
+            "  | { a: 2 };\n",
+            "export const LIMIT = 8192;\n",
+        );
+        assert!(!super::is_type_only(src), "a const after a type alias is still runtime code");
     }
 
     #[test]
