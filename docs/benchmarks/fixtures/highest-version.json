@@ -1,0 +1,15 @@
+{
+  "id": "highest-version",
+  "tier": "t2",
+  "status": "verified",
+  "instruction": "`newest` must return the highest published version, not the first or the lexically largest. Skip drafts, prereleases and tags that do not parse as vX.Y.Z. Return null when none qualify.",
+  "target_file": "bench-tmp/highest-version/subject.ts",
+  "oracle": {
+    "setup_files": {
+      "bench-tmp/highest-version/subject.ts": "export interface Release { tag: string; draft?: boolean; prerelease?: boolean; }\n\nexport function newest(releases: readonly Release[]): string | null {\n  const usable = releases.filter((r) => !r.draft);\n  return usable.length > 0 ? usable[0]!.tag : null;\n}\n",
+      "bench-tmp/highest-version/oracle.test.ts": "import { expect, test } from \"bun:test\";\nimport { newest } from \"./subject.js\";\n\ntest(\"highest version wins regardless of order\", () => {\n  expect(newest([{ tag: \"v26.9.10\" }, { tag: \"v26.9.11\" }, { tag: \"v26.9.9\" }])).toBe(\"v26.9.11\");\n});\ntest(\"numeric, not lexical\", () => {\n  expect(newest([{ tag: \"v26.9.9\" }, { tag: \"v26.10.0\" }, { tag: \"v26.9.11\" }])).toBe(\"v26.10.0\");\n});\ntest(\"drafts, prereleases and junk are skipped\", () => {\n  expect(newest([{ tag: \"v27.0.0\", draft: true }, { tag: \"v26.12.0\", prerelease: true },\n                 { tag: \"nightly\" }, { tag: \"v26.9.11\" }])).toBe(\"v26.9.11\");\n});\ntest(\"nothing usable is null\", () => {\n  expect(newest([{ tag: \"nightly\" }])).toBeNull();\n});\n"
+    },
+    "command": "bun test bench-tmp/highest-version/oracle.test.ts"
+  },
+  "provenance": "hexa self-update, 2026-09-15: trusted GitHub's 'latest' flag, which is the most recently created release. Two tags pushed together would have downgraded every machine. ADR-2609151700."
+}

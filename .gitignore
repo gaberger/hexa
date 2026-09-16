@@ -42,6 +42,12 @@ test-output/
 docs/*
 !docs/adrs/
 !docs/analysis/
+# The benchmark corpus is source, not output: `hexa bench agentic` reads it and
+# has nothing to run without it. Ignoring it is why the corpus was empty and
+# every claim about choosing models empirically rested on nothing (2026-09-16).
+!docs/benchmarks/
+docs/benchmarks/*
+!docs/benchmarks/fixtures/
 !docs/guides/
 !docs/reference/
 !docs/GETTING-STARTED.md

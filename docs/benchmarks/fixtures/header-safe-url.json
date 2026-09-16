@@ -1,0 +1,15 @@
+{
+  "id": "header-safe-url",
+  "tier": "t2",
+  "status": "verified",
+  "instruction": "`validate` returns the trimmed URL when it is safe to put verbatim in an HTTP Location header, and null otherwise. A URL that is accepted here and then throws at the header is worse than one rejected up front.",
+  "target_file": "bench-tmp/header-safe-url/subject.ts",
+  "oracle": {
+    "setup_files": {
+      "bench-tmp/header-safe-url/subject.ts": "export function validate(raw: unknown): string | null {\n  if (typeof raw !== \"string\") return null;\n  const t = raw.trim();\n  if (t === \"\") return null;\n  try {\n    const u = new URL(t);\n    if (u.protocol !== \"http:\" && u.protocol !== \"https:\") return null;\n  } catch {\n    return null;\n  }\n  return t;\n}\n",
+      "bench-tmp/header-safe-url/oracle.test.ts": "import { expect, test } from \"bun:test\";\nimport { validate } from \"./subject.js\";\n\ntest(\"ordinary urls pass, trimmed\", () => {\n  expect(validate(\"  https://example.com/a  \")).toBe(\"https://example.com/a\");\n});\ntest(\"non-http schemes are rejected\", () => {\n  expect(validate(\"javascript:alert(1)\")).toBeNull();\n});\ntest(\"a code point above U+00FF cannot ride in a header\", () => {\n  expect(validate(\"https://example.com/caf\\u00e9\")).toBeNull();\n  expect(validate(\"https://example.com/\\u65e5\\u672c\")).toBeNull();\n});\ntest(\"control characters are rejected\", () => {\n  expect(validate(\"https://example.com/\\u0001x\")).toBeNull();\n  expect(validate(\"https://example.com/a\\nb\")).toBeNull();\n});\ntest(\"latin-1 still passes\", () => {\n  expect(validate(\"https://example.com/caf%C3%A9\")).toBe(\"https://example.com/caf%C3%A9\");\n});\n"
+    },
+    "command": "bun test bench-tmp/header-safe-url/oracle.test.ts"
+  },
+  "provenance": "URL shortener build trial, 2026-09-15: two of three frameworks accepted a non-Latin-1 URL with 201 and then returned 500 forever, leaving a permanently dead short code."
+}

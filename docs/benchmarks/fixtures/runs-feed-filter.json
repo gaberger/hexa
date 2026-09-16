@@ -1,0 +1,15 @@
+{
+  "id": "runs-feed-filter",
+  "tier": "t1",
+  "status": "verified",
+  "instruction": "The rows in this feed come from two writers. A run has an `agent` string field; the other writer's rows do not. `summarise` must describe only the runs, and must not count a foreign row as a failed run.",
+  "target_file": "bench-tmp/runs-feed-filter/subject.ts",
+  "oracle": {
+    "setup_files": {
+      "bench-tmp/runs-feed-filter/subject.ts": "export type Row = Record<string, unknown>;\nexport interface Summary { total: number; passed: number; failed: number; }\n\nexport function summarise(rows: readonly Row[]): Summary {\n  const total = rows.length;\n  const passed = rows.filter((r) => r.ok === true).length;\n  return { total, passed, failed: total - passed };\n}\n",
+      "bench-tmp/runs-feed-filter/oracle.test.ts": "import { expect, test } from \"bun:test\";\nimport { summarise } from \"./subject.js\";\n\nconst run = (ok: boolean) => ({ agent: \"direct\", instruction: \"x\", ok });\nconst foreign = () => ({ kind: \"subagent\", event: \"stop\", agent_id: \"a1\" });\n\ntest(\"foreign rows are not runs\", () => {\n  expect(summarise([foreign(), run(true), foreign(), run(false)]))\n    .toEqual({ total: 2, passed: 1, failed: 1 });\n});\ntest(\"a feed of only foreign rows has no runs\", () => {\n  expect(summarise([foreign(), foreign()])).toEqual({ total: 0, passed: 0, failed: 0 });\n});\ntest(\"an empty feed is empty\", () => {\n  expect(summarise([])).toEqual({ total: 0, passed: 0, failed: 0 });\n});\n"
+    },
+    "command": "bun test bench-tmp/runs-feed-filter/oracle.test.ts"
+  },
+  "provenance": "hexa's own run feed, 2026-09-15: hook events counted as failed runs, reporting 8% pass over 5 runs that had all passed. ADR-2609151100."
+}

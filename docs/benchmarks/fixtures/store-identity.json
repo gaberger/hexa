@@ -1,0 +1,15 @@
+{
+  "id": "store-identity",
+  "tier": "t2.5",
+  "status": "verified",
+  "instruction": "`Store` caches an open handle. It must notice when the underlying store has been replaced \u2014 a cleanup, another process \u2014 and reopen, rather than keep writing into an orphaned handle. Identity, not path.",
+  "target_file": "bench-tmp/store-identity/subject.ts",
+  "oracle": {
+    "setup_files": {
+      "bench-tmp/store-identity/subject.ts": "export interface Backing { id: number; alive: boolean; }\nexport interface Host { open(): Backing; currentId(): number | null; }\n\n/** Reuses its handle while a store still exists at the path. */\nexport class Store {\n  private handle: Backing | null = null;\n  constructor(private readonly host: Host) {}\n\n  write(): Backing {\n    if (this.handle === null || this.host.currentId() === null) {\n      this.handle = this.host.open();\n    }\n    return this.handle;\n  }\n}\n",
+      "bench-tmp/store-identity/oracle.test.ts": "import { expect, test } from \"bun:test\";\nimport { Store, type Backing, type Host } from \"./subject.js\";\n\nclass FakeHost implements Host {\n  private next = 1;\n  live: Backing | null = null;\n  open(): Backing { this.live = { id: this.next++, alive: true }; return this.live; }\n  currentId(): number | null { return this.live ? this.live.id : null; }\n  replace(): void { if (this.live) this.live.alive = false; this.live = { id: this.next++, alive: true }; }\n}\n\ntest(\"the handle is reused while the store is unchanged\", () => {\n  const h = new FakeHost(); const s = new Store(h);\n  expect(s.write().id).toBe(s.write().id);\n});\ntest(\"a replaced store is noticed and reopened\", () => {\n  const h = new FakeHost(); const s = new Store(h);\n  const first = s.write();\n  h.replace();\n  const after = s.write();\n  expect(after.id).not.toBe(first.id);\n  expect(after.alive).toBe(true);\n});\ntest(\"writes never go to an orphaned handle\", () => {\n  const h = new FakeHost(); const s = new Store(h);\n  s.write(); h.replace();\n  expect(s.write().id).toBe(h.currentId());\n});\n"
+    },
+    "command": "bun test bench-tmp/store-identity/oracle.test.ts"
+  },
+  "provenance": "URL shortener change round, 2026-09-16: hexa's adversarial pass found a SQLite adapter validating its connection by path existence. Replacing the store left writes acknowledged and invisible. One competing framework shipped the same fault."
+}

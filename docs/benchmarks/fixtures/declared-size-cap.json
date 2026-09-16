@@ -1,0 +1,15 @@
+{
+  "id": "declared-size-cap",
+  "tier": "t1",
+  "status": "verified",
+  "instruction": "`accept` enforces a maximum payload size. It must hold whether or not the caller declares a length.",
+  "target_file": "bench-tmp/declared-size-cap/subject.ts",
+  "oracle": {
+    "setup_files": {
+      "bench-tmp/declared-size-cap/subject.ts": "export const MAX = 1024;\n\nexport function accept(body: string, declaredLength: number | null): boolean {\n  if (declaredLength !== null && declaredLength > MAX) return false;\n  return true;\n}\n",
+      "bench-tmp/declared-size-cap/oracle.test.ts": "import { expect, test } from \"bun:test\";\nimport { accept, MAX } from \"./subject.js\";\n\ntest(\"a declared oversize payload is refused\", () => {\n  expect(accept(\"x\".repeat(MAX + 1), MAX + 1)).toBe(false);\n});\ntest(\"an undeclared oversize payload is refused too\", () => {\n  expect(accept(\"x\".repeat(MAX + 1), null)).toBe(false);\n});\ntest(\"a payload within the cap is accepted either way\", () => {\n  expect(accept(\"x\".repeat(10), 10)).toBe(true);\n  expect(accept(\"x\".repeat(10), null)).toBe(true);\n});\ntest(\"a lying declaration does not get the payload in\", () => {\n  expect(accept(\"x\".repeat(MAX + 1), 1)).toBe(false);\n});\n"
+    },
+    "command": "bun test bench-tmp/declared-size-cap/oracle.test.ts"
+  },
+  "provenance": "URL shortener build trial: two of three frameworks capped the body only when Content-Length was present, so a chunked request buffered an unbounded body."
+}
