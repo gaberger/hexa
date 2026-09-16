@@ -21,6 +21,7 @@ pub mod skill;
 pub mod status;
 pub mod build;
 pub mod test;
+pub mod gate;
 pub mod update;
 pub mod worktree;
 pub mod new;
