@@ -32,7 +32,8 @@ Ports and adapters (hexagonal). Every arm is held to this identically:
 2. `src/ports/` imports only from `src/domain/`.
 3. `src/usecases/` imports only from `src/domain/` and `src/ports/`.
 4. `src/adapters/primary/` and `src/adapters/secondary/` import only from
-   `src/ports/` (and `src/domain/` value types).
+   `src/ports/`. Not from `src/domain/`, not even a type-only import of a
+   value object: re-export what an adapter needs through its port.
 5. No adapter imports another adapter.
 6. Exactly one composition root (`src/main.ts`) imports from adapters.
 7. All relative imports use `.js` extensions (NodeNext).
@@ -46,3 +47,18 @@ in-memory cache are two secondary adapters behind one port.
 black box: it only runs your program from the outside. It does not inspect
 your source and does not care how you structure it. The architecture rules
 above are checked separately and are not part of the gate.
+
+
+---
+
+## Correction, 2026-09-16
+
+Rule 4 above originally read "`src/ports/` (and `src/domain/` value types)".
+That parenthesis was wrong. `hexa analyze` forbids adapter-to-domain imports
+outright, with no value-type exception, so the brief contradicted the
+instrument that scores it and all three trial arms were marked down for
+obeying the brief. The first run's architecture comparison was voided by it
+(`docs/analysis/2609152230-build-trial-results.md`).
+
+Rule 4 now matches the analyzer. Anyone rerunning this trial gets a brief that
+agrees with the thing measuring them.

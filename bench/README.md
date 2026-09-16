@@ -3,11 +3,37 @@
 One command, deterministic output, no speculation:
 
 ```bash
-./bench/selftest.sh                      # is the rubric fit to judge anything?
-./bench/run.sh <dir> [dir...]            # judge implementations
+./bench/score.sh <dir> [dir...]          # the full scorecard
 ```
 
-`run.sh` refuses to produce a table until `selftest.sh` passes.
+That runs, in order: the self-test, the functional gate, every probe, the
+architecture grade, and — with `BASE=<rev>` set and the target a git
+repository — the blast radius of the change since that revision.
+
+```bash
+BASE=67d3aa6 ./bench/score.sh ../build-trial/hexa
+```
+
+Two narrower entry points remain:
+
+```bash
+./bench/selftest.sh                      # is the rubric fit to judge anything?
+./bench/run.sh <dir> [dir...]            # the probe matrix across several targets
+```
+
+Both `score.sh` and `run.sh` refuse to produce anything until `selftest.sh`
+passes.
+
+## Rerunning the trial
+
+`CHALLENGE.md` is the build brief and `CHANGE-01.md` the change request, both
+exactly as the three arms received them, with one correction noted at the foot
+of `CHALLENGE.md`: its layering rule 4 originally contradicted `hexa analyze`
+and voided the first run's architecture comparison. It now agrees.
+
+To rerun: give each method a clean directory containing `CHALLENGE.md` and a
+copy of `gate.sh`, let it build, commit, then hand it `CHANGE-01.md`. Score
+with `score.sh`, passing `BASE=<the pre-change commit>` for the second round.
 
 ## What it judges
 
