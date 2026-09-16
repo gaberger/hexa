@@ -121,11 +121,11 @@
         "/tmp/claude-1001/-home-gary-projects-hexa/27287875-fffc-4ab0-ad71-2c122d2fd477/scratchpad/log4.txt",
         "/tmp/claude-1001/-home-gary-projects-hexa/27287875-fffc-4ab0-ad71-2c122d2fd477/scratchpad/msg.txt"
       ],
-      "gate": "PATH=/home/gary/.cargo/bin:$PATH cargo test -p hexa-cli --lib adr_gates",
+      "gate": "PATH=/home/gary/.cargo/bin:$PATH cargo test -p hexa-cli --lib gate_coverage",
       "pid": 4193848,
       "pid_start": 26669617,
       "stage": "build",
-      "updated": "2026-09-16T21:19:50.627607820+00:00"
+      "updated": "2026-09-16T21:37:14.436969878+00:00"
     }
   }
 }
