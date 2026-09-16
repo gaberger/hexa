@@ -57,6 +57,33 @@ pub fn record_with(model: &str, input_tokens: u64, output_tokens: u64, cost_usd:
     }
 }
 
+/// The model that served a frontier (`claude -p`) call, read out of its JSON
+/// answer.
+///
+/// The spend log must name a model, not a code path. `claude-code` is the name
+/// of the process hexa shells out to; recording it means `hexa spend` can
+/// report dollars it cannot attribute to anything that ran, and a spend log
+/// that cannot name what served a call cannot support any cost claim. When the
+/// answer names nothing, say so — `"unknown (frontier default)"` is an honest
+/// gap, a code-path name is a false attribution.
+///
+/// Resolution order: the top-level `model` field, then the keys of
+/// `modelUsage` (sorted, joined with `+`, since one answer may be served by
+/// more than one model), then the unknown marker.
+pub fn model_from_frontier_json(v: &Value) -> String {
+    if let Some(m) = v.get("model").and_then(Value::as_str).filter(|m| !m.is_empty()) {
+        return m.to_string();
+    }
+    if let Some(map) = v.get("modelUsage").and_then(Value::as_object) {
+        if !map.is_empty() {
+            let mut names: Vec<&str> = map.keys().map(String::as_str).collect();
+            names.sort_unstable();
+            return names.join("+");
+        }
+    }
+    "unknown (frontier default)".to_string()
+}
+
 /// Every recorded call, oldest first.
 pub fn entries() -> Vec<Value> {
     entries_in(&log_path())
@@ -186,5 +213,42 @@ mod tests {
         let rows = entries_in(&path);
         assert_eq!(rows.len(), 2);
         assert_eq!(totals(&rows).cost_usd, 0.5);
+    }
+}
+
+#[cfg(test)]
+mod spend_names_a_model {
+    //! ADR-2609160300 §4: the spend log names a model, not a code path.
+    //! `record_with("claude-code", ...)` wrote the name of the process hexa
+    //! shelled out to, so `hexa spend` could report $107 without being able to
+    //! say what served any of it.
+    use super::model_from_frontier_json;
+    use serde_json::json;
+
+    #[test]
+    fn the_models_own_id_wins_when_the_answer_carries_one() {
+        let v = json!({"result": "ok", "model": "claude-opus-5", "usage": {"input_tokens": 1}});
+        assert_eq!(model_from_frontier_json(&v), "claude-opus-5");
+    }
+
+    #[test]
+    fn a_per_model_usage_map_is_read_when_there_is_no_top_level_model() {
+        let v = json!({"result": "ok", "modelUsage": {"claude-opus-5": {"inputTokens": 12}}});
+        assert_eq!(model_from_frontier_json(&v), "claude-opus-5");
+    }
+
+    #[test]
+    fn several_models_in_one_answer_are_all_named() {
+        let v = json!({"modelUsage": {"claude-haiku-4-5": {"inputTokens": 3}, "claude-opus-5": {"inputTokens": 9}}});
+        let got = model_from_frontier_json(&v);
+        assert!(got.contains("claude-opus-5") && got.contains("claude-haiku-4-5"), "got {got}");
+    }
+
+    #[test]
+    fn an_answer_that_names_nothing_says_so_rather_than_naming_the_code_path() {
+        let v = json!({"result": "ok", "usage": {"input_tokens": 1}});
+        let got = model_from_frontier_json(&v);
+        assert_ne!(got, "claude-code", "a code path is not a model");
+        assert!(got.contains("unknown"), "an unnamed model must be recorded as unknown, got {got}");
     }
 }
