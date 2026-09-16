@@ -19,15 +19,19 @@ operator, not taken on their reports.
    zero cycles, zero dead exports, 100 out of 100. **A three-way tie.**
 3. **What separated the arms was whether an adversarial review step ran.**
    Probed for six specific defects, drawn evenhandedly from both adversarial
-   passes: **gate-first 0, BMAD 1, Spec Kit 4.** Spec Kit ran no adversarial
+   passes: **gate-first 0, BMAD 2, Spec Kit 4.** Spec Kit ran no adversarial
    step.
 4. **Gate-first's harden pass was the stronger of the two.** It shipped none of
-   the six. BMAD shipped the one defect harden had caught: a URL above U+00FF
-   accepted with 201 and then 500 forever, leaving a permanently dead code.
-   Nothing BMAD's review found was still present in the gate-first arm.
-5. **The gate I wrote before the code missed a stated requirement.** Deleting
+   the five probed defects. BMAD shipped two, both of which harden had caught:
+   the wide-code-point URL that dies on redirect, and an unbounded request
+   body. Nothing BMAD's own review found was still present in the gate-first
+   arm.
+5. **The rubric had to be tested before any of this could be trusted.** The
+   first version of this table was produced by probes that had never been shown
+   to detect anything. Two of six could not fail at all. See ADR-2609160100.
+6. **The gate I wrote before the code missed a stated requirement.** Deleting
    the entire cache adapter leaves it green, demonstrated.
-6. **Gate-first wrote every test after the implementation.** Reported by the
+7. **Gate-first wrote every test after the implementation.** Reported by the
    arm itself and provable from file mtimes. Its oracle was the adversarial
    hunt, not a test suite.
 
@@ -44,28 +48,42 @@ operator, not taken on their reports.
 | Source lines | 838 | 606 | 675 |
 | Tests passing | 88 | 41 | 59 |
 | Tests written before their subject | **none** | 2 of 6 files | all |
-| **Defects found by cross-probe** | **0** | **4** | **1** |
+| **Defects found by the bench** | **0** | **4** | **2** |
 
-## The defect probe
+## The defect bench
 
-Six defects, three taken from hexa's harden report and three from BMAD's
-review report, written into two scripts by the operator after both had
-reported, and run identically against all three arms. Sourcing from both
-adversarial passes is what makes it symmetric; a probe built only from
-harden's findings would have been rigged for hexa.
+**Superseded by `bench/`.** The ad-hoc probes that produced the first version
+of this table were replaced by a versioned bench whose rubric is itself tested
+(ADR-2609160100). Every probe must pass a known-good reference and fail a
+known-bad one; `bench/run.sh` refuses to print a table until that holds.
 
-| Defect | Gate-first | Spec Kit | BMAD |
-|---|---|---|---|
-| URL above U+00FF: 201 then 500 forever, code permanently dead | ok | **DEFECT** | **DEFECT** |
-| Body cap bypassed by chunked encoding | ok | **DEFECT** | ok |
-| Whitespace URL corrupts the Location invariant | ok | ok | ok |
-| `GET /%` returns 500 instead of 404 | ok | **DEFECT** | ok |
-| Corrupt store: prior records destroyed by the next write | ok | **DEFECT** | ok |
-| Empty `STORE_DIR` writes into the working directory | ok | ok | ok |
-| **Total** | **0** | **4** | **1** |
+Rebuilding it changed two things. One probe was retired as unreachable on the
+runtime. One was rewritten and then found a real defect in BMAD that the broken
+version had cleared: BMAD caps URL length but has no request-body cap at all,
+so a 200 KB body carrying a short valid URL is accepted with 201.
 
-Every one of these sat behind a green gate. Spec Kit's four sat behind a green
-gate and 41 passing tests.
+Reproduce with:
+
+```bash
+./bench/selftest.sh
+./bench/run.sh <arm-dir>...
+```
+
+| Probe | Gate-first | Spec Kit | BMAD | sound | unsound |
+|---|---|---|---|---|---|
+| URL above U+00FF: 201 then 500 forever | ok | **DEFECT** | **DEFECT** | ok | DEFECT |
+| Body cap bypassed by chunked encoding | ok | **DEFECT** | **DEFECT** | ok | DEFECT |
+| `GET /%` returns 500 instead of 404 | ok | **DEFECT** | ok | ok | DEFECT |
+| Partial store corruption destroys prior records | ok | **DEFECT** | ok | ok | DEFECT |
+| Empty `STORE_DIR` writes into the working directory | ok | ok | ok | ok | DEFECT |
+| **Total** | **0** | **4** | **2** | **0** | **5** |
+
+The last two columns are the self-test poles, shown to make the point that
+every column above them could have come out the other way.
+
+**The behavioural gate is green on both poles.** That is the bench's reason to
+exist. Every defect above hides behind a passing functional gate, and Spec
+Kit's four hid behind 41 passing tests as well.
 
 ### Correction, 2026-09-16
 
