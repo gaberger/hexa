@@ -7,7 +7,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "tsc && node --test \"dist/**/*.test.js\""
+    "test": "tsc && node -e \"const{globSync}=require('node:fs');if(globSync('dist/**/*.test.js').length===0){console.error('No compiled test files under dist/. A gate that runs nothing is not a gate.');process.exit(1)}\" && node --test \"dist/**/*.test.js\""
   },
   "devDependencies": {
     "@types/node": "^22",

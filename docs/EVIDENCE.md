@@ -22,9 +22,11 @@ and the result passes its gate with no edits, in Rust, Go and TypeScript.
 cargo test -p hexa-cli --test scaffold_is_executable
 ```
 
-Expected: `8 passed`. The tests scaffold twice and diff the bytes, run each
+Expected: `13 passed`. The tests scaffold twice and diff the bytes, run each
 language's gate, plant a violation and assert each shipped rule fires, and
-assert a clean scaffold trips none of them.
+assert a clean scaffold trips none of them. The TypeScript gate needs one
+`npm install`, so it is skipped unless `HEXA_TEST_NPM=1` is set; CI sets it
+(ADR-2609211245).
 
 ## The rules that ship with a scaffold fire
 
@@ -61,7 +63,7 @@ correct commit.
 cargo test -p hexa-analysis --lib health_score
 ```
 
-Expected: `8 passed`, including `the_score_never_climbs_as_violations_are_added`
+Expected: `10 passed`, including `the_score_never_climbs_as_violations_are_added`
 over 0 to 60 violations. Before the fix, 26 violations scored 96 because the
 penalty wrapped in a `u8`.
 
@@ -126,7 +128,7 @@ diagram image exists.
 cargo test -p hexa-cli --test shipped_docs_name_real_verbs
 ```
 
-Expected: `9 passed`. Planting a dead verb or a dead link fails it.
+Expected: `10 passed`. Planting a dead verb or a dead link fails it.
 
 ## A workplan task is done only with evidence
 
@@ -234,12 +236,140 @@ Expected: three `pass` lines and `Standalone gate passed`. It runs the
 inference adapters' tests and the agent loop's tests. Before the fix it ran
 tests in a deleted crate and could never pass.
 
+## Memory belongs to the project it was learned in
+
+**Claim.** Two repositories worked on by the same user do not share one memory
+store. A note stored in one project is invisible in another, and the shared
+per-user store is reached only by naming it.
+
+```bash
+cargo test -p hexa-cli --test memory_is_project_scoped
+```
+
+Expected: `4 passed`. The tests drive the built binary, because path resolution
+is the subject; `HOME` is set per child process, so no test writes this
+process's environment (ADR-2609131749).
+
+The reproduction from the bug report, re-run against the fix:
+
+```bash
+cd ~/probe && hexa memory store "adr:0007:why" "Postgres over SQLite"
+cd ~/proj2 && hexa memory list          # unrelated, never scaffolded
+```
+
+Expected: the store prints `Store: …/probe/.hexa/memory.jsonl (project)`, and
+the second directory prints `No memory entries yet` above
+`Store: …/.hexa/memory.jsonl (no project here — shared)`. Before
+`97dc8f0` the second command printed the first command's entry.
+
+`adr:0007:why` names a different decision in every repository that has an ADR 7,
+and memory is newest-wins, so the second project to store that key silently
+overwrote the first. Nothing errored (ADR-2609211200).
+
+## A scaffolded TypeScript project passes its own gate
+
+**Claim.** `hexa init --scaffold --lang ts` produces a project whose stated
+gate passes with no edits, and CI runs that gate on every change.
+
+```bash
+hexa init /tmp/ts-probe --scaffold --lang ts
+cd /tmp/ts-probe && npm install && npm test
+```
+
+Expected: `# pass 4` and exit 0, from
+`tsc && node --test "dist/**/*.test.js"`. Before `1abe882` the script read
+`node --test dist/`, which on Node 22 tries to load the directory as a module
+and exits 1 — so every scaffolded TypeScript project failed its first gate. The
+covering test existed and asserted the right thing; nothing ran it, because it
+is skipped unless `HEXA_TEST_NPM=1` and no workflow set it (ADR-2609211245).
+
+Requires Node 22, which the scaffold declares in `engines`.
+
+The same gate deletes every test from a fresh scaffold and asserts `npm test`
+then **fails**. `node --test` over a glob exits 0 when the glob matches
+nothing, so a project with its tests removed reported success; the scaffold's
+test script now counts the compiled test files first and exits 1 with
+`No compiled test files under dist/` when there are none.
+
+## An error-severity rule violation costs grade
+
+**Claim.** A finding the project's own rules file marks `error` moves the
+letter hexa prints, the floor `hexa scaffold --grade` enforces, and
+`--exit-code`, in agreement.
+
+```bash
+cargo test -p hexa-cli --test rule_errors_cost_grade
+```
+
+Expected: `7 passed`. Three of them failed against `1abe882`: the grade floor
+passed where `--exit-code` failed, the ten-point drop was absent, and
+`score_components` reconstructed a number ten points from the score.
+
+## The domain imports only what it is allowed
+
+**Claim.** `[[import_policy]]` in `.hexa/ADR-rules.toml` checks what a layer
+imports from outside the project — which layer-to-layer edges cannot see,
+because such an import has no edge to violate.
+
+```bash
+cargo test -p hexa-cli --test domain_import_policy
+```
+
+Expected: `11 passed` — the nine cases of ADR-2609211430 plus one that every
+scaffolded language satisfies the policy it ships with, and one that an `allow`
+of `serde` does not quietly cover `serde_json`. Two of the eleven pass before
+and after the change by design: an adapter importing `sqlx` is not a finding,
+and a warning-severity policy reports without moving the grade.
+
+The reproduction from the ADR:
+
+```bash
+# a tree whose domain imports sqlx, with the shipped policy
+hexa analyze .              # Architecture grade: B — score 89/100
+hexa analyze . --grade A    # exit 1
+hexa analyze . --exit-code  # exit 1
+```
+
+Expected: `B — score 89/100`, one error naming
+`` `sqlx::PgPool` — not in this policy's `allow` ``, and exit 1 from both gates.
+Before `2e24276` the same tree printed `A+ — score 99/100` and `--grade A`
+exited 0 while `--exit-code` exited 1.
+
+## The refactoring trial, and what of it can be re-run
+
+**Claim.** hexa repaired 17 boundary violations in a project it did not write,
+found 5 more nobody had named, edited no logic and no test, and kept all 177
+tests green. The README says this; the article repeats it.
+
+The trial is written up, with its measures registered **before** the run:
+
+- [`analysis/2609120500-refactoring-trial-preregistered.md`](analysis/2609120500-refactoring-trial-preregistered.md)
+  — the four measures, the task, the gate, written first and not edited after.
+- [`analysis/2609120500-refactoring-trial.md`](analysis/2609120500-refactoring-trial.md)
+  — the run, including the two measures it **failed** on the pre-registered
+  letter, and why the author's first reading of one of them was wrong.
+
+**This one is readable but not re-runnable.** The subject is a project called
+`brain`, and nothing here identifies it by URL or commit, so you cannot fetch
+the baseline and repeat the run. Every other claim on this page is a command
+you can execute. This is the exception, and it is marked as one rather than
+left to look like the others.
+
 ## Not yet validated
 
 - **Localisation.** Given only a failing test name, hexa found the right file in
   1 of 10 trials. There is no command for it. The trial is in
   [`analysis/2609120300-brownfield-trial.md`](analysis/2609120300-brownfield-trial.md).
-- **Third-party imports in `domain/`.** The analyzer does not check them. A
-  project can import a runtime into its domain and score A+.
+- **What a static import declaration does not show.** Third-party imports in
+  `domain/` are checked now (see "The domain imports only what it is allowed"
+  above). Reflection, a dynamic `import()`, a Go `plugin` and Rust's legacy
+  `extern crate` are not import declarations that check reads, so a capability
+  reached through one of them is not seen.
 - **Repair beyond single-token bugs.** The brownfield trial injected one wrong
   token per file. Multi-file changes are untested.
+- **"44 of 110 specs described deleted features."** The figure appears in
+  `README.md`, `CLAUDE.md` and `docs/COMPARISON.md`. The corpus it was counted
+  over is not in this repository, and no script or analysis here re-derives it,
+  so nothing on this page checks it. It needs a source naming the project, the
+  commit, and how "already deleted" was determined — or the sentence needs to
+  stop carrying a number.
