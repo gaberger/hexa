@@ -366,6 +366,32 @@ A module loaded by a computed name — `require(name)` — is a **warning**: it
 does not move the grade, and `--strict` fails on it. Saying nothing would be
 the silent skip this check exists to stop.
 
+**The ADR's table, re-run against the build that closes it.** One file per row
+under `src/domain/`, with the shipped rules file and a manifest declaring
+`sqlx` and `tokio`:
+
+| Written in the domain | Before | After |
+|---|---|---|
+| `use sqlx::PgPool;` | error | error — ``sqlx::PgPool`` not in `allow` |
+| `use std::fs;` | error | error — ``std::fs`` denied |
+| TS `import { Pool } from "pg"` | error | error — ``pg`` |
+| TS `export { Pool } from "pg"` | error | error — ``pg`` |
+| TS `export * from "node:fs"` | error | error — ``node:fs`` denied |
+| `std::fs::read("x")` | **none** | error — ``std::fs::read`` denied |
+| `::sqlx::query("x")` | **none** | error — ``sqlx::query`` |
+| `fn f(_p: sqlx::PgPool)` | **none** | error — ``sqlx::PgPool`` |
+| `#[tokio::main]` | **none** | error — ``tokio::main`` |
+| `sqlx::query!("x")` | **none** | error — ``sqlx::query`` |
+| `extern crate sqlx;` | **none** | error — ``sqlx`` |
+| TS `require("node:fs")` | **none** | error — ``node:fs`` denied |
+| TS `await import("pg")` | **none** | error — ``pg`` |
+| TS `type P = import("pg").Pool` | **none** | error — ``pg`` |
+| TS `require(name)`, computed | **none** | **warning** — cannot be checked |
+| `R14::new()` on a local type | none | none, **correctly** |
+
+Each finding names the reference and which half of the policy spoke, at the
+line it is written on.
+
 ## The refactoring trial, and what of it can be re-run
 
 **Claim.** hexa repaired 17 boundary violations in a project it did not write,
