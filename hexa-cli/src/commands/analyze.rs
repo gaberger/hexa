@@ -1771,9 +1771,31 @@ fn project_names(root: &Path) -> hexa_analysis::import_policy::ProjectNames {
                 {
                     names.rust_crates.push(name.replace('-', "_"));
                 }
+                // Dependency *keys*, which is what code writes: a renamed
+                // dependency `pg = { package = "tokio-postgres" }` is
+                // referenced as `pg::` (ADR-2609211600 §2). Without these, an
+                // inline path cannot be told from a local module.
+                for table in ["dependencies", "dev-dependencies", "build-dependencies"] {
+                    if let Some(deps) = v.get(table).and_then(|d| d.as_table()) {
+                        for key in deps.keys() {
+                            names.rust_dependencies.push(key.replace('-', "_"));
+                        }
+                    }
+                }
+                if let Some(ws) = v
+                    .get("workspace")
+                    .and_then(|w| w.get("dependencies"))
+                    .and_then(|d| d.as_table())
+                {
+                    for key in ws.keys() {
+                        names.rust_dependencies.push(key.replace('-', "_"));
+                    }
+                }
             }
         }
     }
+    names.rust_dependencies.sort();
+    names.rust_dependencies.dedup();
 
     // Go: the module line is the prefix every internal import carries.
     if let Ok(go_mod) = std::fs::read_to_string(root.join("go.mod")) {
@@ -1802,6 +1824,13 @@ fn project_names(root: &Path) -> hexa_analysis::import_policy::ProjectNames {
     }
 
     names
+}
+
+/// The first segment of a module path, which is the name that decides whether
+/// the path leaves the project at all.
+fn first_segment(lang: hexa_analysis::domain::Language, raw: &str) -> String {
+    let sep = if lang == hexa_analysis::domain::Language::Rust { "::" } else { "/" };
+    raw.trim().trim_start_matches("::").split(sep).next().unwrap_or("").to_string()
 }
 
 /// Apply every `[[import_policy]]` to every source file under its layer.
@@ -1844,10 +1873,60 @@ fn evaluate_import_policies(
         let Ok(source) = std::fs::read_to_string(path) else { continue };
         let Ok(imports) = ast.extract_imports(Path::new(&rel), &source, lang) else { continue };
 
-        for imp in imports {
-            let origin = classify(lang, &imp.raw_path, &names);
+        // Declarations and inline references are the same claim about what
+        // this file depends on (ADR-2609211600), so they are judged by the
+        // same rules and differ only in how they were found.
+        let mut sites: Vec<(String, usize)> =
+            imports.into_iter().map(|i| (i.raw_path, i.line)).collect();
+
+        let mut seen: std::collections::HashSet<(usize, String)> = std::collections::HashSet::new();
+        for site in &sites {
+            seen.insert((site.1, first_segment(lang, &site.0)));
+        }
+        for r in hexa_analysis::treesitter_adapter::extract_module_references(&source, lang) {
+            use hexa_analysis::treesitter_adapter::ReferenceKind;
+            if r.kind == ReferenceKind::ComputedLoad {
+                // Nothing can be judged about a name assembled at runtime, and
+                // saying nothing would be the silent skip this exists to stop.
+                // A warning, so it reports without moving the grade.
+                for policy in &matching {
+                    out.push(AdrViolationLocal {
+                        adr: policy.adr.clone(),
+                        id: policy.id.clone(),
+                        file: rel.clone(),
+                        line: r.line,
+                        message: format!(
+                            "a module loaded by a computed name cannot be checked; \
+                             pass a literal or move the load behind a port [`{}`]",
+                            r.raw_path
+                        ),
+                        severity: "warning".to_string(),
+                    });
+                }
+                continue;
+            }
+            // A Rust path may only be judged when its first segment is known
+            // to name something outside the project. `O::new()` and
+            // `Ordering::Less` have a crate's shape and are local code.
+            let head = first_segment(lang, &r.raw_path);
+            if lang == hexa_analysis::domain::Language::Rust
+                && !hexa_analysis::import_policy::names_external(&head, &names)
+            {
+                continue;
+            }
+            // One site per line per name: `sqlx::query(a)` twice on one line
+            // is one reach outside, and the `use` line that introduced it is
+            // already its own site.
+            if seen.insert((r.line, head)) {
+                sites.push((r.raw_path, r.line));
+            }
+        }
+        sites.sort_by_key(|(_, line)| *line);
+
+        for (raw_path, line) in sites {
+            let origin = classify(lang, &raw_path, &names);
             for policy in &matching {
-                let verdict = judge(lang, &imp.raw_path, origin, &policy.allow, &policy.deny);
+                let verdict = judge(lang, &raw_path, origin, &policy.allow, &policy.deny);
                 if verdict == Verdict::OutOfScope || verdict == Verdict::Permitted {
                     continue;
                 }
@@ -1862,8 +1941,8 @@ fn evaluate_import_policies(
                     adr: policy.adr.clone(),
                     id: policy.id.clone(),
                     file: rel.clone(),
-                    line: imp.line,
-                    message: format!("{} [`{}` — {}]", policy.message, imp.raw_path, why),
+                    line,
+                    message: format!("{} [`{}` — {}]", policy.message, raw_path, why),
                     severity: policy.severity.clone(),
                 });
             }

@@ -65,3 +65,26 @@ fix is that one line:
 ```json
 "test": "tsc && node --test \"dist/**/*.test.js\""
 ```
+
+## Inline references now count as imports (`ADR-2609211600`)
+
+`[[import_policy]]` used to judge only import declarations, so a domain file
+could call `std::fs::read("x")` with no `use` line and pass a policy that
+denies `std::fs`.
+
+**What changes for you.** A project whose domain reaches outside inline will
+report findings it did not before, and at `severity = "error"` each site costs
+10 points. The forms now read: an inline path (`std::fs::read`, `::crate::f`,
+a crate in a signature, `#[attr::macro]`, `macro!` paths), `extern crate`,
+`require("x")`, and `import("x")` in expression or type position. A module
+loaded by a computed name is reported as a **warning**.
+
+```bash
+hexa analyze . --json | jq .score_components
+```
+
+The fix is the same as for any other finding: put the capability behind a
+port, or add the dependency to that policy's `allow` with a reason. Local code
+is unaffected — `O::new()`, `Self::x()`, an enum variant and a local module
+are not references, because a path is only judged when its first segment names
+a declared dependency or the standard library.

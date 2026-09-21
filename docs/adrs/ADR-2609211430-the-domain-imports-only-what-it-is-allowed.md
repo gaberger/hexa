@@ -183,6 +183,11 @@ the record rather than the plan:
    `import()` and Go `plugin` — the other things a static import declaration
    does not show.
 
+   **Superseded by ADR-2609211600.** `extern crate`, inline paths, `require`
+   and dynamic `import` are all read now, through a separate extractor that
+   leaves the import graph alone. The limits section lists what actually
+   remains: macro-generated code, reflection, and FFI.
+
 The reporter also changed: an import policy's message names the import it
 found, so sites under one rule no longer say the same thing, and printing only
 the first one reported `pg` and then listed a line that was about `node:fs`.
