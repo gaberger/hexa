@@ -86,3 +86,23 @@ four tests pass on the untouched scaffold and that a fifth added under
 - ADR-2609132158 — a gate that never runs on the branch is not a gate.
 - ADR-2609121400 — the executable gate replaces the written spec; the scaffold
   exists to hand you something a gate can run against.
+
+## Update, 2026-09-21: the zero-match case is closed
+
+The Consequences above record that a zero-match glob still exits 0, and that
+closing it "needs a flag node does not have". That is still true of node's own
+flags; the gap is closed another way, without one.
+
+The scaffold's test script now counts the compiled test files before running
+them and exits 1 with `No compiled test files under dist/. A gate that runs
+nothing is not a gate.` when the count is zero. It uses `fs.globSync`, so the
+check needs no shell and no dependency, and it runs after `tsc` — before it,
+`dist/` may not exist yet or may be stale.
+
+Gated by `a_typescript_scaffold_with_no_tests_left_fails_its_gate` in
+`hexa-cli/tests/scaffold_is_executable.rs`, which asserts the untouched
+scaffold passes first, then removes every test and the stale build and asserts
+the gate fails and says why.
+
+This section is an addition, not a rewrite: the decision above stands as taken,
+and this records what happened next.

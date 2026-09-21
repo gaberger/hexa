@@ -465,3 +465,42 @@ fn copy_tree(from: &std::path::Path, to: &std::path::Path) {
         }
     }
 }
+
+/// A scaffold whose tests are all deleted must fail its own gate.
+///
+/// ADR-2609211245 recorded this as open: `node --test` over a glob exits 0
+/// when the glob matches nothing, so `npm test` on a project with every test
+/// removed reported success. hexa's own `evidence_is_vacuous` catches that
+/// shape when it runs the gate, but a CI job running bare `npm test` does not
+/// — and "a vacuous gate is a failed gate" is the rule this repository states
+/// about every other gate it ships.
+#[test]
+fn a_typescript_scaffold_with_no_tests_left_fails_its_gate() {
+    if std::env::var("HEXA_TEST_NPM").is_err() {
+        eprintln!("skipping: set HEXA_TEST_NPM=1 to allow the npm install this gate needs");
+        return;
+    }
+    let dir = scaffold("ts");
+    let target = dir.path().join("demo-app");
+    let (installed, out) = gate(&target, "npm", &["install", "--silent"]);
+    assert!(installed, "npm install failed:\n{out}");
+
+    // The scaffold passes first, so this asserts the guard rather than a
+    // project that was broken to begin with.
+    let (ok, out) = gate(&target, "npm", &["test"]);
+    assert!(ok, "the untouched scaffold must pass:\n{out}");
+
+    // Remove every test the scaffold shipped, and the stale build with it.
+    std::fs::remove_file(target.join("src/counter.test.ts")).expect("remove the test");
+    std::fs::remove_dir_all(target.join("dist")).expect("remove the stale build");
+
+    let (still_ok, out) = gate(&target, "npm", &["test"]);
+    assert!(
+        !still_ok,
+        "a gate that runs zero tests must fail, not pass quietly:\n{out}"
+    );
+    assert!(
+        out.contains("No compiled test files"),
+        "and it must say why:\n{out}"
+    );
+}

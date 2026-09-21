@@ -298,7 +298,8 @@ Only an adversary reading the code finds it.
 single-token bugs injected into ten files: **10 of 10 repaired**, each restoring
 the original line exactly, zero test files edited.
 
-**Refactoring code it did not write.** A second project had 17 boundary
+**Refactoring code it did not write.** A second project, not identified here,
+so this trial is readable rather than re-runnable. It had 17 boundary
 violations in a web client with no ports layer. hexa was given the rule and the
 count, not the files. It found **17 of 17**, plus five more outside the target,
 added a typed ports layer with the domain types re-exported through it, changed
@@ -321,7 +322,8 @@ v26.9.12. The grade penalised the first fix for two dead exports and was right.
 keeps the misses in.
 
 Every number above has a command that checks it in
-[`docs/EVIDENCE.md`](docs/EVIDENCE.md).
+[`docs/EVIDENCE.md`](docs/EVIDENCE.md). Behaviour changes that need something
+from an existing project are in [`docs/UPGRADING.md`](docs/UPGRADING.md).
 
 ---
 
