@@ -70,6 +70,28 @@ pub struct HardenArgs {
     pub detach: bool,
 }
 
+/// Can this run reach a model at all?
+///
+/// ADR-2609211600's review found `hexa harden` cycling every hunt dimension —
+/// correctness, concurrency, durability-safety — failing each one on the same
+/// unreachable provider. Each dimension costs a round trip to discover what
+/// the first already knew, and the operator reads three failures where the
+/// fact is one: nothing here serves a model.
+///
+/// Pure, so the decision is testable without a provider. `hexa doctor` asks
+/// the same question of the same discovery; this is the check the verbs owed
+/// it before their first inference call, not a second opinion.
+fn first_blocker(found: &[hexa_infer::Found], verb: &str) -> Option<String> {
+    if hexa_infer::discover::any_path(found) {
+        return None;
+    }
+    Some(format!(
+        "{verb} needs a model and no path to one is open. Run `hexa doctor` for what it \
+         probed, then start a local server or put a frontier CLI on PATH. Nothing was \
+         hunted, so nothing about the target is claimed."
+    ))
+}
+
 /// `hexa build` — diverge → red-team → synthesize → build, optionally chaining
 /// the adversarial pass for the full pipeline.
 pub async fn run_build(args: BuildArgs) -> anyhow::Result<()> {
@@ -208,6 +230,11 @@ pub async fn run_harden(args: HardenArgs) -> anyhow::Result<()> {
     if args.detach {
         return detach("harden", &args.target);
     }
+    // Before anything is recorded or hunted: a run that cannot reach a model
+    // fails once, here, rather than once per dimension.
+    if let Some(blocker) = first_blocker(&hexa_infer::discover::discover(), "hexa harden") {
+        anyhow::bail!(blocker);
+    }
     // The gate is recorded in the loop, so the hooks can see the work is under one.
     if let Ok(cwd) = std::env::current_dir() {
         let _ = crate::commands::loop_cmd::update_loop(&cwd, serde_json::json!({ "gate": args.gate.clone(), "stage": "harden" }));
@@ -250,6 +277,53 @@ fn print_review(report: &hexa_exec::adversarial::ReviewReport, indent: &str) {
         other => other.dimmed(),
     };
     println!("{}  final gate: {}", indent, gate);
+}
+
+#[cfg(test)]
+mod preflight {
+    use super::first_blocker;
+    use hexa_infer::Found;
+
+    fn path(reachable: Option<bool>) -> Found {
+        Found {
+            kind: "local",
+            name: "Ollama".to_string(),
+            detail: "http://127.0.0.1:11434".to_string(),
+            via: "default address".to_string(),
+            reachable,
+            models: Vec::new(),
+        }
+    }
+
+    /// The observed failure: `hexa harden` hunted correctness, then
+    /// concurrency, then durability-safety, failing each on the same
+    /// unreachable provider. One fact, reported three times, three round
+    /// trips late.
+    #[test]
+    fn a_run_with_no_reachable_path_is_blocked_before_the_first_hunt() {
+        let blocker = first_blocker(&[], "hexa harden").expect("no paths at all is a blocker");
+        assert!(blocker.contains("hexa harden"), "it names the verb: {blocker}");
+        assert!(blocker.contains("hexa doctor"), "and where to look: {blocker}");
+        assert!(
+            blocker.contains("nothing about the target is claimed"),
+            "a run that hunted nothing must not read as a clean review: {blocker}"
+        );
+
+        assert!(
+            first_blocker(&[path(Some(false))], "hexa harden").is_some(),
+            "a path that failed its probe is not a path"
+        );
+    }
+
+    /// The other half: a reachable path must not be turned away. A preflight
+    /// that blocks a working run is worse than the three failures it saves.
+    #[test]
+    fn a_reachable_path_is_not_blocked() {
+        assert!(first_blocker(&[path(Some(true))], "hexa harden").is_none());
+        // Not probed is not the same as unreachable, and the run is allowed
+        // to find out for itself.
+        assert!(first_blocker(&[path(None)], "hexa harden").is_none());
+    }
 }
 
 #[cfg(test)]
