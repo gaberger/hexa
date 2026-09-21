@@ -1197,6 +1197,27 @@ fn detect_hex_layer(rel_path: &str) -> Option<&'static str> {
 
 // ── Agent Notification Inbox (ADR-060) ───────────────────────────────
 
+/// The key a restart checkpoint is stored under.
+///
+/// Project AND agent id (ADR-2609211200). Two sessions in two repositories can
+/// carry the same agent id, and a checkpoint holds the open workplan, the stage
+/// and the edit count — so keying on the agent id alone let a session in project
+/// B resume into project A's state. Memory is project-scoped now, which
+/// separates them already; this keeps them apart in the shared store too, where
+/// `$HEXA_HOME` is set to one directory for every project.
+fn checkpoint_key(project: &str, agent_id: &str) -> String {
+    let slug = |s: &str| {
+        let out: String = s
+            .trim()
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+            .collect();
+        let out = out.trim_matches('-').to_string();
+        if out.is_empty() { "unknown".to_string() } else { out }
+    };
+    format!("restart:checkpoint:{}:{}", slug(project), slug(agent_id))
+}
+
 /// Save a restart checkpoint so the next session can pick up where this one
 /// stopped (ADR-060 step 8).
 ///
@@ -1214,7 +1235,7 @@ fn save_restart_checkpoint(state: &SessionState) -> Result<()> {
         "saved_at": chrono::Utc::now().to_rfc3339(),
     });
     let _ = hexa_exec::local_store::memory_put(
-        &format!("restart:checkpoint:{}", state.agent_id),
+        &checkpoint_key(&state.project, &state.agent_id),
         &checkpoint.to_string(),
     );
     Ok(())
@@ -1227,7 +1248,7 @@ async fn recover_restart_checkpoint() -> Result<()> {
     let Some(mut state) = SessionState::load().filter(|s| !s.agent_id.is_empty()) else {
         return Ok(());
     };
-    let key = format!("restart:checkpoint:{}", state.agent_id);
+    let key = checkpoint_key(&state.project, &state.agent_id);
     let Some(raw) = hexa_exec::local_store::memory_get(&key) else {
         return Ok(());
     };
@@ -1674,6 +1695,27 @@ fn sanitize_id(id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ─ ADR-2609211200: a checkpoint belongs to one project ─
+
+    #[test]
+    fn two_projects_sharing_an_agent_id_get_different_checkpoints() {
+        assert_ne!(
+            checkpoint_key("alpha", "agent-7"),
+            checkpoint_key("beta", "agent-7"),
+            "a checkpoint carries the open workplan and stage; project B must not resume into A's"
+        );
+        assert_eq!(checkpoint_key("alpha", "agent-7"), "restart:checkpoint:alpha:agent-7");
+    }
+
+    #[test]
+    fn a_checkpoint_key_survives_a_project_named_like_a_path() {
+        // Keys are `:`-delimited and read back by prefix. A project name holding
+        // a separator would split one key into another's namespace.
+        let key = checkpoint_key("/home/u/work: alpha", "agent-7");
+        assert_eq!(key.matches(':').count(), 3, "exactly the three the key defines: {key}");
+        assert_eq!(checkpoint_key("", "agent-7"), "restart:checkpoint:unknown:agent-7");
+    }
 
     // ─ ADR-2026-04-11-0227: classify_work_intent tier classifier ─
 

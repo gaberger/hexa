@@ -26,7 +26,8 @@ operator's manual.
 | **hexa-graph** · **hexa-analysis** · **hexa-git** | Code knowledge graph · boundary checking and health detectors · git plumbing. |
 
 All state is files: `~/.hexa/*.jsonl`, `~/.hexa/inference-servers.json`,
-`graph-out/graph.json`, `.hexa/project.json`, `docs/`.
+`graph-out/graph.json`, `.hexa/project.json`, `.hexa/memory.jsonl`, `docs/`.
+Memory is per project — `hexa memory --global` names the shared user store.
 
 ## Tiered inference routing
 
