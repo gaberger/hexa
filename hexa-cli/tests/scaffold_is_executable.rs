@@ -147,6 +147,32 @@ fn the_typescript_scaffold_passes_npm_test_after_install() {
     let (ok, out) = gate(&target, "npm", &["test"]);
     assert!(ok, "the ts scaffold's gate failed:\n{out}");
     assert!(out.contains("# pass 4"), "expected 4 tests, got:\n{out}");
+
+    // The gate must keep covering tests the user adds, wherever they put
+    // them. `node --test dist/` used to mean "search that directory", then
+    // started meaning "load that directory as a module" and failed outright;
+    // the obvious repair, `dist/*.test.js`, passes this project today and
+    // silently stops running anything nested tomorrow. A shrinking gate is
+    // the one failure mode that looks exactly like a passing one.
+    std::fs::write(
+        target.join("src/core/added-later.test.ts"),
+        concat!(
+            "import assert from 'node:assert/strict';\n",
+            "import { test } from 'node:test';\n",
+            "import { Count } from './domain/count.js';\n",
+            "\n",
+            "test('a test in a subdirectory is part of the gate', () => {\n",
+            "  assert.equal(Count.zero().value(), 0);\n",
+            "});\n",
+        ),
+    )
+    .expect("write nested test");
+    let (ok, out) = gate(&target, "npm", &["test"]);
+    assert!(ok, "the ts gate failed after a nested test was added:\n{out}");
+    assert!(
+        out.contains("# pass 5"),
+        "a test added under src/core/ must run: expected 5 passing, got:\n{out}"
+    );
 }
 
 /// The same name must produce the same bytes. If this ever fails, something

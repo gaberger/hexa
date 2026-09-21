@@ -29,10 +29,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
+      # The TypeScript scaffold's gate is `npm install && npm test`, and it
+      # shipped broken because nothing ran it: `node --test <dir>` stopped
+      # discovering tests and started trying to load the directory as a
+      # module. Pin the runtime the scaffold declares (`engines.node >= 22`)
+      # so this job tests what a user gets, not whatever the image ships.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - name: Build
         run: cargo build --workspace --release --locked
+      # HEXA_TEST_NPM lets the TypeScript scaffold gate reach the network for
+      # its one `npm install`. Off by default — a test that silently reaches
+      # the network is a coin flip — and on here, where the network exists.
+      # ADR-2609132158: a gate that never runs on the branch is not a gate.
       - name: Test
         run: cargo test --workspace --release --locked
+        env:
+          HEXA_TEST_NPM: 1
       # Structural gates before the style one. A failing step stops the job,
       # so with Lint first a clippy idiom warning skipped the architecture
       # grade and the asset check — and did, on v26.9.7 and v26.9.8, which
