@@ -196,8 +196,11 @@ enum Commands {
         #[command(subcommand)]
         action: InsightAction,
     },
-    /// Persistent memory
+    /// Persistent memory — this project's lessons, gaps and decisions
     Memory {
+        /// Read and write the shared user store (~/.hexa) instead of this project's
+        #[arg(long, global = true)]
+        global: bool,
         #[command(subcommand)]
         action: MemoryAction,
     },
@@ -414,7 +417,14 @@ async fn main() -> anyhow::Result<()> {
         Commands::Build(args) => commands::build::run_build(args).await,
         Commands::Harden(args) => commands::build::run_harden(args).await,
         Commands::Insight { action } => commands::insight::run(action).await,
-        Commands::Memory { action } => commands::memory::run(action).await,
+        Commands::Memory { action, global } => {
+            let scope = if global {
+                hexa_exec::local_store::MemoryScope::Shared
+            } else {
+                hexa_exec::local_store::MemoryScope::Project
+            };
+            commands::memory::run(action, scope).await
+        }
         Commands::Loop { action } => commands::loop_cmd::run(action).await,
         Commands::Spend(args) => commands::spend_cmd::run(args).await,
         Commands::Adr { action } => commands::adr::run(action).await,

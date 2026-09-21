@@ -133,7 +133,7 @@ All of it is files on disk.
 
 | What | Where |
 |---|---|
-| Lessons, gaps, decisions | `~/.hexa/memory.jsonl` (`hexa memory`) |
+| Lessons, gaps, decisions | `.hexa/memory.jsonl` in the project (`hexa memory`); `~/.hexa/memory.jsonl` outside one, or with `--global` |
 | Where the work stands: ADR, gate, stage | `.hexa/loop.json` in the project, committed (`hexa loop`) |
 | Session state, keyed by the harness session id | `~/.hexa/sessions/agent-<session_id>.json` |
 | Agent and subagent run feed | `~/.hexa/agent-runs.jsonl` (`hexa do runs`) |

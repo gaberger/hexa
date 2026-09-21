@@ -13,9 +13,16 @@
 //! before the LLM enters REASON, so the model can ground against
 //! "what we already know" instead of relearning every session.
 //!
-//! Backing store: `~/.hexa/memory.jsonl` through `hexa_exec::local_store`.
-//! It was the `hexflo_memory` SpacetimeDB table reached over HTTP, until
-//! ADR-2608241500 — which made reading a lesson depend on a database.
+//! Backing store: `<project>/.hexa/memory.jsonl` through
+//! `hexa_exec::local_store`. It was the `hexflo_memory` SpacetimeDB table
+//! reached over HTTP, until ADR-2608241500 — which made reading a lesson
+//! depend on a database.
+//!
+//! **Project scope only** (ADR-2609211200). This tool hands its result to the
+//! model during GROUND, so a store shared across repositories put another
+//! codebase's lessons into this one's reasoning, under keys that named neither.
+//! The shared user store is reachable from `hexa memory --global` and from
+//! nowhere the model can see.
 
 use async_trait::async_trait;
 use serde_json::{json, Value};

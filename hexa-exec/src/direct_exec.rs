@@ -762,8 +762,9 @@ pub(crate) async fn gather_context(task: &DirectTask) -> String {
 /// writes here. Returned unranked; callers rank by graph relevance
 /// (`hexa_graph::context::rank_lessons`). Capped to keep the pull bounded.
 ///
-/// One JSON object per line, `{"key": "lesson:…", "value": "…"}`, at `~/.hexa/memory.jsonl`. An
-/// absent file is an empty memory, not an error — a fresh install has learned nothing yet.
+/// One JSON object per line, `{"key": "lesson:…", "value": "…"}`, at this project's
+/// `.hexa/memory.jsonl` (ADR-2609211200). An absent file is an empty memory, not an error — a
+/// fresh install has learned nothing yet, and neither has a repository nobody has taught.
 pub async fn fetch_lessons() -> Vec<(String, String)> {
     const CAP: usize = 200;
     crate::local_store::memory_entries(CAP)
