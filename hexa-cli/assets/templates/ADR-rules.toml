@@ -109,3 +109,46 @@ violation_patterns = ["\ntype ", "\nclass ", "\nstruct "]
 # A rule that flags correct code is worse than no rule, because it teaches
 # people to skim past the output. The lesson lives in CLAUDE.md instead, where
 # prose is the honest form for something a machine cannot check.
+
+# ── What the domain may import from outside the project ──────────────
+#
+# Read by `hexa analyze` (ADR-2609211430 §2). Where `[[adr_rules]]` matches
+# text on a line, this reads the imports tree-sitter already parsed, so a
+# grouped `use` split over lines, a TypeScript `import type`, and a Go
+# `import ( … )` block are all seen.
+#
+# It is an allowlist, which is the opposite of what a list of banned crates
+# can express: a denylist only catches the dependencies somebody thought to
+# name, and the property worth stating is the short one — what this layer is
+# permitted to know about.
+#
+# Imports that resolve inside the project are out of scope here; the layer
+# rules above already govern those. The standard library is permitted without
+# being listed, and `deny` beats both it and `allow`, which is how `std` stays
+# available while `std::fs` does not.
+#
+# One policy covers all three languages because one rules file does. The
+# prefixes below are namespaced by language in practice — `std::fs` matches
+# nothing in a Go project — and a prefix shared by two languages is listed
+# once, because two policies naming it would report one import twice and
+# charge the grade for both.
+#
+# To let the domain use a real dependency, add it to `allow` with a reason.
+# The friction is deliberate: the allowlist is the written record of what the
+# domain depends on.
+[[import_policy]]
+adr = "ADR-2609211430"
+id = "domain-imports-only-what-it-is-allowed"
+layer = "/domain/"
+allow = []
+deny = [
+  # Rust
+  "std::fs", "std::net", "std::process", "std::env", "std::io",
+  # TypeScript / Node, in both the prefixed and bare spellings
+  "node:fs", "node:net", "node:http", "node:child_process", "node:process",
+  "fs", "child_process",
+  # Go (and the bare Node spellings it shares)
+  "os", "net", "http", "net/http", "database/sql", "os/exec", "io/ioutil",
+]
+message = "The domain imported something from outside the project that it is not allowed to know about. Put the capability behind a port, or add it to `allow` in .hexa/ADR-rules.toml deliberately and say why in an ADR."
+severity = "error"

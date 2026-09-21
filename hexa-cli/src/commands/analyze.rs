@@ -559,9 +559,22 @@ pub async fn run(
                 if sites.len() == 1 { "" } else { "s" },
                 first.severity
             );
-            println!("      {}", first.message);
-            for v in sites {
-                println!("      {}:{}", v.file, v.line);
+            // One paragraph when every site says the same thing — four sites
+            // of one rule used to print the same paragraph four times. But an
+            // import policy's message names the import it found
+            // (ADR-2609211430 §2), so its sites do *not* say the same thing,
+            // and printing only the first one reported `pg` and then listed a
+            // line that was actually about `node:fs`.
+            let uniform = sites.iter().all(|v| v.message == first.message);
+            if uniform {
+                println!("      {}", first.message);
+                for v in sites {
+                    println!("      {}:{}", v.file, v.line);
+                }
+            } else {
+                for v in sites {
+                    println!("      {}:{} — {}", v.file, v.line, v.message);
+                }
             }
         }
     }
@@ -1557,6 +1570,36 @@ struct AdrRulesFile {
     /// (distinct from `[rules]` which is the enforce.rs forbidden-paths table)
     #[serde(default)]
     adr_rules: Vec<AdrRuleConfig>,
+    /// What a layer may import from outside the project — TOML key
+    /// `[[import_policy]]` (ADR-2609211430 §2).
+    #[serde(default)]
+    import_policy: Vec<ImportPolicyConfig>,
+}
+
+/// One layer's allowlist for imports that leave the project.
+///
+/// Where `[[adr_rules]]` matches text on a line, this reads the imports
+/// tree-sitter already parsed. A denylist of crate names only catches the
+/// crates somebody thought of; this states the opposite and far shorter
+/// property — what the layer is permitted to know about.
+#[derive(serde::Deserialize)]
+struct ImportPolicyConfig {
+    adr: String,
+    id: String,
+    message: String,
+    #[serde(default = "default_severity")]
+    severity: String,
+    /// Path substring naming the layer this governs, e.g. `/domain/`.
+    layer: String,
+    /// Module prefixes this layer may import, matched on segment
+    /// boundaries. The standard library is permitted without being listed.
+    #[serde(default)]
+    allow: Vec<String>,
+    /// Module prefixes it may not, which beat both `allow` and the
+    /// standard library. This is how `std` stays available while
+    /// `std::fs` does not.
+    #[serde(default)]
+    deny: Vec<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -1704,6 +1747,131 @@ mod cfg_test_lines_tests {
     }
 }
 
+/// What this project calls itself, read from its manifests.
+///
+/// Without these, an import of the project's own code is indistinguishable
+/// from an import of somebody else's, and a policy would report every
+/// internal module as an outside dependency.
+fn project_names(root: &Path) -> hexa_analysis::import_policy::ProjectNames {
+    let mut names = hexa_analysis::import_policy::ProjectNames::default();
+
+    // Rust: the root package and every workspace member, since a `use` of a
+    // sibling crate is internal to the project even though it names a crate.
+    let mut manifests = vec![root.join("Cargo.toml")];
+    if let Ok(entries) = std::fs::read_dir(root) {
+        let mut members: Vec<PathBuf> =
+            entries.flatten().map(|e| e.path().join("Cargo.toml")).filter(|p| p.is_file()).collect();
+        members.sort();
+        manifests.extend(members);
+    }
+    for manifest in manifests {
+        if let Ok(text) = std::fs::read_to_string(&manifest) {
+            if let Ok(v) = toml::from_str::<toml::Value>(&text) {
+                if let Some(name) = v.get("package").and_then(|p| p.get("name")).and_then(|n| n.as_str())
+                {
+                    names.rust_crates.push(name.replace('-', "_"));
+                }
+            }
+        }
+    }
+
+    // Go: the module line is the prefix every internal import carries.
+    if let Ok(go_mod) = std::fs::read_to_string(root.join("go.mod")) {
+        for line in go_mod.lines() {
+            if let Some(rest) = line.trim().strip_prefix("module ") {
+                names.go_module = Some(rest.trim().to_string());
+                break;
+            }
+        }
+    }
+
+    // TypeScript: a path alias is a bare specifier that resolves inside the
+    // project, so without this `@app/domain` reads as a third-party package.
+    if let Ok(tsconfig) = std::fs::read_to_string(root.join("tsconfig.json")) {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&tsconfig) {
+            if let Some(paths) = v
+                .get("compilerOptions")
+                .and_then(|c| c.get("paths"))
+                .and_then(|p| p.as_object())
+            {
+                for key in paths.keys() {
+                    names.ts_aliases.push(key.trim_end_matches("/*").trim_end_matches('/').to_string());
+                }
+            }
+        }
+    }
+
+    names
+}
+
+/// Apply every `[[import_policy]]` to every source file under its layer.
+///
+/// Findings are ordinary ADR violations, which is what makes them reach all
+/// four surfaces at once: the printed list, `--exit-code`, `--strict`, and —
+/// at `severity = "error"` — the grade.
+fn evaluate_import_policies(
+    root: &Path,
+    policies: &[ImportPolicyConfig],
+) -> Vec<AdrViolationLocal> {
+    use hexa_analysis::import_policy::{classify, judge, Verdict};
+    use hexa_analysis::ports::AstPort;
+
+    let mut out = Vec::new();
+    if policies.is_empty() {
+        return out;
+    }
+    let names = project_names(root);
+    let ast = hexa_analysis::treesitter_adapter::TreeSitterAdapter::new();
+
+    // The whole tree, not just `src/`: Go puts its layers under `internal/`
+    // and `cmd/`, and a policy that silently skipped them would report a
+    // clean domain because it never looked at one.
+    let mut files = collect_source_files(root);
+    files.sort();
+
+    for path in &files {
+        let rel = path.strip_prefix(root).unwrap_or(path).to_string_lossy().replace('\\', "/");
+        let rel_slashed = format!("/{}", rel.trim_start_matches('/'));
+        let matching: Vec<&ImportPolicyConfig> =
+            policies.iter().filter(|p| rel_slashed.contains(p.layer.as_str())).collect();
+        if matching.is_empty() {
+            continue;
+        }
+        let lang = hexa_analysis::domain::Language::from_path(&rel);
+        if lang == hexa_analysis::domain::Language::Unknown {
+            continue;
+        }
+        let Ok(source) = std::fs::read_to_string(path) else { continue };
+        let Ok(imports) = ast.extract_imports(Path::new(&rel), &source, lang) else { continue };
+
+        for imp in imports {
+            let origin = classify(lang, &imp.raw_path, &names);
+            for policy in &matching {
+                let verdict = judge(lang, &imp.raw_path, origin, &policy.allow, &policy.deny);
+                if verdict == Verdict::OutOfScope || verdict == Verdict::Permitted {
+                    continue;
+                }
+                // Name the import and which half of the policy spoke. A
+                // finding that says only "not allowed" sends the reader back
+                // to the file to work out which line it meant.
+                let why = match verdict {
+                    Verdict::DeniedByDeny => "denied by this policy's `deny`",
+                    _ => "not in this policy's `allow`",
+                };
+                out.push(AdrViolationLocal {
+                    adr: policy.adr.clone(),
+                    id: policy.id.clone(),
+                    file: rel.clone(),
+                    line: imp.line,
+                    message: format!("{} [`{}` — {}]", policy.message, imp.raw_path, why),
+                    severity: policy.severity.clone(),
+                });
+            }
+        }
+    }
+    out
+}
+
 /// The rules run, and say so. This is the reader-facing path.
 fn check_adr_compliance(root: &Path) -> AdrCompliance {
     check_adr_compliance_inner(root, true)
@@ -1719,19 +1887,24 @@ fn check_adr_compliance(root: &Path) -> AdrCompliance {
 fn check_adr_compliance_inner(root: &Path, announce: bool) -> AdrCompliance {
     // Load rules from project's .hexa/ADR-rules.toml
     let rules_path = root.join(".hexa").join("ADR-rules.toml");
-    let rules = if rules_path.is_file() {
+    let (rules, import_policies) = if rules_path.is_file() {
         match std::fs::read_to_string(&rules_path) {
             Ok(content) => match toml::from_str::<AdrRulesFile>(&content) {
                 Ok(parsed) => {
                     if announce {
                         eprintln!(
-                            "    {} Loaded {} rule(s) from {}",
+                            "    {} Loaded {} rule(s){} from {}",
                             "\u{2713}".green(),
                             parsed.adr_rules.len(),
+                            if parsed.import_policy.is_empty() {
+                                String::new()
+                            } else {
+                                format!(" and {} import polic(ies)", parsed.import_policy.len())
+                            },
                             rules_path.strip_prefix(root).unwrap_or(&rules_path).display(),
                         );
                     }
-                    parsed.adr_rules
+                    (parsed.adr_rules, parsed.import_policy)
                 }
                 Err(e) => {
                     return AdrCompliance::skipped(format!(
@@ -1840,6 +2013,8 @@ fn check_adr_compliance_inner(root: &Path, announce: bool) -> AdrCompliance {
             }
         }
     }
+
+    violations.extend(evaluate_import_policies(root, &import_policies));
 
     AdrCompliance::ran(violations)
 }
