@@ -1,5 +1,13 @@
 {
   "sessions": {
+    "08d3a796-7764-544d-b6e2-0baf96498c3b": {
+      "adr": "ADR-2609211600",
+      "gate": "cargo test -p hexa-cli --test domain_import_references",
+      "pid": 104,
+      "pid_start": 390,
+      "stage": "build",
+      "updated": "2026-09-21T16:39:09.857170182+00:00"
+    },
     "15e0cf79-70e3-425b-aa08-d2c85df00d10": {
       "adr": "ADR-2609132122",
       "evidence": "hexa adr gates 2>&1 | tail -2",
