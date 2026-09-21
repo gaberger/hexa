@@ -6,7 +6,7 @@
 > [`ARCHITECTURE.md`](../../ARCHITECTURE.md); for *why* a decision was made,
 > read the ADR itself.
 
-**32 ADRs** across 1 epochs.
+**33 ADRs** across 1 epochs.
 
 ## Epoch: `single-agent` — **current**
 
@@ -16,6 +16,7 @@ _One gateway-mediated agent loop; code-graph context as the differentiator_
 |-----|--------|-------|---------------|
 | ADR-2609211200 | accepted | ADR-2609211200: Memory belongs to the project it was learned in |  |
 | ADR-2609211245 | accepted | ADR-2609211245: The TypeScript gate runs where the network is |  |
+| ADR-2609211430 | proposed | ADR-2609211430: The domain imports only what it is allowed, and a rule error costs grade |  |
 | ADR-2609160100 | accepted | ADR-2609160100: A rubric is tested against known poles, or it is speculation with a table |  |
 | ADR-2609160300 | accepted | ADR-2609160300: What hexa takes from BMAD |  |
 | ADR-2609151100 | accepted | ADR-2609151100: A lifecycle event is not a run |  |
