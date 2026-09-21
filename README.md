@@ -337,10 +337,25 @@ looks like, and it does not work yet.
 `hexa do` takes one file. A change that needs a new directory and edits across
 six files has nothing shaped for it.
 
-**Third-party imports in `domain/`.** Rule 1 says domain imports only domain.
-The analyzer checks layer-to-layer edges and does not check that, so a project
-can pull a runtime into its domain and still score A+. The headline rule is
-stricter than what is enforced.
+**What a static import cannot show.** Rule 1 — domain imports only domain —
+used to be stricter than what was enforced: the analyzer checked layer-to-layer
+edges, so an import that left the project entirely had no edge to violate and a
+domain that pulled in a runtime still scored A+. `[[import_policy]]` in
+`.hexa/ADR-rules.toml` closes that (ADR-2609211430): it reads the imports
+tree-sitter parsed and states what the layer may know about, with the standard
+library permitted and `deny` beating both it and `allow`. Its boundary is what
+a static import declaration shows — an import is classified as inside the
+project, standard library, or external, per language:
+
+| | Inside the project | Standard library | External |
+|---|---|---|---|
+| Rust | `crate::`, `self::`, `super::`, the package's own name | `std`, `core`, `alloc` | any other first segment |
+| TypeScript | relative paths, `tsconfig` path aliases | `node:` specifiers and bare Node built-ins | any other bare specifier, `import type` included |
+| Go | paths under the module path in `go.mod` | first element contains no dot | everything else |
+
+Reflection, a dynamic `import()`, a Go `plugin`, and Rust's legacy
+`extern crate` are not static import declarations that this reads, so a
+capability reached through one of them is not seen.
 
 **The code generation is a frontier model.** hexa contributes the deterministic
 floor, the gates, the grade and the adversary. It does not do the writing. It

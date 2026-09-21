@@ -1,11 +1,11 @@
 ---
 id: ADR-2609211430
-status: proposed
+status: accepted
 date: 2026-09-21
 ---
 # ADR-2609211430: The domain imports only what it is allowed, and a rule error costs grade
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-09-21
 **Drivers:** The dependency rule is checked edge by edge between layers, so an import that leaves the project entirely is invisible to it. A domain file that imports `sqlx` scores A+. The rules file can approximate a check, but an error-severity rule violation does not move the grade, so `hexa analyze --grade A` and `hexa scaffold --grade A` both pass with the error present. Reproduced on `main` at `1abe882` (below).
 
@@ -150,10 +150,47 @@ hexa analyze . --exit-code; echo "exit $?"    # exits 1
 
 ## Implementation status
 
-Staged. §1, §4 and §5 are implemented and gated by
-`cargo test -p hexa-cli --test rule_errors_cost_grade`, whose seven tests were
-written before the change; three of them failed against `1abe882` and the rest
-pin behaviour that had to survive it. §2 and §3 — `[[import_policy]]` and the
-per-language scaffold policies — are not implemented yet, and the gate named
-above (`--test domain_import_policy`) does not exist. This section is removed
-when they land and the status becomes Accepted.
+Implemented. §1, §4 and §5 are gated by
+`cargo test -p hexa-cli --test rule_errors_cost_grade` (seven tests; three
+failed against `1abe882`). §2 and §3 are gated by
+`cargo test -p hexa-cli --test domain_import_policy` — the nine cases above
+plus one for §3 — and by eight unit tests over the pure classification in
+`hexa-analysis/src/import_policy.rs`.
+
+Three things landed differently from the plan above, and the differences are
+the record rather than the plan:
+
+1. **The rule-error term is applied in `analyze::deep_analysis`, not in
+   `analyzer.rs:444`.** `hexa-analysis` does not read the rules file, and
+   giving it that job to make one call site correct would have moved the
+   rules engine into a crate that analyses structure. `deep_analysis` is the
+   one door `hexa analyze`, `--json` and the scaffold floor all read the score
+   from, so the four surfaces agree without three copies of the arithmetic.
+   `compute_health_score` takes the count as its fifth argument, so the
+   formula is still in one place. The cost is that the rules are evaluated
+   twice per `hexa analyze` — once for the score, once for the compliance
+   section — and the second evaluation no longer announces itself.
+
+2. **One `[[import_policy]]` ships, not three.** One rules file serves all
+   three languages, and the prefixes are namespaced by language in practice
+   (`std::fs` matches nothing in a Go project). Three blocks sharing a prefix
+   like `net` would report one import twice and charge the grade for both.
+
+3. **`extern crate` is not covered**, though the table above lists it. The
+   Rust extractor reads `use_declaration` only, and teaching it a second node
+   kind changes the import graph every other analysis is built on. It is
+   recorded in the README's Limits section alongside reflection, dynamic
+   `import()` and Go `plugin` — the other things a static import declaration
+   does not show.
+
+The reporter also changed: an import policy's message names the import it
+found, so sites under one rule no longer say the same thing, and printing only
+the first one reported `pg` and then listed a line that was about `node:fs`.
+Sites with differing messages now print one line each.
+
+**Evidence.** hexa's own tree: A+ 100/100, `violations 0 · cycles 0 · dead
+exports 0 · unused ports 0`, unchanged, which is what this ADR named as the
+check that the repository was not silently re-scored. Its own rules file gains
+no policy: hexa has no `/domain/` directory — `hexa-analysis/src/domain.rs` is
+a file — so the shipped policy would match nothing here and a no-op rule is
+noise.

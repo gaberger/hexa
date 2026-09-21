@@ -8,6 +8,7 @@
 pub mod domain;
 pub mod ports;
 pub mod layer_classifier;
+pub mod import_policy;
 pub mod path_normalizer;
 pub mod treesitter_adapter;
 pub mod boundary_checker;
