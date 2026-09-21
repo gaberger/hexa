@@ -2,12 +2,15 @@
   "name": "{{name}}",
   "version": "0.1.0",
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build": "tsc",
-    "test": "tsc && node --test dist/"
+    "test": "tsc && node --test \"dist/**/*.test.js\""
   },
   "devDependencies": {
-    "@types/node": "^20",
+    "@types/node": "^22",
     "typescript": "^5.4"
   }
 }
