@@ -147,8 +147,10 @@ deny = [
   # TypeScript / Node, in both the prefixed and bare spellings
   "node:fs", "node:net", "node:http", "node:child_process", "node:process",
   "fs", "child_process",
-  # Go (and the bare Node spellings it shares)
+  # Go (and the bare Node spellings it shares). `plugin` loads code at run
+  # time, which is infrastructure by definition (ADR-2609211600 §6).
   "os", "net", "http", "net/http", "database/sql", "os/exec", "io/ioutil",
+  "plugin",
 ]
 message = "The domain imported something from outside the project that it is not allowed to know about. Put the capability behind a port, or add it to `allow` in .hexa/ADR-rules.toml deliberately and say why in an ADR."
 severity = "error"

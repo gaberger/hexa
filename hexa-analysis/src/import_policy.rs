@@ -43,6 +43,35 @@ pub struct ProjectNames {
     /// TypeScript `compilerOptions.paths` keys, with any trailing `/*`
     /// removed — `@app/*` is stored as `@app`.
     pub ts_aliases: Vec<String>,
+    /// Rust dependency **keys** from the manifest, `-` normalised to `_`
+    /// (ADR-2609211600). The key is used rather than `package =`, because the
+    /// key is the name code writes: `pg = { package = "tokio-postgres" }` is
+    /// referenced as `pg::`.
+    pub rust_dependencies: Vec<String>,
+}
+
+/// Does this first path segment name something outside the project?
+///
+/// Only a path that starts with a known-outside name may be judged, and this
+/// is why. `O::new()`, `Self::make()`, `Ordering::Less` after a `use`, and
+/// `util::f()` for a local `mod util` all have a first segment that
+/// [`classify`] would otherwise call `External` — it classifies by shape, and
+/// their shape is identical to a crate's. Without the manifest to say which
+/// names are dependencies, judging inline paths would report a project's own
+/// code as an outside dependency, which is worse than the gap it closes.
+///
+/// `crate`, `self`, `super` and `Self` are absent from the manifest and so are
+/// false by construction, rather than by a list that could fall out of date.
+pub fn names_external(first_segment: &str, names: &ProjectNames) -> bool {
+    let first = first_segment.trim();
+    if first.is_empty() {
+        return false;
+    }
+    if matches!(first, "std" | "core" | "alloc") {
+        return true;
+    }
+    let normalised = first.replace('-', "_");
+    names.rust_dependencies.iter().any(|d| d == &normalised)
 }
 
 /// The separator that divides one segment of a module path from the next.
@@ -192,7 +221,42 @@ mod tests {
             rust_crates: vec!["my_app".to_string()],
             go_module: Some("github.com/acme/app".to_string()),
             ts_aliases: vec!["@app".to_string()],
+            rust_dependencies: vec!["sqlx".to_string(), "tokio".to_string(), "serde".to_string()],
         }
+    }
+
+    // ── which inline paths may be judged at all ───────────────────────────
+
+    #[test]
+    fn only_a_declared_dependency_or_the_standard_library_names_something_outside() {
+        let n = names();
+        for outside in ["std", "core", "alloc", "sqlx", "tokio", "serde"] {
+            assert!(names_external(outside, &n), "{outside}");
+        }
+        // The whole reason this function exists: every one of these has the
+        // shape of a crate path and is local code.
+        for local in ["crate", "self", "super", "Self", "O", "Ordering", "util", "Colour"] {
+            assert!(!names_external(local, &n), "{local} is this project's own");
+        }
+    }
+
+    #[test]
+    fn a_dependency_written_with_dashes_is_the_same_dependency() {
+        // Cargo accepts `some-crate` in the manifest; code writes `some_crate`.
+        let n = ProjectNames {
+            rust_dependencies: vec!["some_crate".to_string()],
+            ..Default::default()
+        };
+        assert!(names_external("some_crate", &n));
+        assert!(names_external("some-crate", &n));
+        assert!(!names_external("some_other", &n));
+    }
+
+    #[test]
+    fn an_empty_first_segment_names_nothing() {
+        // `::sqlx::query` splits to an empty first segment; the caller strips
+        // the prefix before asking, and a bare empty string is not a name.
+        assert!(!names_external("", &names()));
     }
 
     // ── the boundary ──────────────────────────────────────────────────────

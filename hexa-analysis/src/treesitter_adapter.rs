@@ -791,6 +791,168 @@ fn has_hex_public_annotation(node: &tree_sitter::Node, source: &str) -> bool {
     false
 }
 
+// ── Module references that are not import declarations ───────────────────────
+
+/// A place where source code names a module without an import line.
+///
+/// ADR-2609211600. `use std::fs;` and `std::fs::read("x")` are the same claim
+/// about what a file depends on, and a policy that judged only the first let
+/// the second walk past a `deny` that named it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModuleReference {
+    /// The path as written, with any leading `::` removed.
+    pub raw_path: String,
+    /// 1-based line.
+    pub line: usize,
+    /// What the reference is, for the caller's own rules.
+    pub kind: ReferenceKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReferenceKind {
+    /// A path naming a module: `std::fs::read`, `sqlx::PgPool`, `#[tokio::main]`.
+    Path,
+    /// `extern crate x;`
+    ExternCrate,
+    /// A module specifier in an expression: `require("x")`, `import("x")`.
+    Specifier,
+    /// A load whose name is not a literal, so nothing can be judged about it.
+    /// `raw_path` is the expression as written.
+    ComputedLoad,
+}
+
+/// Every module reference in `source` that is not an import declaration.
+///
+/// Raw extraction only: whether `util::f()` names a dependency or a local
+/// module is the caller's question, because only the caller knows what the
+/// project declares. Returning local paths here and filtering there keeps this
+/// function testable against the grammar alone.
+pub fn extract_module_references(source: &str, lang: Language) -> Vec<ModuleReference> {
+    let Ok(tree) = parse_source(source, lang) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    match lang {
+        Language::Rust => collect_rust_references(tree.root_node(), source, &mut out),
+        Language::TypeScript => collect_ts_references(tree.root_node(), source, &mut out),
+        // Go cannot name a package without importing it, so there is nothing
+        // here that `extract_imports` has not already seen.
+        Language::Go | Language::Unknown => {}
+    }
+    out
+}
+
+fn collect_rust_references(
+    node: tree_sitter::Node,
+    source: &str,
+    out: &mut Vec<ModuleReference>,
+) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        match child.kind() {
+            // Already an import. `extract_imports` reports it, and reporting it
+            // twice would charge the grade twice for one line.
+            "use_declaration" => continue,
+            "extern_crate_declaration" => {
+                // `extern crate sqlx;` or `extern crate sqlx as db;` — the
+                // first identifier is the crate, the alias is a local name.
+                let text = node_text(child, source);
+                if let Some(name) = text
+                    .trim_start_matches("extern")
+                    .trim_start()
+                    .trim_start_matches("crate")
+                    .trim_start()
+                    .split(|c: char| c.is_whitespace() || c == ';')
+                    .find(|t| !t.is_empty())
+                {
+                    out.push(ModuleReference {
+                        raw_path: name.to_string(),
+                        line: child.start_position().row + 1,
+                        kind: ReferenceKind::ExternCrate,
+                    });
+                }
+                continue;
+            }
+            // The outermost scoped path is the whole reference. Descending
+            // would report `std::fs` again inside `std::fs::read`.
+            "scoped_identifier" | "scoped_type_identifier" => {
+                let raw = node_text(child, source);
+                let raw = raw.trim().trim_start_matches("::").to_string();
+                if !raw.is_empty() {
+                    out.push(ModuleReference {
+                        raw_path: raw,
+                        line: child.start_position().row + 1,
+                        kind: ReferenceKind::Path,
+                    });
+                }
+                // A generic argument inside a type path is its own reference:
+                // `Vec<sqlx::PgPool>` names sqlx. Those sit in a type_arguments
+                // child, which is not part of the path text above.
+                let mut inner = child.walk();
+                for grandchild in child.children(&mut inner) {
+                    if grandchild.kind() == "type_arguments" {
+                        collect_rust_references(grandchild, source, out);
+                    }
+                }
+                continue;
+            }
+            _ => {}
+        }
+        collect_rust_references(child, source, out);
+    }
+}
+
+fn collect_ts_references(node: tree_sitter::Node, source: &str, out: &mut Vec<ModuleReference>) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        // `import ... from "x"` is a declaration `extract_imports` already
+        // reports, and it contains no call expression, so it is skipped by
+        // shape rather than by name. An `export` is NOT skipped: skipping the
+        // statement skipped the body of every exported function with it, and
+        // `export async function f() { await import("pg") }` is exactly the
+        // load this is looking for.
+        if child.kind() == "import_statement" {
+            continue;
+        }
+        if child.kind() == "call_expression" {
+            if let Some(func) = child.child(0) {
+                let name = node_text(func, source);
+                let name = name.trim();
+                if name == "require" || name == "import" || func.kind() == "import" {
+                    if let Some(args) = child.child_by_field_name("arguments") {
+                        let mut arg_cursor = args.walk();
+                        let first = args
+                            .children(&mut arg_cursor)
+                            .find(|n| !matches!(n.kind(), "(" | ")" | ","));
+                        let line = child.start_position().row + 1;
+                        match first {
+                            Some(n) if n.kind() == "string" => {
+                                out.push(ModuleReference {
+                                    raw_path: unquote(node_text(n, source)),
+                                    line,
+                                    kind: ReferenceKind::Specifier,
+                                });
+                            }
+                            Some(n) => {
+                                // A name assembled at runtime. Saying nothing
+                                // here would be the silent skip this ADR
+                                // exists to stop.
+                                out.push(ModuleReference {
+                                    raw_path: node_text(n, source),
+                                    line,
+                                    kind: ReferenceKind::ComputedLoad,
+                                });
+                            }
+                            None => {}
+                        }
+                    }
+                }
+            }
+        }
+        collect_ts_references(child, source, out);
+    }
+}
+
 // ── Helpers ──────────────────────────────────────────────
 
 fn node_text(node: tree_sitter::Node, source: &str) -> String {
