@@ -441,11 +441,16 @@ impl ArchAnalysisPort for ArchAnalyzer {
         // Unused ports: port interfaces with no adapter importing them
         let unused_ports = detect_unused_ports(&file_data);
 
+        // 0 rule errors: this crate analyses structure and never reads the
+        // project's rules file. The caller that owns that file applies the
+        // term (ADR-2609211430 §1) — in hexa's case `analyze::deep_analysis`,
+        // which is the one door every graded surface goes through.
         let health_score = ArchAnalysisResult::compute_health_score(
             violations.len(),
             circular_deps.len(),
             dead_exports.len(),
             unused_ports.len(),
+            0,
         );
 
         // ADR-056: Frontend hexagonal architecture checks (skipped if no assets/src/)
@@ -670,23 +675,23 @@ mod tests {
 
     #[test]
     fn health_score_perfect() {
-        assert_eq!(ArchAnalysisResult::compute_health_score(0, 0, 0, 0), 100);
+        assert_eq!(ArchAnalysisResult::compute_health_score(0, 0, 0, 0, 0), 100);
     }
 
     #[test]
     fn health_score_with_violations() {
         // 2 violations = -20, 1 cycle = -15 → 65
-        assert_eq!(ArchAnalysisResult::compute_health_score(2, 1, 0, 0), 65);
+        assert_eq!(ArchAnalysisResult::compute_health_score(2, 1, 0, 0, 0), 65);
     }
 
     #[test]
     fn health_score_capped_dead_exports() {
         // 50 dead exports capped at -20
-        assert_eq!(ArchAnalysisResult::compute_health_score(0, 0, 50, 0), 80);
+        assert_eq!(ArchAnalysisResult::compute_health_score(0, 0, 50, 0, 0), 80);
     }
 
     #[test]
     fn health_score_floor_at_zero() {
-        assert_eq!(ArchAnalysisResult::compute_health_score(10, 5, 30, 10), 0);
+        assert_eq!(ArchAnalysisResult::compute_health_score(10, 5, 30, 10, 0), 0);
     }
 }

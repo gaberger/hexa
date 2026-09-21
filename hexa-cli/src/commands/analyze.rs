@@ -726,7 +726,38 @@ pub async fn deep_analysis(
 ) -> Result<hexa_analysis::domain::ArchAnalysisResult, hexa_analysis::ports::AnalysisError> {
     use hexa_analysis::ports::ArchAnalysisPort;
     let ast = std::sync::Arc::new(hexa_analysis::treesitter_adapter::TreeSitterAdapter::new());
-    hexa_analysis::analyzer::ArchAnalyzer::new(ast).analyze(root).await
+    let mut result = hexa_analysis::analyzer::ArchAnalyzer::new(ast).analyze(root).await?;
+
+    // The rules-file term, applied at the one door every graded surface goes
+    // through — `hexa analyze`, `hexa analyze --json`, and the floor
+    // `hexa scaffold --grade` enforces all read the score from here
+    // (ADR-2609211430 §1). Applying it in each of them instead would be three
+    // places to keep in agreement, which is the disagreement this fixes.
+    let rule_errors = rule_error_count(root);
+    result.health_score = hexa_analysis::domain::ArchAnalysisResult::compute_health_score(
+        result.violations.len(),
+        result.circular_deps.len(),
+        result.dead_exports.len(),
+        result.unused_ports.len(),
+        rule_errors,
+    );
+    Ok(result)
+}
+
+/// Error-severity findings from the project's own rules file.
+///
+/// A rules file that is absent or does not parse yields 0: an unscored tree
+/// is not a penalised tree, and `check_adr_compliance` reports the skip in
+/// its own section rather than silently docking the grade for it.
+///
+/// Private: callers outside this module want a graded result, which is
+/// `deep_analysis`, not a raw count to subtract themselves.
+fn rule_error_count(root: &Path) -> usize {
+    check_adr_compliance_inner(root, false)
+        .violations
+        .iter()
+        .filter(|v| v.severity == "error")
+        .count()
 }
 
 fn run_single_file(
@@ -1541,8 +1572,17 @@ struct AdrRuleConfig {
     /// the float is visible on the line.
     #[serde(default)]
     allow_line_patterns: Vec<String>,
+    /// Suffix match on the file name, e.g. `.rs`.
     #[serde(default)]
     file_patterns: Vec<String>,
+    /// Substring match on the project-relative path, e.g. `/domain/`
+    /// (ADR-2609211430 §4). Scoping a rule to one layer used to mean naming
+    /// every *other* layer in `exclude_patterns`, so a new directory silently
+    /// fell into scope and a project whose layers are named differently got
+    /// a rule that matched nothing. Empty means no restriction, which is what
+    /// every rules file written before this field says.
+    #[serde(default)]
+    path_patterns: Vec<String>,
     #[serde(default)]
     exclude_patterns: Vec<String>,
     #[serde(default)]
@@ -1664,19 +1704,33 @@ mod cfg_test_lines_tests {
     }
 }
 
+/// The rules run, and say so. This is the reader-facing path.
 fn check_adr_compliance(root: &Path) -> AdrCompliance {
+    check_adr_compliance_inner(root, true)
+}
+
+/// The rules run without announcing themselves.
+///
+/// `deep_analysis` needs the error count to compute the grade
+/// (ADR-2609211430 §1) and runs before the compliance section is printed. A
+/// second "Loaded N rule(s)" line there would claim the rules ran twice —
+/// which they do, but as an implementation detail of scoring, not as
+/// something the reader is being told about.
+fn check_adr_compliance_inner(root: &Path, announce: bool) -> AdrCompliance {
     // Load rules from project's .hexa/ADR-rules.toml
     let rules_path = root.join(".hexa").join("ADR-rules.toml");
     let rules = if rules_path.is_file() {
         match std::fs::read_to_string(&rules_path) {
             Ok(content) => match toml::from_str::<AdrRulesFile>(&content) {
                 Ok(parsed) => {
-                    eprintln!(
-                        "    {} Loaded {} rule(s) from {}",
-                        "\u{2713}".green(),
-                        parsed.adr_rules.len(),
-                        rules_path.strip_prefix(root).unwrap_or(&rules_path).display(),
-                    );
+                    if announce {
+                        eprintln!(
+                            "    {} Loaded {} rule(s) from {}",
+                            "\u{2713}".green(),
+                            parsed.adr_rules.len(),
+                            rules_path.strip_prefix(root).unwrap_or(&rules_path).display(),
+                        );
+                    }
                     parsed.adr_rules
                 }
                 Err(e) => {
@@ -1750,6 +1804,11 @@ fn check_adr_compliance(root: &Path) -> AdrCompliance {
             {
                 continue;
             }
+            if !rule.path_patterns.is_empty()
+                && !rule.path_patterns.iter().any(|p| rel.contains(p.as_str()))
+            {
+                continue;
+            }
             if rule.exclude_patterns.iter().any(|p| rel.contains(p.as_str())) {
                 continue;
             }
@@ -1789,7 +1848,7 @@ fn check_adr_compliance(root: &Path) -> AdrCompliance {
 /// carried in `--json` under `explain`, so a person and a model read the
 /// same sentence.
 const SCORE_FORMULA: &str =
-    "score = 100 − 10·violations − 15·cycles − dead exports (max 20) − unused ports (max 10)";
+    "score = 100 − 10·(violations + rule errors) − 15·cycles − dead exports (max 20) − unused ports (max 10)";
 const GRADE_BANDS: &str = "A+ 95–100 · A 90–94 · B 80–89 · C 70–79 · D 60–69 · F below 60";
 const HEALTH_NOTE: &str = "read next to the grade; none of these move the score";
 
@@ -1800,9 +1859,9 @@ const HEALTH_NOTE: &str = "read next to the grade; none of these move the score"
 fn explain_json() -> serde_json::Value {
     serde_json::json!({
         "score": {
-            "formula": "100 - 10*violations - 15*circular_deps - min(dead_exports, 20) - min(unused_ports, 10)",
+            "formula": "100 - 10*(violations + rule_errors) - 15*circular_deps - min(dead_exports, 20) - min(unused_ports, 10)",
             "grade_bands": { "A+": "95-100", "A": "90-94", "B": "80-89", "C": "70-79", "D": "60-69", "F": "0-59" },
-            "in_score": ["violations", "circular_deps", "dead_exports", "unused_ports"],
+            "in_score": ["violations", "rule_errors", "circular_deps", "dead_exports", "unused_ports"],
             "not_in_score": ["cohesion", "duplication", "god_types", "dead_layers", "orphans"]
         },
         "components": {
@@ -1810,6 +1869,11 @@ fn explain_json() -> serde_json::Value {
                 "weight": 10,
                 "meaning": "an import that crosses a hexagonal boundary the wrong way (rules 1 to 6)",
                 "fix": "import through the port; if the port does not re-export the type, add the re-export to the port first"
+            },
+            "rule_errors": {
+                "weight": 10,
+                "meaning": "a finding from this project's own .hexa/ADR-rules.toml at severity = error; warnings are not counted and are what --strict is for",
+                "fix": "resolve the finding, or decide the rule is advisory here and set that rule to severity = warning"
             },
             "circular_deps": {
                 "weight": 15,
@@ -1968,8 +2032,12 @@ async fn run_json(root: &Path, strict: bool, adr_compliance_only: bool) -> anyho
             // The score's inputs, so a reader can see where the points went.
             // Without this a score of 78 with zero violations was
             // unexplainable from the output, and got misattributed.
+            // `rule_errors` belongs here for the same reason the rest do:
+            // without it the components sum to a different number than the
+            // score, and the difference is invisible (ADR-2609211430 §1).
             result["score_components"] = serde_json::json!({
                 "violations": deep.violations.len(),
+                "rule_errors": rule_error_count(root),
                 "circular_deps": deep.circular_deps.len(),
                 "dead_exports": deep.dead_exports.len(),
                 "unused_ports": deep.unused_ports.len(),

@@ -175,16 +175,32 @@ impl ArchAnalysisResult {
     ///
     /// Scoring (matches TypeScript implementation):
     /// - Violations: -10 points each
+    /// - Rule errors: -10 points each
     /// - Circular deps: -15 points each
     /// - Dead exports: -1 point each (capped at -20)
     /// - Unused ports: -1 point each (capped at -10)
+    ///
+    /// `rule_errors` is the count of error-severity findings from the
+    /// project's own rules file (ADR-2609211430 §1). It costs what a boundary
+    /// violation costs, because it is one: a rule at `severity = "error"` is a
+    /// statement that the tree is wrong, and until this term existed
+    /// `--exit-code` failed on such a tree while `--grade A` passed and the
+    /// tool printed A+. Warnings stay out of the score — that is what
+    /// `--strict` is for.
+    ///
+    /// This crate analyses structure and does not read the rules file, so its
+    /// own caller passes 0. The count arrives from whoever owns the rules
+    /// file, which keeps the formula in one place rather than letting each
+    /// surface subtract its own idea of a penalty.
     pub fn compute_health_score(
         violations: usize,
         circular_deps: usize,
         dead_exports: usize,
         unused_ports: usize,
+        rule_errors: usize,
     ) -> u8 {
         let penalty = (violations * 10)
+            + (rule_errors * 10)
             + (circular_deps * 15)
             + dead_exports.min(20)
             + unused_ports.min(10);
@@ -207,14 +223,14 @@ mod health_score_tests {
 
     #[test]
     fn a_clean_project_scores_100() {
-        assert_eq!(R::compute_health_score(0, 0, 0, 0), 100);
+        assert_eq!(R::compute_health_score(0, 0, 0, 0, 0), 100);
     }
 
     #[test]
     fn the_score_never_climbs_as_violations_are_added() {
         let mut previous = 100u8;
         for violations in 0..60 {
-            let score = R::compute_health_score(violations, 0, 0, 0);
+            let score = R::compute_health_score(violations, 0, 0, 0, 0);
             assert!(
                 score <= previous,
                 "score rose from {previous} to {score} at {violations} violations"
@@ -227,11 +243,30 @@ mod health_score_tests {
     /// truncate to 4 and report 96/100.
     #[test]
     fn twenty_six_violations_do_not_report_ninety_six() {
-        assert_eq!(R::compute_health_score(26, 0, 0, 0), 0);
+        assert_eq!(R::compute_health_score(26, 0, 0, 0, 0), 0);
     }
 
     #[test]
     fn the_worst_case_floors_at_zero_rather_than_wrapping() {
-        assert_eq!(R::compute_health_score(usize::MAX / 100, 0, 0, 0), 0);
+        assert_eq!(R::compute_health_score(usize::MAX / 100, 0, 0, 0, 0), 0);
+    }
+
+    /// ADR-2609211430 §1. A rule the project marked `error` costs what a
+    /// boundary violation costs; the two are the same claim about the tree.
+    #[test]
+    fn a_rule_error_costs_what_a_boundary_violation_costs() {
+        assert_eq!(
+            R::compute_health_score(0, 0, 0, 0, 1),
+            R::compute_health_score(1, 0, 0, 0, 0),
+            "ten points either way"
+        );
+        assert_eq!(R::compute_health_score(0, 0, 0, 0, 1), 90);
+        assert_eq!(R::compute_health_score(1, 0, 0, 0, 1), 80, "they add");
+    }
+
+    #[test]
+    fn rule_errors_saturate_like_every_other_term() {
+        assert_eq!(R::compute_health_score(0, 0, 0, 0, 26), 0);
+        assert_eq!(R::compute_health_score(0, 0, 0, 0, usize::MAX / 100), 0);
     }
 }
