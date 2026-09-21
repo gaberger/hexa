@@ -5,8 +5,9 @@
       "gate": "cargo test -p hexa-cli --test domain_import_references",
       "pid": 104,
       "pid_start": 390,
+      "running": null,
       "stage": "build",
-      "updated": "2026-09-21T16:39:09.857170182+00:00"
+      "updated": "2026-09-21T16:46:57.610560668+00:00"
     },
     "15e0cf79-70e3-425b-aa08-d2c85df00d10": {
       "adr": "ADR-2609132122",
