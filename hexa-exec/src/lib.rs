@@ -9,6 +9,7 @@
 //! outside hexa-nexus.
 
 pub mod local_store;
+pub mod provenance;
 pub mod adversarial;
 pub mod compress;
 pub mod direct_exec;

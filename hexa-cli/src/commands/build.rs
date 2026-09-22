@@ -25,7 +25,7 @@
 
 use clap::Args;
 use colored::Colorize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Args)]
 pub struct BuildArgs {
@@ -139,6 +139,32 @@ pub async fn run_build(args: BuildArgs) -> anyhow::Result<()> {
         println!("  {} {}", "·".dimmed(), n.dimmed());
     }
 
+    // The receipt, written by the run that produced the code rather than
+    // reconstructed later (ADR-2609221900). Written whether or not the gate
+    // passed: a failed build that records what it attempted is more useful
+    // than no record. A failure to write it must not fail the build.
+    let facts = hexa_exec::provenance::Facts {
+        date_utc: now_utc_rfc3339(),
+        hexa_version: env!("CARGO_PKG_VERSION").to_string(),
+        challenge: args.challenge.clone(),
+        gate: args.gate.clone(),
+        gate_passed: b.build_ok,
+        designs: b.designs,
+        critiques: b.critiques,
+        // Read through hexa-infer, which is the only place a model may be
+        // named (G1). These are values resolved at run time, not literals.
+        tiers: hexa_infer::configured_tiers()
+            .into_iter()
+            .map(|(tier, _, model)| (tier.to_string(), model))
+            .collect(),
+        react_models: hexa_infer::react_models(),
+    };
+    let target = Path::new(&args.target);
+    match hexa_exec::provenance::write(target, &facts) {
+        Ok(()) => println!("  {} {}", "·".dimmed(), format!("provenance → {}/PROVENANCE.md", args.target).dimmed()),
+        Err(e) => eprintln!("  {} could not write provenance: {e}", "⚠".yellow()),
+    }
+
     if args.harden && b.build_ok {
         println!("{} adversarial pass", "⬡".cyan());
         let r = hexa_exec::adversarial::run_review_with(&args.target, &args.gate, &repo_root, reporter("harden", &repo_root)).await;
@@ -146,6 +172,11 @@ pub async fn run_build(args: BuildArgs) -> anyhow::Result<()> {
         print_review(&r, "    ");
     }
     Ok(())
+}
+
+/// Now, as RFC 3339 in UTC, for the provenance record.
+fn now_utc_rfc3339() -> String {
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
 
 /// The argv of a detached run: this process's own, with `--detach` removed
