@@ -52,11 +52,13 @@ docs/*
 
 # .hexa is runtime state at any depth, except the files that define the
 # project: its config, its rule set (what `hexa analyze .` checks this
-# repository against) and its loop state (the ADR and gate in progress).
+# repository against), its loop state (the ADR and gate in progress) and its
+# memory (what this project learned, which is worth keeping).
 **/.hexa/*
 !.hexa/project.json
 !.hexa/ADR-rules.toml
 !.hexa/loop.json
+!.hexa/memory.jsonl
 
 # Example projects are isolated repositories
 examples/*/target/
