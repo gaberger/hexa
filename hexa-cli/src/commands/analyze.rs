@@ -1757,13 +1757,13 @@ fn project_names(root: &Path) -> hexa_analysis::import_policy::ProjectNames {
 
     // Rust: the root package and every workspace member, since a `use` of a
     // sibling crate is internal to the project even though it names a crate.
-    let mut manifests = vec![root.join("Cargo.toml")];
-    if let Ok(entries) = std::fs::read_dir(root) {
-        let mut members: Vec<PathBuf> =
-            entries.flatten().map(|e| e.path().join("Cargo.toml")).filter(|p| p.is_file()).collect();
-        members.sort();
-        manifests.extend(members);
-    }
+    //
+    // This used to read the root and one directory down. A dependency declared
+    // by `crates/core/Cargo.toml` was therefore not a known external name, so
+    // an inline `sqlx::query("x")` in that crate's domain was never judged —
+    // while `use sqlx::PgPool;` in the same file was. One file, two answers
+    // about one crate. (ADR-2609221430 §3.)
+    let manifests = rust_manifests(root);
     for manifest in manifests {
         if let Ok(text) = std::fs::read_to_string(&manifest) {
             if let Ok(v) = toml::from_str::<toml::Value>(&text) {
@@ -1779,6 +1779,21 @@ fn project_names(root: &Path) -> hexa_analysis::import_policy::ProjectNames {
                     if let Some(deps) = v.get(table).and_then(|d| d.as_table()) {
                         for key in deps.keys() {
                             names.rust_dependencies.push(key.replace('-', "_"));
+                        }
+                    }
+                }
+                // `[target.'cfg(unix)'.dependencies]` is a dependency table
+                // like any other; code names those crates without a cfg in
+                // sight. Missing them made a platform-specific crate invisible
+                // to the policy. (§3.)
+                if let Some(targets) = v.get("target").and_then(|t| t.as_table()) {
+                    for cfg in targets.values() {
+                        for table in ["dependencies", "dev-dependencies", "build-dependencies"] {
+                            if let Some(deps) = cfg.get(table).and_then(|d| d.as_table()) {
+                                for key in deps.keys() {
+                                    names.rust_dependencies.push(key.replace('-', "_"));
+                                }
+                            }
                         }
                     }
                 }
@@ -1826,6 +1841,84 @@ fn project_names(root: &Path) -> hexa_analysis::import_policy::ProjectNames {
     names
 }
 
+/// Every `Cargo.toml` whose dependency keys this project's code may name.
+///
+/// A workspace states its own shape, so when the root manifest has a
+/// `[workspace]` table that is what is read: `members`, with `*` globs
+/// expanded, minus `exclude`. Without one there is nothing to expand, so the
+/// tree is walked instead — that is the fallback, not the rule, which is why an
+/// excluded member stays excluded rather than being picked up by a walk.
+///
+/// `target/` is skipped: a vendored build artefact's manifest is not this
+/// project's declaration of anything.
+fn rust_manifests(root: &Path) -> Vec<PathBuf> {
+    let mut out = vec![root.join("Cargo.toml")];
+    let workspace = std::fs::read_to_string(root.join("Cargo.toml"))
+        .ok()
+        .and_then(|t| toml::from_str::<toml::Value>(&t).ok())
+        .and_then(|v| v.get("workspace").cloned());
+
+    if let Some(ws) = workspace {
+        let list = |key: &str| -> Vec<String> {
+            ws.get(key)
+                .and_then(|m| m.as_array())
+                .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+                .unwrap_or_default()
+        };
+        let excluded: Vec<PathBuf> = list("exclude").iter().map(|e| root.join(e)).collect();
+        for member in list("members") {
+            for dir in expand_member(root, &member) {
+                if excluded.iter().any(|e| dir.starts_with(e)) {
+                    continue;
+                }
+                let manifest = dir.join("Cargo.toml");
+                if manifest.is_file() {
+                    out.push(manifest);
+                }
+            }
+        }
+    } else {
+        let mut found = Vec::new();
+        walk_manifests(root, root, &mut found);
+        found.sort();
+        out.extend(found);
+    }
+    out.dedup();
+    out
+}
+
+/// One `members` entry to the directories it names. Only a trailing `*` is
+/// expanded, which is the form cargo documents and the only one seen in the
+/// wild; anything else is taken literally.
+fn expand_member(root: &Path, member: &str) -> Vec<PathBuf> {
+    let Some(prefix) = member.strip_suffix("/*").or_else(|| member.strip_suffix('*')) else {
+        return vec![root.join(member)];
+    };
+    let base = root.join(prefix.trim_end_matches('/'));
+    let Ok(entries) = std::fs::read_dir(&base) else { return Vec::new() };
+    let mut dirs: Vec<PathBuf> = entries.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
+    dirs.sort();
+    dirs
+}
+
+/// Every `Cargo.toml` under `dir`, for a project that is not a workspace.
+fn walk_manifests(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if path.is_dir() {
+            if name == "target" || name == "node_modules" || name.starts_with('.') {
+                continue;
+            }
+            walk_manifests(root, &path, out);
+        } else if name == "Cargo.toml" && path != root.join("Cargo.toml") {
+            out.push(path);
+        }
+    }
+}
+
 /// The first segment of a module path, which is the name that decides whether
 /// the path leaves the project at all.
 fn first_segment(lang: hexa_analysis::domain::Language, raw: &str) -> String {
@@ -1857,12 +1950,14 @@ fn evaluate_import_policies(
     // clean domain because it never looked at one.
     let mut files = collect_source_files(root);
     files.sort();
+    let mut reported_findings: std::collections::HashSet<(String, usize, String, String)> =
+        std::collections::HashSet::new();
 
     for path in &files {
         let rel = path.strip_prefix(root).unwrap_or(path).to_string_lossy().replace('\\', "/");
         let rel_slashed = format!("/{}", rel.trim_start_matches('/'));
         let matching: Vec<&ImportPolicyConfig> =
-            policies.iter().filter(|p| rel_slashed.contains(p.layer.as_str())).collect();
+            policies.iter().filter(|p| layer_matches(&rel_slashed, &p.layer)).collect();
         if matching.is_empty() {
             continue;
         }
@@ -1870,8 +1965,24 @@ fn evaluate_import_policies(
         if lang == hexa_analysis::domain::Language::Unknown {
             continue;
         }
-        let Ok(source) = std::fs::read_to_string(path) else { continue };
-        let Ok(imports) = ast.extract_imports(Path::new(&rel), &source, lang) else { continue };
+        let source = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(e) => {
+                // `else { continue }` dropped the file from the check and said
+                // nothing, so a policy could report a clean layer it had never
+                // read. (ADR-2609122048, ADR-2609221430 §6.) A warning: it
+                // reports without moving the grade, and `--strict` binds it.
+                out.extend(unchecked_file(&matching, &rel, &format!("could not be read ({e})")));
+                continue;
+            }
+        };
+        let imports = match ast.extract_imports(Path::new(&rel), &source, lang) {
+            Ok(i) => i,
+            Err(e) => {
+                out.extend(unchecked_file(&matching, &rel, &format!("could not be parsed ({e})")));
+                continue;
+            }
+        };
 
         // Declarations and inline references are the same claim about what
         // this file depends on (ADR-2609211600), so they are judged by the
@@ -1879,11 +1990,16 @@ fn evaluate_import_policies(
         let mut sites: Vec<(String, usize)> =
             imports.into_iter().map(|i| (i.raw_path, i.line)).collect();
 
-        let mut seen: std::collections::HashSet<(usize, String)> = std::collections::HashSet::new();
-        for site in &sites {
-            seen.insert((site.1, first_segment(lang, &site.0)));
-        }
-        for r in hexa_analysis::treesitter_adapter::extract_module_references(&source, lang) {
+        let references = match hexa_analysis::treesitter_adapter::extract_module_references(
+            &source, lang,
+        ) {
+            Ok(r) => r,
+            Err(e) => {
+                out.extend(unchecked_file(&matching, &rel, &format!("could not be parsed ({e})")));
+                continue;
+            }
+        };
+        for r in references {
             use hexa_analysis::treesitter_adapter::ReferenceKind;
             if r.kind == ReferenceKind::ComputedLoad {
                 // Nothing can be judged about a name assembled at runtime, and
@@ -1914,12 +2030,14 @@ fn evaluate_import_policies(
             {
                 continue;
             }
-            // One site per line per name: `sqlx::query(a)` twice on one line
-            // is one reach outside, and the `use` line that introduced it is
-            // already its own site.
-            if seen.insert((r.line, head)) {
-                sites.push((r.raw_path, r.line));
-            }
+            // Every reference is kept and judged. De-duplication used to happen
+            // here, keyed on (line, first segment) — so on a line holding both
+            // `std::collections::HashMap` and `std::fs::read`, the permitted
+            // path claimed the key `(1, "std")` and the denied one was dropped
+            // *before anything judged it*. A permitted reference can no longer
+            // suppress anything; findings are de-duplicated after the verdict
+            // instead. (ADR-2609221430 §2.)
+            sites.push((r.raw_path, r.line));
         }
         sites.sort_by_key(|(_, line)| *line);
 
@@ -1937,6 +2055,15 @@ fn evaluate_import_policies(
                     Verdict::DeniedByDeny => "denied by this policy's `deny`",
                     _ => "not in this policy's `allow`",
                 };
+                // One finding per line per reported name. `sqlx::query(a)`
+                // written twice on one line is one reach outside, and the
+                // `use` that introduced it is the same claim again — but this
+                // is keyed on what the finding *reports*, after judging, so a
+                // permitted path never stands in for a denied one.
+                let reported = denied_name(lang, &raw_path, &policy.deny, &names);
+                if !reported_findings.insert((rel.clone(), line, policy.id.clone(), reported)) {
+                    continue;
+                }
                 out.push(AdrViolationLocal {
                     adr: policy.adr.clone(),
                     id: policy.id.clone(),
@@ -1949,6 +2076,78 @@ fn evaluate_import_policies(
         }
     }
     out
+}
+
+/// The name a finding is keyed on: the `deny` prefix that matched, else the
+/// external package the path names. Two different reaches outside on one line
+/// are two findings; the same one written twice is one.
+fn denied_name(
+    lang: hexa_analysis::domain::Language,
+    raw_path: &str,
+    deny: &[String],
+    names: &hexa_analysis::import_policy::ProjectNames,
+) -> String {
+    let _ = names;
+    let sep = if lang == hexa_analysis::domain::Language::Rust { "::" } else { "/" };
+    let path = raw_path.trim().trim_start_matches("::");
+    let mut best: Option<&str> = None;
+    for d in deny {
+        let matches = path == d.as_str()
+            || path.strip_prefix(d.as_str()).is_some_and(|rest| rest.starts_with(sep));
+        if matches && best.is_none_or(|b| d.len() > b.len()) {
+            best = Some(d.as_str());
+        }
+    }
+    match best {
+        Some(d) => d.to_string(),
+        None => first_segment(lang, path),
+    }
+}
+
+/// A file inside a policy's layer that the check could not read or parse.
+///
+/// One warning per policy, naming the file. The grade is untouched — a file
+/// that could not be read is not a violation — but the reader is told, and
+/// `--strict` refuses to call it clean.
+fn unchecked_file(
+    matching: &[&ImportPolicyConfig],
+    rel: &str,
+    why: &str,
+) -> Vec<AdrViolationLocal> {
+    matching
+        .iter()
+        .map(|policy| AdrViolationLocal {
+            adr: policy.adr.clone(),
+            id: policy.id.clone(),
+            file: rel.to_string(),
+            line: 1,
+            message: format!(
+                "this file is inside `{}` but {}, so its imports were not checked",
+                policy.layer, why
+            ),
+            severity: "warning".to_string(),
+        })
+        .collect()
+}
+
+/// Whether a file sits in a policy's layer.
+///
+/// `rel.contains("/domain/")` also matched `tests/domain/` and
+/// `src/adapters/domain_helpers/`, so a policy could report against files it
+/// was never written for. Segments are compared whole, and the directories a
+/// project keeps its tests and examples in are out of scope: a fixture that
+/// imports a database driver on purpose is not a domain violation.
+/// (ADR-2609221430 §7.)
+fn layer_matches(rel_slashed: &str, layer: &str) -> bool {
+    let segments: Vec<&str> = rel_slashed.split('/').filter(|s| !s.is_empty()).collect();
+    if segments.first().is_some_and(|s| matches!(*s, "tests" | "benches" | "examples")) {
+        return false;
+    }
+    let wanted: Vec<&str> = layer.split('/').filter(|s| !s.is_empty()).collect();
+    if wanted.is_empty() {
+        return true;
+    }
+    segments.windows(wanted.len()).any(|w| w == wanted.as_slice())
 }
 
 /// The rules run, and say so. This is the reader-facing path.

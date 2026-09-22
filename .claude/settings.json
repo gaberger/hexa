@@ -158,7 +158,6 @@
   },
   "permissions": {
     "allow": [
-      "mcp__hex__hex_*"
     ],
     "deny": [
       "Read(./.env)",

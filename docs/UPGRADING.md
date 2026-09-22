@@ -88,3 +88,44 @@ port, or add the dependency to that policy's `allow` with a reason. Local code
 is unaffected — `O::new()`, `Self::x()`, an enum variant and a local module
 are not references, because a path is only judged when its first segment names
 a declared dependency or the standard library.
+
+## Every reference is read, and every one is judged (`ADR-2609221430`)
+
+`[[import_policy]]` read most inline references but not all of them, and what
+counted as an "external" name came from the root manifest only. Both are
+widened (ADR-2609221430).
+
+**What changes for you.** A project may report findings it did not before, and
+at `severity = "error"` each site costs 10 points. The new forms:
+
+- a path written inside a macro call — `println!("{:?}", std::fs::read("x"))`,
+  `vec![…]`, `assert!(…)`, `format!(…)`, nested macros included;
+- a second reference on a line whose first reference was permitted — a
+  permitted path no longer suppresses a denied one beside it;
+- a crate declared by a nested workspace member's own `Cargo.toml`, or by a
+  `[target.'cfg(…)'.dependencies]` table;
+- a qualified path, `<sqlx::PgPool as Default>::default`;
+- TypeScript `import x = require("m")`, and `` require(`m`) `` or ``
+  import(`m`) `` with nothing interpolated.
+
+```bash
+hexa analyze . --json | jq .score_components
+```
+
+Two changes may *remove* findings. A policy's `layer` now matches whole path
+segments, so `/domain/` no longer matches `src/adapters/domain_helpers/`; and
+files under a top-level `tests/`, `benches/` or `examples/` directory are out
+of scope, so a fixture that imports a driver on purpose is no longer a
+violation.
+
+One new **warning**: a file inside a policy's layer that could not be read or
+parsed is now reported instead of silently skipped. It does not move the grade,
+but `--strict` fails on it. If you see one, the file is usually not UTF-8.
+
+**If you use `.mcp.json`:** `hexa assets sync --force` used to write a `hexa`
+MCP server whose command was the hexa binary with an `mcp` subcommand — one the
+binary does not have, so the server exited immediately. It now writes no such entry and removes that one
+if it wrote it before, matching on the exact command and args so a `hexa` entry
+you re-pointed yourself is left alone. Nothing else in the file is touched. If
+you have a hand-written entry that starts the hexa binary with an `mcp`
+subcommand, delete it.
