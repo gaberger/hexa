@@ -357,7 +357,23 @@ enum Commands {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() {
+    // `main` used to return `anyhow::Result<()>`, so Rust's Termination printed
+    // the error with `Debug` — and anyhow's `Debug` appends a backtrace when
+    // RUST_BACKTRACE is set. hexa's users are Rust developers, who commonly
+    // export that globally, so "write the ADR first" arrived looking like a
+    // crash. The message and the exit code were always right; a tool that looks
+    // like it crashed while working teaches people to distrust it.
+    //
+    // `{:#}` prints the whole cause chain on one line and no backtrace. A
+    // genuine panic is unaffected — that is a different path, and still says so.
+    if let Err(e) = run().await {
+        eprintln!("Error: {e:#}");
+        std::process::exit(1);
+    }
+}
+
+async fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     let filter = if cli.verbose {

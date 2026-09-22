@@ -466,6 +466,49 @@ It now writes no such entry, and removes that one if it wrote it before —
 matched on the exact command and args, so a `hexa` entry pointed somewhere else
 is left alone, and every other server in the file is untouched.
 
+## Prose that could not fail, in this repository
+
+**Claim.** hexa's own decision records drifted from its code in silence: ids
+were cited that resolved to nothing, and no check said so. `hexa adr doctor`
+is the gate that closed it.
+
+On 2026-09-15, an audit found **140 distinct ADR ids cited** across the code and
+docs and **113 with no file** — the most-cited decision of all, referenced 39
+times, did not exist. The write-up is
+[`analysis/2609151900-adrs-as-memory-investigation.md`](analysis/2609151900-adrs-as-memory-investigation.md),
+which states the cause plainly: the history before 2026-09-12 was not carried
+into this repository, and `hexa adr doctor` reported "registry is consistent"
+because it checked the files that exist against each other and never a citation
+against the ledger.
+
+Today, on `main`:
+
+```bash
+cited=$(grep -rhoE "ADR-([0-9]{3}|[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{4}|[0-9]{10})" \
+  --include='*.rs' --include='*.md' --include='*.toml' hexa-* docs README.md CLAUDE.md | sort -u)
+for id in $cited; do
+  [ -z "$(find docs/adrs -maxdepth 2 -name "${id}*.md" -print -quit)" ] && echo "$id"
+done
+```
+
+Expected: **153 ids cited, 2 unresolved** — `ADR-000` and `ADR-010`, both
+fixtures inside test code rather than references to decisions.
+
+| | 2026-09-15 | today |
+|---|---|---|
+| Distinct ADR ids cited | 140 | 153 |
+| Cited ids with no file | **113** | **2** |
+
+Two honest qualifications. The gap was closed by writing 114 stub files under
+`docs/adrs/historical/`, each saying what it is — `ADR-001` is titled "Decision
+text not carried into this repository" and its Decision section reads
+"Unknown." The citations resolve; the decisions are still gone. And the count
+above is a shell pipeline on this page, not a test, so it is checked when
+someone runs it. `hexa adr doctor` is the part that runs in CI, and it now
+fails on a dangling citation — this session hit that twice, once for an ADR
+written but not yet filed, and once for a test fixture that looked like a
+citation.
+
 ## The refactoring trial, and what of it can be re-run
 
 **Claim.** hexa repaired 17 boundary violations in a project it did not write,
@@ -499,9 +542,10 @@ left to look like the others.
   reported as warnings rather than left out.
 - **Repair beyond single-token bugs.** The brownfield trial injected one wrong
   token per file. Multi-file changes are untested.
-- **"44 of 110 specs described deleted features."** The figure appears in
-  `README.md`, `CLAUDE.md` and `docs/COMPARISON.md`. The corpus it was counted
-  over is not in this repository, and no script or analysis here re-derives it,
-  so nothing on this page checks it. It needs a source naming the project, the
-  commit, and how "already deleted" was determined — or the sentence needs to
-  stop carrying a number.
+- **"44 of 110 specs described deleted features."** *Withdrawn 2026-09-22.* The
+  corpus was never in this repository: `docs/specs/` has no commit that ever
+  added it, and this repository's history starts 2026-09-13, while the corpus
+  belonged to the history before 2026-09-12 that was not carried over. A number
+  whose evidence lives in a repository nobody can open is not evidence. The
+  three places that carried it now cite the ADR-citation audit below, which is
+  the same failure, in this repository, with a command.

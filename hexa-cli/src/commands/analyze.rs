@@ -45,14 +45,14 @@ pub async fn run(
     exit_code: bool,
     grade_floor: Option<&str>,
 ) -> anyhow::Result<()> {
-    let root = Path::new(path)
-        .canonicalize()
-        .unwrap_or_else(|_| Path::new(path).to_path_buf());
+    let root = resolve_root(path)?;
 
     // Single-file mode: analyze just one file
     if let Some(file_path) = file {
         return run_single_file(file_path, &root, quiet, violations_only, exit_code);
     }
+
+    refuse_an_empty_scan(&root)?;
 
     // JSON mode: collect results and emit structured output
     if json_output {
@@ -1839,6 +1839,44 @@ fn project_names(root: &Path) -> hexa_analysis::import_policy::ProjectNames {
     }
 
     names
+}
+
+/// The directory a grade will be about.
+///
+/// `canonicalize()` used to fall back to the literal path when it failed, so
+/// `hexa analyze /does-not-exist` carried on, scanned nothing, and printed
+/// **A+ 100/100** with exit 0 — `--grade A`, `--strict` and `--exit-code`
+/// included. A CI job pointed at the wrong directory passed with full marks.
+fn resolve_root(path: &str) -> anyhow::Result<PathBuf> {
+    let p = Path::new(path);
+    if !p.exists() {
+        anyhow::bail!(
+            "no such path: {path}\n       A grade is a claim about code that was read, and there is nothing here to read."
+        );
+    }
+    if !p.is_dir() {
+        anyhow::bail!(
+            "not a directory: {path}\n       To analyse one file, pass it with --file."
+        );
+    }
+    Ok(p.canonicalize().unwrap_or_else(|_| p.to_path_buf()))
+}
+
+/// A scan that read no files cannot produce a grade.
+///
+/// Zero files means zero findings, and a score computed from zero findings is a
+/// perfect one — the vacuous gate this project refuses everywhere else
+/// (`evidence_is_vacuous` rejects "running 0 tests"; ADR-2609122048 says a tool
+/// reporting "nothing found" must prove it looked). Printing A+ here said the
+/// architecture was perfect when the truth was that nothing was examined.
+fn refuse_an_empty_scan(root: &Path) -> anyhow::Result<()> {
+    if collect_source_files(root).is_empty() {
+        anyhow::bail!(
+            "no source files under {}\n       There is nothing to grade. A grade printed for an empty scan is a\n       vacuous gate: it reports a perfect result because it read nothing.",
+            root.display()
+        );
+    }
+    Ok(())
 }
 
 /// Every `Cargo.toml` whose dependency keys this project's code may name.

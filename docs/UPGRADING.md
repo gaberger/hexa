@@ -129,3 +129,34 @@ if it wrote it before, matching on the exact command and args so a `hexa` entry
 you re-pointed yourself is left alone. Nothing else in the file is touched. If
 you have a hand-written entry that starts the hexa binary with an `mcp`
 subcommand, delete it.
+
+## `hexa analyze` refuses to grade a scan that read nothing (`ADR-2609221700`)
+
+`hexa analyze /path-that-does-not-exist` printed **A+ — score 100/100** and
+exited 0, and so did `--grade A`, `--strict`, `--exit-code` and `--json`. An
+empty but existing directory did the same: zero files scanned means zero
+findings, and a score computed from zero findings is a perfect one.
+
+`analyze` now refuses a path that does not exist, and refuses to grade a
+directory holding no source files. Every surface fails together, because the
+guard sits above the branch into `--json`.
+
+**What changes for you.** A CI job that was passing may now fail — correctly.
+If a job runs `hexa analyze . --grade A` with the wrong working directory, or
+after a checkout that produced nothing, it was passing against an empty scan
+and now exits 1 with a message saying so. That is the bug being fixed rather
+than a regression; the tree did not get worse, the check stopped reporting a
+result it had not earned.
+
+```bash
+hexa analyze .        # from the directory you mean to grade
+```
+
+Analysing a docs-only or config-only repository now fails for the same reason.
+To analyse a single file rather than a tree, pass it with `--file`.
+
+**Also:** an expected refusal now prints one sentence instead of a stack trace.
+`main` returned a `Result`, so errors printed with `Debug`, and a backtrace was
+appended whenever `RUST_BACKTRACE` was set — which many Rust developers export
+globally. The message and the exit code were always right; only the
+presentation was wrong. Nothing to do on your side.
