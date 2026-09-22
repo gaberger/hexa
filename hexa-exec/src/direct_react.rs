@@ -633,18 +633,21 @@ mod tests {
 
 /// Resolve the ordered candidate-model list for the do-loop with precedence:
 /// 1) explicit model always wins (list of one)
-/// 2) configured list in order
-/// 3) single fallback
-/// 4) default pair
-pub fn candidate_models(explicit: Option<&str>, configured: &[String], single: Option<&str>) -> Vec<String> {
+/// 2) the configured list, in order
+/// 3) nothing
+///
+/// This used to take a third argument for the singular `inference.react_model`
+/// key. Collapsing the two keys into one list is the *reader's* job, and this
+/// function's job is precedence; splitting them left the singular key handled
+/// in two places and read in only one of them. `configured` now arrives from
+/// [`hexa_infer::react_models_in_config`], which is the only thing that reads
+/// either key.
+pub fn candidate_models(explicit: Option<&str>, configured: &[String]) -> Vec<String> {
     if let Some(m) = explicit {
         return vec![m.to_string()];
     }
     if !configured.is_empty() {
         return configured.to_vec();
-    }
-    if let Some(m) = single {
-        return vec![m.to_string()];
     }
     // No hardcoded last resort. A model id written here is a model the
     // operator never chose and cannot change by editing configuration — the
@@ -652,32 +655,17 @@ pub fn candidate_models(explicit: Option<&str>, configured: &[String], single: O
     // say what is missing instead.
     Vec::new()
 }
-/// Extract candidate model list from a parsed config JSON value
-/// and delegate ordering/precedence to candidate_models.
+/// The do-loop's candidate models for an already-parsed `project.json`.
+///
+/// Reading is delegated to [`hexa_infer::react_models_in_config`] — the one
+/// reader of `inference.react_models` / `inference.react_model`. This function
+/// used to re-implement that read here, and the two implementations disagreed:
+/// the copy in `hexa-infer` never looked at the singular key, so a project that
+/// set only `react_model` ran fine in the do-loop and reported nothing
+/// configured everywhere else. What stays here is precedence, which is a
+/// do-loop concern.
 pub fn react_models_from_config_value(cfg: &serde_json::Value, explicit: Option<&str>) -> Vec<String> {
-    // Step (a): read configured = cfg["inference"]["react_models"] as array of strings
-    let mut configured = Vec::<String>::new();
-    if let Some(inference) = cfg.get("inference") {
-        if let Some(react_models) = inference.get("react_models") {
-            if let Some(arr) = react_models.as_array() {
-                for item in arr {
-                    if let Some(s) = item.as_str() {
-                        configured.push(s.to_string());
-                    }
-                }
-            }
-        }
-    }
-    
-    // Step (b): read single = cfg["inference"]["react_model"] as Option<&str>
-    let single = if let Some(inference) = cfg.get("inference") {
-        inference.get("react_model").and_then(|v| v.as_str())
-    } else {
-        None
-    };
-    
-    // Step (c): return candidate_models(explicit, &configured, single)
-    candidate_models(explicit, &configured, single)
+    candidate_models(explicit, &hexa_infer::react_models_in_config(cfg))
 }
 
 /// Pick the best-of-N winner from per-candidate outcomes in priority order: the
@@ -698,8 +686,10 @@ pub fn select_best_of_n(
 }
 
 /// Resolve the ordered candidate-model list for a run: explicit `task.model` or
-/// `HEXA_REACT_MODEL` wins; else `.hexa/project.json` `inference.react_models`; else
-/// `inference.react_model`; else the default complementary pair. (ADR-2606072044.)
+/// `HEXA_REACT_MODEL` wins; else whatever `.hexa/project.json` declares; else
+/// nothing, and the caller says `NO_MODEL_CONFIGURED`. There is no default
+/// pair — the doc comment claimed one for long after the code stopped having
+/// one. (ADR-2606072044.)
 pub(crate) fn resolve_react_models(task: &DirectTask) -> Vec<String> {
     let explicit = task
         .model
