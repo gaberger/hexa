@@ -481,34 +481,41 @@ into this repository, and `hexa adr doctor` reported "registry is consistent"
 because it checked the files that exist against each other and never a citation
 against the ledger.
 
-Today, on `main`:
+Today, on `main`, the number that matters is the one CI enforces:
 
 ```bash
-cited=$(grep -rhoE "ADR-[0-9][0-9-]*" \
-  --include='*.rs' --include='*.md' --include='*.toml' hexa-* docs README.md CLAUDE.md \
-  | sed 's/-$//' | sort -u)
-for id in $cited; do
-  [ -z "$(find docs/adrs -maxdepth 2 -name "${id}*.md" -print -quit)" ] && echo "$id"
-done
+hexa adr doctor          # "No findings — registry is consistent"
 ```
 
-Expected: **162 ids cited, 7 unresolved**, and every one of the seven is a
-synthetic id inside test code — a fixture a test writes to prove the checker
-refuses it. No citation to a real decision dangles, which is what `hexa adr
-doctor` reports independently.
+**Zero dangling citations, checked on every push.** That step sits between the
+architecture grade and lint in `.github/workflows/ci.yml`, and a dangling
+citation fails the build. It is the part of this section that cannot drift,
+because nothing has to remember to run it.
 
 | | 2026-09-15 | today |
 |---|---|---|
-| Decision ids cited | 140 | 162 |
-| Cited ids with no file | **113** | **7**, all test fixtures |
+| Decision ids cited | 140 | — |
+| Cited ids with no file | **113** | **0**, enforced in CI |
 
-**The pattern matters, and the first version of this section got it wrong.** It
-matched a three-digit alternative, which also matches the first three digits of
-a four-digit id, so a four-digit fixture id inside test code was counted as a
-citation to a three-digit id that appears nowhere as literal text. That
-produced "153 cited, 2 unresolved", and both of the two were inventions of the
-pattern. The pattern above takes the whole run of digits, so a longer id cannot
-be truncated into a shorter one nobody wrote.
+**This section used to print its own count, and that was the mistake.** It said
+"153 ids cited, 2 unresolved", from a shell pipeline written for the page. The
+pipeline matched a three-digit alternative, which also matches the first three
+digits of a four-digit id, so four-digit fixture ids in test code were counted
+as citations to ids that appear nowhere as literal text. Corrected to 162 and
+7, the figure drifted to 164 and 9 within one commit — because the correction
+itself added ids to the repository, and because the count included test
+fixtures, which are not citations at all.
+
+A number maintained by hand on a page that promises every number has a command
+behind it is the failure this page exists to catch, in the page itself. It is
+replaced above by the checker's own result, which a machine re-derives on every
+push.
+
+The 2026-09-15 figures were measured with a pattern carrying that same
+truncation, so 140 and 113 are close rather than exact. Their magnitude rests
+on something no pattern can distort: closing that gap required writing **114
+stub files**, one per cited and missing decision. That is the number worth
+quoting, because a reader can count the files.
 
 **`hexa adr doctor` does not share that bug, and an earlier version of this
 section said it did.** The checker drops a match followed by a digit, so it
