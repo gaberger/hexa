@@ -192,12 +192,13 @@ fn adr_id_re() -> &'static Regex {
     // Two forms, hyphenated YYYY-MM-DD-HHMM first (longest match wins in
     // alternation only when used with `find` — must list more-specific
     // pattern first). Falls back to legacy sequential / 10-digit form.
-    // Without this, `ADR-2026-03-22-1500` truncates to `ADR-2026` and the
-    // doctor reports 154 duplicates.
+    // Without this, a full date-time id truncates to its year and the doctor
+    // reports 154 duplicates. (The example is described rather than written:
+    // an id spelled in a comment is a citation, ADR-2609221830 §1.)
     // Order matters (leftmost-first): full date-time (YYYY-MM-DD-HHMM), then
     // date-only (YYYY-MM-DD, used by ADR-2026-05-09/-05-12/-05-20), then the
     // legacy sequential / 10-digit fallback. Without the date-only form those
-    // three collapse to `ADR-2026` and read as duplicates.
+    // three collapse to their shared year prefix and read as duplicates.
     RE.get_or_init(|| Regex::new(r"ADR-\d{4}-\d{2}-\d{2}-\d{4}|ADR-\d{4}-\d{2}-\d{2}|ADR-\d+").unwrap())
 }
 
@@ -597,15 +598,23 @@ fn detect_dangling_dependencies(adrs: &[(PathBuf, String)]) -> Vec<Finding> {
 /// `ADR-<10 digits>`, `ADR-<3 digits>`. A match must not be followed by a
 /// digit, so a longer numeric run is never truncated into a shorter id.
 pub(crate) fn cited_adr_ids(text: &str) -> Vec<(usize, String)> {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| {
-        Regex::new(r"ADR-\d{4}-\d{2}-\d{2}-\d{4}|ADR-\d{4}-\d{2}-\d{2}|ADR-\d{10}|ADR-\d{3}").unwrap()
-    });
+    // One pattern for both readers of "what is an id" (ADR-2609221830 §5).
+    // This side used to carry its own, ending in two fixed widths, and a regex
+    // alternation has no notion of "and nothing more after it": a four-digit id
+    // matched on its first three, the guard below saw the fourth digit and
+    // dropped the whole match. The id was neither resolved nor reported — the
+    // checker said "registry is consistent" about a file it had not read.
+    let re = adr_id_re();
     let mut out = Vec::new();
     for (i, line) in text.lines().enumerate() {
         for m in re.find_iter(line) {
             let next = line[m.end()..].chars().next();
-            if next.is_some_and(|c| c.is_ascii_digit()) {
+            // Letters as well as digits (§4). A digit after the match means a
+            // longer id was cut short; a letter means a placeholder whose final
+            // digits were never filled in. Reading the digit run and stopping at
+            // the letter invents a citation to a decision nobody wrote, which
+            // the first attempt at this fix did seven times.
+            if next.is_some_and(|c| c.is_ascii_alphanumeric()) {
                 continue;
             }
             out.push((i + 1, m.as_str().to_string()));
@@ -626,7 +635,10 @@ pub(crate) type OrphanSites = (String, Vec<CitingSite>);
 /// `docs/adrs/INDEX.md` are skipped: the former is where orphan stubs live,
 /// the latter is generated from the corpus.
 pub(crate) fn scan_repo_citations(root: &Path) -> Vec<CitingSite> {
-    const SKIP_DIRS: &[&str] = &["target", ".git", "node_modules", "graph-out"];
+    // `tests` joins these per ADR-2609221830 §2: a fixture is data for an
+    // assertion, not a claim that a decision exists. Founding goal G1 already
+    // draws the same test/non-test line for provider names.
+    const SKIP_DIRS: &[&str] = &["target", ".git", "node_modules", "graph-out", "tests"];
     const EXTS: &[&str] = &["rs", "md", "toml", "yml", "yaml", "json"];
     let historical = Path::new("docs").join("adrs").join("historical");
     let index = Path::new("docs").join("adrs").join("INDEX.md");
@@ -655,10 +667,75 @@ pub(crate) fn scan_repo_citations(root: &Path) -> Vec<CitingSite> {
                 continue;
             }
             let Ok(text) = std::fs::read_to_string(&path) else { continue };
+            let text = match ext {
+                "rs" => strip_test_modules(&text),
+                "md" => strip_code_blocks(&text),
+                _ => text,
+            };
             for (line, id) in cited_adr_ids(&text) {
                 out.push((rel.clone(), line, id));
             }
         }
+    }
+    out
+}
+
+/// Blank out fenced code blocks, keeping line numbers intact.
+///
+/// An id inside a fence is sample input, sample output or a configuration
+/// illustration — an example, not a citation (ADR-2609221830 §5). Three of the
+/// sites this rule covers are records that must not be edited to suit a
+/// checker: a configuration example inside an accepted ADR, which is
+/// append-only, and a quoted terminal transcript in a case study.
+fn strip_code_blocks(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut fenced = false;
+    for line in text.lines() {
+        if line.trim_start().starts_with("```") {
+            fenced = !fenced;
+            out.push('\n');
+            continue;
+        }
+        if fenced {
+            out.push('\n');
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
+/// Blank out `#[cfg(test)]` modules, keeping line numbers intact.
+///
+/// The same rule as skipping `tests/` (ADR-2609221830 §2). Unit tests live
+/// beside the code they test, so excluding the directory is not enough: one
+/// command module alone carries 25 synthetic ids inside its test module.
+///
+/// Lines are replaced rather than removed so a reported line number still
+/// points at the right line of the real file.
+fn strip_test_modules(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut depth: i32 = 0;
+    let mut in_test = false;
+    for line in text.lines() {
+        if !in_test && line.trim_start().starts_with("#[cfg(test)]") {
+            in_test = true;
+            depth = 0;
+            out.push('\n');
+            continue;
+        }
+        if in_test {
+            depth += line.matches('{').count() as i32;
+            depth -= line.matches('}').count() as i32;
+            out.push('\n');
+            if depth <= 0 && line.contains('}') {
+                in_test = false;
+            }
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
     }
     out
 }

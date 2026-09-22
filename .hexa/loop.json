@@ -1,13 +1,13 @@
 {
   "sessions": {
     "08d3a796-7764-544d-b6e2-0baf96498c3b": {
-      "adr": "ADR-2609221430",
-      "gate": "cargo test -p hexa-cli --test domain_import_references_complete",
-      "pid": 102,
-      "pid_start": 450,
+      "adr": "ADR-2609221830",
+      "gate": "cargo test -p hexa-cli --test an_id_is_not_a_prefix_of_another",
+      "pid": 103,
+      "pid_start": 378,
       "running": null,
       "stage": "done",
-      "updated": "2026-09-22T16:49:13.356765678+00:00"
+      "updated": "2026-09-22T18:39:12.687353361+00:00"
     },
     "15e0cf79-70e3-425b-aa08-d2c85df00d10": {
       "adr": "ADR-2609132122",

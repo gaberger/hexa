@@ -575,7 +575,7 @@ fn parse_enforced_by(content: &str) -> Option<String> {
 ///   "ADR-2026-03-22-1500-foo"        → "ADR-2026-03-22-1500" (hyphenated timestamp)
 ///   "ADR-2026-03-22-1500-foo"             → "ADR-2026-03-22-1500"     (legacy 10-digit)
 ///
-/// The naive split-on-hyphen previously returned "ADR-2026" for every
+/// The naive split-on-hyphen previously returned the year prefix alone for every
 /// hyphenated file, causing `hexa adr doctor` to report 154 duplicates.
 fn extract_adr_id(filename: &str) -> String {
     let rest = match filename.strip_prefix("ADR-").or_else(|| filename.strip_prefix("adr-")) {
@@ -596,7 +596,7 @@ fn extract_adr_id(filename: &str) -> String {
 
     // Date-only timestamp: YYYY-MM-DD (4-2-2, no HHMM) — e.g.
     // ADR-2026-05-09-cost-ops-runbook. Checked after the date-time form so a
-    // full timestamp still wins; without this these collapse to "ADR-2026".
+    // full timestamp still wins; without this these collapse to the year alone.
     if parts.len() >= 3
         && parts[0].len() == 4 && parts[0].chars().all(|c| c.is_ascii_digit())
         && parts[1].len() == 2 && parts[1].chars().all(|c| c.is_ascii_digit())
