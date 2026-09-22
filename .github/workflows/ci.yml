@@ -58,6 +58,11 @@ jobs:
       # appended another copy of every hook.
       - name: Installed assets are in sync
         run: ./target/release/hexa assets sync --dry-run | grep -q 'Everything up to date'
+
+      # main went registry-inconsistent under green CI because nothing ran
+      # this. A checker nothing runs is documentation.
+      - name: Decision registry is consistent
+        run: ./target/release/hexa adr doctor
       # `hexa dev test lint` denies warnings and had been red since this
       # repository began, because nothing here ran it (ADR-2609122048).
       - name: Lint

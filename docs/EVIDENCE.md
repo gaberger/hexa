@@ -484,24 +484,68 @@ against the ledger.
 Today, on `main`:
 
 ```bash
-cited=$(grep -rhoE "ADR-([0-9]{3}|[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{4}|[0-9]{10})" \
-  --include='*.rs' --include='*.md' --include='*.toml' hexa-* docs README.md CLAUDE.md | sort -u)
+cited=$(grep -rhoE "ADR-[0-9][0-9-]*" \
+  --include='*.rs' --include='*.md' --include='*.toml' hexa-* docs README.md CLAUDE.md \
+  | sed 's/-$//' | sort -u)
 for id in $cited; do
   [ -z "$(find docs/adrs -maxdepth 2 -name "${id}*.md" -print -quit)" ] && echo "$id"
 done
 ```
 
-Expected: **153 ids cited, 2 unresolved** — `ADR-000` and `ADR-010`, both
-fixtures inside test code rather than references to decisions.
+Expected: **162 ids cited, 7 unresolved**, and every one of the seven is a
+synthetic id inside test code — a fixture a test writes to prove the checker
+refuses it. No citation to a real decision dangles, which is what `hexa adr
+doctor` reports independently.
 
 | | 2026-09-15 | today |
 |---|---|---|
-| Distinct ADR ids cited | 140 | 153 |
-| Cited ids with no file | **113** | **2** |
+| Decision ids cited | 140 | 162 |
+| Cited ids with no file | **113** | **7**, all test fixtures |
 
-Two honest qualifications. The gap was closed by writing 114 stub files under
-`docs/adrs/historical/`, each saying what it is — `ADR-001` is titled "Decision
-text not carried into this repository" and its Decision section reads
+**The pattern matters, and the first version of this section got it wrong.** It
+matched a three-digit alternative, which also matches the first three digits of
+a four-digit id, so a four-digit fixture id inside test code was counted as a
+citation to a three-digit id that appears nowhere as literal text. That
+produced "153 cited, 2 unresolved", and both of the two were inventions of the
+pattern. The pattern above takes the whole run of digits, so a longer id cannot
+be truncated into a shorter one nobody wrote.
+
+**`hexa adr doctor` does not share that bug, and an earlier version of this
+section said it did.** The checker drops a match followed by a digit, so it
+never reports a truncated id. What it does instead is quieter and worse: a
+four-digit id matches on its first three, the guard sees the fourth digit and
+discards the whole match, so a **four-digit citation that dangles is invisible**
+— the checker reports "registry is consistent" about a file it could not see.
+Reproduced on this build:
+
+```bash
+mkdir -p /tmp/adrgap/docs/adrs /tmp/adrgap/src && cd /tmp/adrgap
+printf -- '---\nid: ADR-001\nstatus: accepted\ndate: 2026-01-01\n---\n# ADR-001: x\n' \
+  > docs/adrs/ADR-001-x.md
+printf '// cites ADR-0042, which does not exist\npub fn f() {}\n' > src/lib.rs
+hexa adr doctor        # "No findings — registry is consistent"
+```
+
+Not fixed here, deliberately. Widening the pattern makes every id visible, and
+that surfaces prose that *discusses* an id rather than citing a decision —
+including comments inside the checker's own source explaining this very
+behaviour. Telling a citation from an example is a design decision that needs
+its own ADR and its own gate, not a regex edit. What ships now is the checker
+running in CI at all, which is why the gap is written down here instead of
+being discovered again later.
+
+This is also why this section describes the fixture ids instead of spelling
+them: writing one here makes this page cite it.
+
+The 2026-09-15 figures were measured with the older pattern and carry the same
+truncation, so treat 140 and 113 as close rather than exact. The magnitude is
+corroborated by something countable that does not depend on any regex: closing
+that gap required writing **114 stub files**, one per decision that was cited
+and missing.
+
+Two honest qualifications. The gap was closed by writing those 114 stub files
+under `docs/adrs/historical/`, each saying what it is — the first is titled
+"Decision text not carried into this repository" and its Decision section reads
 "Unknown." The citations resolve; the decisions are still gone. And the count
 above is a shell pipeline on this page, not a test, so it is checked when
 someone runs it. `hexa adr doctor` is the part that runs in CI, and it now
