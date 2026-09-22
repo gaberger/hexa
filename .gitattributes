@@ -1,0 +1,6 @@
+# The memory store is append-only JSONL, one self-contained entry per line, and
+# the reader takes the newest line per key with tombstones hiding older ones
+# (local_store::memory_entries_in). Two branches that both stored a lesson have
+# not conflicted in any real sense — they each added a line — so keep both
+# sides rather than raising a conflict a person has to resolve by hand.
+.hexa/memory.jsonl merge=union
