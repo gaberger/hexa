@@ -50,10 +50,18 @@ That moves the problem rather than solving it, for one structural reason:
 
 > **A spec is prose. Prose cannot fail.**
 
-Code drifts from a spec in silence, because nothing ever runs the spec. In one
-project's spec corpus, 44 of 110 specs described features that had already been
-deleted, and not one raised an error. A document that cannot fail is
-indistinguishable from a document that is wrong.
+Code drifts from a spec in silence, because nothing ever runs the spec. This
+repository did it to itself with its own decision records: on 2026-09-15, 140
+ADR ids were cited across the code and docs and **113 of them had no file**.
+The most-cited decision of all, referenced 39 times, did not exist. Nothing
+raised an error, because nothing read a citation against the ledger. A document
+that cannot fail is indistinguishable from a document that is wrong.
+
+`hexa adr doctor` is the gate that closed it: 153 ids are cited today and 2
+resolve to nothing, both of them test fixtures. The audit that found it is
+[`docs/analysis/2609151900-adrs-as-memory-investigation.md`](docs/analysis/2609151900-adrs-as-memory-investigation.md),
+and [`docs/EVIDENCE.md`](docs/EVIDENCE.md) carries the command that re-derives
+both numbers.
 
 | | spec-driven | gate-driven |
 |---|---|---|

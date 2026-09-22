@@ -19,9 +19,10 @@ counts.
 ## The spec problem
 
 A spec is prose. Prose cannot fail. Code drifts from a spec in silence because
-nothing runs the spec. In a 110-spec corpus audited during this project's own
-development, 44 described features that had already been deleted, and not one
-raised an error.
+nothing runs the spec. This repository's own decision records show the shape of
+it: 140 ADR ids were cited across code and docs on 2026-09-15 and 113 of them
+had no file, the most-cited one referenced 39 times. Not one raised an error,
+because nothing read a citation against the ledger.
 
 A gate is a command. It exits nonzero the moment it stops being true. That is
 the whole difference between the second row and the fourth.

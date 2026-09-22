@@ -156,10 +156,13 @@ Three rules:
   tests"; every new gate shape needs the same guard.
 
 Why: a 36-task spec-driven workplan was wrong in four places that would have
-broken the build, two of its own tasks contradicted each other, and 44 of 110
-specs described deleted features while nothing failed. Meanwhile `hexa build`
-produced 777 working lines from one challenge and one command, and `hexa harden`
-then found three real bugs its own passing tests missed.
+broken the build, and two of its own tasks contradicted each other. The same
+rot reached this repository's own decision records — 113 of 140 cited ADR ids
+resolved to no file, and nothing failed, because nothing checked a citation
+against the ledger (`hexa adr doctor` now does; the audit is
+`docs/analysis/2609151900-adrs-as-memory-investigation.md`). Meanwhile `hexa
+build` produced 777 working lines from one challenge and one command, and `hexa
+harden` then found three real bugs its own passing tests missed.
 
 ## Skills & agents
 
