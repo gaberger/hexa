@@ -215,7 +215,15 @@ fn extract_ts_imports(
             // import type { Baz } from '../bar.js'
             // import * as ns from 'pkg'
             "import_statement" => {
-                if let Some(src) = child.child_by_field_name("source") {
+                // `import pg = require("pg")` has no `source` field: the
+                // specifier hangs off an `import_require_clause`. It was read
+                // by neither half — not a declaration here, and skipped as an
+                // `import_statement` by the reference collector — so it was the
+                // one import form nothing saw. (ADR-2609221430 §4.)
+                let specifier = child
+                    .child_by_field_name("source")
+                    .or_else(|| import_require_specifier(&child));
+                if let Some(src) = specifier {
                     let raw_path = unquote(node_text(src, source));
                     let names = extract_ts_import_names(&child, source);
                     imports.push(ImportStatement {
@@ -251,6 +259,15 @@ fn extract_ts_imports(
     }
 
     Ok(imports)
+}
+
+/// The `"pkg"` of an `import x = require("pkg")`, if this is one.
+fn import_require_specifier<'a>(node: &tree_sitter::Node<'a>) -> Option<tree_sitter::Node<'a>> {
+    let mut cursor = node.walk();
+    let clause = node.children(&mut cursor).find(|c| c.kind() == "import_require_clause")?;
+    let mut inner = clause.walk();
+    let found = clause.children(&mut inner).find(|c| matches!(c.kind(), "string" | "template_string"));
+    found
 }
 
 /// Extract imported names from an import statement clause.
@@ -827,10 +844,14 @@ pub enum ReferenceKind {
 /// module is the caller's question, because only the caller knows what the
 /// project declares. Returning local paths here and filtering there keeps this
 /// function testable against the grammar alone.
-pub fn extract_module_references(source: &str, lang: Language) -> Vec<ModuleReference> {
-    let Ok(tree) = parse_source(source, lang) else {
-        return Vec::new();
-    };
+pub fn extract_module_references(
+    source: &str,
+    lang: Language,
+) -> Result<Vec<ModuleReference>, AnalysisError> {
+    // A parse failure used to return an empty list, which reads exactly like a
+    // file with nothing in it. ADR-2609122048: a tool that reports "nothing
+    // found" must prove it looked, so the caller is told instead.
+    let tree = parse_source(source, lang)?;
     let mut out = Vec::new();
     match lang {
         Language::Rust => collect_rust_references(tree.root_node(), source, &mut out),
@@ -839,7 +860,7 @@ pub fn extract_module_references(source: &str, lang: Language) -> Vec<ModuleRefe
         // here that `extract_imports` has not already seen.
         Language::Go | Language::Unknown => {}
     }
-    out
+    Ok(out)
 }
 
 fn collect_rust_references(
@@ -873,11 +894,28 @@ fn collect_rust_references(
                 }
                 continue;
             }
+            // Inside a macro, every argument is one `token_tree` of raw tokens
+            // with no `scoped_identifier` among them, so `println!("{:?}",
+            // std::fs::read("x"))` named a denied module and nothing saw it.
+            // (ADR-2609221430 §1.) Hand-written code passed to a macro is read;
+            // code a macro *generates* is not, and stays a documented limit.
+            "token_tree" => {
+                collect_rust_token_tree(child, source, out);
+                continue;
+            }
             // The outermost scoped path is the whole reference. Descending
             // would report `std::fs` again inside `std::fs::read`.
             "scoped_identifier" | "scoped_type_identifier" => {
                 let raw = node_text(child, source);
                 let raw = raw.trim().trim_start_matches("::").to_string();
+                // `<sqlx::PgPool as Default>::default` is a scoped_identifier
+                // whose text begins with `<`, so its first segment read as
+                // `<sqlx` and matched nothing. The type inside the brackets is
+                // a reference in its own right, so walk it. (§5.)
+                if raw.starts_with('<') {
+                    collect_rust_references(child, source, out);
+                    continue;
+                }
                 if !raw.is_empty() {
                     out.push(ModuleReference {
                         raw_path: raw,
@@ -899,6 +937,65 @@ fn collect_rust_references(
             _ => {}
         }
         collect_rust_references(child, source, out);
+    }
+}
+
+/// Paths written inside a macro's argument list.
+///
+/// A `token_tree` is unparsed: `std`, `::`, `fs`, `::`, `read` arrive as five
+/// sibling tokens. A path is therefore a *run* — an optional leading `::`, an
+/// identifier, then one or more `:: identifier` pairs. A lone identifier is not
+/// a path, so `println!("{}", x)` contributes nothing.
+///
+/// Whether a run names a dependency or a local module is still the caller's
+/// question: `util::v()` and `Ordering::Less` are emitted here and filtered
+/// there, the same as every other reference.
+fn collect_rust_token_tree(node: tree_sitter::Node, source: &str, out: &mut Vec<ModuleReference>) {
+    fn is_path_segment(kind: &str) -> bool {
+        // `crate`, `self` and `super` are their own token kinds and are legal
+        // path heads. They resolve inside the project, which the caller knows
+        // and this function does not.
+        matches!(kind, "identifier" | "type_identifier" | "crate" | "self" | "super" | "metavariable")
+    }
+
+    let mut cursor = node.walk();
+    let children: Vec<tree_sitter::Node> = node.children(&mut cursor).collect();
+    let mut i = 0;
+    while i < children.len() {
+        // Macros nest: `println!("{:?}", vec![std::fs::read("x")])`.
+        if children[i].kind() == "token_tree" {
+            collect_rust_token_tree(children[i], source, out);
+            i += 1;
+            continue;
+        }
+        let mut j = i;
+        if children[j].kind() == "::" {
+            j += 1;
+        }
+        if j >= children.len() || !is_path_segment(children[j].kind()) {
+            i += 1;
+            continue;
+        }
+        let line = children[j].start_position().row + 1;
+        let mut segments = vec![node_text(children[j], source)];
+        let mut k = j + 1;
+        while k + 1 < children.len()
+            && children[k].kind() == "::"
+            && is_path_segment(children[k + 1].kind())
+        {
+            segments.push(node_text(children[k + 1], source));
+            k += 2;
+        }
+        if segments.len() >= 2 {
+            out.push(ModuleReference {
+                raw_path: segments.join("::"),
+                line,
+                kind: ReferenceKind::Path,
+            });
+        }
+        // Always advance: a single identifier that began no path still moves
+        // the cursor, or this loop does not terminate.
+        i = if k > i { k } else { i + 1 };
     }
 }
 
@@ -926,7 +1023,16 @@ fn collect_ts_references(node: tree_sitter::Node, source: &str, out: &mut Vec<Mo
                             .find(|n| !matches!(n.kind(), "(" | ")" | ","));
                         let line = child.start_position().row + 1;
                         match first {
-                            Some(n) if n.kind() == "string" => {
+                            // A template with no `${...}` in it is a constant
+                            // spelled with backticks. It used to be reported as
+                            // a computed load, which named a real limit that did
+                            // not apply and let a denied package through as a
+                            // warning. (ADR-2609221430 §4.)
+                            Some(n)
+                                if n.kind() == "string"
+                                    || (n.kind() == "template_string"
+                                        && !has_substitution(n)) =>
+                            {
                                 out.push(ModuleReference {
                                     raw_path: unquote(node_text(n, source)),
                                     line,
@@ -954,6 +1060,13 @@ fn collect_ts_references(node: tree_sitter::Node, source: &str, out: &mut Vec<Mo
 }
 
 // ── Helpers ──────────────────────────────────────────────
+
+/// Whether a `template_string` interpolates anything.
+fn has_substitution(node: tree_sitter::Node) -> bool {
+    let mut cursor = node.walk();
+    let found = node.children(&mut cursor).any(|c| c.kind() == "template_substitution");
+    found
+}
 
 fn node_text(node: tree_sitter::Node, source: &str) -> String {
     source[node.byte_range()].to_string()

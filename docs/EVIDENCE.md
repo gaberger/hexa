@@ -392,6 +392,80 @@ under `src/domain/`, with the shipped rules file and a manifest declaring
 Each finding names the reference and which half of the policy spoke, at the
 line it is written on.
 
+## Every reference is read, and every one is judged
+
+**Claim.** The gaps left in the check above are closed: a path written inside a
+macro, a second reference on a line whose first was permitted, a crate declared
+by a nested workspace member or a `target.<cfg>` table, a qualified path, and
+two TypeScript specifier forms. Local code is still not flagged.
+
+```bash
+cargo test -p hexa-cli --test domain_import_references_complete
+```
+
+Expected: `38 passed`. Against `08e7cda` — the commit this was written on —
+**23 of the 38 failed**. The 15 that passed are the negative controls and the
+cases that already worked, and they are why the number is not 38: widening an
+extractor is exactly how local code starts getting flagged, so half this gate
+exists to prove that did not happen.
+
+The ADR's Context table, re-run against the build that closes it. Every row was
+reproduced on `08e7cda` first; the middle column is what that build printed.
+
+| Case (a file under `src/domain/`) | On `08e7cda` | Now |
+|---|---|---|
+| `println!("{:?}", std::fs::read("x"))` | none | error naming `std::fs` |
+| `vec![std::fs::read("x")]` | none | error |
+| `assert!(std::env::var("X").is_ok())` | none | error |
+| `format!("{:?}", sqlx::query("x"))` | none | error naming `sqlx` |
+| `println!("{:?}", vec![std::fs::read("x")])` (nested) | none | error |
+| `std::collections::…` then `std::fs::read`, one line | none | error naming `std::fs` |
+| …same line, order reversed | error | error (unchanged) |
+| `std::fs::read` twice on one line | error | error, once |
+| `std::fs::read` and `std::env::var` on one line | one error | two errors |
+| Nested member `crates/core`, inline `sqlx::query` | none | error |
+| …and `use sqlx::PgPool;` in the same file | error | error — both, agreeing |
+| Glob member `crates/*` | none | error |
+| An `exclude`d member's manifest | not read | not read (unchanged) |
+| `[target.'cfg(unix)'.dependencies] nix` → `nix::unistd::getpid()` | none | error |
+| `[target.'cfg(windows)'.dev-dependencies] winapi` | none | error |
+| TS `import pg = require("pg")` | none | error |
+| TS `` require(`pg`) `` | warning | error |
+| TS `` require(`${x}`) `` | warning | warning (unchanged) |
+| TS `` import(`pg`) `` | warning | error |
+| `<sqlx::PgPool as Default>::default` | none | error naming `sqlx` |
+| `<O as Default>::default` on a local type | none | none (unchanged) |
+| A non-UTF-8 file under `src/domain/` | skipped in silence | one warning naming the file |
+| …its effect on the grade | — | none; `--strict` exits 1 |
+| `tests/domain/x.rs` importing `sqlx` | error | none |
+| `src/adapters/domain_helpers/x.rs` | none | none (unchanged) |
+| `src/adapters/domain/x.rs` | error | error (unchanged) |
+| `src/domain/x.rs` importing `sqlx` | error | error (unchanged) |
+
+The negative controls, all unchanged: comments, doc comments and string
+literals naming denied modules; `O::new()` on a local type; an enum variant
+after `use std::cmp::Ordering;`; a local `mod util` reached as `util::v()`
+inside a macro; `crate::util::v()`; and `vec![1, 2, 3]`, which has no path in
+it at all.
+
+Anchoring changed one of these, not three. `domain_helpers` never matched —
+`/domain/` is not a substring of `/domain_helpers/` — so that row is a control.
+`src/adapters/domain/` still matches, and should: `domain` there is a whole
+segment, and deciding that a `domain` directory stops being one because of its
+parent is a rule this ADR did not make. What anchoring actually buys is the
+`tests/` row, plus the guarantee that a future `domain_x` layout stays out.
+
+**The dead MCP entry.** `hexa assets sync --force` wrote an MCP server whose
+command was the hexa binary with an `mcp` subcommand. The binary has no such
+subcommand — it answers `error: unrecognized subcommand` — so any client that
+loaded `.mcp.json` started a server that exited immediately. The gate pins the
+premise as well as the fix: `hexa_has_no_mcp_subcommand` will fail the day hexa
+grows one, which is the right moment to revisit this.
+
+It now writes no such entry, and removes that one if it wrote it before —
+matched on the exact command and args, so a `hexa` entry pointed somewhere else
+is left alone, and every other server in the file is untouched.
+
 ## The refactoring trial, and what of it can be re-run
 
 **Claim.** hexa repaired 17 boundary violations in a project it did not write,
@@ -418,9 +492,11 @@ left to look like the others.
   1 of 10 trials. There is no command for it. The trial is in
   [`analysis/2609120300-brownfield-trial.md`](analysis/2609120300-brownfield-trial.md).
 - **What no static reading shows.** Third-party dependencies in `domain/` are
-  checked, whether or not they have an import line (see "A reference is an
-  import" above). What remains unseen is code generated by a macro from an
-  allowed crate, reflection, and FFI.
+  checked whether or not they have an import line, and whether or not they are
+  written inside a macro (see the two sections above). What remains unseen is
+  code generated by a macro from an allowed crate, reflection, and FFI. A
+  module loaded by a computed name, and a file that could not be read, are
+  reported as warnings rather than left out.
 - **Repair beyond single-token bugs.** The brownfield trial injected one wrong
   token per file. Multi-file changes are untested.
 - **"44 of 110 specs described deleted features."** The figure appears in

@@ -479,14 +479,25 @@ fn sync_mcp_json(target: &Path, dry_run: bool) -> Result<Option<String>> {
 
     let original = mcp.to_string();
 
-    mcp["mcpServers"]["hexa"] = serde_json::json!({
-        "command": "hexa",
-        "args": ["mcp"],
-        "toolSearch": {
-            "type": "tool_search_tool_bm25_20251119",
-            "enabled": true
+    // There is no `hexa mcp` — the binary answers `unrecognized subcommand`.
+    // Writing the entry told every client that loads .mcp.json to start a
+    // server that exits immediately, which reads as a broken hexa rather than
+    // as a line that should never have been written. Remove the entry we wrote
+    // before, and write no new one. (ADR-2609221430 §8.) If hexa ever serves
+    // MCP, that gets its own ADR and its own gate.
+    if let Some(servers) = mcp.get_mut("mcpServers").and_then(|s| s.as_object_mut()) {
+        let ours = servers.get("hexa").is_some_and(|e| {
+            e.get("command").and_then(|c| c.as_str()) == Some("hexa")
+                && e.get("args").and_then(|a| a.as_array()).is_some_and(|a| {
+                    a.len() == 1 && a[0].as_str() == Some("mcp")
+                })
+        });
+        // Only the entry with our command and our args. A `hexa` server the
+        // user pointed somewhere else is theirs, and this file is theirs.
+        if ours {
+            servers.remove("hexa");
         }
-    });
+    }
 
     let updated = mcp.to_string();
     if original == updated {
