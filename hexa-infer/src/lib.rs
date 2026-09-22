@@ -22,6 +22,6 @@ pub use adapters::{
 };
 pub use endpoint::Endpoint;
 pub use complete::{complete_raw, complete_text};
-pub use tiers::{react_models, tier_model};
+pub use tiers::{react_models, react_models_in_config, tier_model};
 pub use local_provider::{configured_tiers, local_provider, LocalProvider};
 pub use discover::{discover, enumerate_models, served_models, serves, Coverage, Found};

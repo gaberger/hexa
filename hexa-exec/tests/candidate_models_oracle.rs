@@ -8,16 +8,17 @@ fn s(xs: &[&str]) -> Vec<String> {
 
 #[test]
 fn explicit_model_wins() {
-    assert_eq!(candidate_models(Some("foo"), &s(&["a", "b"]), Some("bar")), s(&["foo"]));
+    assert_eq!(candidate_models(Some("foo"), &s(&["a", "b"])), s(&["foo"]));
 }
 #[test]
 fn configured_list_used_when_no_explicit() {
-    assert_eq!(candidate_models(None, &s(&["a", "b"]), Some("bar")), s(&["a", "b"]));
+    assert_eq!(candidate_models(None, &s(&["a", "b"])), s(&["a", "b"]));
 }
-#[test]
-fn single_fallback_when_list_empty() {
-    assert_eq!(candidate_models(None, &[], Some("bar")), s(&["bar"]));
-}
+// The singular-key fallback that used to be asserted here is now read, not
+// resolved: it is `hexa_infer::react_models_in_config`, gated by
+// `hexa-infer/tests/one_reader_for_react_models.rs`. The end-to-end assertion
+// for it is unchanged in the sibling oracle,
+// `react_models_config_oracle.rs::single_from_config`.
 /// Nothing configured means nothing to run, not a model of hexa's choosing.
 ///
 /// This used to assert a hardcoded pair of model ids. Founding goal G1 says no
@@ -30,5 +31,5 @@ fn single_fallback_when_list_empty() {
 /// that is missing.
 #[test]
 fn nothing_configured_yields_no_candidates() {
-    assert_eq!(candidate_models(None, &[], None), Vec::<String>::new());
+    assert_eq!(candidate_models(None, &[]), Vec::<String>::new());
 }

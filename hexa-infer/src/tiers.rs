@@ -53,13 +53,50 @@ fn react_models_in(root: &Path) -> Vec<String> {
     let Ok(text) = std::fs::read_to_string(root.join(".hexa").join("project.json")) else {
         return Vec::new();
     };
-    let Ok(root) = serde_json::from_str::<serde_json::Value>(&text) else {
+    let Ok(cfg) = serde_json::from_str::<serde_json::Value>(&text) else {
         return Vec::new();
     };
-    root.get("inference")
+    react_models_in_config(&cfg)
+}
+
+/// The ReAct models declared by an already-parsed `project.json`.
+///
+/// **One reader for the key.** This used to be two: this module read the
+/// plural `inference.react_models`, and the do-loop read the plural array
+/// *and* a singular `inference.react_model`, from its own copy of the file. A
+/// project that set only the singular key had a do-loop that ran and a `hexa
+/// hey` that reported nothing configured — one configuration meaning two
+/// things depending on who asked, with no error either way.
+///
+/// The plural key wins when both are present, because a list is the more
+/// specific statement. Nothing configured is an empty list and never a guess:
+/// a model id defaulted here is one the operator never chose and cannot
+/// change by editing configuration, which is founding goal G1's failure in one
+/// line.
+///
+/// Pure, so a caller that already holds the document does not read it again,
+/// and a test needs no filesystem.
+pub fn react_models_in_config(cfg: &serde_json::Value) -> Vec<String> {
+    let inference = cfg.get("inference");
+    let plural: Vec<String> = inference
         .and_then(|i| i.get("react_models"))
         .and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    if !plural.is_empty() {
+        return plural;
+    }
+    inference
+        .and_then(|i| i.get("react_model"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| vec![s.to_string()])
         .unwrap_or_default()
 }
 
