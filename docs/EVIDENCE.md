@@ -510,12 +510,32 @@ produced "153 cited, 2 unresolved", and both of the two were inventions of the
 pattern. The pattern above takes the whole run of digits, so a longer id cannot
 be truncated into a shorter one nobody wrote.
 
-`hexa adr doctor` shares that truncation: given a four-digit id it reports a
-dangling three-digit one. It is recorded here rather than fixed in the same
-change, because the fix belongs with a gate of its own. It does not affect the
-finding above — no real decision citation dangles either way — and it is why
-this section describes the fixture ids instead of spelling them, since writing
-one here makes this page cite it.
+**`hexa adr doctor` does not share that bug, and an earlier version of this
+section said it did.** The checker drops a match followed by a digit, so it
+never reports a truncated id. What it does instead is quieter and worse: a
+four-digit id matches on its first three, the guard sees the fourth digit and
+discards the whole match, so a **four-digit citation that dangles is invisible**
+— the checker reports "registry is consistent" about a file it could not see.
+Reproduced on this build:
+
+```bash
+mkdir -p /tmp/adrgap/docs/adrs /tmp/adrgap/src && cd /tmp/adrgap
+printf -- '---\nid: ADR-001\nstatus: accepted\ndate: 2026-01-01\n---\n# ADR-001: x\n' \
+  > docs/adrs/ADR-001-x.md
+printf '// cites ADR-0042, which does not exist\npub fn f() {}\n' > src/lib.rs
+hexa adr doctor        # "No findings — registry is consistent"
+```
+
+Not fixed here, deliberately. Widening the pattern makes every id visible, and
+that surfaces prose that *discusses* an id rather than citing a decision —
+including comments inside the checker's own source explaining this very
+behaviour. Telling a citation from an example is a design decision that needs
+its own ADR and its own gate, not a regex edit. What ships now is the checker
+running in CI at all, which is why the gap is written down here instead of
+being discovered again later.
+
+This is also why this section describes the fixture ids instead of spelling
+them: writing one here makes this page cite it.
 
 The 2026-09-15 figures were measured with the older pattern and carry the same
 truncation, so treat 140 and 113 as close rather than exact. The magnitude is
