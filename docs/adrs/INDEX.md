@@ -6,7 +6,7 @@
 > [`ARCHITECTURE.md`](../../ARCHITECTURE.md); for *why* a decision was made,
 > read the ADR itself.
 
-**37 ADRs** across 1 epochs.
+**38 ADRs** across 1 epochs.
 
 ## Epoch: `single-agent` — **current**
 
@@ -17,6 +17,7 @@ _One gateway-mediated agent loop; code-graph context as the differentiator_
 | ADR-2609221430 | accepted | ADR-2609221430: Every reference in the file is read, and every one is judged |  |
 | ADR-2609221700 | accepted | ADR-2609221700: A grade is a claim about code that was read |  |
 | ADR-2609221830 | accepted | ADR-2609221830: A citation is an id in text people read |  |
+| ADR-2609221900 | accepted | ADR-2609221900: What generated this is written when it is generated |  |
 | ADR-2609211200 | accepted | ADR-2609211200: Memory belongs to the project it was learned in |  |
 | ADR-2609211245 | accepted | ADR-2609211245: The TypeScript gate runs where the network is |  |
 | ADR-2609211430 | accepted | ADR-2609211430: The domain imports only what it is allowed, and a rule error costs grade |  |
