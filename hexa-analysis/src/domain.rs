@@ -168,6 +168,33 @@ pub struct ArchAnalysisResult {
     /// ADR-056: Frontend hexagonal architecture check results (None if no frontend found).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub frontend: Option<super::frontend_checker::FrontendCheckResult>,
+    /// How much of what was read could be placed in a layer (ADR-2609241707).
+    #[serde(default)]
+    pub coverage: Coverage,
+}
+
+/// The share of the graded files that have a layer. An import touching an
+/// unclassified file is never checked, so the grade says nothing about it —
+/// and hexa graded itself A+ with 118 of 144 files in that state, while
+/// nothing said so (ADR-2609241707).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Coverage {
+    pub classified: usize,
+    pub total: usize,
+    /// Every file with no layer, by path — each one a fix.
+    pub unclassified: Vec<String>,
+}
+
+impl Coverage {
+    /// The highest score this coverage can support: the classified share,
+    /// rounded down, and never A+ (95) while any file is unclassified.
+    pub fn ceiling(&self) -> u8 {
+        if self.unclassified.is_empty() || self.total == 0 {
+            return 100;
+        }
+        let pct = self.classified * 100 / self.total;
+        u8::try_from(pct.min(94)).unwrap_or(94)
+    }
 }
 
 impl ArchAnalysisResult {

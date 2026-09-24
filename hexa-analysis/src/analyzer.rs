@@ -15,7 +15,8 @@ use super::boundary_checker;
 use super::cycle_detector;
 use super::dead_export_finder::{self, FileData};
 use super::domain::{
-    ArchAnalysisResult, DeadExport, DependencyViolation, ImportEdge, ImportStatement, Language,
+    ArchAnalysisResult, Coverage, DeadExport, DependencyViolation, HexLayer, ImportEdge, ImportStatement,
+    Language,
 };
 use super::frontend_checker;
 use super::layer_classifier::LayerMap;
@@ -137,6 +138,25 @@ pub async fn file_violations(root: &Path, rel_path: &str) -> Result<Vec<Dependen
     let imports = TreeSitterAdapter::new().extract_imports(Path::new(rel_path), &source, lang)?;
     let edges = edges_of(rel_path, &imports, &packages, &layers, go_mod.as_deref());
     Ok(boundary_checker::find_violations(&edges))
+}
+
+/// Which graded files have a layer. A build script is not architecture and
+/// counts neither way.
+fn coverage_of(file_data: &[FileData], layers: &LayerMap) -> Coverage {
+    let mut cov = Coverage::default();
+    for f in file_data {
+        if f.path.rsplit('/').next() == Some("build.rs") {
+            continue;
+        }
+        cov.total += 1;
+        if layers.classify(&f.path) == HexLayer::Unknown {
+            cov.unclassified.push(f.path.clone());
+        } else {
+            cov.classified += 1;
+        }
+    }
+    cov.unclassified.sort();
+    cov
 }
 
 /// Resolve an import: the project's own packages first, then the language's
@@ -571,13 +591,15 @@ impl ArchAnalysisPort for ArchAnalyzer {
         // project's rules file. The caller that owns that file applies the
         // term (ADR-2609211430 §1) — in hexa's case `analyze::deep_analysis`,
         // which is the one door every graded surface goes through.
+        let coverage = coverage_of(&file_data, &layers);
         let health_score = ArchAnalysisResult::compute_health_score(
             violations.len(),
             circular_deps.len(),
             dead_exports.len(),
             unused_ports.len(),
             0,
-        );
+        )
+        .min(coverage.ceiling());
 
         // ADR-056: Frontend hexagonal architecture checks (skipped if no assets/src/)
         let frontend = frontend_checker::check_frontend(root_path);
@@ -592,6 +614,7 @@ impl ArchAnalysisPort for ArchAnalyzer {
             file_count: file_data.len(),
             edge_count: edges.len(),
             frontend,
+            coverage,
         })
     }
 

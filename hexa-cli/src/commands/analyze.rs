@@ -63,6 +63,7 @@ struct ScoreItems {
     cycles: Vec<Vec<String>>,
     dead: Vec<String>,
     unused: Vec<String>,
+    coverage: hexa_analysis::domain::Coverage,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -368,6 +369,7 @@ pub async fn run(
                         .map(|d| format!("{}:{} {}", d.file, d.line, d.export_name))
                         .collect::<Vec<_>>(),
                     unused: result.unused_ports.clone(),
+                    coverage: result.coverage.clone(),
                 });
                 Some(result.health_score as u64)
             }
@@ -427,7 +429,7 @@ pub async fn run(
                 score_colored,
             );
         }
-        if let Some(ScoreItems { violations, cycles, dead, unused }) = &score_components.clone().filter(|_| !nothing_parsed) {
+        if let Some(ScoreItems { violations, cycles, dead, unused, coverage }) = &score_components.clone().filter(|_| !nothing_parsed) {
             println!(
                 "    violations {} · cycles {} · dead exports {} · unused ports {}",
                 violations,
@@ -435,6 +437,31 @@ pub async fn run(
                 dead.len(),
                 unused.len()
             );
+            // What the grade could see. An unclassified file's imports are
+            // never checked, so the score is capped at the share classified
+            // and A+ needs all of it (ADR-2609241707).
+            println!(
+                "    coverage {}/{} files in a layer{}",
+                coverage.classified,
+                coverage.total,
+                if coverage.unclassified.is_empty() {
+                    String::new()
+                } else {
+                    format!(" — score capped at {}", coverage.ceiling())
+                }
+            );
+            for u in coverage.unclassified.iter().take(8) {
+                println!("      no layer      {}", u);
+            }
+            if coverage.unclassified.len() > 8 {
+                println!("      … and {} more files with no layer", coverage.unclassified.len() - 8);
+            }
+            if !coverage.unclassified.is_empty() {
+                println!(
+                    "      {}",
+                    "declare each one's layer in .hexa/project.json → analyze.layers, or move it".dimmed()
+                );
+            }
             // A cycle costs 15 points, more than any other single item, and
             // used to be the one deduction printed as a bare number. The
             // footer below promises that every item names its fix; it did
@@ -456,7 +483,7 @@ pub async fn run(
             }
             println!("    {}", SCORE_FORMULA.dimmed());
             println!("    {}", GRADE_BANDS.dimmed());
-            if *violations > 0 || !cycles.is_empty() || !dead.is_empty() || !unused.is_empty() {
+            if *violations > 0 || !cycles.is_empty() || !dead.is_empty() || !unused.is_empty() || !coverage.unclassified.is_empty() {
                 // Said here because it was not done: an agent relayed "B, 87,
                 // unchanged" five times and fixed only the two items its own
                 // diff had added. The grade is a property of the tree.
@@ -765,7 +792,10 @@ pub async fn deep_analysis(
         result.dead_exports.len(),
         result.unused_ports.len(),
         rule_errors,
-    );
+    )
+    // Re-scored here, so the ceiling is re-applied here: the score cannot
+    // exceed what the grade could classify (ADR-2609241707).
+    .min(result.coverage.ceiling());
     Ok(result)
 }
 
@@ -1927,7 +1957,7 @@ fn check_adr_compliance_inner(root: &Path, announce: bool) -> AdrCompliance {
 /// carried in `--json` under `explain`, so a person and a model read the
 /// same sentence.
 const SCORE_FORMULA: &str =
-    "score = 100 − 10·(violations + rule errors) − 15·cycles − dead exports (max 20) − unused ports (max 10)";
+    "score = 100 − 10·(violations + rule errors) − 15·cycles − dead exports (max 20) − unused ports (max 10), capped at the % of files in a layer (A+ needs all)";
 const GRADE_BANDS: &str = "A+ 95–100 · A 90–94 · B 80–89 · C 70–79 · D 60–69 · F below 60";
 const HEALTH_NOTE: &str = "read next to the grade; none of these move the score";
 
@@ -1938,9 +1968,9 @@ const HEALTH_NOTE: &str = "read next to the grade; none of these move the score"
 fn explain_json() -> serde_json::Value {
     serde_json::json!({
         "score": {
-            "formula": "100 - 10*(violations + rule_errors) - 15*circular_deps - min(dead_exports, 20) - min(unused_ports, 10)",
+            "formula": "min(100 - 10*(violations + rule_errors) - 15*circular_deps - min(dead_exports, 20) - min(unused_ports, 10), coverage_ceiling) where coverage_ceiling = 100 if every file has a layer, else min(floor(classified*100/total), 94)",
             "grade_bands": { "A+": "95-100", "A": "90-94", "B": "80-89", "C": "70-79", "D": "60-69", "F": "0-59" },
-            "in_score": ["violations", "rule_errors", "circular_deps", "dead_exports", "unused_ports"],
+            "in_score": ["violations", "rule_errors", "circular_deps", "dead_exports", "unused_ports", "coverage"],
             "not_in_score": ["cohesion", "duplication", "god_types", "dead_layers", "orphans"]
         },
         "components": {
@@ -2102,6 +2132,7 @@ async fn run_json(root: &Path, strict: bool, adr_compliance_only: bool) -> anyho
                 "circular_deps": deep.circular_deps.len(),
                 "dead_exports": deep.dead_exports.len(),
                 "unused_ports": deep.unused_ports.len(),
+                "coverage_ceiling": deep.coverage.ceiling(),
             });
             // And the items themselves, so a count can be checked. This
             // held for two of the four inputs and not for the two that
@@ -2110,6 +2141,12 @@ async fn run_json(root: &Path, strict: bool, adr_compliance_only: bool) -> anyho
             // cycles were serialized nowhere at all. A JSON consumer was
             // handed a count it could not reconcile (ADR-2609140020).
             result["unused_ports"] = serde_json::json!(deep.unused_ports);
+            result["coverage"] = serde_json::json!({
+                "classified": deep.coverage.classified,
+                "total": deep.coverage.total,
+                "unclassified": deep.coverage.unclassified,
+                "ceiling": deep.coverage.ceiling(),
+            });
             result["dead_exports"] = serde_json::json!(deep.dead_exports);
             result["circular_deps"] = serde_json::json!(deep.circular_deps);
             result["boundary_violations"] = serde_json::json!(deep
