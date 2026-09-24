@@ -219,11 +219,19 @@ impl LayerMap {
     }
 
     /// The declared layer for `path`, else the built-in classification.
+    ///
+    /// A key naming a source file also names its module: an import of
+    /// `crate::store::Disk` resolves to `src/store/Disk`, not `src/store.rs`,
+    /// and a declaration that missed it left the import unchecked.
     pub fn classify(&self, path: &str) -> HexLayer {
+        let under = |p: &str, key: &str| {
+            p == key || p.strip_prefix(key).is_some_and(|rest| rest.starts_with('/'))
+        };
         for (prefix, layer) in &self.entries {
-            let hit = path == prefix
-                || path.strip_prefix(prefix.as_str()).is_some_and(|rest| rest.starts_with('/'));
-            if hit {
+            let module = [".rs", ".ts", ".tsx", ".go"]
+                .iter()
+                .find_map(|ext| prefix.strip_suffix(ext));
+            if under(path, prefix) || module.is_some_and(|m| under(path, m)) {
                 return *layer;
             }
         }

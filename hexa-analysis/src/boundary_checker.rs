@@ -41,15 +41,28 @@ pub fn find_violations(edges: &[ImportEdge]) -> Vec<DependencyViolation> {
 /// `adapters/secondary`. That is structural nesting, not one adapter reaching
 /// for another, and reading it as a violation flags the shipped scaffold
 /// (ADR-2609122048). A rule that flags correct code is worse than no rule.
+///
+/// Nested means inside the module's *own* subtree: a `mod.rs`, `lib.rs`,
+/// `main.rs` or `index.ts` owns its directory, `foo.rs` owns `foo/`, a Go
+/// file owns its package directory. It used to be the importing file's
+/// directory for every file — and for a file directly in `src/` that is
+/// the whole crate, so every import such a file made was exempt. hexa
+/// graded itself A+ through that with use cases importing adapters.
 fn declares_own_submodule(from_file: &str, to_file: &str) -> bool {
-    let dir = match from_file.rfind('/') {
-        Some(i) => &from_file[..i],
-        None => return false,
+    let (dir, name) = match from_file.rsplit_once('/') {
+        Some((d, n)) => (d, n),
+        None => ("", from_file),
     };
-    if dir.is_empty() {
+    let own: String = match name {
+        "mod.rs" | "lib.rs" | "main.rs" | "index.ts" | "index.tsx" | "index.js" => dir.to_string(),
+        n if n.ends_with(".go") => dir.to_string(),
+        n if n.ends_with(".rs") => from_file.trim_end_matches(".rs").to_string(),
+        _ => return false,
+    };
+    if own.is_empty() {
         return false;
     }
-    to_file.strip_prefix(dir).is_some_and(|rest| rest.starts_with('/'))
+    to_file.strip_prefix(own.as_str()).is_some_and(|rest| rest.starts_with('/'))
 }
 
 #[cfg(test)]

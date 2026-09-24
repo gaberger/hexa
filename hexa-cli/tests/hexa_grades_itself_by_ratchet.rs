@@ -19,6 +19,35 @@ use std::process::Command;
 
 /// (importing file, import) — each with the reason it is still here.
 const KNOWN: &[(&str, &str)] = &[
+    // Surfaced together when the "own submodule" exemption stopped exempting
+    // every import a crate-root file made, and a file's declared layer began
+    // to match its module path. They were always there; the grade could not
+    // see them, and printed A+.
+    // use case → adapter, no port between them.
+    ("hexa-analysis/src/analyzers/dead_layer.rs", "crate::treesitter_adapter::TreeSitterAdapter"),
+    ("hexa-analysis/src/layer_inventory.rs", "crate::treesitter_adapter::parse_source"),
+    ("hexa-exec/src/direct_react.rs", "crate::tools::ToolRegistry"),
+    ("hexa-exec/src/direct_workspace.rs", "hexa_git::worktree"),
+    ("hexa-exec/src/simple_agent.rs", "crate::tools::ToolRegistry"),
+    ("hexa-infer/src/complete.rs", "crate::adapters::secondary::AnthropicAdapter"),
+    ("hexa-infer/src/complete.rs", "crate::adapters::secondary::ClaudeCodeInferenceAdapter"),
+    ("hexa-infer/src/complete.rs", "crate::adapters::secondary::OllamaInferenceAdapter"),
+    ("hexa-infer/src/complete.rs", "crate::adapters::secondary::OpenAiCompatAdapter"),
+    ("hexa-infer/src/complete.rs", "crate::registry"),
+    // CLI command → adapter or infrastructure directly — the command is doing the composition root's wiring.
+    ("hexa-cli/src/commands/assets_cmd.rs", "crate::assets::Assets"),
+    ("hexa-cli/src/commands/doctor/mod.rs", "crate::assets::Assets"),
+    ("hexa-cli/src/commands/inference.rs", "crate::assets::Assets"),
+    ("hexa-cli/src/commands/memory/mod.rs", "hexa_exec::local_store::MemoryScope"),
+    ("hexa-cli/src/commands/memory/mod.rs", "hexa_exec::local_store::self"),
+    ("hexa-cli/src/commands/skill.rs", "crate::assets::Assets"),
+    ("hexa-cli/src/commands/spend_cmd.rs", "hexa_infer::spend::Totals"),
+    ("hexa-cli/src/commands/spend_cmd.rs", "hexa_infer::spend::self"),
+    // adapter → domain type the port does not re-export.
+    ("hexa-cli/src/commands/graph.rs", "hexa_graph::model::KnowledgeGraph"),
+    ("hexa-graph/src/extract/code.rs", "crate::model::NodeKind"),
+    ("hexa-infer/src/discover.rs", "crate::endpoint::Endpoint"),
+    ("hexa-infer/src/registry.rs", "crate::endpoint::Endpoint"),
 ];
 
 #[test]
