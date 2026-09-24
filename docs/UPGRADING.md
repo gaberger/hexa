@@ -7,6 +7,51 @@ exists, and the one command that resolves it.
 A change that needs nothing from you is not listed here; it is in the commit
 log.
 
+## A grade cannot exceed the code it could classify (`bf1bafc`)
+
+Every file the grade reads must have a layer for the grade to reach A+, and
+the score is capped at the share of files that do (ADR-2609241707). Before
+this, a file the classifier could not place was skipped silently — every import
+into or out of it went unchecked — and the grade said nothing about how much
+was skipped.
+
+**What changes for you.** A project organised by crate, by feature, or by any
+folder names other than `domain/`, `ports/`, `usecases/`, `adapters/` may grade
+lower. The report names each file with no layer. Declare where it belongs:
+
+```json
+{ "analyze": { "layers": { "src/billing": "usecases", "crates/store": "adapters/secondary" } } }
+```
+
+in `.hexa/project.json`, then `hexa analyze .` again. Keys are path prefixes
+matched on whole segments, longest first; a misspelt layer stops the run and
+names the entry. A crate or package named for its layer (`app-domain`,
+`app_ports`) needs no entry.
+
+## Imports between your own packages are checked (`0f0024f`, `342a903`)
+
+An import of another crate, Go module or npm package *in the same workspace*
+is now an edge the grade checks. Before, it was taken for a third-party
+dependency and never checked, so a domain crate importing an adapter crate
+graded clean.
+
+**What changes for you.** Violations that were always there become visible,
+and the grade drops by 10 for each. Each one is listed with its file and
+import. hexa's own tree went from A+ to C on this change before its fixes —
+the usual fix is the one hexa's scaffold teaches: have the port re-export the
+domain value types it speaks, and import them through the port.
+
+## `--json` no longer has `rust_layers` or `rust_violations` (`316787e`)
+
+Both came from a Rust-only scan with its own layer rules, which disagreed
+with the grade (it called a flat `adapters/` folder secondary; the grade,
+by ADR-2609122048, calls it primary). Every violation is in
+`boundary_violations`, from the one classifier.
+
+**What changes for you.** A script that read those fields reads
+`boundary_violations` for violations and `layer_inventory` for per-layer
+counts (files, interfaces, types, implementations, functions — per language).
+
 ## Memory is stored per project (`97dc8f0`)
 
 `hexa memory` used to write to one file per *user*, so every project on the
