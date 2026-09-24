@@ -1,3 +1,4 @@
+use hexa_infer::ports::Discovery;
 use std::path::Path;
 use std::process::Command;
 
@@ -33,7 +34,7 @@ impl BootstrapReport {
     }
 
     pub fn format_warning(&self) -> String {
-        let provider = hexa_infer::local_provider();
+        let provider = hexa_infer::ports::local_provider();
         let mut output = String::from("✗ No path to a model\n\n");
         output.push_str("╭─ Validation Report ───────────────────╮\n");
         for (service, ok) in &self.service_checks {
@@ -74,7 +75,7 @@ impl BootstrapValidator {
         // SpacetimeDB (3033) and hexa-nexus (5555) were checked here too. Both
         // are deleted (ADR-2608241500); an inference backend is the only
         // service hexa needs.
-        let provider = hexa_infer::local_provider();
+        let provider = hexa_infer::ports::local_provider();
         service_checks.push((
             provider.display_name.to_string(),
             self.check_service_health().await,
@@ -101,7 +102,7 @@ impl BootstrapValidator {
         // server on purpose. Only no path at all fails.
         // Every path the environment, the registry and PATH hold. The local
         // server counts only with the models the project configures.
-        let found = hexa_infer::discover();
+        let found = hexa_infer::discovery().discover();
         let local_up = service_checks.iter().all(|(_, ok)| *ok);
         let local_ok = local_up && model_checks.iter().all(|(_, ok)| *ok);
         let others: Vec<&hexa_infer::Found> = found.iter().filter(|f| f.kind != "local" && f.open()).collect();
@@ -125,13 +126,13 @@ impl BootstrapValidator {
 
     /// The address comes from the provider, never from a port argument.
     async fn check_service_health(&self) -> bool {
-        tokio::net::TcpStream::connect(hexa_infer::local_provider().socket_addr())
+        tokio::net::TcpStream::connect(hexa_infer::ports::local_provider().socket_addr())
             .await
             .is_ok()
     }
 
     fn model_exists(&self, model_name: &str) -> bool {
-        if let Ok(output) = Command::new(hexa_infer::local_provider().binary)
+        if let Ok(output) = Command::new(hexa_infer::ports::local_provider().binary)
             .arg("show")
             .arg(model_name)
             .output()

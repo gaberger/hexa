@@ -11,30 +11,7 @@ use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
 use crate::endpoint::Endpoint;
-
-/// One place a model can be reached.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Found {
-    /// `local`, `api`, `registered` or `frontier`.
-    pub kind: &'static str,
-    pub name: String,
-    /// The address, path or model; never a secret.
-    pub detail: String,
-    /// What told us: an environment variable, a file, or PATH.
-    pub via: String,
-    /// `Some(true)` answered a probe, `Some(false)` did not, `None` not probed.
-    pub reachable: Option<bool>,
-    /// The models this path is known to serve. Empty means *not
-    /// enumerated*, never *none* (ADR-2609131617 §1).
-    pub models: Vec<String>,
-}
-
-impl Found {
-    /// A path counts unless a probe said no.
-    pub fn open(&self) -> bool {
-        self.reachable != Some(false)
-    }
-}
+use crate::ports::Found;
 
 /// Discover from the real environment, registry and PATH.
 pub fn discover() -> Vec<Found> {
@@ -123,57 +100,6 @@ fn discover_with(
     out
 }
 
-/// What a configured tier's model resolves to among the discovered paths
-/// (ADR-2609131617 §3).
-#[derive(Debug, Clone, PartialEq)]
-pub enum Coverage {
-    /// A reachable path lists it; the name is that path's.
-    Served(String),
-    /// Every reachable path was enumerated and none lists it.
-    NotServed,
-    /// A reachable path could not be enumerated, so nothing can be said.
-    /// The name is that path's.
-    Unverified(String),
-}
-
-/// Does a frontier CLI answer for this model id?
-fn frontier_serves(model: &str) -> bool {
-    let m = model.to_ascii_lowercase();
-    m.starts_with("claude") || m.starts_with("anthropic/") || m.starts_with("us.anthropic.")
-}
-
-/// Resolve `model` against the discovered paths. Never a substring match:
-/// `registry::serving` makes the same point about routing, and a diagnosis
-/// that guesses is the thing this replaces.
-pub fn serves(found: &[Found], model: &str) -> Coverage {
-    let reachable = || found.iter().filter(|f| f.reachable == Some(true));
-    for f in reachable() {
-        if f.models.iter().any(|m| m == model) {
-            return Coverage::Served(f.name.clone());
-        }
-        if f.kind == "frontier" && frontier_serves(model) {
-            return Coverage::Served(f.name.clone());
-        }
-    }
-    // Nothing listed it. Only say so when every reachable path was asked.
-    match reachable().find(|f| f.models.is_empty() && f.kind != "frontier") {
-        Some(f) => Coverage::Unverified(f.name.clone()),
-        None => Coverage::NotServed,
-    }
-}
-
-/// Every model the reachable paths list, for the line that says what is
-/// actually on offer.
-pub fn served_models(found: &[Found]) -> Vec<String> {
-    let mut out: Vec<String> = found
-        .iter()
-        .filter(|f| f.reachable == Some(true))
-        .flat_map(|f| f.models.iter().cloned())
-        .collect();
-    out.sort();
-    out.dedup();
-    out
-}
 
 /// The names in an Ollama `/api/tags` body.
 fn tags_models(v: &serde_json::Value) -> Vec<String> {
@@ -211,25 +137,6 @@ pub async fn enumerate_models(base_url: &str) -> Option<Vec<String>> {
     None
 }
 
-/// Is there any path to a model?
-pub fn any_path(found: &[Found]) -> bool {
-    found.iter().any(Found::open)
-}
-
-/// The open paths, in words: "local server, anthropic, claude".
-pub fn path_words(found: &[Found]) -> String {
-    let names: Vec<String> = found
-        .iter()
-        .filter(|f| f.open())
-        .map(|f| match f.kind {
-            "local" => "local server".to_string(),
-            "frontier" => "claude".to_string(),
-            _ => f.name.clone(),
-        })
-        .collect();
-    if names.is_empty() { "none".to_string() } else { names.join(", ") }
-}
-
 /// Does this authority already carry a port?
 ///
 /// A bare `contains(':')` says yes for every IPv6 address, whose own colons
@@ -259,6 +166,16 @@ fn probe(url: &str) -> Option<bool> {
     Some(TcpStream::connect_timeout(&addr, Duration::from_millis(700)).is_ok())
 }
 
+/// [`Discovery`](crate::ports::Discovery) over the real environment,
+/// registry and PATH.
+pub struct EnvDiscovery;
+
+impl crate::ports::Discovery for EnvDiscovery {
+    fn discover(&self) -> Vec<Found> {
+        discover()
+    }
+}
+
 #[cfg(test)]
 mod has_port_tests {
     use super::has_port;
@@ -285,6 +202,8 @@ mod has_port_tests {
 #[cfg(test)]
 mod serves_tests {
     use super::*;
+    use crate::ports::Coverage;
+    use crate::reach::{served_models, serves};
 
     fn path(kind: &'static str, name: &str, reachable: Option<bool>, models: &[&str]) -> Found {
         Found {
@@ -359,6 +278,7 @@ mod serves_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::reach::{any_path, path_words};
 
     fn env_of<'p>(pairs: &'p [(&'p str, &'p str)]) -> impl Fn(&str) -> Option<String> + 'p {
         move |k: &str| pairs.iter().find(|(kk, _)| *kk == k).map(|(_, v)| v.to_string())

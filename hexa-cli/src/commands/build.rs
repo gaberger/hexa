@@ -23,6 +23,7 @@
 //! Both verbs take `--gate`, a shell command that must exit 0. Nothing here
 //! decides a build is finished; the gate does.
 
+use hexa_infer::ports::Discovery;
 use clap::Args;
 use colored::Colorize;
 use std::path::{Path, PathBuf};
@@ -82,7 +83,7 @@ pub struct HardenArgs {
 /// the same question of the same discovery; this is the check the verbs owed
 /// it before their first inference call, not a second opinion.
 fn first_blocker(found: &[hexa_infer::Found], verb: &str) -> Option<String> {
-    if hexa_infer::discover::any_path(found) {
+    if hexa_infer::reach::any_path(found) {
         return None;
     }
     Some(format!(
@@ -263,7 +264,7 @@ pub async fn run_harden(args: HardenArgs) -> anyhow::Result<()> {
     }
     // Before anything is recorded or hunted: a run that cannot reach a model
     // fails once, here, rather than once per dimension.
-    if let Some(blocker) = first_blocker(&hexa_infer::discover::discover(), "hexa harden") {
+    if let Some(blocker) = first_blocker(&hexa_infer::discovery().discover(), "hexa harden") {
         anyhow::bail!(blocker);
     }
     // The gate is recorded in the loop, so the hooks can see the work is under one.

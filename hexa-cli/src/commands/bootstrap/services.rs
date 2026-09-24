@@ -32,7 +32,7 @@ impl ServiceStarter {
     /// Start the local inference server.
     ///
     /// Its name, binary, port and start command come from
-    /// `hexa_infer::local_provider()` — this file named all four, which is
+    /// `hexa_infer::ports::local_provider()` — this file named all four, which is
     /// founding goal G1's failure and also meant a change of server was a
     /// six-file edit.
     ///
@@ -42,7 +42,7 @@ impl ServiceStarter {
     /// `hexa bootstrap` therefore hung until the operator killed it, and the
     /// `Ok(_)` arm reporting "running: true" was unreachable.
     async fn start_inference_server(&self) -> ServiceStatus {
-        let provider = hexa_infer::local_provider();
+        let provider = hexa_infer::ports::local_provider();
         let name = provider.display_name.to_string();
 
         if self.is_port_open().await && !self.force {
@@ -99,7 +99,7 @@ impl ServiceStarter {
     /// This took a `port` argument it never read, so it answered a different
     /// question than its signature promised (ADR-2609122048).
     async fn is_port_open(&self) -> bool {
-        tokio::net::TcpStream::connect(hexa_infer::local_provider().socket_addr())
+        tokio::net::TcpStream::connect(hexa_infer::ports::local_provider().socket_addr())
             .await
             .is_ok()
     }

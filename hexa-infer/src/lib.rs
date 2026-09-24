@@ -13,6 +13,7 @@ pub mod complete;
 pub mod endpoint;
 pub mod local_provider;
 pub mod ports;
+pub mod reach;
 pub mod discover;
 pub mod registry;
 pub mod spend;
@@ -25,8 +26,11 @@ pub use adapters::secondary::{
 };
 pub use endpoint::Endpoint;
 pub use tiers::{react_models, react_models_in_config, tier_model};
-pub use local_provider::{configured_tiers, local_provider, LocalProvider};
-pub use discover::{discover, enumerate_models, served_models, serves, Coverage, Found};
+pub use local_provider::configured_tiers;
+pub use ports::{local_provider, LocalProvider};
+pub use discover::enumerate_models;
+pub use ports::{Coverage, Found};
+pub use reach::{served_models, serves};
 
 /// Send one system+user turn and return the text of the reply, on the registry-backed backends.
 /// See [`complete::complete_text_with`].
@@ -59,4 +63,14 @@ pub fn spend_budget() -> Option<f64> {
 /// by [`spend_report::budget_verdict`].
 pub fn spend_budget_check() -> Result<(), String> {
     spend_report::budget_verdict(&spend::entries(), spend::budget_usd_per_day())
+}
+
+/// Discovery, wired: the environment, the registry and PATH.
+pub fn discovery() -> impl ports::Discovery {
+    discover::EnvDiscovery
+}
+
+/// The endpoint registry, wired: `~/.hexa/inference-servers.json`.
+pub fn endpoints() -> impl ports::EndpointRegistry {
+    registry::FileRegistry
 }

@@ -13,6 +13,7 @@
 //!   hexa inference discover --free                       # Auto-discover all free-tier providers
 //!   hexa inference stats                                 # Cost attribution dashboard
 
+use hexa_infer::ports::EndpointRegistry;
 use clap::Subcommand;
 use colored::Colorize;
 
@@ -462,9 +463,9 @@ async fn add_provider(
         quality_score: 0.0,
         quantization_level: resolved_quantization.clone().unwrap_or_default(),
     };
-    match hexa_infer::registry::upsert(endpoint) {
+    match hexa_infer::endpoints().upsert(endpoint) {
         Ok(()) => println!("  {} Written to {}", "✓".green(),
-                           hexa_infer::registry::registry_path().display()),
+                           hexa_infer::endpoints().path().display()),
         Err(e) => anyhow::bail!("could not write the inference registry: {e}"),
     }
 
@@ -564,7 +565,7 @@ async fn add_from_template(
         quality_score: 0.0,
         quantization_level: quantization.clone(),
     };
-    match hexa_infer::registry::upsert(endpoint) {
+    match hexa_infer::endpoints().upsert(endpoint) {
         Ok(()) => println!("  {} Written to the registry", "✓".green()),
         Err(e) => println!("  {} Registry write failed: {}", "!".yellow(), e),
     }
@@ -667,7 +668,7 @@ async fn discover_free_tier() -> anyhow::Result<()> {
 /// same shape from the registry file keeps the change to where the rows come
 /// from, rather than rewriting six blocks of display code that were not wrong.
 fn registry_rows() -> Vec<serde_json::Value> {
-    hexa_infer::registry::load()
+    hexa_infer::endpoints().load()
         .iter()
         .map(|e| {
             serde_json::json!({
@@ -724,9 +725,9 @@ async fn list_providers() -> anyhow::Result<()> {
     // SpacetimeDB, which it had preloaded from this same file on startup.
     println!();
     println!("{}", "── Registered Backends ──".cyan());
-    let endpoints = hexa_infer::registry::load();
+    let endpoints = hexa_infer::endpoints().load();
     if endpoints.is_empty() {
-        println!("  None registered in {}.", hexa_infer::registry::registry_path().display());
+        println!("  None registered in {}.", hexa_infer::endpoints().path().display());
     }
     for e in &endpoints {
         let icon = if e.status == "healthy" || e.status == "ok" {
@@ -958,13 +959,13 @@ async fn test_single_provider(id: &str, url: &str, provider_type: &str, model_na
                     "ℹ".cyan(), quality_score, latency_bonus, sanity_bonus);
 
                 // Persist the score to the registry file (ADR-2608241500 P6.2).
-                let mut all = hexa_infer::registry::load();
+                let mut all = hexa_infer::endpoints().load();
                 match all.iter_mut().find(|e| e.id == id) {
                     Some(e) => {
                         e.quality_score = quality_score;
                         e.status = "healthy".to_string();
                         e.health_checked_at = chrono::Utc::now().to_rfc3339();
-                        match hexa_infer::registry::save(&all) {
+                        match hexa_infer::endpoints().save(&all) {
                             Ok(()) => println!("  {} Calibration saved", "✓".green()),
                             Err(e) => println!("  {} Could not save calibration: {}", "!".yellow(), e),
                         }
@@ -1130,7 +1131,7 @@ async fn discover_ollama(prune: bool) -> anyhow::Result<()> {
     let mut registered_ids: Vec<String> = Vec::new();
 
     println!("{}", "── Registered Backends ──".cyan());
-    let registered = hexa_infer::registry::load();
+    let registered = hexa_infer::endpoints().load();
     if registered.is_empty() {
         println!("  None registered yet.");
     }
@@ -1159,7 +1160,7 @@ async fn discover_ollama(prune: bool) -> anyhow::Result<()> {
                 println!("  {} Removed {} (unreachable)", "✗".red(), e.id);
             }
         }
-        if let Err(err) = hexa_infer::registry::save(&kept) {
+        if let Err(err) = hexa_infer::endpoints().save(&kept) {
             println!("  {} Could not write the registry: {}", "!".yellow(), err);
         }
         println!();
@@ -1329,7 +1330,7 @@ async fn discover_openrouter(filter: Option<&str>, min_context: Option<u64>) -> 
             quality_score: 0.0,
             quantization_level: "cloud".to_string(),
         };
-        if hexa_infer::registry::upsert(endpoint).is_ok() {
+        if hexa_infer::endpoints().upsert(endpoint).is_ok() {
             registered += 1;
         }
 
@@ -1343,7 +1344,7 @@ async fn discover_openrouter(filter: Option<&str>, min_context: Option<u64>) -> 
 }
 
 async fn remove_provider(provider_id: &str) -> anyhow::Result<()> {
-    match hexa_infer::registry::remove(provider_id) {
+    match hexa_infer::endpoints().remove(provider_id) {
         Ok(true) => println!("{} Removed backend: {}", "✓".green(), provider_id),
         Ok(false) => println!("{} No backend with id '{}'", "!".yellow(), provider_id),
         Err(e) => anyhow::bail!("could not write the inference registry: {e}"),
@@ -1368,14 +1369,14 @@ const DEFAULT_MODELS: &[(&str, &str)] = &[
 /// Was a PATCH to `/api/inference/endpoints/{id}`, which the daemon turned
 /// into a SpacetimeDB row update.
 fn save_quality_score(id: &str, score: f32) -> Result<(), String> {
-    let mut all = hexa_infer::registry::load();
+    let mut all = hexa_infer::endpoints().load();
     let Some(e) = all.iter_mut().find(|e| e.id == id) else {
         return Err(format!("'{id}' is not registered"));
     };
     e.quality_score = score;
     e.status = "healthy".to_string();
     e.health_checked_at = chrono::Utc::now().to_rfc3339();
-    hexa_infer::registry::save(&all)
+    hexa_infer::endpoints().save(&all)
 }
 
 async fn setup_defaults() -> anyhow::Result<()> {
@@ -1414,7 +1415,7 @@ async fn setup_defaults() -> anyhow::Result<()> {
         print!("  {} {} ({})... ", "→".cyan(), model_id, purpose);
 
         // Register it, then calibrate.
-        let _ = hexa_infer::registry::upsert(hexa_infer::Endpoint {
+        let _ = hexa_infer::endpoints().upsert(hexa_infer::Endpoint {
             id: provider_id.clone(),
             url: or_url.to_string(),
             provider: "openrouter".to_string(),
@@ -1960,7 +1961,7 @@ async fn bench_provider(
     // ── Compare mode ────────────────────────────────────────────────────────
     if let Some(baseline_target) = compare {
         // Resolve baseline the same way
-        let baseline_resolved = hexa_infer::registry::load()
+        let baseline_resolved = hexa_infer::endpoints().load()
             .into_iter()
             .find(|e| {
                 e.id == baseline_target || e.id.starts_with(&format!("{}-", baseline_target))

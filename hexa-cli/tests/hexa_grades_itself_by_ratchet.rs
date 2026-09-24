@@ -20,7 +20,8 @@ use std::process::Command;
 /// (importing file, import) — each with the reason it is still here.
 const KNOWN: &[(&str, &str)] = &[
     // Surfaced when `super::` resolved to a real module, inline paths and
-    // nested/`pub use`/aliased imports became edges. Grouped by the rule.
+    // nested/`pub use`/aliased imports became edges. Grouped by the rule;
+    // each line goes when its crossing is fixed.
     // domain must not import from outside domain.
     ("hexa-analysis/src/domain.rs", "super::frontend_checker::FrontendCheckResult"),
     // adapters must not import from domain directly.
@@ -32,39 +33,18 @@ const KNOWN: &[(&str, &str)] = &[
     // adapters must not import from other adapters.
     ("hexa-cli/src/commands/analyze.rs", "hexa_analysis::treesitter_adapter::ReferenceKind"),
     ("hexa-cli/src/commands/analyze.rs", "hexa_analysis::treesitter_adapter::extract_module_references"),
-    ("hexa-cli/src/commands/bootstrap/models.rs", "hexa_infer::local_provider"),
-    ("hexa-cli/src/commands/bootstrap/prereq.rs", "hexa_infer::local_provider"),
-    ("hexa-cli/src/commands/bootstrap/services.rs", "hexa_infer::local_provider"),
-    ("hexa-cli/src/commands/bootstrap/validate.rs", "hexa_infer::discover"),
-    ("hexa-cli/src/commands/bootstrap/validate.rs", "hexa_infer::local_provider"),
     ("hexa-cli/src/commands/build.rs", "hexa_exec::provenance::Facts"),
     ("hexa-cli/src/commands/build.rs", "hexa_exec::provenance::write"),
-    ("hexa-cli/src/commands/build.rs", "hexa_infer::discover::any_path"),
-    ("hexa-cli/src/commands/build.rs", "hexa_infer::discover::discover"),
-    ("hexa-cli/src/commands/doctor/composition.rs", "hexa_infer::discover"),
-    ("hexa-cli/src/commands/doctor/composition.rs", "hexa_infer::discover::any_path"),
-    ("hexa-cli/src/commands/doctor/composition.rs", "hexa_infer::discover::path_words"),
-    ("hexa-cli/src/commands/hey.rs", "hexa_infer::local_provider"),
     ("hexa-cli/src/commands/hook/mod.rs", "hexa_exec::local_store::memory_delete"),
     ("hexa-cli/src/commands/hook/mod.rs", "hexa_exec::local_store::memory_get"),
     ("hexa-cli/src/commands/hook/mod.rs", "hexa_exec::local_store::memory_put"),
     ("hexa-cli/src/commands/hook/mod.rs", "hexa_exec::local_store::persist_run"),
-    ("hexa-cli/src/commands/inference.rs", "hexa_infer::registry::load"),
-    ("hexa-cli/src/commands/inference.rs", "hexa_infer::registry::remove"),
-    ("hexa-cli/src/commands/inference.rs", "hexa_infer::registry::save"),
-    ("hexa-cli/src/commands/inference.rs", "hexa_infer::registry::upsert"),
-    ("hexa-cli/src/commands/test.rs", "hexa_infer::registry::load"),
     // usecases may only import from domain and ports.
     ("hexa-exec/src/direct_exec.rs", "crate::local_store::memory_entries"),
     ("hexa-exec/src/direct_exec.rs", "crate::local_store::persist_run"),
     ("hexa-exec/src/direct_exec.rs", "crate::local_store::recent_runs"),
     ("hexa-exec/src/frontier.rs", "hexa_infer::spend::model_from_frontier_json"),
     ("hexa-exec/src/frontier.rs", "hexa_infer::spend::record_with"),
-    ("hexa-exec/src/resource_governor.rs", "hexa_infer::local_provider"),
-    // adapters must not import from usecases.
-    ("hexa-infer/src/local_provider.rs", "crate::tiers::project_root"),
-    ("hexa-infer/src/local_provider.rs", "crate::tiers::tier_model_in"),
-    ("hexa-infer/src/spend.rs", "crate::tiers::project_root"),
 ];
 
 #[test]

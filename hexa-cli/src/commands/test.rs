@@ -10,6 +10,7 @@
 //!   hexa test inference    # Probe the configured inference backends
 //!   hexa test all          # Everything
 
+use hexa_infer::ports::EndpointRegistry;
 use std::cmp::Reverse;
 use std::process::Command;
 use std::time::Instant;
@@ -451,7 +452,7 @@ async fn run_inference_tests(r: &mut TestResults) {
 
     // Registered backends come from ~/.hexa/inference-servers.json, which the
     // daemon used to mirror into SpacetimeDB and serve back over HTTP.
-    let endpoints = hexa_infer::registry::load();
+    let endpoints = hexa_infer::endpoints().load();
     if endpoints.is_empty() {
         r.skip("No inference backends registered (hexa config inference add)");
     } else {

@@ -58,7 +58,7 @@ impl ModelLoader {
 
         // Pull the model with retries
         for attempt in 0..3 {
-            match Command::new(hexa_infer::local_provider().binary)
+            match Command::new(hexa_infer::ports::local_provider().binary)
                 .arg("pull")
                 .arg(model_name)
                 .output()
@@ -83,7 +83,7 @@ impl ModelLoader {
     }
 
     fn model_exists(&self, model_name: &str) -> bool {
-        if let Ok(output) = Command::new(hexa_infer::local_provider().binary)
+        if let Ok(output) = Command::new(hexa_infer::ports::local_provider().binary)
             .arg("show")
             .arg(model_name)
             .output()

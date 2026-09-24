@@ -18,48 +18,9 @@
 //! reads. There is no hardcoded model list here either — a default model in
 //! this file would be a model the operator never chose.
 
-/// The local inference server hexa bootstraps against.
-///
-/// One value, because this is a single-binary tool for one machine. When hexa
-/// needs to support a second local server, this becomes an enum and every
-/// caller below keeps compiling — which is the point of naming it here rather
-/// than spelling it out in six files.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LocalProvider {
-    /// For display: "Ollama".
-    pub display_name: &'static str,
-    /// The executable on `PATH`, and the process name to match.
-    pub binary: &'static str,
-    /// The port it listens on by default.
-    pub default_port: u16,
-    /// The subcommand that starts it in the foreground.
-    pub serve_arg: &'static str,
-    /// How to install it, per platform.
-    pub install_macos: &'static str,
-    pub install_linux: &'static str,
-    /// The environment variable that overrides where it listens.
-    pub host_env: &'static str,
-}
-
-/// The local provider hexa targets.
-pub const fn local_provider() -> LocalProvider {
-    LocalProvider {
-        display_name: "Ollama",
-        binary: "ollama",
-        default_port: 11434,
-        serve_arg: "serve",
-        install_macos: "brew install ollama",
-        install_linux: "curl https://ollama.ai/install.sh | sh",
-        host_env: "OLLAMA_HOST",
-    }
-}
+use crate::ports::LocalProvider;
 
 impl LocalProvider {
-    /// `http://127.0.0.1:<port>` — the base URL for a default install.
-    pub fn default_base_url(&self) -> String {
-        format!("http://127.0.0.1:{}", self.default_port)
-    }
-
     /// Where the server actually is: the host environment variable if set,
     /// otherwise the default.
     ///
@@ -82,15 +43,6 @@ impl LocalProvider {
     /// was running fine.
     pub fn socket_addr(&self) -> String {
         socket_addr_with(self, &|k| std::env::var(k).ok())
-    }
-
-    /// The install hint for the platform this binary was built for.
-    pub fn install_hint(&self) -> &'static str {
-        if cfg!(target_os = "macos") {
-            self.install_macos
-        } else {
-            self.install_linux
-        }
     }
 }
 
@@ -143,6 +95,7 @@ fn configured_tiers_in(root: &std::path::Path) -> Vec<(&'static str, &'static st
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ports::local_provider;
 
     #[test]
     fn the_base_url_is_built_from_the_declared_port() {

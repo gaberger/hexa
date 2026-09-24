@@ -5,6 +5,7 @@
 //! `HEXA_INFERENCE_URL`, `HEXA_VLLM_HOST`), the endpoint registry, and a
 //! logged-in `claude` on PATH. Any one of them is enough to run.
 
+use hexa_infer::ports::Discovery;
 use colored::Colorize;
 
 
@@ -27,7 +28,7 @@ pub struct TierCoverage {
 impl InferenceStatus {
     /// At least one path to a model is open.
     pub fn has_any_inference(&self) -> bool {
-        hexa_infer::discover::any_path(&self.found)
+        hexa_infer::reach::any_path(&self.found)
     }
 
     /// Every configured tier, resolved against the reachable paths.
@@ -58,7 +59,7 @@ impl InferenceStatus {
 
     /// The open paths, in words.
     pub fn path(&self) -> String {
-        hexa_infer::discover::path_words(&self.found)
+        hexa_infer::reach::path_words(&self.found)
     }
 }
 
@@ -67,7 +68,7 @@ impl InferenceStatus {
 /// A reachable runtime that carries no model list is asked for one, so a
 /// tier can be answered rather than shrugged at (ADR-2609131617 §2).
 pub async fn run_composition_check_quiet() -> InferenceStatus {
-    let mut found = hexa_infer::discover();
+    let mut found = hexa_infer::discovery().discover();
     for f in found.iter_mut() {
         if f.reachable == Some(true) && f.models.is_empty() && f.kind != "frontier" {
             let url = f.detail.split(' ').next().unwrap_or(&f.detail).to_string();

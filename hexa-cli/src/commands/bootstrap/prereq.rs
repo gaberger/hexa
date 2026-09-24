@@ -60,10 +60,10 @@ impl PrereqChecker {
     /// Is the local inference server installed?
     ///
     /// Every detail, the display name, the executable and the install command
-    /// per platform, comes from `hexa_infer::local_provider()`. This file must
+    /// per platform, comes from `hexa_infer::ports::local_provider()`. This file must
     /// not name the server (founding goal G1).
     fn check_inference_server(&self) -> PrereqStatus {
-        let provider = hexa_infer::local_provider();
+        let provider = hexa_infer::ports::local_provider();
         let hint = provider.install_hint();
         self.status(provider.display_name, provider.binary, hint)
     }

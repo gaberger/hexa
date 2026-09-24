@@ -85,10 +85,11 @@
       "hexa-infer/src/endpoint.rs": "ports",
       "hexa-infer/src/local_provider.rs": "adapters/secondary",
       "hexa-infer/src/ports.rs": "ports",
+      "hexa-infer/src/reach.rs": "usecases",
       "hexa-infer/src/registry.rs": "adapters/secondary",
       "hexa-infer/src/spend.rs": "adapters/secondary",
       "hexa-infer/src/spend_report.rs": "usecases",
-      "hexa-infer/src/tiers.rs": "usecases",
+      "hexa-infer/src/tiers.rs": "adapters/secondary",
       "hexa-infer/src/wiring.rs": "composition-root",
       "scripts/hooks": "adapters/primary"
     }

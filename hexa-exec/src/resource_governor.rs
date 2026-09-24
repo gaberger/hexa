@@ -70,7 +70,7 @@ async fn model_size_mb(model: &str) -> Option<u64> {
     // One resolver, in the crate that is allowed to know the provider.
     // This read the same variable as `doctor` and `complete` and normalised it
     // a third way; see hexa_infer::LocalProvider::base_url.
-    let host = hexa_infer::local_provider().base_url();
+    let host = hexa_infer::ports::local_provider().base_url();
     let http = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()

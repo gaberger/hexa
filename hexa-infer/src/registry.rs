@@ -230,6 +230,27 @@ fn endpoint_to_json(e: &Endpoint) -> serde_json::Value {
     })
 }
 
+/// [`EndpointRegistry`](crate::ports::EndpointRegistry) on the JSON file.
+pub struct FileRegistry;
+
+impl crate::ports::EndpointRegistry for FileRegistry {
+    fn path(&self) -> PathBuf {
+        registry_path()
+    }
+    fn load(&self) -> Vec<Endpoint> {
+        load()
+    }
+    fn save(&self, endpoints: &[Endpoint]) -> Result<(), String> {
+        save(endpoints)
+    }
+    fn upsert(&self, endpoint: Endpoint) -> Result<(), String> {
+        upsert(endpoint)
+    }
+    fn remove(&self, id: &str) -> Result<bool, String> {
+        remove(id)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

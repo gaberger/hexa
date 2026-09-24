@@ -41,7 +41,7 @@ pub(crate) fn command_whitelist() -> Vec<String> {
         .collect();
     // The inference server's binary is whitelisted too, but this file does not
     // get to know its name (founding goal G1).
-    v.push(hexa_infer::local_provider().binary.to_string());
+    v.push(hexa_infer::ports::local_provider().binary.to_string());
     v.sort();
     v
 }
