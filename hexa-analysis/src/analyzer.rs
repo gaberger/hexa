@@ -26,11 +26,16 @@ use super::ports::{AnalysisError, AstPort, ArchAnalysisPort};
 /// Source file glob patterns for supported languages.
 const SOURCE_EXTENSIONS: &[&str] = &["ts", "tsx", "go", "rs"];
 
-/// Directories to exclude from analysis.
+/// What the grade leaves out. A pattern starting with `/` is a directory,
+/// matched as a whole path segment; any other is matched within the path
+/// (file-name suffixes). The directories were substrings, so `dist` left out
+/// `src/domain/distance.ts` and `tests/` left out `contests/` — and `test/`,
+/// where TypeScript keeps its tests, was not excluded at all, which under the
+/// coverage ceiling cost grade for test helpers (ADR-2609241707).
 const EXCLUDE_PATTERNS: &[&str] = &[
-    "node_modules",
-    "dist",
-    "examples",
+    "/node_modules/",
+    "/dist/",
+    "/examples/",
     // Tool configuration is consumed by the tool, not imported by code. Its
     // default export read as dead on every project that has one.
     ".config.ts",
@@ -41,14 +46,22 @@ const EXCLUDE_PATTERNS: &[&str] = &[
     ".spec.ts",
     "_test.go",
     ".test.rs",
-    "tests/",
-    "target/",
+    "/tests/",
+    "/test/",
+    "/__tests__/",
+    "/target/",
 ];
 
 fn matches_exclude(file_path: &str, patterns: &[&str]) -> bool {
-    patterns.iter().any(|p| match p.strip_prefix('*') {
-        Some(suffix) => file_path.ends_with(suffix),
-        None => file_path.contains(p),
+    let segmented = format!("/{}/", file_path.trim_matches('/'));
+    patterns.iter().any(|p| {
+        if p.starts_with('/') {
+            return segmented.contains(p);
+        }
+        match p.strip_prefix('*') {
+            Some(suffix) => file_path.ends_with(suffix),
+            None => file_path.contains(p),
+        }
     })
 }
 
@@ -389,7 +402,9 @@ pub(crate) async fn collect_source_files(root: &Path) -> Result<Vec<String>, Ana
 const TEST_PATTERNS: &[&str] = &[".test.ts", ".spec.ts", "_test.go", ".test.rs"];
 
 fn is_test_file(path: &str) -> bool {
-    TEST_PATTERNS.iter().any(|p| path.ends_with(p)) || path.contains("tests/")
+    let segmented = format!("/{}/", path.trim_matches('/'));
+    TEST_PATTERNS.iter().any(|p| path.ends_with(p))
+        || ["/tests/", "/test/", "/__tests__/"].iter().any(|d| segmented.contains(d))
 }
 
 /// Collect test files that may import from main source files.
@@ -409,7 +424,7 @@ async fn collect_test_files(root: &Path) -> Result<Vec<String>, AnalysisError> {
                 .replace('\\', "/");
 
             if path.is_dir() {
-                if !skip_dirs.iter().any(|d| rel.contains(d)) {
+                if !rel.split('/').any(|seg| skip_dirs.contains(&seg)) {
                     stack.push(path);
                 }
             } else if is_source_file(&rel) && is_test_file(&rel) {

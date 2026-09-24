@@ -1023,11 +1023,13 @@ fn is_test_file(rel: &str) -> bool {
     let p = rel.replace('\\', "/").to_lowercase();
     let name = p.rsplit('/').next().unwrap_or(&p);
 
-    // Go and Rust integration tests carry it in the filename or the directory.
+    // Go and Rust integration tests carry it in the filename or the directory;
+    // TypeScript keeps them in `test/` or `__tests__/`. Matched as whole
+    // segments, the same set the grade excludes (hexa-analysis EXCLUDE_PATTERNS).
+    let segmented = format!("/{}/", p.trim_matches('/'));
     name.ends_with("_test.go")
         || name.ends_with("_test.rs")
-        || p.contains("/tests/")
-        || p.starts_with("tests/")
+        || ["/tests/", "/test/", "/__tests__/"].iter().any(|d| segmented.contains(d))
         // TS/JS colocated tests: foo.test.ts, foo.spec.tsx, …
         || name.contains(".test.")
         || name.contains(".spec.")

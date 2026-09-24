@@ -7,6 +7,19 @@ exists, and the one command that resolves it.
 A change that needs nothing from you is not listed here; it is in the commit
 log.
 
+## What the grade leaves out is decided by folder, not substring (`c3708ff`)
+
+The built-in exclusions matched substrings: `dist` left out
+`src/domain/distance.ts`, `examples` anything with that word in its path,
+`tests/` a folder named `contests/`. They now match whole path segments
+(`dist/`, `examples/`, `tests/`, `target/`, `node_modules/`), and `test/` and
+`__tests__/` — where TypeScript keeps its tests — are excluded too.
+
+**What changes for you.** A source file whose name only contained one of those
+words is now graded, which can surface violations it always had. Test helpers
+under `test/` stop counting as source files with no layer, which could only
+raise a grade.
+
 ## A grade cannot exceed the code it could classify (`bf1bafc`)
 
 Every file the grade reads must have a layer for the grade to reach A+, and
