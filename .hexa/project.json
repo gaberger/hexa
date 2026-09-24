@@ -51,7 +51,7 @@
       "hexa-analysis/src/ports.rs": "ports",
       "hexa-analysis/src/treesitter_adapter.rs": "adapters/secondary",
       "hexa-cli/build.rs": "infrastructure",
-      "hexa-cli/src/assets.rs": "infrastructure",
+      "hexa-cli/src/assets.rs": "adapters/primary",
       "hexa-cli/src/commands": "adapters/primary",
       "hexa-cli/src/fmt.rs": "adapters/primary",
       "hexa-core/src/quantization.rs": "domain",
@@ -87,6 +87,7 @@
       "hexa-infer/src/ports.rs": "ports",
       "hexa-infer/src/registry.rs": "adapters/secondary",
       "hexa-infer/src/spend.rs": "adapters/secondary",
+      "hexa-infer/src/spend_report.rs": "usecases",
       "hexa-infer/src/tiers.rs": "usecases",
       "hexa-infer/src/wiring.rs": "composition-root",
       "scripts/hooks": "adapters/primary"

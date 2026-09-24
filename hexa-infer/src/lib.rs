@@ -16,6 +16,7 @@ pub mod ports;
 pub mod discover;
 pub mod registry;
 pub mod spend;
+pub mod spend_report;
 pub mod tiers;
 pub mod wiring;
 
@@ -37,4 +38,25 @@ pub async fn complete_text(model: &str, system: &str, user: &str, max_tokens: u3
 /// See [`complete::complete_raw_with`].
 pub async fn complete_raw(req: &serde_json::Value) -> Result<serde_json::Value, String> {
     complete::complete_raw_with(&wiring::RegistryBackends, req).await
+}
+
+/// Every row in the spend log.
+pub fn spend_entries() -> Vec<serde_json::Value> {
+    spend::entries()
+}
+
+/// Where the spend log lives.
+pub fn spend_log_path() -> std::path::PathBuf {
+    spend::home().join("inference-log.jsonl")
+}
+
+/// `inference.budget_usd_per_day`, if the project declares one.
+pub fn spend_budget() -> Option<f64> {
+    spend::budget_usd_per_day()
+}
+
+/// Whether the frontier path may spend today: the log and the budget, judged
+/// by [`spend_report::budget_verdict`].
+pub fn spend_budget_check() -> Result<(), String> {
+    spend_report::budget_verdict(&spend::entries(), spend::budget_usd_per_day())
 }

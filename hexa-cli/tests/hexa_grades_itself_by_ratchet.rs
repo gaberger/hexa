@@ -19,21 +19,8 @@ use std::process::Command;
 
 /// (importing file, import) — each with the reason it is still here.
 const KNOWN: &[(&str, &str)] = &[
-    // Surfaced together when the "own submodule" exemption stopped exempting
-    // every import a crate-root file made, and a file's declared layer began
-    // to match its module path. They were always there; the grade could not
-    // see them, and printed A+.
-    // use case → adapter, no port between them.
-    // CLI command → adapter or infrastructure directly — the command is doing the composition root's wiring.
-    ("hexa-cli/src/commands/assets_cmd.rs", "crate::assets::Assets"),
-    ("hexa-cli/src/commands/doctor/mod.rs", "crate::assets::Assets"),
-    ("hexa-cli/src/commands/inference.rs", "crate::assets::Assets"),
-    ("hexa-cli/src/commands/memory/mod.rs", "hexa_exec::local_store::MemoryScope"),
-    ("hexa-cli/src/commands/memory/mod.rs", "hexa_exec::local_store::self"),
-    ("hexa-cli/src/commands/skill.rs", "crate::assets::Assets"),
-    ("hexa-cli/src/commands/spend_cmd.rs", "hexa_infer::spend::Totals"),
-    ("hexa-cli/src/commands/spend_cmd.rs", "hexa_infer::spend::self"),
-    // adapter → domain type the port does not re-export.
+    // Empty. Every entry above this line in history was fixed, not listed:
+    // the boundary checks now enforce zero on hexa's own tree.
 ];
 
 #[test]

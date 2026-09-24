@@ -81,3 +81,8 @@ pub fn default_deps() -> direct_exec::ExecDeps {
 pub async fn execute_direct(task: direct_exec::DirectTask) -> direct_exec::DirectResult {
     direct_exec::execute_direct_with(&default_deps(), task).await
 }
+
+/// The memory store, wired: `memory.jsonl` files under the project or `~/.hexa`.
+pub fn memory() -> impl ports::MemoryStore {
+    local_store::LocalMemory
+}

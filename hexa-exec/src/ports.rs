@@ -7,7 +7,7 @@
 //! The loop holds these, never a concrete tool or git itself; which ones it gets
 //! is wiring, at the crate root (`default_tools`, `default_deps`).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use serde_json::Value;
@@ -60,4 +60,31 @@ pub trait Worktrees: Send + Sync {
 
     /// Remove the worktree at `path` and delete its branch.
     fn remove(&self, repo: &Path, path: &Path) -> Result<(), String>;
+}
+
+/// Which store a memory call reads or writes.
+///
+/// `Project` is the default everywhere. `Shared` is the old per-user file, kept
+/// for the entries that really are cross-project — model calibration, a lesson
+/// about the machine — and for reaching what a pre-scoping install already
+/// wrote. Nothing falls back from one to the other: an implicit fallback is the
+/// cross-project bleed this split exists to stop.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MemoryScope {
+    #[default]
+    Project,
+    Shared,
+}
+
+/// Where lessons and keyed notes are kept, by scope (ADR-2609211200).
+pub trait MemoryStore: Send + Sync {
+    /// The file a scope's entries live in.
+    fn path(&self, scope: MemoryScope) -> PathBuf;
+    fn put(&self, scope: MemoryScope, key: &str, value: &str) -> Result<(), String>;
+    fn get(&self, scope: MemoryScope, key: &str) -> Option<String>;
+    /// The most recent `limit` entries.
+    fn entries(&self, scope: MemoryScope, limit: usize) -> Vec<(String, String)>;
+    fn search(&self, scope: MemoryScope, query: &str) -> Vec<(String, String)>;
+    /// Whether the key was there to delete.
+    fn delete(&self, scope: MemoryScope, key: &str) -> Result<bool, String>;
 }

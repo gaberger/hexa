@@ -24,6 +24,7 @@
 //! (`~/.hexa/memory.jsonl`) remains for entries that genuinely are cross-project, reached
 //! explicitly with [`MemoryScope::Shared`] — never as a fallback, which is the bleed again.
 
+use crate::ports::MemoryScope;
 use std::fs::{create_dir_all, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -144,19 +145,6 @@ const SPEND: &str = "inference-log.jsonl";
 
 const MEMORY: &str = "memory.jsonl";
 
-/// Which store a memory call reads or writes.
-///
-/// `Project` is the default everywhere. `Shared` is the old per-user file, kept
-/// for the entries that really are cross-project — model calibration, a lesson
-/// about the machine — and for reaching what a pre-scoping install already
-/// wrote. Nothing falls back from one to the other: an implicit fallback is the
-/// cross-project bleed this split exists to stop.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum MemoryScope {
-    #[default]
-    Project,
-    Shared,
-}
 
 /// The directory a scope's `memory.jsonl` lives in. Internal: callers outside
 /// the crate want the file, which is [`memory_path`].
@@ -389,6 +377,30 @@ pub fn spend_rows(group_by: &str, limit: usize) -> Vec<Value> {
         .collect()
 }
 
+/// [`MemoryStore`](crate::ports::MemoryStore) on `memory.jsonl` files.
+pub struct LocalMemory;
+
+impl crate::ports::MemoryStore for LocalMemory {
+    fn path(&self, scope: MemoryScope) -> PathBuf {
+        memory_path(scope)
+    }
+    fn put(&self, scope: MemoryScope, key: &str, value: &str) -> Result<(), String> {
+        memory_put_scoped(scope, key, value)
+    }
+    fn get(&self, scope: MemoryScope, key: &str) -> Option<String> {
+        memory_get_scoped(scope, key)
+    }
+    fn entries(&self, scope: MemoryScope, limit: usize) -> Vec<(String, String)> {
+        memory_entries_scoped(scope, limit)
+    }
+    fn search(&self, scope: MemoryScope, query: &str) -> Vec<(String, String)> {
+        memory_search_scoped(scope, query)
+    }
+    fn delete(&self, scope: MemoryScope, key: &str) -> Result<bool, String> {
+        memory_delete_scoped(scope, key)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -597,4 +609,3 @@ mod tests {
         assert!(memory_put_in(d.path(), "   ", "value").is_err());
     }
 }
-

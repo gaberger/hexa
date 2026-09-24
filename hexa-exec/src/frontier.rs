@@ -19,7 +19,7 @@ pub const OUTPUT_JSON: [&str; 2] = ["--output-format", "json"];
 
 /// Refuse to spend when the project's daily budget is reached.
 pub fn budget_check() -> Result<(), String> {
-    hexa_infer::spend::budget_check()
+    hexa_infer::spend_budget_check()
 }
 
 /// The text of a `claude -p --output-format json` answer, with its usage

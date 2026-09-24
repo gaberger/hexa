@@ -12,7 +12,7 @@ use colored::Colorize;
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-use hexa_infer::spend::{self, Totals};
+use hexa_infer::spend_report::{self as spend, Totals};
 
 #[derive(Args, Debug)]
 pub struct SpendArgs {
@@ -40,7 +40,7 @@ fn line(label: &str, t: &Totals) -> String {
 }
 
 pub async fn run(args: SpendArgs) -> anyhow::Result<()> {
-    let rows = spend::entries();
+    let rows = hexa_infer::spend_entries();
     let week = (chrono::Utc::now() - chrono::Duration::days(7)).to_rfc3339();
     let today_rows = spend::since(&rows, &spend::start_of_today());
     let week_rows = spend::since(&rows, &week);
@@ -48,13 +48,13 @@ pub async fn run(args: SpendArgs) -> anyhow::Result<()> {
     let today = spend::totals(&today_rows.iter().map(|r| (*r).clone()).collect::<Vec<_>>());
     let seven = spend::totals(&week_rows.iter().map(|r| (*r).clone()).collect::<Vec<_>>());
     let all = spend::totals(&rows);
-    let budget = spend::budget_usd_per_day();
+    let budget = hexa_infer::spend_budget();
 
     if args.json {
         let t = |t: &Totals| serde_json::json!({ "calls": t.calls, "input_tokens": t.input_tokens, "output_tokens": t.output_tokens, "cost_usd": t.cost_usd, "priced_calls": t.priced_calls });
         let group = |m: BTreeMap<String, Totals>| -> Value { m.iter().map(|(k, v)| (k.clone(), t(v))).collect::<serde_json::Map<_, _>>().into() };
         println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-            "log": spend::home().join("inference-log.jsonl").display().to_string(),
+            "log": hexa_infer::spend_log_path().display().to_string(),
             "today": t(&today), "last_7_days": t(&seven), "all": t(&all),
             "by_source_7_days": group(by_key(&week_rows, "source")),
             "by_model_7_days": group(by_key(&week_rows, "model")),
@@ -68,7 +68,7 @@ pub async fn run(args: SpendArgs) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    println!("{} Inference spend ({})", "\u{2b21}".cyan(), spend::home().join("inference-log.jsonl").display());
+    println!("{} Inference spend ({})", "\u{2b21}".cyan(), hexa_infer::spend_log_path().display());
     if rows.is_empty() {
         println!("  nothing recorded yet");
         return Ok(());

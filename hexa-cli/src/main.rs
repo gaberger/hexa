@@ -435,9 +435,9 @@ async fn run() -> anyhow::Result<()> {
         Commands::Insight { action } => commands::insight::run(action).await,
         Commands::Memory { action, global } => {
             let scope = if global {
-                hexa_exec::local_store::MemoryScope::Shared
+                hexa_exec::ports::MemoryScope::Shared
             } else {
-                hexa_exec::local_store::MemoryScope::Project
+                hexa_exec::ports::MemoryScope::Project
             };
             commands::memory::run(action, scope).await
         }

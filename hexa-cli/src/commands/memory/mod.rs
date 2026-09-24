@@ -25,7 +25,7 @@
 use clap::Subcommand;
 use colored::Colorize;
 
-use hexa_exec::local_store::{self, MemoryScope};
+use hexa_exec::ports::{MemoryScope, MemoryStore};
 
 #[derive(Subcommand)]
 pub enum MemoryAction {
@@ -65,12 +65,12 @@ const LIST_LIMIT: usize = 500;
 /// The store this invocation reads and writes, spelled out. Printed on every
 /// path that is not `--json`: the whole bug was a scope nobody could see.
 fn store_line(scope: MemoryScope) -> String {
-    let path = local_store::memory_path(scope);
+    let path = hexa_exec::memory().path(scope);
     // Outside a project the project scope *is* the user store. Saying
     // "project" there would be the same invisible scope in a friendlier hat.
     let label = match scope {
         MemoryScope::Shared => "shared",
-        MemoryScope::Project if path == local_store::memory_path(MemoryScope::Shared) => {
+        MemoryScope::Project if path == hexa_exec::memory().path(MemoryScope::Shared) => {
             "no project here — shared"
         }
         MemoryScope::Project => "project",
@@ -81,13 +81,13 @@ fn store_line(scope: MemoryScope) -> String {
 pub async fn run(action: MemoryAction, scope: MemoryScope) -> anyhow::Result<()> {
     match action {
         MemoryAction::Store { key, value } => {
-            local_store::memory_put_scoped(scope, &key, &value).map_err(|e| anyhow::anyhow!(e))?;
+            hexa_exec::memory().put(scope, &key, &value).map_err(|e| anyhow::anyhow!(e))?;
             println!("{} Memory stored", "\u{2b21}".green());
             println!("  Key:   {}", key.bold());
             println!("  Value: {} bytes", value.len());
             println!("{}", store_line(scope).dimmed());
         }
-        MemoryAction::Get { key } => match local_store::memory_get_scoped(scope, &key) {
+        MemoryAction::Get { key } => match hexa_exec::memory().get(scope, &key) {
             Some(value) => {
                 println!("{} Memory lookup", "\u{2b21}".cyan());
                 println!("  Key:   {}", key.bold());
@@ -98,7 +98,7 @@ pub async fn run(action: MemoryAction, scope: MemoryScope) -> anyhow::Result<()>
                 // Keys are namespaced, `lesson:quadratic-cost-walks`. A bare
                 // namespace names every entry under it.
                 let prefix = format!("{}:", key.trim_end_matches(':'));
-                let under: Vec<(String, String)> = local_store::memory_entries_scoped(scope, LIST_LIMIT)
+                let under: Vec<(String, String)> = hexa_exec::memory().entries(scope, LIST_LIMIT)
                     .into_iter()
                     .filter(|(k, _)| k.starts_with(&prefix))
                     .collect();
@@ -114,7 +114,7 @@ pub async fn run(action: MemoryAction, scope: MemoryScope) -> anyhow::Result<()>
             }
         },
         MemoryAction::Search { query } => {
-            let results = local_store::memory_search_scoped(scope, &query);
+            let results = hexa_exec::memory().search(scope, &query);
             if results.is_empty() {
                 println!("{} No results for '{}'", "\u{2b21}".dimmed(), query);
                 println!("{}", store_line(scope).dimmed());
@@ -136,7 +136,7 @@ pub async fn run(action: MemoryAction, scope: MemoryScope) -> anyhow::Result<()>
             }
         }
         MemoryAction::List { json } => {
-            let all = local_store::memory_entries_scoped(scope, LIST_LIMIT);
+            let all = hexa_exec::memory().entries(scope, LIST_LIMIT);
             if json {
                 let rows: Vec<_> = all
                     .iter()
@@ -164,7 +164,7 @@ pub async fn run(action: MemoryAction, scope: MemoryScope) -> anyhow::Result<()>
             }
         }
         MemoryAction::Delete { key } => {
-            if local_store::memory_delete_scoped(scope, &key).map_err(|e| anyhow::anyhow!(e))? {
+            if hexa_exec::memory().delete(scope, &key).map_err(|e| anyhow::anyhow!(e))? {
                 println!("{} Deleted '{}'", "\u{2b21}".green(), key.bold());
             } else {
                 println!("{} Key '{}' not found", "\u{2b21}".yellow(), key);
