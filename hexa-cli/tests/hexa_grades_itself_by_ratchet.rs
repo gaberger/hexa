@@ -29,11 +29,6 @@ const KNOWN: &[(&str, &str)] = &[
     ("hexa-exec/src/direct_react.rs", "crate::tools::ToolRegistry"),
     ("hexa-exec/src/direct_workspace.rs", "hexa_git::worktree"),
     ("hexa-exec/src/simple_agent.rs", "crate::tools::ToolRegistry"),
-    ("hexa-infer/src/complete.rs", "crate::adapters::secondary::AnthropicAdapter"),
-    ("hexa-infer/src/complete.rs", "crate::adapters::secondary::ClaudeCodeInferenceAdapter"),
-    ("hexa-infer/src/complete.rs", "crate::adapters::secondary::OllamaInferenceAdapter"),
-    ("hexa-infer/src/complete.rs", "crate::adapters::secondary::OpenAiCompatAdapter"),
-    ("hexa-infer/src/complete.rs", "crate::registry"),
     // CLI command → adapter or infrastructure directly — the command is doing the composition root's wiring.
     ("hexa-cli/src/commands/assets_cmd.rs", "crate::assets::Assets"),
     ("hexa-cli/src/commands/doctor/mod.rs", "crate::assets::Assets"),
@@ -46,8 +41,6 @@ const KNOWN: &[(&str, &str)] = &[
     // adapter → domain type the port does not re-export.
     ("hexa-cli/src/commands/graph.rs", "hexa_graph::model::KnowledgeGraph"),
     ("hexa-graph/src/extract/code.rs", "crate::model::NodeKind"),
-    ("hexa-infer/src/discover.rs", "crate::endpoint::Endpoint"),
-    ("hexa-infer/src/registry.rs", "crate::endpoint::Endpoint"),
 ];
 
 #[test]

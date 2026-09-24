@@ -78,11 +78,13 @@
       "hexa-graph/src/semantic.rs": "usecases",
       "hexa-infer/src/complete.rs": "usecases",
       "hexa-infer/src/discover.rs": "adapters/secondary",
-      "hexa-infer/src/endpoint.rs": "domain",
+      "hexa-infer/src/endpoint.rs": "ports",
       "hexa-infer/src/local_provider.rs": "adapters/secondary",
+      "hexa-infer/src/ports.rs": "ports",
       "hexa-infer/src/registry.rs": "adapters/secondary",
       "hexa-infer/src/spend.rs": "adapters/secondary",
       "hexa-infer/src/tiers.rs": "usecases",
+      "hexa-infer/src/wiring.rs": "composition-root",
       "scripts/hooks": "adapters/primary"
     }
   }

@@ -12,16 +12,29 @@ pub mod adapters;
 pub mod complete;
 pub mod endpoint;
 pub mod local_provider;
+pub mod ports;
 pub mod discover;
 pub mod registry;
 pub mod spend;
 pub mod tiers;
+pub mod wiring;
 
 pub use adapters::secondary::{
     AnthropicAdapter, ClaudeCodeInferenceAdapter, OllamaInferenceAdapter, OpenAiCompatAdapter,
 };
 pub use endpoint::Endpoint;
-pub use complete::{complete_raw, complete_text};
 pub use tiers::{react_models, react_models_in_config, tier_model};
 pub use local_provider::{configured_tiers, local_provider, LocalProvider};
 pub use discover::{discover, enumerate_models, served_models, serves, Coverage, Found};
+
+/// Send one system+user turn and return the text of the reply, on the registry-backed backends.
+/// See [`complete::complete_text_with`].
+pub async fn complete_text(model: &str, system: &str, user: &str, max_tokens: u32) -> Result<String, String> {
+    complete::complete_text_with(&wiring::RegistryBackends, model, system, user, max_tokens).await
+}
+
+/// The loop's JSON completion contract, on the registry-backed backends.
+/// See [`complete::complete_raw_with`].
+pub async fn complete_raw(req: &serde_json::Value) -> Result<serde_json::Value, String> {
+    complete::complete_raw_with(&wiring::RegistryBackends, req).await
+}
