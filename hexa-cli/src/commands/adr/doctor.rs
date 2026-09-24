@@ -653,7 +653,10 @@ pub(crate) fn scan_repo_citations(root: &Path) -> Vec<CitingSite> {
             let rel = path.strip_prefix(root).unwrap_or(&path).to_path_buf();
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if path.is_dir() {
-                if SKIP_DIRS.contains(&name) || rel == historical {
+                // A directory with its own `.git` is another checkout — a
+                // linked worktree (`.git` is a file) or a nested clone — and
+                // its citations are that checkout's, not this repository's.
+                if SKIP_DIRS.contains(&name) || rel == historical || path.join(".git").exists() {
                     continue;
                 }
                 stack.push(path);

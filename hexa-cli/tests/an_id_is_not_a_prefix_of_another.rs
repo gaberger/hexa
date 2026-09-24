@@ -228,6 +228,42 @@ fn a_citation_in_shipped_code_is_still_scanned() {
     assert!(out.contains("DanglingCitation"), "src/ is still read:\n{out}");
 }
 
+// ── Another checkout is not this repository ──────────────────────────────────
+
+/// `project` plus `nested/` holding a stale copy whose source cites `0042`,
+/// which has no file. With `git_marker`, `nested/.git` is a file, as git
+/// writes it for a linked worktree.
+fn project_with_nested_copy(nested: &str, git_marker: bool) -> tempfile::TempDir {
+    let d = project(Some("001"), "001");
+    let n = d.path().join(nested);
+    std::fs::create_dir_all(n.join("src")).unwrap();
+    std::fs::write(n.join("src/lib.rs"), format!("// see {}\n", id("0042"))).unwrap();
+    if git_marker {
+        std::fs::write(n.join(".git"), "gitdir: /elsewhere/.git/worktrees/w\n").unwrap();
+    }
+    d
+}
+
+#[test]
+fn a_linked_worktree_inside_the_repository_is_not_scanned() {
+    // Agent sessions leave worktrees under .claude/worktrees/, each an older
+    // copy of the whole tree. Reading them made this repository's own
+    // consistency check fail on 40 citations no tracked file contains, on
+    // every machine that had run an agent, and on none of CI's clean clones.
+    let d = project_with_nested_copy(".claude/worktrees/agent-x", true);
+    let (code, out) = run(d.path(), &["adr", "doctor"]);
+    assert!(!out.contains("DanglingCitation"), "a worktree is another checkout:\n{out}");
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
+fn a_directory_without_its_own_git_is_still_scanned() {
+    // The control: the skip is for the `.git` marker, not for the path.
+    let d = project_with_nested_copy(".claude/worktrees/agent-x", false);
+    let (_, out) = run(d.path(), &["adr", "doctor"]);
+    assert!(out.contains("DanglingCitation"), "an ordinary directory is read:\n{out}");
+}
+
 // ── The checker has to actually run ──────────────────────────────────────────
 
 #[test]
