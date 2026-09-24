@@ -121,6 +121,13 @@ fn edges_of(
         .collect()
 }
 
+/// One edge per target a file reaches. A module both imported and named
+/// inline is one crossing, and each violation costs ten points.
+fn one_edge_per_target(edges: Vec<ImportEdge>) -> Vec<ImportEdge> {
+    let mut seen = HashSet::new();
+    edges.into_iter().filter(|e| seen.insert(e.to_file.clone())).collect()
+}
+
 /// The boundary violations in one file, by exactly the rules the grade
 /// applies: its imports parsed by tree-sitter, resolved through the
 /// project's packages, classified by its declared layers. For the post-edit
@@ -139,8 +146,10 @@ pub async fn file_violations(
     let go_mod = detect_go_module_prefix(root).await;
     let source = tokio::fs::read_to_string(root.join(rel_path)).await?;
     let imports = ast.extract_imports(Path::new(rel_path), &source, lang)?;
-    let edges = edges_of(rel_path, &imports, &packages, &layers, go_mod.as_deref());
-    Ok(boundary_checker::find_violations(&edges))
+    let paths = ast.module_paths(Path::new(rel_path), &source, lang)?;
+    let mut edges = edges_of(rel_path, &imports, &packages, &layers, go_mod.as_deref());
+    edges.extend(edges_of(rel_path, &paths, &packages, &layers, go_mod.as_deref()));
+    Ok(boundary_checker::find_violations(&one_edge_per_target(edges)))
 }
 
 /// Which graded files have a layer. A build script is not architecture and
@@ -440,7 +449,10 @@ impl ArchAnalyzer {
 
             let from_file = normalize_path(rel_path);
 
-            all_edges.extend(edges_of(rel_path, &imports, &packages, &layers, go_module_prefix));
+            let paths = self.ast.module_paths(Path::new(rel_path), &source, lang)?;
+            let mut edges = edges_of(rel_path, &imports, &packages, &layers, go_module_prefix);
+            edges.extend(edges_of(rel_path, &paths, &packages, &layers, go_module_prefix));
+            all_edges.extend(one_edge_per_target(edges));
 
             let members = self
                 .ast

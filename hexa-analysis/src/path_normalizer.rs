@@ -165,18 +165,36 @@ fn resolve_rust_import(import_path: &str, from_file: &str) -> String {
         return format!("{}src/{}", crate_root, stripped.join("/"));
     }
 
-    // self::foo — current module (resolve relative to importing file's directory)
-    if let Some(rest) = import_path.strip_prefix("self::") {
-        let dir = dirname_posix(from_file);
-        let segments: Vec<&str> = rest.split("::").collect();
-        let mut parts = vec![dir];
-        parts.extend(segments);
-        return join_posix(&parts);
-    }
-
-    // super::foo — parent module
-    if import_path.starts_with("super::") {
-        return import_path.replace("::", "/");
+    // self:: and super:: are relative to the importing file's *module*: a
+    // `mod.rs`, `lib.rs` or `main.rs` is the module of its directory, and
+    // `foo.rs` is the module `foo`. `super::` used to resolve to the literal
+    // path `super/…`, which is in no layer — so an import through it was
+    // never checked, and matched only when its text happened to contain a
+    // layer's folder name. `self::x` from `foo.rs` named a sibling of `foo`
+    // rather than its child.
+    if import_path.starts_with("self::") || import_path.starts_with("super::") {
+        let module_path = rust_module_of(from_file);
+        let mut module: Vec<&str> = module_path.split('/').filter(|s| !s.is_empty()).collect();
+        let mut segments = import_path.split("::").peekable();
+        while let Some(&head) = segments.peek() {
+            match head {
+                "self" => {}
+                "super" => {
+                    if module.pop().is_none() {
+                        return import_path.to_string();
+                    }
+                }
+                _ => break,
+            }
+            segments.next();
+        }
+        let rest: Vec<&str> = segments.collect();
+        // The item name is stripped as it is for a `crate::` path.
+        let mut with_root = vec!["crate"];
+        with_root.extend(&rest);
+        let stripped = strip_rust_item_name(&with_root);
+        module.extend(stripped[1..].iter().copied());
+        return module.join("/");
     }
 
     // External crate or std — return as-is
@@ -274,6 +292,17 @@ impl WorkspacePackages {
     }
 }
 
+/// The module path of a Rust file: its directory for `mod.rs`, `lib.rs` and
+/// `main.rs`, else the file without `.rs`.
+fn rust_module_of(from_file: &str) -> String {
+    let name = from_file.rsplit('/').next().unwrap_or(from_file);
+    if matches!(name, "mod.rs" | "lib.rs" | "main.rs") {
+        let dir = dirname_posix(from_file);
+        return if dir == "." { String::new() } else { dir.to_string() };
+    }
+    from_file.trim_end_matches(".rs").to_string()
+}
+
 /// Strip trailing item-name segment from a Rust path.
 ///
 /// If the path has 3+ segments and the last segment starts with an uppercase
@@ -368,9 +397,33 @@ mod tests {
 
     #[test]
     fn rust_self_path() {
+        // In `cli.rs`, `self` is the module `cli`: `self::helpers` is
+        // `cli/helpers.rs`. This asserted the sibling `primary/helpers`,
+        // pinning the resolver's old mistake as the expected answer.
         assert_eq!(
             resolve_import_path("src/adapters/primary/cli.rs", "self::helpers", None),
-            "src/adapters/primary/helpers"
+            "src/adapters/primary/cli/helpers"
+        );
+        // In `mod.rs`, `self` is the directory's module.
+        assert_eq!(
+            resolve_import_path("src/adapters/primary/mod.rs", "self::cli", None),
+            "src/adapters/primary/cli"
+        );
+    }
+
+    #[test]
+    fn rust_super_path_is_the_parent_module() {
+        assert_eq!(
+            resolve_import_path("src/domain/order.rs", "super::money::Money", None),
+            "src/domain/money"
+        );
+        assert_eq!(
+            resolve_import_path("src/domain/order.rs", "super::super::store::Disk", None),
+            "src/store"
+        );
+        assert_eq!(
+            resolve_import_path("src/domain/mod.rs", "super::ports::StorePort", None),
+            "src/ports"
         );
     }
 

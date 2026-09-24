@@ -190,6 +190,19 @@ impl TreeSitterAdapter {
 }
 
 impl AstPort for TreeSitterAdapter {
+    fn module_paths(
+        &self,
+        path: &Path,
+        source: &str,
+        lang: Language,
+    ) -> Result<Vec<ImportStatement>, AnalysisError> {
+        if lang != Language::Rust {
+            return Ok(Vec::new());
+        }
+        let tree = parse_source(source, lang)?;
+        Ok(extract_rust_module_paths(&tree.root_node(), source, &path.to_string_lossy()))
+    }
+
     fn count_items(&self, source: &str, lang: Language) -> Result<ItemCounts, AnalysisError> {
         count_items_in(source, lang)
     }
@@ -624,68 +637,184 @@ fn extract_rust_imports(
     let mut cursor = root.walk();
 
     for child in root.children(&mut cursor) {
-        match child.kind() {
-            "use_declaration" => {
-                let text = node_text(child, source).trim().to_string();
-                let path = text
-                    .strip_prefix("use ")
-                    .unwrap_or(&text)
-                    .trim_end_matches(';')
-                    .trim();
-
-                if let Some(brace_idx) = path.find('{') {
-                    // Grouped use: `use crate::core::{ports, domain};`
-                    // Expand into one import per item in the group
-                    let base = path[..brace_idx].trim_end_matches("::").trim();
-                    let group = path[brace_idx + 1..]
-                        .trim_end_matches('}')
-                        .trim();
-                    for item in group.split(',') {
-                        let item = item.trim();
-                        if item.is_empty() {
-                            continue;
-                        }
-                        // Each item might be `Name` or `submod::Name`
-                        let full_path = format!("{}::{}", base, item);
-                        let name = item.rsplit("::").next().unwrap_or(item).to_string();
-                        imports.push(ImportStatement {
-                            from_file: from_file.to_string(),
-                            raw_path: full_path.clone(),
-                            resolved_path: full_path,
-                            names: vec![name],
-                            line: child.start_position().row + 1,
-                        });
-                    }
-                } else {
-                    // Simple use: `use crate::core::ports::IStatePort;`
-                    let name = path.rsplit("::").next().unwrap_or(path).to_string();
-                    imports.push(ImportStatement {
-                        from_file: from_file.to_string(),
-                        raw_path: path.to_string(),
-                        resolved_path: path.to_string(),
-                        names: vec![name],
-                        line: child.start_position().row + 1,
-                    });
-                }
+        if child.kind() == "mod_item" && !has_body(&child) {
+            // mod foo; (external module declaration, not inline mod foo { ... })
+            if let Some(name_node) = child.child_by_field_name("name") {
+                let mod_name = node_text(name_node, source);
+                imports.push(ImportStatement {
+                    from_file: from_file.to_string(),
+                    raw_path: format!("self::{}", mod_name),
+                    resolved_path: format!("self::{}", mod_name),
+                    names: vec![mod_name.clone()],
+                    line: child.start_position().row + 1,
+                });
             }
-            "mod_item" if !has_body(&child) => {
-                // mod foo; (external module declaration, not inline mod foo { ... })
-                if let Some(name_node) = child.child_by_field_name("name") {
-                    let mod_name = node_text(name_node, source);
-                    imports.push(ImportStatement {
-                        from_file: from_file.to_string(),
-                        raw_path: format!("self::{}", mod_name),
-                        resolved_path: format!("self::{}", mod_name),
-                        names: vec![mod_name.clone()],
-                        line: child.start_position().row + 1,
-                    });
-                }
-            }
-            _ => {}
         }
     }
 
+    // Every other way the file reaches a module, outside test code: `use`
+    // at any depth (a function body's too), `pub use`, and inline paths
+    // (`crate::store::save()`, `hexa_exec::local_store::x()`). Only top-level
+    // `use` was read, from its text — so `pub use` and `use x as y` kept a
+    // raw path that resolved to nothing, and the rest were not read at all.
+    let mut seen = std::collections::HashSet::new();
+    collect_rust_edges(*root, source, from_file, Want::Uses, &mut imports, &mut seen);
     Ok(imports)
+}
+
+/// What [`collect_rust_edges`] reports: declarations (`use`), or inline
+/// module paths. Kept apart because they have different readers — the domain
+/// import policy reads declarations and filters inline paths itself.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Want {
+    Uses,
+    Paths,
+}
+
+/// Inline module paths in a Rust file, outside test code: `crate::x::y()`,
+/// `hexa_exec::local_store::z()` — reaching a module with no `use` line.
+fn extract_rust_module_paths(root: &tree_sitter::Node, source: &str, from_file: &str) -> Vec<ImportStatement> {
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    collect_rust_edges(*root, source, from_file, Want::Paths, &mut out, &mut seen);
+    out
+}
+
+/// `use` declarations and inline module paths under `node`, skipping any
+/// item marked `#[cfg(test)]` or `#[test]`. One import per distinct path.
+fn collect_rust_edges(
+    node: tree_sitter::Node,
+    source: &str,
+    from_file: &str,
+    want: Want,
+    out: &mut Vec<ImportStatement>,
+    seen: &mut std::collections::HashSet<String>,
+) {
+    fn push(
+        raw: String,
+        name: Option<String>,
+        line: usize,
+        from_file: &str,
+        out: &mut Vec<ImportStatement>,
+        seen: &mut std::collections::HashSet<String>,
+    ) {
+        if seen.insert(raw.clone()) {
+            out.push(ImportStatement {
+                from_file: from_file.to_string(),
+                resolved_path: raw.clone(),
+                raw_path: raw,
+                names: name.into_iter().collect(),
+                line,
+            });
+        }
+    }
+    let mut skip_next = false;
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        let line = child.start_position().row + 1;
+        match child.kind() {
+            "attribute_item" => {
+                let t: String = node_text(child, source).chars().filter(|c| !c.is_whitespace()).collect();
+                if t.starts_with("#[cfg(test)") || t == "#[test]" {
+                    skip_next = true;
+                }
+                continue;
+            }
+            _ if std::mem::take(&mut skip_next) => continue,
+            "use_declaration" => {
+                if want != Want::Uses {
+                    continue;
+                }
+                if let Some(arg) = child.child_by_field_name("argument") {
+                    for (path, name) in expand_rust_use(&node_text(arg, source)) {
+                        push(path, Some(name), line, from_file, out, seen);
+                    }
+                }
+                continue;
+            }
+            "scoped_identifier" | "scoped_type_identifier" => {
+                let raw = node_text(child, source).trim().trim_start_matches("::").to_string();
+                if raw.starts_with('<') {
+                    collect_rust_edges(child, source, from_file, want, out, seen);
+                    continue;
+                }
+                // A module path starts with `crate`, `self`, `super` or a
+                // snake_case crate name. `Vec::new`, `Self::x`,
+                // `Ordering::Less` start with a type and name no module.
+                let head = raw.split("::").next().unwrap_or("");
+                let module_like = matches!(head, "crate" | "self" | "super")
+                    || head.starts_with(|c: char| c.is_ascii_lowercase() || c == '_');
+                if want == Want::Paths && module_like && raw.contains("::") {
+                    push(raw, None, line, from_file, out, seen);
+                }
+                let mut inner = child.walk();
+                for grandchild in child.children(&mut inner) {
+                    if grandchild.kind() == "type_arguments" {
+                        collect_rust_edges(grandchild, source, from_file, want, out, seen);
+                    }
+                }
+                continue;
+            }
+            _ => {}
+        }
+        collect_rust_edges(child, source, from_file, want, out, seen);
+    }
+}
+
+/// A `use` argument, expanded: `a::{b, c::{d, e as f}}` is `a::b`, `a::c::d`,
+/// `a::c::e`, each with the name it binds. `self` inside a group is the
+/// group's own path; `as` aliases are dropped from the path.
+fn expand_rust_use(arg: &str) -> Vec<(String, String)> {
+    fn split_top(s: &str) -> Vec<&str> {
+        let (mut depth, mut start, mut out) = (0i32, 0usize, Vec::new());
+        for (i, c) in s.char_indices() {
+            match c {
+                '{' => depth += 1,
+                '}' => depth -= 1,
+                ',' if depth == 0 => {
+                    out.push(&s[start..i]);
+                    start = i + 1;
+                }
+                _ => {}
+            }
+        }
+        out.push(&s[start..]);
+        out
+    }
+    fn walk(prefix: &str, item: &str, out: &mut Vec<(String, String)>) {
+        let item = item.trim();
+        if item.is_empty() {
+            return;
+        }
+        if let Some(open) = item.find('{') {
+            let base = item[..open].trim().trim_end_matches("::");
+            let inner = item[open + 1..].trim_end().trim_end_matches('}');
+            let joined = join(prefix, base);
+            for part in split_top(inner) {
+                walk(&joined, part, out);
+            }
+            return;
+        }
+        let path_part = item.split(" as ").next().unwrap_or(item).trim();
+        if path_part == "self" {
+            let name = prefix.rsplit("::").next().unwrap_or(prefix).to_string();
+            out.push((prefix.to_string(), name));
+            return;
+        }
+        let full = join(prefix, path_part);
+        let name = full.rsplit("::").next().unwrap_or(&full).to_string();
+        out.push((full, name));
+    }
+    fn join(prefix: &str, rest: &str) -> String {
+        match (prefix.is_empty(), rest.is_empty()) {
+            (true, _) => rest.to_string(),
+            (_, true) => prefix.to_string(),
+            _ => format!("{prefix}::{rest}"),
+        }
+    }
+    let mut out = Vec::new();
+    walk("", arg.trim().trim_start_matches("::"), &mut out);
+    out
 }
 
 /// Check if a mod_item has a body (inline module) vs just `mod foo;`

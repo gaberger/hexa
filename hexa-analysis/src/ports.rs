@@ -47,6 +47,19 @@ pub trait AstPort: Send + Sync {
     /// inventory is a use case and asks.
     fn count_items(&self, source: &str, lang: Language) -> Result<ItemCounts, AnalysisError>;
 
+    /// Module paths the file reaches with no import line — in Rust,
+    /// `crate::x::y()` inline. The edge builder adds these to the imports;
+    /// in languages that cannot name a module without importing it, none.
+    fn module_paths(
+        &self,
+        path: &Path,
+        source: &str,
+        lang: Language,
+    ) -> Result<Vec<ImportStatement>, AnalysisError> {
+        let _ = (path, source, lang);
+        Ok(Vec::new())
+    }
+
     /// Extract all export declarations from a source file.
     fn extract_exports(
         &self,
