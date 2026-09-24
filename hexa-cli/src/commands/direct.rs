@@ -117,8 +117,8 @@ pub async fn run(action: DoAction) -> anyhow::Result<()> {
         }
         DoAction::Runs => {
             let r = json!({
-                "summary": hexa_exec::direct_exec::runs_summary(),
-                "runs": hexa_exec::direct_exec::runs_snapshot(),
+                "summary": hexa_exec::direct_exec::runs_summary(&hexa_exec::run_log()),
+                "runs": hexa_exec::direct_exec::runs_snapshot(&hexa_exec::run_log()),
             });
             let s = &r["summary"];
             let pass_pct = (s["pass_rate"].as_f64().unwrap_or(0.0) * 100.0).trunc() as u32;

@@ -45,8 +45,15 @@ impl RunWorkspace {
     /// If isolation is requested but the worktree cannot be created, this returns
     /// `Err` — the caller MUST abort rather than silently fall back to the
     /// operator's tree (that fallback is exactly the race this prevents).
-    pub fn acquire(slug: &str, isolate: bool, worktrees: Arc<dyn Worktrees>) -> Result<Self, String> {
-        let main_root = crate::direct_exec::repo_root();
+    ///
+    /// `main_root` is the operator's checkout, given by the caller: asking
+    /// `direct_exec` for it made this module and the loop that uses it a cycle.
+    pub fn acquire(
+        slug: &str,
+        isolate: bool,
+        worktrees: Arc<dyn Worktrees>,
+        main_root: PathBuf,
+    ) -> Result<Self, String> {
         if !isolate {
             return Ok(Self {
                 workdir: main_root.clone(),
@@ -136,7 +143,7 @@ mod tests {
 
     #[test]
     fn non_isolated_uses_main_root_and_finish_is_noop() {
-        let ws = RunWorkspace::acquire("test-slug", false, Arc::new(crate::git_worktrees::GitWorktrees)).expect("non-isolated acquire");
+        let ws = RunWorkspace::acquire("test-slug", false, Arc::new(crate::git_worktrees::GitWorktrees), crate::direct_exec::repo_root()).expect("non-isolated acquire");
         assert_eq!(ws.workdir(), crate::direct_exec::repo_root());
         assert!(!ws.is_isolated());
         assert!(ws.assert_off_operator_tree().is_ok());

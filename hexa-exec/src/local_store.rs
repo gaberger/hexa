@@ -377,6 +377,18 @@ pub fn spend_rows(group_by: &str, limit: usize) -> Vec<Value> {
         .collect()
 }
 
+/// [`RunLog`](crate::ports::RunLog) on the local runs file.
+pub struct LocalRuns;
+
+impl crate::ports::RunLog for LocalRuns {
+    fn record(&self, run: &Value) {
+        persist_run(run)
+    }
+    fn recent(&self, limit: usize) -> Vec<Value> {
+        recent_runs(limit)
+    }
+}
+
 /// [`MemoryStore`](crate::ports::MemoryStore) on `memory.jsonl` files.
 pub struct LocalMemory;
 

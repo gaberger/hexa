@@ -88,3 +88,74 @@ pub trait MemoryStore: Send + Sync {
     /// Whether the key was there to delete.
     fn delete(&self, scope: MemoryScope, key: &str) -> Result<bool, String>;
 }
+
+/// Why a frontier call produced no answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FrontierError {
+    /// Today's budget is spent; nothing was run. The message names the numbers.
+    OverBudget(String),
+    /// The CLI could not be started.
+    Spawn(String),
+    /// It ran past its time limit.
+    Timeout(std::time::Duration),
+}
+
+impl std::fmt::Display for FrontierError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::OverBudget(m) => write!(f, "{m}"),
+            Self::Spawn(e) => write!(f, "spawn claude: {e}"),
+            Self::Timeout(t) => write!(f, "claude -p timed out after {}s", t.as_secs()),
+        }
+    }
+}
+
+/// The frontier agent (`claude -p`): given a prompt and a working tree, it
+/// works and answers. The budget, the process, and recording what it cost are
+/// the adapter's; the loops only ask.
+#[async_trait]
+pub trait Frontier: Send + Sync {
+    /// Run one agent on `prompt` in `cwd`; its cost is recorded under `source`.
+    async fn run(
+        &self,
+        prompt: &str,
+        cwd: &Path,
+        timeout: std::time::Duration,
+        source: &str,
+    ) -> Result<String, FrontierError>;
+}
+
+/// Where finished runs are kept — the feed `hexa do runs` reads.
+pub trait RunLog: Send + Sync {
+    /// Keep one run. Never fails a run: losing a feed entry must not lose an edit.
+    fn record(&self, run: &Value);
+    /// The most recent `limit` rows, newest first.
+    fn recent(&self, limit: usize) -> Vec<Value>;
+}
+
+/// What a build run can say about itself, truthfully.
+///
+/// Every field is something the run observed. There is deliberately no field
+/// for "the model that wrote this": the runner resolves a tier at dispatch and
+/// does not record which model answered each call, so that claim has no source.
+#[derive(Debug, Clone, Default)]
+pub struct Facts {
+    /// RFC 3339, UTC.
+    pub date_utc: String,
+    pub hexa_version: String,
+    pub challenge: String,
+    /// The command that had to exit 0.
+    pub gate: String,
+    pub gate_passed: bool,
+    pub designs: usize,
+    pub critiques: usize,
+    /// Each configured tier and the model it resolved to, at run time.
+    pub tiers: Vec<(String, String)>,
+    /// The do-loop's candidate models, in preference order.
+    pub react_models: Vec<String>,
+}
+
+/// Where a build's receipt is written (ADR-2609221900).
+pub trait Provenance: Send + Sync {
+    fn write(&self, dir: &Path, facts: &Facts) -> std::io::Result<()>;
+}

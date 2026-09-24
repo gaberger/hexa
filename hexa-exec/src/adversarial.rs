@@ -16,9 +16,9 @@ use serde::Deserialize;
 use std::path::Path;
 use std::time::Duration;
 
-fn claude_binary() -> String {
-    std::env::var("HEXA_CLAUDE_BINARY").unwrap_or_else(|_| "claude".to_string())
-}
+use std::sync::Arc;
+
+use crate::ports::Frontier;
 
 /// One adversarial lens — a focused failure class a reviewer hunts.
 struct Lens {
@@ -315,27 +315,12 @@ fn plural(n: usize, one: &str) -> String {
     format!("{n} {one}{suffix}")
 }
 
-/// Spawn one `claude -p` agent in `cwd`, return stdout.
-async fn claude_run(prompt: &str, cwd: &Path, timeout_secs: u64) -> Result<String, String> {
-    crate::frontier::budget_check()?;
-    let fut = tokio::process::Command::new(claude_binary())
-        .arg("-p")
-        .args(crate::frontier::OUTPUT_JSON)
-        // hexa's own prompt. The project\'s hooks run inside this claude and must
-        // not treat it as a person's work: `route` once drafted workplans from the
-        // harden reviewer prompts. `hexa hook` returns early when this is set.
-        .env("HEXA_INTERNAL", "1")
-        .arg("--dangerously-skip-permissions")
-        .arg(prompt)
-        .current_dir(cwd)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .output();
-    match tokio::time::timeout(Duration::from_secs(timeout_secs), fut).await {
-        Ok(Ok(o)) => Ok(crate::frontier::take_answer(&String::from_utf8_lossy(&o.stdout), "harden")),
-        Ok(Err(e)) => Err(format!("spawn claude: {e}")),
-        Err(_) => Err("claude -p timed out".to_string()),
-    }
+/// One frontier agent in `cwd`; its answer.
+async fn claude_run(frontier: &dyn Frontier, prompt: &str, cwd: &Path, timeout_secs: u64) -> Result<String, String> {
+    frontier
+        .run(prompt, cwd, Duration::from_secs(timeout_secs), "harden")
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Who produced a reply (ADR-2609131702 §2). A finding from an agent that
@@ -484,6 +469,7 @@ async fn local_run(prompt: &str, code: &str, truncated: bool) -> Result<String, 
 /// Ask the frontier; on any non-answer, ask the tier-mapped model with the
 /// code inline (ADR-2609131702 §1). Returns what came back and who said it.
 async fn ask<T: serde::de::DeserializeOwned>(
+    frontier: &dyn Frontier,
     prompt: &str,
     code: &str,
     truncated: bool,
@@ -491,7 +477,7 @@ async fn ask<T: serde::de::DeserializeOwned>(
     timeout_secs: u64,
     attempts: u32,
 ) -> (Answer<T>, Reviewer) {
-    let frontier = read_answer::<T>(Ok(claude_run_retry(prompt, cwd, timeout_secs, attempts).await));
+    let frontier = read_answer::<T>(Ok(claude_run_retry(frontier, prompt, cwd, timeout_secs, attempts).await));
     if let Answer::Answered(v) = frontier {
         return (Answer::Answered(v), Reviewer::Frontier);
     }
@@ -581,12 +567,12 @@ fn probe_found_it(findings: &[Finding]) -> bool {
 }
 
 /// Ask the local reviewer to find the planted defect in [`PROBE_CODE`].
-async fn calibrate(repo_root: &Path) -> Calibration {
+async fn calibrate(frontier: &dyn Frontier, repo_root: &Path) -> Calibration {
     let prompt = "You are an adversarial code reviewer. Hunt this code for concurrency defects: races, \
          lost updates, work done outside a lock. Report exclusively REAL bugs you can point to. \
          Output ONLY a JSON object: \
          {\"findings\":[{\"title\":\"...\",\"location\":\"file:line or fn\",\"description\":\"the concrete failure\",\"lens\":\"concurrency\"}]}".to_string();
-    let (answer, who) = ask::<FindingsEnvelope>(&prompt, PROBE_CODE, false, repo_root, 600, 1).await;
+    let (answer, who) = ask::<FindingsEnvelope>(frontier, &prompt, PROBE_CODE, false, repo_root, 600, 1).await;
     // `who` is deliberately not recorded on the report: the probe reviewed a
     // snippet, not the target, and `reviewed_by` names who reviewed the code
     // the findings are about.
@@ -609,6 +595,7 @@ const DEFAULT_RETRIES: u32 = 3;
 /// single long call, not rate limits, so immediate retry is the right shape (mirrors
 /// the bounded-attempt loop in direct_exec.rs rather than time-based backoff).
 async fn claude_run_retry(
+    frontier: &dyn Frontier,
     prompt: &str,
     cwd: &Path,
     timeout_secs: u64,
@@ -618,7 +605,7 @@ async fn claude_run_retry(
     let mut last_err = String::new();
     for attempt in 1..=attempts {
         let this_prompt = retry_prompt(prompt, attempt, attempts, &last_err);
-        match claude_run(&this_prompt, cwd, timeout_secs).await {
+        match claude_run(frontier, &this_prompt, cwd, timeout_secs).await {
             Ok(out) => return Ok(out),
             Err(e) => last_err = e,
         }
@@ -728,12 +715,18 @@ async fn commit_result(
 /// Run the adversarial review pipeline over `target` (a path), gated by `gate` (a
 /// shell command that must exit 0). Fixes are applied to the working tree and left
 /// uncommitted for operator review.
-pub async fn run_review(target: &str, gate: &str, repo_root: &Path) -> ReviewReport {
-    run_review_with(target, gate, repo_root, silent()).await
+pub async fn run_review(frontier: Arc<dyn Frontier>, target: &str, gate: &str, repo_root: &Path) -> ReviewReport {
+    run_review_with(frontier, target, gate, repo_root, silent()).await
 }
 
 /// [`run_review`], reporting each phase as it happens.
-pub async fn run_review_with(target: &str, gate: &str, repo_root: &Path, reporter: Reporter) -> ReviewReport {
+pub async fn run_review_with(
+    frontier: Arc<dyn Frontier>,
+    target: &str,
+    gate: &str,
+    repo_root: &Path,
+    reporter: Reporter,
+) -> ReviewReport {
     let mut report = ReviewReport::default();
     // What the operator had already changed. Anything dirty after the pass and
     // not in this set is the pass's own work, tests included.
@@ -761,9 +754,10 @@ pub async fn run_review_with(target: &str, gate: &str, repo_root: &Path, reporte
         );
         let root = repo_root.to_path_buf();
         let code = code.clone();
+        let f = frontier.clone();
         hunts.push((
             lens.key,
-            tokio::spawn(async move { ask::<FindingsEnvelope>(&prompt, &code, truncated, &root, 600, DEFAULT_RETRIES).await }),
+            tokio::spawn(async move { ask::<FindingsEnvelope>(&*f, &prompt, &code, truncated, &root, 600, DEFAULT_RETRIES).await }),
         ));
     }
     report.lenses = hunts.len();
@@ -799,7 +793,7 @@ pub async fn run_review_with(target: &str, gate: &str, repo_root: &Path, reporte
     let local_only = report.reviewed_by.iter().any(|r| r != "frontier");
     if candidates.is_empty() && local_only {
         let probe = Phase::start(&reporter, "calibrate", "one planted defect, to see if an empty review means anything", HEARTBEAT);
-        report.calibration = calibrate(repo_root).await;
+        report.calibration = calibrate(&*frontier, repo_root).await;
         probe.finish(report.calibration.note().unwrap_or_else(|| "not needed".into()));
     }
     if !report.reviewed() {
@@ -825,9 +819,10 @@ pub async fn run_review_with(target: &str, gate: &str, repo_root: &Path, reporte
         );
         let root = repo_root.to_path_buf();
         let code = code.clone();
+        let fr = frontier.clone();
         checks.push((
             f,
-            tokio::spawn(async move { ask::<VerdictEnvelope>(&prompt, &code, truncated, &root, 600, DEFAULT_RETRIES).await }),
+            tokio::spawn(async move { ask::<VerdictEnvelope>(&*fr, &prompt, &code, truncated, &root, 600, DEFAULT_RETRIES).await }),
         ));
     }
     for (f, c) in checks {
@@ -872,7 +867,7 @@ pub async fn run_review_with(target: &str, gate: &str, repo_root: &Path, reporte
         // (ADR-2609131702 §1). And a reply is not an edit: the frontier
         // exits 0 when it declines, so the tree itself is the evidence.
         let before = dirty_paths(repo_root).await;
-        match claude_run_retry(&prompt, repo_root, 900, DEFAULT_RETRIES).await {
+        match claude_run_retry(&*frontier, &prompt, repo_root, 900, DEFAULT_RETRIES).await {
             Ok(reply) => {
                 let after = dirty_paths(repo_root).await;
                 if after == before {
@@ -947,6 +942,7 @@ const DESIGN_PRIORITIES: &[&str] = &[
 /// priorities) → red-team each → synthesize one spec → build to the gate. Pairs with
 /// [`run_review`] for the full cooperative+adversarial pipeline.
 pub async fn run_build(
+    frontier: Arc<dyn Frontier>,
     challenge: &str,
     target: &str,
     gate: &str,
@@ -955,12 +951,13 @@ pub async fn run_build(
     timeout_secs: u64,
     retries: u32,
 ) -> BuildReport {
-    run_build_with(challenge, target, gate, n_designs, repo_root, timeout_secs, retries, silent()).await
+    run_build_with(frontier, challenge, target, gate, n_designs, repo_root, timeout_secs, retries, silent()).await
 }
 
 /// [`run_build`], reporting each phase as it happens.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_build_with(
+    frontier: Arc<dyn Frontier>,
     challenge: &str,
     target: &str,
     gate: &str,
@@ -984,7 +981,8 @@ pub async fn run_build_with(
              concurrency/atomicity strategy, and the main risks. Output your design as clear prose (no code yet)."
         );
         let root = repo_root.to_path_buf();
-        tasks.push(tokio::spawn(async move { claude_run_retry(&prompt, &root, timeout_secs, retries).await }));
+        let f = frontier.clone();
+        tasks.push(tokio::spawn(async move { claude_run_retry(&*f, &prompt, &root, timeout_secs, retries).await }));
     }
     let mut designs = Vec::new();
     for (i, t) in tasks.into_iter().enumerate() {
@@ -1012,7 +1010,8 @@ pub async fn run_build_with(
              them concretely.\n\nDESIGN {i}:\n{d}"
         );
         let root = repo_root.to_path_buf();
-        ctasks.push(tokio::spawn(async move { claude_run_retry(&prompt, &root, timeout_secs, retries).await }));
+        let f = frontier.clone();
+        ctasks.push(tokio::spawn(async move { claude_run_retry(&*f, &prompt, &root, timeout_secs, retries).await }));
     }
     let mut critiques = Vec::new();
     for (i, t) in ctasks.into_iter().enumerate() {
@@ -1036,6 +1035,7 @@ pub async fn run_build_with(
         .join("\n\n");
     let critiques_block = critiques.join("\n\n--- next critique ---\n\n");
     let spec = match claude_run_retry(
+        &*frontier,
         &format!(
             "You are the lead architect. Given these candidate designs and their adversarial critiques for \
              the challenge:\n{challenge}\n\nSynthesize ONE concrete build spec: the public API, the internal \
@@ -1067,7 +1067,7 @@ pub async fn run_build_with(
          — fix compile errors and failing tests — until the gate exits 0. Do not stop until the gate passes.\n\n\
          CHALLENGE:\n{challenge}\n\nSPEC:\n{spec}"
     );
-    if let Err(e) = claude_run_retry(&build_prompt, repo_root, timeout_secs.saturating_mul(4), retries).await {
+    if let Err(e) = claude_run_retry(&*frontier, &build_prompt, repo_root, timeout_secs.saturating_mul(4), retries).await {
         build.note(format!("build agent error: {e}"));
         report.notes.push(format!("build agent error: {e}"));
     }

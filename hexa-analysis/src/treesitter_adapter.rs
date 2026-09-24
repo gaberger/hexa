@@ -10,6 +10,7 @@ use tree_sitter::{Language as TsLanguage, Node as TsNode, Parser, Tree};
 
 use super::ports::{
     AnalysisError, AstPort, ExportDeclaration, ExportKind, ImportStatement, ItemCounts, Language,
+    ModuleReference, ReferenceKind,
 };
 
 // ── Grammar Loading ──────────────────────────────────────
@@ -190,6 +191,10 @@ impl TreeSitterAdapter {
 }
 
 impl AstPort for TreeSitterAdapter {
+    fn module_references(&self, source: &str, lang: Language) -> Result<Vec<ModuleReference>, AnalysisError> {
+        extract_module_references(source, lang)
+    }
+
     fn module_paths(
         &self,
         path: &Path,
@@ -1082,33 +1087,7 @@ fn has_hex_public_annotation(node: &tree_sitter::Node, source: &str) -> bool {
 
 // ── Module references that are not import declarations ───────────────────────
 
-/// A place where source code names a module without an import line.
-///
-/// ADR-2609211600. `use std::fs;` and `std::fs::read("x")` are the same claim
-/// about what a file depends on, and a policy that judged only the first let
-/// the second walk past a `deny` that named it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ModuleReference {
-    /// The path as written, with any leading `::` removed.
-    pub raw_path: String,
-    /// 1-based line.
-    pub line: usize,
-    /// What the reference is, for the caller's own rules.
-    pub kind: ReferenceKind,
-}
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ReferenceKind {
-    /// A path naming a module: `std::fs::read`, `sqlx::PgPool`, `#[tokio::main]`.
-    Path,
-    /// `extern crate x;`
-    ExternCrate,
-    /// A module specifier in an expression: `require("x")`, `import("x")`.
-    Specifier,
-    /// A load whose name is not a literal, so nothing can be judged about it.
-    /// `raw_path` is the expression as written.
-    ComputedLoad,
-}
 
 /// Every module reference in `source` that is not an import declaration.
 ///

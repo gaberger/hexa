@@ -8,41 +8,11 @@
 //! F7: Service singletons exist (services/ directory present)
 //! F9: No hardcoded hex colors in components (#RRGGBB patterns)
 
-use serde::{Deserialize, Serialize};
+pub use crate::domain::{FrontendCheckResult, FrontendRuleResult, FrontendViolation};
 use std::path::{Path, PathBuf};
 
-/// Result of a single frontend architecture rule check.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FrontendRuleResult {
-    /// Rule identifier: "F1", "F2", etc.
-    pub id: String,
-    /// Human-readable rule name.
-    pub name: String,
-    /// Whether the rule passed (no violations found).
-    pub passed: bool,
-    /// Specific violations found for this rule.
-    pub violations: Vec<FrontendViolation>,
-}
 
-/// A single frontend architecture violation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FrontendViolation {
-    /// Project-relative file path.
-    pub file: String,
-    /// Line number (1-based) where the violation was found.
-    pub line: usize,
-    /// Human-readable description of what was found.
-    pub message: String,
-}
 
-/// Complete result of all frontend architecture checks.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FrontendCheckResult {
-    /// Per-rule results.
-    pub rules: Vec<FrontendRuleResult>,
-    /// Overall frontend health score (0–100).
-    pub score: u32,
-}
 
 /// Patterns that indicate direct network calls in stores or components.
 /// These are unambiguous — method names like `.get()` are excluded to avoid

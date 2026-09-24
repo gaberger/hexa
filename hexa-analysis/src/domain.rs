@@ -167,7 +167,7 @@ pub struct ArchAnalysisResult {
     pub edge_count: usize,
     /// ADR-056: Frontend hexagonal architecture check results (None if no frontend found).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub frontend: Option<super::frontend_checker::FrontendCheckResult>,
+    pub frontend: Option<FrontendCheckResult>,
     /// How much of what was read could be placed in a layer (ADR-2609241707).
     #[serde(default)]
     pub coverage: Coverage,
@@ -321,3 +321,67 @@ impl ItemCounts {
     }
 }
 
+// ── Frontend check (ADR-056) ─────────────────────────────
+
+/// Result of a single frontend architecture rule check.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FrontendRuleResult {
+    /// Rule identifier: "F1", "F2", etc.
+    pub id: String,
+    /// Human-readable rule name.
+    pub name: String,
+    /// Whether the rule passed (no violations found).
+    pub passed: bool,
+    /// Specific violations found for this rule.
+    pub violations: Vec<FrontendViolation>,
+}
+
+/// A single frontend architecture violation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FrontendViolation {
+    /// Project-relative file path.
+    pub file: String,
+    /// Line number (1-based) where the violation was found.
+    pub line: usize,
+    /// Human-readable description of what was found.
+    pub message: String,
+}
+
+/// Complete result of all frontend architecture checks.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FrontendCheckResult {
+    /// Per-rule results.
+    pub rules: Vec<FrontendRuleResult>,
+    /// Overall frontend health score (0–100).
+    pub score: u32,
+}
+
+// ── Module references (the domain import policy) ─────────
+
+/// A place where source code names a module without an import line.
+///
+/// ADR-2609211600. `use std::fs;` and `std::fs::read("x")` are the same claim
+/// about what a file depends on, and a policy that judged only the first let
+/// the second walk past a `deny` that named it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModuleReference {
+    /// The path as written, with any leading `::` removed.
+    pub raw_path: String,
+    /// 1-based line.
+    pub line: usize,
+    /// What the reference is, for the caller's own rules.
+    pub kind: ReferenceKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReferenceKind {
+    /// A path naming a module: `std::fs::read`, `sqlx::PgPool`, `#[tokio::main]`.
+    Path,
+    /// `extern crate x;`
+    ExternCrate,
+    /// A module specifier in an expression: `require("x")`, `import("x")`.
+    Specifier,
+    /// A load whose name is not a literal, so nothing can be judged about it.
+    /// `raw_path` is the expression as written.
+    ComputedLoad,
+}

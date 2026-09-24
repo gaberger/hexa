@@ -63,7 +63,7 @@ struct ScoreItems {
     cycles: Vec<Vec<String>>,
     dead: Vec<String>,
     unused: Vec<String>,
-    coverage: hexa_analysis::domain::Coverage,
+    coverage: hexa_analysis::ports::Coverage,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -775,7 +775,7 @@ fn health_findings(root: &Path) -> Vec<(&'static str, Health)> {
 /// would have orphaned it and broken the verb P9.2 is measured on.
 pub async fn deep_analysis(
     root: &Path,
-) -> Result<hexa_analysis::domain::ArchAnalysisResult, hexa_analysis::ports::AnalysisError> {
+) -> Result<hexa_analysis::ports::ArchAnalysisResult, hexa_analysis::ports::AnalysisError> {
     use hexa_analysis::ports::ArchAnalysisPort;
     let ast = hexa_analysis::default_ast();
     let mut result = hexa_analysis::analyzer::ArchAnalyzer::new(ast).analyze(root).await?;
@@ -786,16 +786,7 @@ pub async fn deep_analysis(
     // (ADR-2609211430 §1). Applying it in each of them instead would be three
     // places to keep in agreement, which is the disagreement this fixes.
     let rule_errors = rule_error_count(root);
-    result.health_score = hexa_analysis::domain::ArchAnalysisResult::compute_health_score(
-        result.violations.len(),
-        result.circular_deps.len(),
-        result.dead_exports.len(),
-        result.unused_ports.len(),
-        rule_errors,
-    )
-    // Re-scored here, so the ceiling is re-applied here: the score cannot
-    // exceed what the grade could classify (ADR-2609241707).
-    .min(result.coverage.ceiling());
+    hexa_analysis::analyzer::apply_rule_errors(&mut result, rule_errors);
     Ok(result)
 }
 
@@ -918,7 +909,7 @@ fn find_workspace_crate_dirs(root: &Path) -> Vec<PathBuf> {
 
 /// The layer inventory as a table: one row per (layer, language) with files.
 async fn print_layer_inventory(root: &Path) {
-    use hexa_analysis::domain::Language;
+    use hexa_analysis::ports::Language;
     println!();
     println!("  {}", "Layer inventory:".bold());
     println!("    {}", "what each layer holds, per language, over the files the grade reads".dimmed());
@@ -1577,8 +1568,8 @@ fn walk_manifests(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) {
 
 /// The first segment of a module path, which is the name that decides whether
 /// the path leaves the project at all.
-fn first_segment(lang: hexa_analysis::domain::Language, raw: &str) -> String {
-    let sep = if lang == hexa_analysis::domain::Language::Rust { "::" } else { "/" };
+fn first_segment(lang: hexa_analysis::ports::Language, raw: &str) -> String {
+    let sep = if lang == hexa_analysis::ports::Language::Rust { "::" } else { "/" };
     raw.trim().trim_start_matches("::").split(sep).next().unwrap_or("").to_string()
 }
 
@@ -1616,8 +1607,8 @@ fn evaluate_import_policies(
         if matching.is_empty() {
             continue;
         }
-        let lang = hexa_analysis::domain::Language::from_path(&rel);
-        if lang == hexa_analysis::domain::Language::Unknown {
+        let lang = hexa_analysis::ports::Language::from_path(&rel);
+        if lang == hexa_analysis::ports::Language::Unknown {
             continue;
         }
         let source = match std::fs::read_to_string(path) {
@@ -1645,9 +1636,7 @@ fn evaluate_import_policies(
         let mut sites: Vec<(String, usize)> =
             imports.into_iter().map(|i| (i.raw_path, i.line)).collect();
 
-        let references = match hexa_analysis::treesitter_adapter::extract_module_references(
-            &source, lang,
-        ) {
+        let references = match ast.module_references(&source, lang) {
             Ok(r) => r,
             Err(e) => {
                 out.extend(unchecked_file(&matching, &rel, &format!("could not be parsed ({e})")));
@@ -1655,7 +1644,7 @@ fn evaluate_import_policies(
             }
         };
         for r in references {
-            use hexa_analysis::treesitter_adapter::ReferenceKind;
+            use hexa_analysis::ports::ReferenceKind;
             if r.kind == ReferenceKind::ComputedLoad {
                 // Nothing can be judged about a name assembled at runtime, and
                 // saying nothing would be the silent skip this exists to stop.
@@ -1680,7 +1669,7 @@ fn evaluate_import_policies(
             // to name something outside the project. `O::new()` and
             // `Ordering::Less` have a crate's shape and are local code.
             let head = first_segment(lang, &r.raw_path);
-            if lang == hexa_analysis::domain::Language::Rust
+            if lang == hexa_analysis::ports::Language::Rust
                 && !hexa_analysis::import_policy::names_external(&head, &names)
             {
                 continue;
@@ -1737,13 +1726,13 @@ fn evaluate_import_policies(
 /// external package the path names. Two different reaches outside on one line
 /// are two findings; the same one written twice is one.
 fn denied_name(
-    lang: hexa_analysis::domain::Language,
+    lang: hexa_analysis::ports::Language,
     raw_path: &str,
     deny: &[String],
     names: &hexa_analysis::import_policy::ProjectNames,
 ) -> String {
     let _ = names;
-    let sep = if lang == hexa_analysis::domain::Language::Rust { "::" } else { "/" };
+    let sep = if lang == hexa_analysis::ports::Language::Rust { "::" } else { "/" };
     let path = raw_path.trim().trim_start_matches("::");
     let mut best: Option<&str> = None;
     for d in deny {

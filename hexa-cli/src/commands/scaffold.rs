@@ -138,6 +138,7 @@ pub async fn run(args: ScaffoldArgs) -> Result<()> {
     // ── 3. the frontier path builds onto it ──────────────────────────────
     let challenge = challenge_for(&args.description, &args.lang, gate);
     let b = hexa_exec::adversarial::run_build(
+        hexa_exec::frontier_agent(),
         &challenge,
         &args.target,
         gate,
@@ -212,7 +213,7 @@ pub async fn run(args: ScaffoldArgs) -> Result<()> {
     if args.harden && gate_ok {
         println!("{} adversarial pass", "⬡".cyan());
         let report =
-            hexa_exec::adversarial::run_review(&args.target, gate, &repo_root).await;
+            hexa_exec::adversarial::run_review(hexa_exec::frontier_agent(), &args.target, gate, &repo_root).await;
         println!(
             "  {} {} candidate(s) → {} confirmed → {} fixed",
             "✓".green(),

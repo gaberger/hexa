@@ -14,6 +14,7 @@ pub mod adversarial;
 pub mod compress;
 pub mod direct_exec;
 pub mod direct_react;
+pub mod do_task;
 pub mod frontier;
 pub mod git_worktrees;
 pub mod ports;
@@ -73,16 +74,34 @@ pub fn default_deps() -> direct_exec::ExecDeps {
     direct_exec::ExecDeps {
         tools: std::sync::Arc::new(default_tools()),
         worktrees: std::sync::Arc::new(git_worktrees::GitWorktrees),
+        frontier: frontier_agent(),
+        runs: std::sync::Arc::new(local_store::LocalRuns),
+        memory: std::sync::Arc::new(memory()),
     }
 }
 
 /// Run one direct task on the default dependencies.
-/// See [`direct_exec::execute_direct_with`].
+/// See [`do_task::execute_direct_with`].
 pub async fn execute_direct(task: direct_exec::DirectTask) -> direct_exec::DirectResult {
-    direct_exec::execute_direct_with(&default_deps(), task).await
+    do_task::execute_direct_with(&default_deps(), task).await
 }
 
 /// The memory store, wired: `memory.jsonl` files under the project or `~/.hexa`.
 pub fn memory() -> impl ports::MemoryStore {
     local_store::LocalMemory
+}
+
+/// The frontier agent, wired: the operator's logged-in `claude` CLI.
+pub fn frontier_agent() -> std::sync::Arc<dyn ports::Frontier> {
+    std::sync::Arc::new(frontier::ClaudeCli)
+}
+
+/// The run log, wired: the local runs file.
+pub fn run_log() -> impl ports::RunLog {
+    local_store::LocalRuns
+}
+
+/// Where a build's receipt goes, wired: `PROVENANCE.md` in the target.
+pub fn provenance_store() -> impl ports::Provenance {
+    provenance::ProvenanceFile
 }

@@ -494,7 +494,7 @@ async fn subagent_start() -> Result<()> {
             agent_id, agent_type
         );
     }
-    hexa_exec::local_store::persist_run(&serde_json::json!({
+    hexa_exec::ports::RunLog::record(&hexa_exec::run_log(), &serde_json::json!({
         "kind": "subagent",
         "event": "start",
         "agent_id": agent_id,
@@ -512,7 +512,7 @@ async fn subagent_start() -> Result<()> {
 /// facts it needs.
 async fn subagent_stop() -> Result<()> {
     let v = hook_payload().clone();
-    hexa_exec::local_store::persist_run(&serde_json::json!({
+    hexa_exec::ports::RunLog::record(&hexa_exec::run_log(), &serde_json::json!({
         "kind": "subagent",
         "event": "stop",
         "agent_id": v["agent_id"].as_str().unwrap_or(""),
@@ -1243,7 +1243,7 @@ fn save_restart_checkpoint(state: &SessionState) -> Result<()> {
         "session_id": session_key(),
         "saved_at": chrono::Utc::now().to_rfc3339(),
     });
-    let _ = hexa_exec::local_store::memory_put(
+    let _ = hexa_exec::ports::MemoryStore::put(&hexa_exec::memory(), hexa_exec::ports::MemoryScope::Project, 
         &checkpoint_key(&state.project, &state.agent_id),
         &checkpoint.to_string(),
     );
@@ -1258,7 +1258,7 @@ async fn recover_restart_checkpoint() -> Result<()> {
         return Ok(());
     };
     let key = checkpoint_key(&state.project, &state.agent_id);
-    let Some(raw) = hexa_exec::local_store::memory_get(&key) else {
+    let Some(raw) = hexa_exec::ports::MemoryStore::get(&hexa_exec::memory(), hexa_exec::ports::MemoryScope::Project, &key) else {
         return Ok(());
     };
     let Ok(cp) = serde_json::from_str::<serde_json::Value>(&raw) else {
@@ -1276,13 +1276,13 @@ async fn recover_restart_checkpoint() -> Result<()> {
     }
     // One-shot: a checkpoint consumed is a checkpoint spent, or every future
     // session recovers the same stale context.
-    let _ = hexa_exec::local_store::memory_delete(&key);
+    let _ = hexa_exec::ports::MemoryStore::delete(&hexa_exec::memory(), hexa_exec::ports::MemoryScope::Project, &key);
     Ok(())
 }
 
 /// Load the active workplan from local memory into session state (ADR-050).
 async fn load_workplan_context(project_id: &str) -> Result<()> {
-    let Some(raw) = hexa_exec::local_store::memory_get(&format!("workplan:active:{project_id}"))
+    let Some(raw) = hexa_exec::ports::MemoryStore::get(&hexa_exec::memory(), hexa_exec::ports::MemoryScope::Project, &format!("workplan:active:{project_id}"))
     else {
         return Ok(());
     };

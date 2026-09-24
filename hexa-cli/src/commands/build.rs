@@ -117,6 +117,7 @@ pub async fn run_build(args: BuildArgs) -> anyhow::Result<()> {
     );
 
     let b = hexa_exec::adversarial::run_build_with(
+        hexa_exec::frontier_agent(),
         &args.challenge,
         &args.target,
         &args.gate,
@@ -144,7 +145,7 @@ pub async fn run_build(args: BuildArgs) -> anyhow::Result<()> {
     // reconstructed later (ADR-2609221900). Written whether or not the gate
     // passed: a failed build that records what it attempted is more useful
     // than no record. A failure to write it must not fail the build.
-    let facts = hexa_exec::provenance::Facts {
+    let facts = hexa_exec::ports::Facts {
         date_utc: now_utc_rfc3339(),
         hexa_version: env!("CARGO_PKG_VERSION").to_string(),
         challenge: args.challenge.clone(),
@@ -161,14 +162,14 @@ pub async fn run_build(args: BuildArgs) -> anyhow::Result<()> {
         react_models: hexa_infer::react_models(),
     };
     let target = Path::new(&args.target);
-    match hexa_exec::provenance::write(target, &facts) {
+    match hexa_exec::ports::Provenance::write(&hexa_exec::provenance_store(), target, &facts) {
         Ok(()) => println!("  {} {}", "·".dimmed(), format!("provenance → {}/PROVENANCE.md", args.target).dimmed()),
         Err(e) => eprintln!("  {} could not write provenance: {e}", "⚠".yellow()),
     }
 
     if args.harden && b.build_ok {
         println!("{} adversarial pass", "⬡".cyan());
-        let r = hexa_exec::adversarial::run_review_with(&args.target, &args.gate, &repo_root, reporter("harden", &repo_root)).await;
+        let r = hexa_exec::adversarial::run_review_with(hexa_exec::frontier_agent(), &args.target, &args.gate, &repo_root, reporter("harden", &repo_root)).await;
         running_done(&repo_root);
         print_review(&r, "    ");
     }
@@ -279,7 +280,7 @@ pub async fn run_harden(args: HardenArgs) -> anyhow::Result<()> {
         args.gate.dimmed()
     );
     println!("  hunt → skeptical-verify → fix-loop");
-    let report = hexa_exec::adversarial::run_review_with(&args.target, &args.gate, &repo_root, reporter("harden", &repo_root)).await;
+    let report = hexa_exec::adversarial::run_review_with(hexa_exec::frontier_agent(), &args.target, &args.gate, &repo_root, reporter("harden", &repo_root)).await;
     running_done(&repo_root);
     print_review(&report, "  ");
     // A pass that reviewed nothing is not a pass: `hexa harden && ship`

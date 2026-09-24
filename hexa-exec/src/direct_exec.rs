@@ -111,6 +111,7 @@ pub struct DirectRun {
 /// feed — keeps the run-buffer internals private to this module.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn record_react_run(
+    runs: &dyn crate::ports::RunLog,
     started_at: String,
     task: &DirectTask,
     model: &str,
@@ -136,7 +137,7 @@ pub(crate) fn record_react_run(
         duration_ms,
         error,
     };
-    store_run(run);
+    store_run(runs, run);
 }
 
 /// Persist a run to the local store.
@@ -146,8 +147,8 @@ pub(crate) fn record_react_run(
 /// process reads is not a cache — it is a way to report zero runs while the
 /// file holds every one of them. Never fails a run: losing a feed entry must
 /// not lose an edit.
-fn store_run(run: DirectRun) {
-    persist_run_async(run);
+fn store_run(runs: &dyn crate::ports::RunLog, run: DirectRun) {
+    persist_run_async(runs, run);
 }
 
 static RUN_ID: AtomicU64 = AtomicU64::new(1);
@@ -284,7 +285,14 @@ test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out";
     }
 }
 
-fn record_run(started_at: String, task: &DirectTask, model: &str, r: &DirectResult, duration_ms: u64) {
+pub(crate) fn record_run(
+    runs: &dyn crate::ports::RunLog,
+    started_at: String,
+    task: &DirectTask,
+    model: &str,
+    r: &DirectResult,
+    duration_ms: u64,
+) {
     let run = DirectRun {
         id: RUN_ID.fetch_add(1, Ordering::Relaxed),
         agent: "direct-executor".to_string(),
@@ -300,10 +308,28 @@ fn record_run(started_at: String, task: &DirectTask, model: &str, r: &DirectResu
         duration_ms,
         error: r.error.clone(),
     };
-    store_run(run);
+    store_run(runs, run);
 }
 
 // ── local persistence (survives a restart, needs no database) ────────────────
+
+/// Turn a git failure into something the operator can act on.
+///
+/// The message that started this: "fatal: unable to auto-detect email address
+/// (got 'user@host.(none)')". Correct, and it tells you nothing about what to
+/// do, while appearing under a passing test summary.
+pub(crate) fn commit_failure_hint(err: &str) -> String {
+    let base = format!("evidence PASSED but the commit failed: {err}");
+    if err.contains("auto-detect email") || err.contains("tell me who you are") {
+        format!(
+            "{base}\n  This repository has no git identity. The change is in your working \
+             tree, unstaged — commit it yourself, or set one:\n    \
+             git config user.email you@example.com && git config user.name \"Your Name\""
+        )
+    } else {
+        format!("{base}\n  The change is in your working tree, unstaged.")
+    }
+}
 
 /// Fire-and-forget persist of a run. The in-memory ring is the fast path; this is the copy that
 /// outlives the process. Never blocks or fails a recorder.
@@ -311,11 +337,11 @@ fn record_run(started_at: String, task: &DirectTask, model: &str, r: &DirectResu
 /// Was a `record_agent_run` reducer call to SpacetimeDB — so a feed that exists to be READ needed a
 /// database WRITE to a service the daemon owned, and the agent loop carried that dependency purely
 /// to leave a trace of itself.
-fn persist_run_async(run: DirectRun) {
+fn persist_run_async(runs: &dyn crate::ports::RunLog, run: DirectRun) {
     // `<started_at>#<seq>` stays unique across restarts even though RUN_ID resets to 1, because
     // started_at differs. Kept from the STDB key for exactly that reason.
     let id = format!("{}#{}", run.started_at, run.id);
-    crate::local_store::persist_run(&json!({
+    runs.record(&json!({
         "id": id,
         "agent": run.agent,
         "started_at": run.started_at,
@@ -346,8 +372,8 @@ fn persist_run_async(run: DirectRun) {
 /// reported 8% pass over 5 real runs. `runs_from_rows` drops those rows
 /// before assigning display ids, so ids number only real runs
 /// (ADR-2609151100).
-pub fn runs_snapshot() -> Vec<DirectRun> {
-    runs_from_rows(crate::local_store::recent_runs(RUN_HISTORY))
+pub fn runs_snapshot(runs: &dyn crate::ports::RunLog) -> Vec<DirectRun> {
+    runs_from_rows(runs.recent(RUN_HISTORY))
 }
 
 /// Map raw newest-first log rows into `DirectRun`s, skipping non-run rows.
@@ -400,8 +426,8 @@ pub(crate) fn runs_from_rows(rows: Vec<Value>) -> Vec<DirectRun> {
 }
 
 /// Aggregate counters for an at-a-glance monitor header.
-pub fn runs_summary() -> Value {
-    summary_of(&runs_snapshot())
+pub fn runs_summary(runs: &dyn crate::ports::RunLog) -> Value {
+    summary_of(&runs_snapshot(runs))
 }
 
 /// Count `runs` into the monitor-header shape: total, passed, failed,
@@ -427,41 +453,11 @@ pub(crate) fn summary_of(runs: &[DirectRun]) -> Value {
 pub struct ExecDeps {
     pub tools: std::sync::Arc<crate::tool_registry::ToolRegistry>,
     pub worktrees: std::sync::Arc<dyn crate::ports::Worktrees>,
+    pub frontier: std::sync::Arc<dyn crate::ports::Frontier>,
+    pub runs: std::sync::Arc<dyn crate::ports::RunLog>,
+    pub memory: std::sync::Arc<dyn crate::ports::MemoryStore>,
 }
 
-pub async fn execute_direct_with(deps: &ExecDeps, task: DirectTask) -> DirectResult {
-    let started = std::time::Instant::now();
-    let started_at = chrono::Utc::now().to_rfc3339();
-    let Some(model) = resolve_model(&task) else {
-        return DirectResult::err(NO_MODEL_CONFIGURED.to_string());
-    };
-
-    // Default (ADR-2606071XXX): the multi-step ReAct tool-use loop — the agent
-    // explores (grep/read/cargo_check) before editing. `--fast` keeps the
-    // single-shot path (read → one edit → evidence → retry) for trivial edits.
-    if task.fast {
-        let result = execute_direct_inner(deps, task.clone()).await;
-        record_run(started_at, &task, &model, &result, started.elapsed().as_millis() as u64);
-        result
-    } else {
-        // Evidence-gated best-of-N across candidate models (ADR-2606072044): try
-        // each in order, commit the first that passes. Single-model configs resolve
-        // to a one-element list, so this is a no-op for them.
-        let (result, steps, used_model) = crate::direct_react::react_execute_best_of_n(deps, task.clone()).await;
-        record_react_run(
-            started_at,
-            &task,
-            &used_model,
-            result.ok,
-            result.evidence_passed,
-            result.committed.clone(),
-            steps,
-            started.elapsed().as_millis() as u64,
-            result.error.clone(),
-        );
-        result
-    }
-}
 
 /// The model this task runs on: the task's own choice, then the environment
 /// override, then the project's configured tier.
@@ -504,7 +500,7 @@ impl DirectResult {
     }
 }
 
-async fn execute_direct_inner(deps: &ExecDeps, task: DirectTask) -> DirectResult {
+pub(crate) async fn execute_direct_inner(deps: &ExecDeps, task: DirectTask) -> DirectResult {
     // Serialize the whole acquire→read→edit→evidence→commit→finish section.
     let _exec_guard = EXEC_LOCK.lock().await;
 
@@ -512,7 +508,7 @@ async fn execute_direct_inner(deps: &ExecDeps, task: DirectTask) -> DirectResult
     // explicitly opted out. Never silently fall back to the operator's tree.
     let isolate = want_isolation(&task);
     let slug = crate::direct_workspace::next_run_slug();
-    let workspace = match crate::direct_workspace::RunWorkspace::acquire(&slug, isolate, deps.worktrees.clone()) {
+    let workspace = match crate::direct_workspace::RunWorkspace::acquire(&slug, isolate, deps.worktrees.clone(), repo_root()) {
         Ok(w) => w,
         Err(e) => return DirectResult::err(format!("workspace: {e}")),
     };
@@ -522,12 +518,12 @@ async fn execute_direct_inner(deps: &ExecDeps, task: DirectTask) -> DirectResult
     }
     let repo_root = workspace.workdir().to_path_buf();
     let factory = workspace.is_isolated();
-    let result = exec_attempts(&task, &repo_root, factory).await;
+    let result = exec_attempts(deps, &task, &repo_root, factory).await;
     workspace.finish(result.ok);
     result
 }
 
-async fn exec_attempts(task: &DirectTask, repo_root: &std::path::Path, factory: bool) -> DirectResult {
+async fn exec_attempts(deps: &ExecDeps, task: &DirectTask, repo_root: &std::path::Path, factory: bool) -> DirectResult {
     // Snapshot pre-run dirty files so the commit includes the supporting files the
     // evidence depends on (ADR-2606080915 follow-up — do-loop commit-gap fix).
     let start_dirty = dirty_paths(repo_root).await;
@@ -541,7 +537,7 @@ async fn exec_attempts(task: &DirectTask, repo_root: &std::path::Path, factory: 
     // Phase 2 (ADR-2606061359): assemble graph-context + lessons once and prepend
     // it to every edit prompt — the single agent reasons with structural context
     // + memory (Hermes/OpenClaw), not from the file slice alone.
-    let context_block = gather_context(task).await;
+    let context_block = gather_context(&*deps.memory, task).await;
 
     let mut result = DirectResult {
         ok: false,
@@ -613,7 +609,7 @@ async fn exec_attempts(task: &DirectTask, repo_root: &std::path::Path, factory: 
                         .arg(&task.file)
                         .current_dir(repo_root)
                         .output();
-                    result.error = Some(crate::direct_react::commit_failure_hint(&e));
+                    result.error = Some(commit_failure_hint(&e));
                     return result;
                 }
             }
@@ -720,7 +716,7 @@ pub(crate) fn ground_window(content: &str, instruction: &str) -> String {
 /// edit prompt: the target file's graph neighbourhood (hexa-graph engine — hexa's
 /// structural-context differentiator) plus relevant learned lessons. Best-effort:
 /// any failure yields "" and never breaks the edit loop.
-pub(crate) async fn gather_context(task: &DirectTask) -> String {
+pub(crate) async fn gather_context(memory: &dyn crate::ports::MemoryStore, task: &DirectTask) -> String {
     let mut out = String::new();
 
     // (a) Graph neighbourhood for the target file, from graph-out/graph.json.
@@ -741,7 +737,7 @@ pub(crate) async fn gather_context(task: &DirectTask) -> String {
     // the target file's neighbourhood labels (path/symbols) they mention, so the
     // agent gets the lessons about THIS code, not 6 arbitrary recent ones. Falls
     // back to recency when there's no graph/anchors (ADR-2606061359 memory loop).
-    let all = fetch_lessons().await;
+    let all = fetch_lessons(memory).await;
     if !all.is_empty() {
         let chosen: Vec<(String, String)> = match &bundle {
             Some(b) => {
@@ -773,9 +769,9 @@ pub(crate) async fn gather_context(task: &DirectTask) -> String {
 /// One JSON object per line, `{"key": "lesson:…", "value": "…"}`, at this project's
 /// `.hexa/memory.jsonl` (ADR-2609211200). An absent file is an empty memory, not an error — a
 /// fresh install has learned nothing yet, and neither has a repository nobody has taught.
-pub async fn fetch_lessons() -> Vec<(String, String)> {
+pub async fn fetch_lessons(memory: &dyn crate::ports::MemoryStore) -> Vec<(String, String)> {
     const CAP: usize = 200;
-    crate::local_store::memory_entries(CAP)
+    memory.entries(crate::ports::MemoryScope::Project, CAP)
 }
 
 // ─── the one inference call ───────────────────────────────────────────────────

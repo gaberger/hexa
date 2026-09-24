@@ -6,12 +6,15 @@
 use async_trait::async_trait;
 use std::path::Path;
 
-use super::domain::{ArchAnalysisResult, DeadExport, DependencyViolation};
+use super::domain::{DeadExport, DependencyViolation};
 
 /// The value types `AstPort` speaks, re-exported so an adapter reaches them
 /// through the port rather than the domain — the convention hexa's own
 /// scaffold emits (`pub use crate::domain::Count as CountValue`).
-pub use super::domain::{ExportDeclaration, ExportKind, HexLayer, ImportStatement, ItemCounts, Language};
+pub use super::domain::{
+    ArchAnalysisResult, Coverage, ExportDeclaration, ExportKind, HexLayer, ImportStatement, ItemCounts, Language,
+    ModuleReference, ReferenceKind,
+};
 
 // ── Error Type ───────────────────────────────────────────
 
@@ -59,6 +62,11 @@ pub trait AstPort: Send + Sync {
         let _ = (path, source, lang);
         Ok(Vec::new())
     }
+
+    /// Every path the file names that could be a module — inline paths,
+    /// `extern crate`, dynamic loads — for the domain import policy, which
+    /// filters local code itself.
+    fn module_references(&self, source: &str, lang: Language) -> Result<Vec<ModuleReference>, AnalysisError>;
 
     /// Extract all export declarations from a source file.
     fn extract_exports(

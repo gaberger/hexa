@@ -391,7 +391,7 @@ async fn context(a: ContextArgs) -> anyhow::Result<()> {
     let mut markdown = hexa_graph::context::render_markdown(&bundle);
     // Graph-relevant memory: lessons whose text mentions this file's
     // neighbourhood (path/symbols), ranked — not arbitrary recency.
-    let lessons = hexa_exec::direct_exec::fetch_lessons().await;
+    let lessons = hexa_exec::direct_exec::fetch_lessons(&hexa_exec::memory()).await;
     let ranked = hexa_graph::context::rank_lessons(&bundle, &lessons, 6);
     if !ranked.is_empty() {
         markdown.push_str("\n## Lessons (most relevant to this file)\n");

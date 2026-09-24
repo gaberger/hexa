@@ -11,27 +11,8 @@
 
 use std::path::Path;
 
-/// What a build run can say about itself, truthfully.
-///
-/// Every field is something the run observed. There is deliberately no field
-/// for "the model that wrote this": the runner resolves a tier at dispatch and
-/// does not record which model answered each call, so that claim has no source.
-#[derive(Debug, Clone, Default)]
-pub struct Facts {
-    /// RFC 3339, UTC.
-    pub date_utc: String,
-    pub hexa_version: String,
-    pub challenge: String,
-    /// The command that had to exit 0.
-    pub gate: String,
-    pub gate_passed: bool,
-    pub designs: usize,
-    pub critiques: usize,
-    /// Each configured tier and the model it resolved to, at run time.
-    pub tiers: Vec<(String, String)>,
-    /// The do-loop's candidate models, in preference order.
-    pub react_models: Vec<String>,
-}
+pub use crate::ports::Facts;
+
 
 /// The provenance document for a run.
 ///
@@ -112,3 +93,13 @@ pub fn write(dir: &Path, f: &Facts) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
     std::fs::write(dir.join("PROVENANCE.md"), record(f))
 }
+
+/// [`Provenance`](crate::ports::Provenance) as `PROVENANCE.md` in the target.
+pub struct ProvenanceFile;
+
+impl crate::ports::Provenance for ProvenanceFile {
+    fn write(&self, dir: &Path, facts: &Facts) -> std::io::Result<()> {
+        write(dir, facts)
+    }
+}
+

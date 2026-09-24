@@ -19,32 +19,8 @@ use std::process::Command;
 
 /// (importing file, import) — each with the reason it is still here.
 const KNOWN: &[(&str, &str)] = &[
-    // Surfaced when `super::` resolved to a real module, inline paths and
-    // nested/`pub use`/aliased imports became edges. Grouped by the rule;
-    // each line goes when its crossing is fixed.
-    // domain must not import from outside domain.
-    ("hexa-analysis/src/domain.rs", "super::frontend_checker::FrontendCheckResult"),
-    // adapters must not import from domain directly.
-    ("hexa-cli/src/commands/analyze.rs", "hexa_analysis::domain::ArchAnalysisResult::compute_health_score"),
-    ("hexa-cli/src/commands/analyze.rs", "hexa_analysis::domain::Language"),
-    ("hexa-cli/src/commands/analyze.rs", "hexa_analysis::domain::Language::Rust"),
-    ("hexa-cli/src/commands/analyze.rs", "hexa_analysis::domain::Language::from_path"),
-    ("hexa-exec/src/tools/code_patch.rs", "hexa_core::domain::validation::is_critical_path"),
-    // adapters must not import from other adapters.
-    ("hexa-cli/src/commands/analyze.rs", "hexa_analysis::treesitter_adapter::ReferenceKind"),
-    ("hexa-cli/src/commands/analyze.rs", "hexa_analysis::treesitter_adapter::extract_module_references"),
-    ("hexa-cli/src/commands/build.rs", "hexa_exec::provenance::Facts"),
-    ("hexa-cli/src/commands/build.rs", "hexa_exec::provenance::write"),
-    ("hexa-cli/src/commands/hook/mod.rs", "hexa_exec::local_store::memory_delete"),
-    ("hexa-cli/src/commands/hook/mod.rs", "hexa_exec::local_store::memory_get"),
-    ("hexa-cli/src/commands/hook/mod.rs", "hexa_exec::local_store::memory_put"),
-    ("hexa-cli/src/commands/hook/mod.rs", "hexa_exec::local_store::persist_run"),
-    // usecases may only import from domain and ports.
-    ("hexa-exec/src/direct_exec.rs", "crate::local_store::memory_entries"),
-    ("hexa-exec/src/direct_exec.rs", "crate::local_store::persist_run"),
-    ("hexa-exec/src/direct_exec.rs", "crate::local_store::recent_runs"),
-    ("hexa-exec/src/frontier.rs", "hexa_infer::spend::model_from_frontier_json"),
-    ("hexa-exec/src/frontier.rs", "hexa_infer::spend::record_with"),
+    // Empty. Every entry was fixed, not listed: the boundary checks now
+    // enforce zero on hexa's own tree.
 ];
 
 #[test]

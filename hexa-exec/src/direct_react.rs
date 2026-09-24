@@ -80,7 +80,7 @@ async fn react_execute(deps: &ExecDeps, task: DirectTask) -> (DirectResult, u32,
     // opted out (`isolate:false`). Never silently fall back to the operator tree.
     let isolate = direct_exec::want_isolation(&task);
     let slug = crate::direct_workspace::next_run_slug();
-    let workspace = match crate::direct_workspace::RunWorkspace::acquire(&slug, isolate, deps.worktrees.clone()) {
+    let workspace = match crate::direct_workspace::RunWorkspace::acquire(&slug, isolate, deps.worktrees.clone(), direct_exec::repo_root()) {
         Ok(w) => w,
         Err(e) => {
             return (
@@ -131,7 +131,7 @@ async fn react_attempts(
         error: None,
     };
 
-    let context_block = direct_exec::gather_context(task).await;
+    let context_block = direct_exec::gather_context(&*deps.memory, task).await;
     let registry = deps.tools.clone();
     let tools_schema = curated_schema(&registry);
     let system_prompt = build_system_prompt(&tools_schema);
@@ -308,23 +308,6 @@ enum EditOutcome {
     CommitFailed(String),
 }
 
-/// Turn a git failure into something the operator can act on.
-///
-/// The message that started this: "fatal: unable to auto-detect email address
-/// (got 'user@host.(none)')". Correct, and it tells you nothing about what to
-/// do, while appearing under a passing test summary.
-pub(crate) fn commit_failure_hint(err: &str) -> String {
-    let base = format!("evidence PASSED but the commit failed: {err}");
-    if err.contains("auto-detect email") || err.contains("tell me who you are") {
-        format!(
-            "{base}\n  This repository has no git identity. The change is in your working \
-             tree, unstaged — commit it yourself, or set one:\n    \
-             git config user.email you@example.com && git config user.name \"Your Name\""
-        )
-    } else {
-        format!("{base}\n  The change is in your working tree, unstaged.")
-    }
-}
 
 /// Apply a proposed edit, run the evidence command, commit on pass. On an APPLY
 /// or EVIDENCE failure the edit is REVERTED so each `propose_edit` is atomic
@@ -365,7 +348,7 @@ async fn apply_and_verify(
                     .arg(&task.file)
                     .current_dir(repo_root)
                     .output();
-                EditOutcome::CommitFailed(commit_failure_hint(&e))
+                EditOutcome::CommitFailed(direct_exec::commit_failure_hint(&e))
             }
         }
     } else {
@@ -578,7 +561,7 @@ fn flatten_text(m: &Value) -> String {
 
 #[cfg(test)]
 mod commit_failure_tests {
-    use super::commit_failure_hint;
+    use crate::direct_exec::commit_failure_hint;
 
     /// The exact message a fresh clone produces, and the exact thing it failed
     /// to say: which half worked, and what to do about it.
@@ -773,7 +756,7 @@ pub(crate) fn is_claude_model(m: &str) -> bool {
 async fn claude_execute(deps: &ExecDeps, task: DirectTask) -> (DirectResult, u32, String) {
     let isolate = direct_exec::want_isolation(&task);
     let slug = crate::direct_workspace::next_run_slug();
-    let workspace = match crate::direct_workspace::RunWorkspace::acquire(&slug, isolate, deps.worktrees.clone()) {
+    let workspace = match crate::direct_workspace::RunWorkspace::acquire(&slug, isolate, deps.worktrees.clone(), direct_exec::repo_root()) {
         Ok(w) => w,
         Err(e) => return (DirectResult::err(format!("workspace: {e}")), 0, "claude-code".to_string()),
     };
@@ -783,12 +766,13 @@ async fn claude_execute(deps: &ExecDeps, task: DirectTask) -> (DirectResult, u32
     }
     let repo_root = workspace.workdir().to_path_buf();
     let factory = workspace.is_isolated();
-    let out = claude_attempts(&task, &repo_root, factory).await;
+    let out = claude_attempts(deps, &task, &repo_root, factory).await;
     workspace.finish(out.0.ok);
     out
 }
 
 async fn claude_attempts(
+    deps: &ExecDeps,
     task: &DirectTask,
     repo_root: &std::path::Path,
     factory: bool,
@@ -809,7 +793,6 @@ async fn claude_attempts(
     let abs_path = repo_root.join(&task.file);
     let snapshot = std::fs::read_to_string(&abs_path).unwrap_or_default();
 
-    let binary = std::env::var("HEXA_CLAUDE_BINARY").unwrap_or_else(|_| "claude".to_string());
     let prompt = format!(
         "Task: {}\n\nEdit ONLY the file `{}` in this repository so that the shell command \
          `{}` exits 0. Make the change directly to the file now. Do not ask questions and do \
@@ -820,37 +803,21 @@ async fn claude_attempts(
         std::env::var("CLAUDE_TIMEOUT_SECS").ok().and_then(|s| s.parse().ok()).unwrap_or(300),
     );
 
-    if let Err(msg) = crate::frontier::budget_check() {
-        result.error = Some(msg);
-        return (result, 0, model);
-    }
-    let spawn = tokio::process::Command::new(&binary)
-        .arg("-p")
-        .args(crate::frontier::OUTPUT_JSON)
-        // hexa's own prompt. The project\'s hooks run inside this claude and must
-        // not treat it as a person's work: `route` once drafted workplans from the
-        // harden reviewer prompts. `hexa hook` returns early when this is set.
-        .env("HEXA_INTERNAL", "1")
-        .arg("--dangerously-skip-permissions")
-        .arg(&prompt)
-        .current_dir(repo_root)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .output();
-
-    match tokio::time::timeout(timeout, spawn).await {
-        Ok(Ok(out)) => {
-            // claude finished (or errored); the evidence gate decides. Its
-            // usage and cost are recorded either way: they were spent.
-            let _ = crate::frontier::take_answer(&String::from_utf8_lossy(&out.stdout), "react");
+    match deps.frontier.run(&prompt, repo_root, timeout, "react").await {
+        // claude finished (or errored); the evidence gate decides. Its usage
+        // and cost were recorded by the adapter either way: they were spent.
+        Ok(_) => {}
+        Err(crate::ports::FrontierError::OverBudget(msg)) => {
+            result.error = Some(msg);
+            return (result, 0, model);
         }
-        Ok(Err(e)) => {
-            result.error = Some(format!("claude spawn failed ({}): {}", binary, e));
+        Err(crate::ports::FrontierError::Spawn(e)) => {
+            result.error = Some(format!("claude spawn failed ({e})"));
             return (result, 1, model);
         }
-        Err(_) => {
+        Err(crate::ports::FrontierError::Timeout(t)) => {
             let _ = std::fs::write(&abs_path, &snapshot);
-            result.error = Some(format!("claude -p timed out after {}s", timeout.as_secs()));
+            result.error = Some(format!("claude -p timed out after {}s", t.as_secs()));
             return (result, 1, model);
         }
     }
@@ -879,7 +846,7 @@ async fn claude_attempts(
                     .output();
                 result.evidence_passed = true;
                 result.edit_applied = true;
-                result.error = Some(commit_failure_hint(&e));
+                result.error = Some(direct_exec::commit_failure_hint(&e));
             }
         }
     } else {

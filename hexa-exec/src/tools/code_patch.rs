@@ -125,7 +125,7 @@ impl Tool for CodePatch {
         // autonomous agents — closing the v0 persona-prompts ADR attack chain
         // at the foundation. Per ADR-2026-05-23-0900 §5: route through the
         // domain validator so CRITICAL_FILES + CRITICAL_PREFIXES both apply.
-        if hexa_core::domain::validation::is_critical_path(&rel_path) {
+        if hexa_core::ports::edit::is_critical_path(&rel_path) {
             return ToolResult::err(
                 format!("path '{}' is critical (CRITICAL_FILES or CRITICAL_PREFIXES) — code_patch cannot modify it; requires explicit operator action", rel_path),
                 start.elapsed().as_millis() as u64,

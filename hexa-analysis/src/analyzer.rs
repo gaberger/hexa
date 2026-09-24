@@ -121,6 +121,20 @@ fn edges_of(
         .collect()
 }
 
+/// Re-score `result` with the project's error-severity rule findings
+/// (ADR-2609211430 §1), keeping the coverage ceiling (ADR-2609241707). The
+/// rules file is read by the caller that owns it; the arithmetic is here.
+pub fn apply_rule_errors(result: &mut ArchAnalysisResult, rule_errors: usize) {
+    result.health_score = ArchAnalysisResult::compute_health_score(
+        result.violations.len(),
+        result.circular_deps.len(),
+        result.dead_exports.len(),
+        result.unused_ports.len(),
+        rule_errors,
+    )
+    .min(result.coverage.ceiling());
+}
+
 /// One edge per target a file reaches. A module both imported and named
 /// inline is one crossing, and each violation costs ten points.
 fn one_edge_per_target(edges: Vec<ImportEdge>) -> Vec<ImportEdge> {
