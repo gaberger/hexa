@@ -183,6 +183,97 @@ fn resolve_rust_import(import_path: &str, from_file: &str) -> String {
     import_path.to_string()
 }
 
+// ── Workspace Packages ───────────────────────────────────
+
+/// The project's own packages — Cargo crates, Go modules, npm packages —
+/// and where each lives, so an import of one resolves to a path in the tree
+/// instead of being taken for a third-party dependency.
+///
+/// Without this, `hexa_core::ports::x`, `example.com/store` and `@fx/store`
+/// were all "external": no edge, no layer, no check. A workspace that gives
+/// each layer its own package — the layout that should grade best, because
+/// the build tool then refuses undeclared imports — had every crossing
+/// between its layers invisible.
+#[derive(Debug, Clone, Default)]
+pub struct WorkspacePackages {
+    /// (language, import name, project-relative dir, TS entry file).
+    /// Longest name first, so `example.com/a/b` wins over `example.com/a`.
+    entries: Vec<(Language, String, String, Option<String>)>,
+}
+
+impl WorkspacePackages {
+    /// A Cargo package: imported as its name with `-` read as `_`.
+    pub fn add_crate(&mut self, name: &str, dir: &str) {
+        self.push(Language::Rust, name.replace('-', "_"), dir, None);
+    }
+
+    /// A Go module, by its `module` path.
+    pub fn add_go_module(&mut self, module: &str, dir: &str) {
+        self.push(Language::Go, module.to_string(), dir, None);
+    }
+
+    /// An npm package, by its `name`, with the file a bare import of it
+    /// reaches.
+    pub fn add_npm_package(&mut self, name: &str, dir: &str, entry: &str) {
+        self.push(Language::TypeScript, name.to_string(), dir, Some(entry.to_string()));
+    }
+
+    fn push(&mut self, lang: Language, name: String, dir: &str, entry: Option<String>) {
+        let dir = dir.trim_matches('/').to_string();
+        self.entries.push((lang, name, dir, entry));
+        self.entries.sort_by_key(|e| std::cmp::Reverse(e.1.len()));
+    }
+
+    /// The project-relative path `import_path` names, when it names one of
+    /// these packages; `None` for anything else, which keeps its existing
+    /// resolution.
+    pub fn resolve(&self, from_file: &str, import_path: &str) -> Option<String> {
+        let lang = Language::from_path(from_file);
+        let join = |dir: &str, rest: &str| {
+            if dir.is_empty() { rest.to_string() } else { format!("{dir}/{rest}") }
+        };
+        for (l, name, dir, entry) in &self.entries {
+            if *l != lang {
+                continue;
+            }
+            match lang {
+                Language::Rust => {
+                    let mut segs = import_path.split("::");
+                    if segs.next() != Some(name.as_str()) {
+                        continue;
+                    }
+                    let rest: Vec<&str> = segs.collect();
+                    if rest.is_empty() {
+                        return Some(join(dir, "src/lib.rs"));
+                    }
+                    // `name::` stands where `crate::` would, so the item name
+                    // is stripped as it is for a `crate::` path.
+                    let mut with_root = vec!["crate"];
+                    with_root.extend(&rest);
+                    let stripped = strip_rust_item_name(&with_root);
+                    return Some(join(dir, &format!("src/{}", stripped[1..].join("/"))));
+                }
+                Language::Go | Language::TypeScript => {
+                    let rest = if import_path == name {
+                        ""
+                    } else if let Some(r) = import_path.strip_prefix(name.as_str()).and_then(|r| r.strip_prefix('/')) {
+                        r
+                    } else {
+                        continue;
+                    };
+                    return Some(match (rest, entry) {
+                        ("", Some(e)) => join(dir, e),
+                        ("", None) => if dir.is_empty() { ".".to_string() } else { dir.clone() },
+                        (r, _) => join(dir, r),
+                    });
+                }
+                Language::Unknown => {}
+            }
+        }
+        None
+    }
+}
+
 /// Strip trailing item-name segment from a Rust path.
 ///
 /// If the path has 3+ segments and the last segment starts with an uppercase

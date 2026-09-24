@@ -35,7 +35,7 @@ impl futures_stream::Stream for VecStream {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hexa_core::domain::messages::StopReason;
+    use hexa_core::ports::inference::StopReason;
     use hexa_core::ports::inference::futures_stream::Stream as _;
     use std::task::{Context, Poll};
 

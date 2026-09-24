@@ -558,13 +558,22 @@ fn an_enum_variant_in_a_macro_is_still_clean() {
 }
 
 #[test]
-fn hexas_own_tree_still_grades_a_plus() {
+fn hexas_own_domain_still_imports_nothing_it_may_not() {
     // The broadest regression check available: this change reads more of every
-    // file in the workspace, and hexa's own domain must stay clean.
+    // file in the workspace, and hexa's own domain must stay clean. It used to
+    // assert the whole grade was A+ as a stand-in; once the grade read every
+    // file and every crate, the grade stopped being about this. The whole
+    // tree's violations are ratcheted in hexa_grades_itself_by_ratchet.rs.
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("workspace root");
-    let (_, out) = run(root, &["analyze", "."]);
-    assert!(
-        out.contains("A+") && out.contains("100/100"),
-        "hexa's own grade is the floor this change may not lower:\n{out}"
+    let (_, out) = run(root, &["analyze", ".", "--json"]);
+    // `run` joins stdout and stderr; the report is the first JSON value.
+    let v: serde_json::Value = serde_json::Deserializer::from_str(&out)
+        .into_iter()
+        .next()
+        .and_then(Result::ok)
+        .unwrap_or_else(|| panic!("no JSON report:\n{out}"));
+    assert_eq!(
+        v["score_components"]["rule_errors"], 0,
+        "hexa's own domain import policy is the floor this change may not lower:\n{out}"
     );
 }

@@ -29,13 +29,13 @@
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use hexa_core::domain::messages::{ContentBlock, Role, StopReason};
+use hexa_core::ports::inference::{ContentBlock, Role, StopReason};
 use hexa_core::ports::inference::{
     futures_stream, HealthStatus, IInferencePort, InferenceCapabilities, InferenceError,
     InferenceRequest, InferenceResponse, ModelInfo, ModelTier, StreamChunk,
 };
-use hexa_core::domain::messages::Message;
-use hexa_core::domain::tools::ToolDefinition;
+use hexa_core::ports::inference::Message;
+use hexa_core::ports::inference::ToolDefinition;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
@@ -642,7 +642,7 @@ struct OaiModelEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hexa_core::domain::tools::ToolInputSchema;
+    use hexa_core::ports::inference::ToolInputSchema;
     use hexa_core::ports::inference::Priority;
 
     fn req(model: &str) -> InferenceRequest {

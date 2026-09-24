@@ -7,8 +7,11 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::domain::messages::{ContentBlock, StopReason};
-use crate::domain::tools::ToolDefinition;
+/// The value types this port speaks, re-exported so an adapter reaches them
+/// through the port rather than the domain — the convention hexa's scaffold
+/// emits (`pub use crate::domain::Count as CountValue`).
+pub use crate::domain::messages::{ContentBlock, Message, Role, StopReason};
+pub use crate::domain::tools::{ToolDefinition, ToolInputSchema};
 
 
 /// A request to an inference engine.

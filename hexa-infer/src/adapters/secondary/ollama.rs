@@ -35,7 +35,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
-use hexa_core::domain::messages::{ContentBlock, StopReason};
+use hexa_core::ports::inference::{ContentBlock, StopReason};
 use hexa_core::ports::inference::{
     futures_stream, HealthStatus, IInferencePort, InferenceCapabilities, InferenceError,
     InferenceRequest, InferenceResponse, ModelInfo, ModelTier, StreamChunk,

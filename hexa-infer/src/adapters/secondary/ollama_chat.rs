@@ -14,8 +14,8 @@
 //! therefore never worked against a local model; only the `claude_code` subprocess adapter, which
 //! handles tools itself, made it look like it did.
 
-use hexa_core::domain::messages::{ContentBlock, Role, StopReason};
-use hexa_core::domain::tools::ToolDefinition;
+use hexa_core::ports::inference::{ContentBlock, Role, StopReason};
+use hexa_core::ports::inference::ToolDefinition;
 use hexa_core::ports::inference::{InferenceError, InferenceRequest, InferenceResponse};
 use serde::{Deserialize, Serialize};
 
@@ -234,8 +234,8 @@ pub async fn chat(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hexa_core::domain::messages::Message;
-    use hexa_core::domain::tools::ToolInputSchema;
+    use hexa_core::ports::inference::Message;
+    use hexa_core::ports::inference::ToolInputSchema;
 
     fn req() -> InferenceRequest {
         InferenceRequest {

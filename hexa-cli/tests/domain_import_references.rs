@@ -390,18 +390,20 @@ fn one_inline_reference_costs_exactly_ten_points() {
 // ── 9. hexa's own tree is not exempt ─────────────────────────────────────────
 
 #[test]
-fn hexa_still_grades_a_plus_on_its_own_tree() {
+fn hexa_passes_the_domain_import_rule_it_ships() {
     // If this fails, the finding is real and gets fixed in hexa — not
-    // exempted. hexa has no `/domain/` directory today, so the shipped policy
-    // matches nothing here; that is a fact about hexa's layout, and this test
-    // exists to notice when it stops being true.
+    // exempted. It asserted the whole grade was A+ as a stand-in for "no rule
+    // errors"; once the grade read every file and every crate, the grade
+    // stopped being about this rule. The whole tree's boundary violations are
+    // ratcheted in hexa_grades_itself_by_ratchet.rs.
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("workspace root");
-    let (_, out) = run(repo, &["analyze", "."]);
-    assert!(
-        out.contains("Architecture grade: A+"),
-        "hexa must pass the rule it ships:\n{}",
-        out.lines().filter(|l| l.contains("grade") || l.contains("ADR violation")).collect::<Vec<_>>().join("\n")
-    );
+    let (_, out) = run(repo, &["analyze", ".", "--json"]);
+    let v: serde_json::Value = serde_json::Deserializer::from_str(&out)
+        .into_iter()
+        .next()
+        .and_then(Result::ok)
+        .unwrap_or_else(|| panic!("no JSON report:\n{out}"));
+    assert_eq!(v["score_components"]["rule_errors"], 0, "hexa must pass the rule it ships:\n{}", v["adr_compliance"]);
 }
 
 // ── 10. Go ───────────────────────────────────────────────────────────────────

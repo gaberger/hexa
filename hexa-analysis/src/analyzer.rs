@@ -19,7 +19,7 @@ use super::domain::{
 };
 use super::frontend_checker;
 use super::layer_classifier::LayerMap;
-use super::path_normalizer::{normalize_path, normalize_path_in, resolve_import_path};
+use super::path_normalizer::{normalize_path, normalize_path_in, resolve_import_path, WorkspacePackages};
 use super::ports::{AnalysisError, AstPort, ArchAnalysisPort};
 use super::treesitter_adapter::TreeSitterAdapter;
 
@@ -89,6 +89,93 @@ fn is_source_file(path: &str) -> bool {
     SOURCE_EXTENSIONS.iter().any(|ext| {
         path.ends_with(&format!(".{}", ext))
     })
+}
+
+/// Resolve an import: the project's own packages first, then the language's
+/// own rules.
+fn resolve_in(packages: &WorkspacePackages, from: &str, raw: &str, go_module_prefix: Option<&str>) -> String {
+    packages
+        .resolve(from, raw)
+        .unwrap_or_else(|| resolve_import_path(from, raw, go_module_prefix))
+}
+
+/// The project's own packages, from their manifests: `Cargo.toml` package
+/// names, `go.mod` module paths, `package.json` names. Walks what the grade
+/// walks — the same exclusions, no hidden directories — so a vendored or
+/// excluded manifest never claims an import.
+pub(crate) fn discover_packages(root: &Path) -> WorkspacePackages {
+    let project_ex_owned = project_excludes(root);
+    let project_ex: Vec<&str> = project_ex_owned.iter().map(String::as_str).collect();
+    let mut pkgs = WorkspacePackages::default();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let rel = dir.strip_prefix(root).unwrap_or(&dir).to_string_lossy().replace('\\', "/");
+        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        for e in rd.flatten() {
+            let p = e.path();
+            let name = e.file_name().to_string_lossy().to_string();
+            if p.is_dir() {
+                let child = if rel.is_empty() { name.clone() } else { format!("{rel}/{name}") };
+                if !name.starts_with('.')
+                    && !matches_exclude(&format!("{child}/"), EXCLUDE_PATTERNS)
+                    && !matches_exclude(&child, &project_ex)
+                {
+                    stack.push(p);
+                }
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&p) else { continue };
+            match name.as_str() {
+                "Cargo.toml" => {
+                    if let Some(n) = cargo_package_name(&text) {
+                        pkgs.add_crate(&n, &rel);
+                    }
+                }
+                "go.mod" => {
+                    if let Some(m) = text.lines().find_map(|l| l.trim().strip_prefix("module ")) {
+                        pkgs.add_go_module(m.trim().trim_matches('"'), &rel);
+                    }
+                }
+                "package.json" => {
+                    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else { continue };
+                    if let Some(n) = v.get("name").and_then(|n| n.as_str()) {
+                        let entry = if dir.join("src/index.ts").is_file() {
+                            "src/index.ts".to_string()
+                        } else if let Some(m) = v.get("main").and_then(|m| m.as_str()) {
+                            normalize_path(m.trim_start_matches("./"))
+                        } else {
+                            "index.ts".to_string()
+                        };
+                        pkgs.add_npm_package(n, &rel, &entry);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    pkgs
+}
+
+/// `name` under `[package]` in a Cargo manifest. A workspace root with no
+/// `[package]` has none.
+fn cargo_package_name(text: &str) -> Option<String> {
+    let mut in_package = false;
+    for line in text.lines() {
+        let t = line.trim();
+        if t.starts_with('[') {
+            in_package = t == "[package]";
+            continue;
+        }
+        if in_package {
+            if let Some(v) = t.strip_prefix("name") {
+                let v = v.trim_start();
+                if let Some(v) = v.strip_prefix('=') {
+                    return Some(v.trim().trim_matches('"').to_string());
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Detect Go module prefix from go.mod file.
@@ -262,6 +349,7 @@ impl ArchAnalyzer {
     ) -> Result<(Vec<ImportEdge>, Vec<FileData>), AnalysisError> {
         let source_files = collect_source_files(root).await?;
         let layers = LayerMap::from_project(root).map_err(AnalysisError::Other)?;
+        let packages = discover_packages(root);
         let mut all_edges = Vec::new();
         let mut all_file_data = Vec::new();
 
@@ -284,7 +372,7 @@ impl ArchAnalyzer {
 
             // Build edges with resolved paths and layer classification
             for imp in &imports {
-                let resolved = resolve_import_path(rel_path, &imp.raw_path, go_module_prefix);
+                let resolved = resolve_in(&packages, rel_path, &imp.raw_path, go_module_prefix);
                 // The importing file decides the language, not the resolved target.
                 let to_file = normalize_path_in(&resolved, Language::from_path(rel_path));
                 all_edges.push(ImportEdge {
@@ -308,7 +396,7 @@ impl ArchAnalyzer {
                     .map(|mut imp| {
                         imp.resolved_path =
                             normalize_path_in(
-                                &resolve_import_path(rel_path, &imp.raw_path, go_module_prefix),
+                                &resolve_in(&packages, rel_path, &imp.raw_path, go_module_prefix),
                                 Language::from_path(rel_path),
                             );
                         imp
@@ -330,6 +418,7 @@ impl ArchAnalyzer {
         go_module_prefix: Option<&str>,
     ) -> Result<Vec<FileData>, AnalysisError> {
         let test_files = collect_test_files(root).await?;
+        let packages = discover_packages(root);
         let mut test_data = Vec::new();
 
         for rel_path in &test_files {
@@ -355,7 +444,7 @@ impl ArchAnalyzer {
                     .into_iter()
                     .map(|mut imp| {
                         imp.resolved_path = normalize_path_in(
-                            &resolve_import_path(rel_path, &imp.raw_path, go_module_prefix),
+                            &resolve_in(&packages, rel_path, &imp.raw_path, go_module_prefix),
                             Language::from_path(rel_path),
                         );
                         imp
