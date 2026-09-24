@@ -22,7 +22,6 @@ use super::frontend_checker;
 use super::layer_classifier::LayerMap;
 use super::path_normalizer::{normalize_path, normalize_path_in, resolve_import_path, WorkspacePackages};
 use super::ports::{AnalysisError, AstPort, ArchAnalysisPort};
-use super::treesitter_adapter::TreeSitterAdapter;
 
 /// Source file glob patterns for supported languages.
 const SOURCE_EXTENSIONS: &[&str] = &["ts", "tsx", "go", "rs"];
@@ -126,7 +125,11 @@ fn edges_of(
 /// applies: its imports parsed by tree-sitter, resolved through the
 /// project's packages, classified by its declared layers. For the post-edit
 /// hook, which checks the file just written without grading the tree.
-pub async fn file_violations(root: &Path, rel_path: &str) -> Result<Vec<DependencyViolation>, AnalysisError> {
+pub async fn file_violations(
+    root: &Path,
+    rel_path: &str,
+    ast: &dyn AstPort,
+) -> Result<Vec<DependencyViolation>, AnalysisError> {
     let lang = Language::from_path(rel_path);
     if lang == Language::Unknown {
         return Ok(Vec::new());
@@ -135,7 +138,7 @@ pub async fn file_violations(root: &Path, rel_path: &str) -> Result<Vec<Dependen
     let packages = discover_packages(root);
     let go_mod = detect_go_module_prefix(root).await;
     let source = tokio::fs::read_to_string(root.join(rel_path)).await?;
-    let imports = TreeSitterAdapter::new().extract_imports(Path::new(rel_path), &source, lang)?;
+    let imports = ast.extract_imports(Path::new(rel_path), &source, lang)?;
     let edges = edges_of(rel_path, &imports, &packages, &layers, go_mod.as_deref());
     Ok(boundary_checker::find_violations(&edges))
 }
@@ -309,8 +312,7 @@ pub fn source_files_sync(root: &Path) -> Vec<String> {
 
 /// Exports and identifier counts for every graded file, synchronously.
 /// Imports are left empty; the display detectors do not read them.
-pub fn load_file_data_sync(root: &Path) -> Vec<FileData> {
-    let adapter = TreeSitterAdapter::new();
+pub fn load_file_data_sync(root: &Path, adapter: &dyn AstPort) -> Vec<FileData> {
     let mut out = Vec::new();
     for rel in source_files_sync(root) {
         let Ok(source) = std::fs::read_to_string(root.join(&rel)) else {

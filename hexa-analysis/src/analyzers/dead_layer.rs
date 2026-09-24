@@ -44,7 +44,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::domain::Language;
 use crate::ports::AstPort;
-use crate::treesitter_adapter::TreeSitterAdapter;
 
 /// Hex layer kinds the detector is aware of.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
@@ -94,13 +93,11 @@ pub struct DeadLayerReport {
 ///
 /// Findings are sorted by `(layer, layer_kind)` so the improver's
 /// hypothesis IDs and integration-test assertions stay deterministic.
-pub fn analyze(root: &Path) -> anyhow::Result<DeadLayerReport> {
+pub fn analyze(root: &Path, adapter: &dyn AstPort) -> anyhow::Result<DeadLayerReport> {
     let layers = discover_layers(root);
     if layers.is_empty() {
         return Ok(DeadLayerReport::default());
     }
-
-    let adapter = TreeSitterAdapter::new();
 
     // Per-file: which layer kinds does this file name in its imports?
     let mut file_refs: Vec<(PathBuf, BTreeSet<LayerKind>)> = Vec::new();

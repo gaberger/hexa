@@ -6,10 +6,10 @@
 //! ADR-034 Phase 2.
 
 use std::path::Path;
-use tree_sitter::{Language as TsLanguage, Parser, Tree};
+use tree_sitter::{Language as TsLanguage, Node as TsNode, Parser, Tree};
 
 use super::ports::{
-    AnalysisError, AstPort, ExportDeclaration, ExportKind, ImportStatement, Language,
+    AnalysisError, AstPort, ExportDeclaration, ExportKind, ImportStatement, ItemCounts, Language,
 };
 
 // ── Grammar Loading ──────────────────────────────────────
@@ -34,6 +34,144 @@ pub(crate) fn parse_source(source: &str, lang: Language) -> Result<Tree, Analysi
         .ok_or_else(|| AnalysisError::Other("tree-sitter parse returned None".to_string()))
 }
 
+// ── Item counting (the layer inventory) ──────────────────
+//
+// What counts, per language:
+//
+// | | Rust | Go | TypeScript |
+// |---|---|---|---|
+// | interfaces | `trait` | `type X interface` | `interface` |
+// | types | struct, enum, union | any other `type` spec | class, enum, type alias |
+// | implementations | `impl Trait for T` | — (implicit, never declared) | each name in `implements` |
+// | functions | free `fn` | `func` (not methods) | `function`, top-level arrow/function consts |
+//
+// Go's implementations are `None`, not `0`: satisfying an interface is never
+// written down in Go. Rust items under `#[cfg(test)]` are test code.
+
+/// Count the items `source` declares. `Language::Unknown` declares nothing.
+fn count_items_in(source: &str, lang: Language) -> Result<ItemCounts, AnalysisError> {
+    if lang == Language::Unknown {
+        return Ok(ItemCounts::default());
+    }
+    let tree = parse_source(source, lang)?;
+    let src = source.as_bytes();
+    let mut c = ItemCounts {
+        implementations: if lang == Language::Go { None } else { Some(0) },
+        ..ItemCounts::default()
+    };
+    match lang {
+        Language::Rust => rust(tree.root_node(), src, &mut c),
+        Language::Go => go(tree.root_node(), &mut c),
+        Language::TypeScript => typescript(tree.root_node(), &mut c),
+        Language::Unknown => {}
+    }
+    Ok(c)
+}
+
+fn named_children_of(n: TsNode<'_>) -> Vec<TsNode<'_>> {
+    let mut cur = n.walk();
+    n.named_children(&mut cur).collect()
+}
+
+/// Rust: walk item containers (the file, inline modules), skipping anything
+/// under `#[cfg(test)]`. Trait and impl bodies are not descended into, so a
+/// method is never a free function.
+fn rust(n: TsNode<'_>, src: &[u8], c: &mut ItemCounts) {
+    let mut cfg_test = false;
+    for ch in named_children_of(n) {
+        if ch.kind() == "attribute_item" {
+            let t = ch.utf8_text(src).unwrap_or("");
+            cfg_test |= t.replace(' ', "").starts_with("#[cfg(test)");
+            continue;
+        }
+        if std::mem::take(&mut cfg_test) {
+            continue;
+        }
+        match ch.kind() {
+            "trait_item" => c.interfaces += 1,
+            "struct_item" | "enum_item" | "union_item" => c.types += 1,
+            "impl_item" => {
+                if ch.child_by_field_name("trait").is_some() {
+                    *c.implementations.get_or_insert(0) += 1;
+                }
+            }
+            "function_item" => c.functions += 1,
+            "mod_item" => {
+                if let Some(body) = ch.child_by_field_name("body") {
+                    rust(body, src, c);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Go: top-level declarations only; Go has no nested ones worth counting.
+fn go(root: TsNode<'_>, c: &mut ItemCounts) {
+    for ch in named_children_of(root) {
+        match ch.kind() {
+            "function_declaration" => c.functions += 1,
+            "type_declaration" => {
+                for spec in named_children_of(ch) {
+                    if !matches!(spec.kind(), "type_spec" | "type_alias") {
+                        continue;
+                    }
+                    match spec.child_by_field_name("type").map(|t| t.kind()) {
+                        Some("interface_type") => c.interfaces += 1,
+                        _ => c.types += 1,
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// TypeScript: top-level declarations, exported or not. A function declared
+/// inside another is part of it, not one of the module's.
+fn typescript(root: TsNode<'_>, c: &mut ItemCounts) {
+    for ch in named_children_of(root) {
+        let decl = if ch.kind() == "export_statement" {
+            match ch.child_by_field_name("declaration") {
+                Some(d) => d,
+                None => continue,
+            }
+        } else {
+            ch
+        };
+        ts_declaration(decl, c);
+    }
+}
+
+fn ts_declaration(d: TsNode<'_>, c: &mut ItemCounts) {
+    match d.kind() {
+        "interface_declaration" => c.interfaces += 1,
+        "class_declaration" | "abstract_class_declaration" => {
+            c.types += 1;
+            let implemented = named_children_of(d)
+                .into_iter()
+                .filter(|h| h.kind() == "class_heritage")
+                .flat_map(named_children_of)
+                .filter(|h| h.kind() == "implements_clause")
+                .map(|h| named_children_of(h).len())
+                .sum::<usize>();
+            *c.implementations.get_or_insert(0) += implemented;
+        }
+        "enum_declaration" | "type_alias_declaration" => c.types += 1,
+        "function_declaration" | "generator_function_declaration" => c.functions += 1,
+        "lexical_declaration" | "variable_declaration" => {
+            for v in named_children_of(d).into_iter().filter(|v| v.kind() == "variable_declarator") {
+                if let Some(val) = v.child_by_field_name("value") {
+                    if matches!(val.kind(), "arrow_function" | "function_expression" | "function") {
+                        c.functions += 1;
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 // ── Adapter ──────────────────────────────────────────────
 
 /// Native tree-sitter implementation of `AstPort`.
@@ -52,6 +190,10 @@ impl TreeSitterAdapter {
 }
 
 impl AstPort for TreeSitterAdapter {
+    fn count_items(&self, source: &str, lang: Language) -> Result<ItemCounts, AnalysisError> {
+        count_items_in(source, lang)
+    }
+
     fn extract_imports(
         &self,
         path: &Path,

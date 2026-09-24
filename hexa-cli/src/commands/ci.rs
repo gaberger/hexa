@@ -165,7 +165,7 @@ async fn gate_analyze() -> bool {
     // gate silently degraded from "no boundary violations" to "it compiles",
     // which are not the same claim.
     let root = std::path::Path::new(".");
-    let ast = std::sync::Arc::new(hexa_analysis::treesitter_adapter::TreeSitterAdapter::new());
+    let ast = hexa_analysis::default_ast();
     let analyzer = hexa_analysis::analyzer::ArchAnalyzer::new(ast);
     use hexa_analysis::ports::ArchAnalysisPort;
     match analyzer.analyze(root).await {

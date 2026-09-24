@@ -61,8 +61,7 @@ impl FooPort for OrphanFoo {
         OrphanOptions {
             orphan_adapters: true,
             orphan_ports: false,
-        },
-    )
+        }, &*hexa_analysis::default_ast())
     .unwrap();
 
     assert_eq!(report.findings.len(), 1, "{:?}", report);
@@ -113,8 +112,7 @@ pub fn wire() -> BoundBar {
         OrphanOptions {
             orphan_adapters: true,
             orphan_ports: false,
-        },
-    )
+        }, &*hexa_analysis::default_ast())
     .unwrap();
 
     assert!(
@@ -159,8 +157,7 @@ impl UsedPort for UsedAdapter {
         OrphanOptions {
             orphan_adapters: false,
             orphan_ports: true,
-        },
-    )
+        }, &*hexa_analysis::default_ast())
     .unwrap();
 
     assert_eq!(report.findings.len(), 1, "{:?}", report);
@@ -206,8 +203,7 @@ impl crate::ports::foo::FooPort for FooAdapter {
         OrphanOptions {
             orphan_adapters: true,
             orphan_ports: true,
-        },
-    )
+        }, &*hexa_analysis::default_ast())
     .unwrap();
 
     assert!(
@@ -245,8 +241,7 @@ impl Lonely {
         OrphanOptions {
             orphan_adapters: true,
             orphan_ports: true,
-        },
-    )
+        }, &*hexa_analysis::default_ast())
     .unwrap();
 
     // Only the orphan port should fire — the inherent impl is not an
@@ -277,8 +272,7 @@ impl Stale for Stalish { fn s(&self) {} }
         OrphanOptions {
             orphan_adapters: true,
             orphan_ports: true,
-        },
-    )
+        }, &*hexa_analysis::default_ast())
     .unwrap();
     assert!(
         report.findings.is_empty(),
@@ -301,8 +295,7 @@ fn architectural_detectors_envelope_serializes_with_findings_array() {
         OrphanOptions {
             orphan_adapters: false,
             orphan_ports: true,
-        },
-    )
+        }, &*hexa_analysis::default_ast())
     .unwrap();
     let json = serde_json::to_value(&report).unwrap();
     let arr = json.get("findings").and_then(|v| v.as_array()).unwrap();

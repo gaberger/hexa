@@ -748,14 +748,14 @@ fn health_findings(root: &Path) -> Vec<(&'static str, Health)> {
         ),
         (
             "dead layers",
-            health(dead_layer::analyze(root), |r| r.not_applicable.clone(), |r| {
+            health(dead_layer::analyze(root, &*hexa_analysis::default_ast()), |r| r.not_applicable.clone(), |r| {
                 r.findings.iter().map(|f| format!("{} ({})", f.layer, f.layer_kind)).collect()
             }),
         ),
         (
             "orphans",
             health(
-                orphan::analyze(root, orphan::OrphanOptions { orphan_adapters: true, orphan_ports: true }),
+                orphan::analyze(root, orphan::OrphanOptions { orphan_adapters: true, orphan_ports: true }, &*hexa_analysis::default_ast()),
                 |r| r.not_applicable.clone(),
                 |r| {
                     r.findings
@@ -777,7 +777,7 @@ pub async fn deep_analysis(
     root: &Path,
 ) -> Result<hexa_analysis::domain::ArchAnalysisResult, hexa_analysis::ports::AnalysisError> {
     use hexa_analysis::ports::ArchAnalysisPort;
-    let ast = std::sync::Arc::new(hexa_analysis::treesitter_adapter::TreeSitterAdapter::new());
+    let ast = hexa_analysis::default_ast();
     let mut result = hexa_analysis::analyzer::ArchAnalyzer::new(ast).analyze(root).await?;
 
     // The rules-file term, applied at the one door every graded surface goes
@@ -844,7 +844,7 @@ async fn run_single_file(
     // packages and declared layers, the one rule table. This had three
     // hand-written checkers, one per language, each with its own layer
     // table — the Rust one still named crates deleted months earlier.
-    let violations: Vec<String> = hexa_analysis::analyzer::file_violations(root, &rel)
+    let violations: Vec<String> = hexa_analysis::analyzer::file_violations(root, &rel, &*hexa_analysis::default_ast())
         .await
         .map_err(|e| anyhow::anyhow!("hexa analyze --file: {e}"))?
         .iter()
@@ -922,7 +922,7 @@ async fn print_layer_inventory(root: &Path) {
     println!();
     println!("  {}", "Layer inventory:".bold());
     println!("    {}", "what each layer holds, per language, over the files the grade reads".dimmed());
-    let rows = match hexa_analysis::layer_inventory::inventory(root).await {
+    let rows = match hexa_analysis::layer_inventory::inventory(root, &*hexa_analysis::default_ast()).await {
         Ok(rows) => rows,
         Err(e) => {
             println!("    {} not counted: {e}", "\u{2717}".red());
@@ -1592,14 +1592,13 @@ fn evaluate_import_policies(
     policies: &[ImportPolicyConfig],
 ) -> Vec<AdrViolationLocal> {
     use hexa_analysis::import_policy::{classify, judge, Verdict};
-    use hexa_analysis::ports::AstPort;
 
     let mut out = Vec::new();
     if policies.is_empty() {
         return out;
     }
     let names = project_names(root);
-    let ast = hexa_analysis::treesitter_adapter::TreeSitterAdapter::new();
+    let ast = hexa_analysis::default_ast();
 
     // The whole tree, not just `src/`: Go puts its layers under `internal/`
     // and `cmd/`, and a policy that silently skipped them would report a
@@ -2176,7 +2175,7 @@ async fn run_json(root: &Path, strict: bool, adr_compliance_only: bool) -> anyho
         result["boundary_errors"] = serde_json::Value::Array(boundary_errors);
         // What each layer holds, per language, over the files the grade reads.
         // An error is reported as one, not as an empty inventory.
-        result["layer_inventory"] = match hexa_analysis::layer_inventory::inventory(root).await {
+        result["layer_inventory"] = match hexa_analysis::layer_inventory::inventory(root, &*hexa_analysis::default_ast()).await {
             Ok(rows) => serde_json::json!(rows),
             Err(e) => serde_json::json!({ "error": e.to_string() }),
         };

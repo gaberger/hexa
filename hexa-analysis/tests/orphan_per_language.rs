@@ -19,7 +19,7 @@ fn write(root: &Path, rel: &str, body: &str) {
 }
 
 fn orphans_in(root: &Path) -> Vec<(String, String)> {
-    let r = orphan::analyze(root, OrphanOptions { orphan_adapters: true, orphan_ports: true }).expect("orphan");
+    let r = orphan::analyze(root, OrphanOptions { orphan_adapters: true, orphan_ports: true }, &*hexa_analysis::default_ast()).expect("orphan");
     assert!(r.not_applicable.is_none());
     r.findings.into_iter().map(|f| (f.kind, f.adapter.unwrap_or(f.port))).collect()
 }

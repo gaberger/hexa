@@ -19,7 +19,7 @@ fn write(root: &Path, rel: &str, body: &str) {
 }
 
 fn dead_layers_in(root: &Path) -> Vec<String> {
-    let r = dead_layer::analyze(root).expect("dead_layer");
+    let r = dead_layer::analyze(root, &*hexa_analysis::default_ast()).expect("dead_layer");
     assert!(r.not_applicable.is_none(), "declined: {:?}", r.not_applicable);
     r.findings.into_iter().map(|f| f.layer).collect()
 }

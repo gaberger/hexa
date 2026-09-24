@@ -11,7 +11,7 @@ use super::domain::{ArchAnalysisResult, DeadExport, DependencyViolation};
 /// The value types `AstPort` speaks, re-exported so an adapter reaches them
 /// through the port rather than the domain — the convention hexa's own
 /// scaffold emits (`pub use crate::domain::Count as CountValue`).
-pub use super::domain::{ExportDeclaration, ExportKind, HexLayer, ImportStatement, Language};
+pub use super::domain::{ExportDeclaration, ExportKind, HexLayer, ImportStatement, ItemCounts, Language};
 
 // ── Error Type ───────────────────────────────────────────
 
@@ -41,6 +41,11 @@ pub trait AstPort: Send + Sync {
         source: &str,
         lang: Language,
     ) -> Result<Vec<ImportStatement>, AnalysisError>;
+
+    /// Count what `source` declares — interfaces, types, implementations,
+    /// functions — for the layer inventory. Parsing is the adapter's job; the
+    /// inventory is a use case and asks.
+    fn count_items(&self, source: &str, lang: Language) -> Result<ItemCounts, AnalysisError>;
 
     /// Extract all export declarations from a source file.
     fn extract_exports(

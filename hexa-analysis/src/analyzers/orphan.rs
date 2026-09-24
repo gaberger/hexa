@@ -70,8 +70,8 @@ fn is_adapters_file(p: &str) -> bool {
 ///
 /// Returns a deterministically ordered report (sorted by file then line)
 /// so test assertions and the improver's hypothesis IDs are stable.
-pub fn analyze(root: &Path, opts: OrphanOptions) -> anyhow::Result<OrphanReport> {
-    let files = load_file_data_sync(root);
+pub fn analyze(root: &Path, opts: OrphanOptions, ast: &dyn crate::ports::AstPort) -> anyhow::Result<OrphanReport> {
+    let files = load_file_data_sync(root, ast);
     Ok(analyze_files(&files, opts))
 }
 

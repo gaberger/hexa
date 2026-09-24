@@ -73,7 +73,7 @@ fn architectural_detectors_dead_layer_silent_for_fully_wired_tree() {
     let root = tmp.path();
     write_full_hex_tree(root);
 
-    let report = dead_layer::analyze(root).unwrap();
+    let report = dead_layer::analyze(root, &*hexa_analysis::default_ast()).unwrap();
     assert!(
         report.findings.is_empty(),
         "fully wired tree should not flag; got {:#?}",
@@ -107,7 +107,7 @@ fn architectural_detectors_dead_layer_flags_unreferenced_usecases() {
         "use crate::ports::foo::FooPort;\npub fn cli<P: FooPort>(p: &P) { let _ = p.p(); }\n",
     );
 
-    let report = dead_layer::analyze(root).unwrap();
+    let report = dead_layer::analyze(root, &*hexa_analysis::default_ast()).unwrap();
     assert_eq!(report.findings.len(), 1, "{:#?}", report.findings);
     let f = &report.findings[0];
     assert_eq!(f.kind, "dead_layer");
@@ -142,7 +142,7 @@ impl FooPort for Db { fn r(&self) -> Q { Q } }
 "#,
     );
 
-    let report = dead_layer::analyze(root).unwrap();
+    let report = dead_layer::analyze(root, &*hexa_analysis::default_ast()).unwrap();
     let dead: Vec<_> = report
         .findings
         .iter()
@@ -185,7 +185,7 @@ impl FooPort for Db { fn r(&self) -> Q { Q } }
         "use crate::adapters::secondary::db::Db;\nuse crate::adapters::primary::cli;\npub fn wire() -> Db { Db }\n",
     );
 
-    let report = dead_layer::analyze(root).unwrap();
+    let report = dead_layer::analyze(root, &*hexa_analysis::default_ast()).unwrap();
     assert!(
         report.findings.is_empty(),
         "composition wiring should make all layers live; got {:#?}",
@@ -208,7 +208,7 @@ fn architectural_detectors_dead_layer_never_flags_primary_adapter_dirs() {
         "use crate::ports::foo::FooPort;\npub fn cli<P: FooPort>(p: &P) { p.p(); }\n",
     );
 
-    let report = dead_layer::analyze(root).unwrap();
+    let report = dead_layer::analyze(root, &*hexa_analysis::default_ast()).unwrap();
     let primaries: Vec<_> = report
         .findings
         .iter()
@@ -242,7 +242,7 @@ fn architectural_detectors_dead_layer_target_dir_is_skipped() {
     // proves that target/-resident layer dirs were filtered out.
     write(root, "src/adapters/primary/main.rs", "pub fn m() {}\n");
 
-    let report = dead_layer::analyze(root).unwrap();
+    let report = dead_layer::analyze(root, &*hexa_analysis::default_ast()).unwrap();
     let names: Vec<&str> = report.findings.iter().map(|f| f.layer.as_str()).collect();
     assert!(
         names.iter().all(|n| !n.starts_with("target")),
@@ -260,7 +260,7 @@ fn architectural_detectors_dead_layer_envelope_serializes_with_findings_array() 
     write(root, "src/usecases/lone.rs", "pub fn x() {}\n");
     write(root, "src/adapters/primary/cli.rs", "pub fn cli() {}\n");
 
-    let report = dead_layer::analyze(root).unwrap();
+    let report = dead_layer::analyze(root, &*hexa_analysis::default_ast()).unwrap();
     let json = serde_json::to_value(&report).unwrap();
     let arr = json.get("findings").and_then(|v| v.as_array()).unwrap();
     assert!(!arr.is_empty(), "{json:#?}");
@@ -285,7 +285,7 @@ fn architectural_detectors_dead_layer_findings_sorted_deterministically() {
     // Primary references neither domain nor usecases — both dead.
     write(root, "src/adapters/primary/cli.rs", "pub fn cli() {}\n");
 
-    let report = dead_layer::analyze(root).unwrap();
+    let report = dead_layer::analyze(root, &*hexa_analysis::default_ast()).unwrap();
     let layers: Vec<&str> = report.findings.iter().map(|f| f.layer.as_str()).collect();
     let mut sorted = layers.clone();
     sorted.sort();
@@ -301,6 +301,6 @@ fn architectural_detectors_dead_layer_no_findings_when_no_layer_dirs() {
     let root = tmp.path();
     write(root, "src/lib.rs", "pub fn whatever() {}\n");
 
-    let report = dead_layer::analyze(root).unwrap();
+    let report = dead_layer::analyze(root, &*hexa_analysis::default_ast()).unwrap();
     assert!(report.findings.is_empty(), "{:#?}", report.findings);
 }

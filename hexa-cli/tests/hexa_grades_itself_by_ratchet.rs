@@ -24,8 +24,6 @@ const KNOWN: &[(&str, &str)] = &[
     // to match its module path. They were always there; the grade could not
     // see them, and printed A+.
     // use case → adapter, no port between them.
-    ("hexa-analysis/src/analyzers/dead_layer.rs", "crate::treesitter_adapter::TreeSitterAdapter"),
-    ("hexa-analysis/src/layer_inventory.rs", "crate::treesitter_adapter::parse_source"),
     ("hexa-exec/src/direct_react.rs", "crate::tools::ToolRegistry"),
     ("hexa-exec/src/direct_workspace.rs", "hexa_git::worktree"),
     ("hexa-exec/src/simple_agent.rs", "crate::tools::ToolRegistry"),

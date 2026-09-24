@@ -22,3 +22,10 @@ pub mod frontend_checker;
 // binary existed for the improver daemon, which is deleted.
 pub mod analyzers;
 pub mod fingerprint_extractor;
+
+/// The tree-sitter [`ports::AstPort`] — the default every caller outside this
+/// crate uses. Wired here, at the crate root, so no use case and no caller
+/// constructs the adapter itself.
+pub fn default_ast() -> std::sync::Arc<dyn ports::AstPort> {
+    std::sync::Arc::new(treesitter_adapter::TreeSitterAdapter::new())
+}

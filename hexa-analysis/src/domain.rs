@@ -297,3 +297,27 @@ mod health_score_tests {
         assert_eq!(R::compute_health_score(0, 0, 0, 0, usize::MAX / 100), 0);
     }
 }
+
+/// What one file, or one (language, layer) cell, declares: interfaces,
+/// types, implementations, functions (the layer inventory).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct ItemCounts {
+    pub interfaces: usize,
+    pub types: usize,
+    /// `None` where the language has no syntax for it (Go).
+    pub implementations: Option<usize>,
+    pub functions: usize,
+}
+
+impl ItemCounts {
+    pub(crate) fn add(&mut self, o: &ItemCounts) {
+        self.interfaces += o.interfaces;
+        self.types += o.types;
+        self.implementations = match (self.implementations, o.implementations) {
+            (None, None) => None,
+            (a, b) => Some(a.unwrap_or(0) + b.unwrap_or(0)),
+        };
+        self.functions += o.functions;
+    }
+}
+
