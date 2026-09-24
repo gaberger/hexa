@@ -35,7 +35,11 @@ assembled for one loop, not the number of loops.
 - **Loop and tool protocol.** `hexa-exec/src/direct_react.rs` holds the ReAct loop.
   `simple_agent.rs` holds native function-calling with a text-mode JSON fallback.
   `direct_exec.rs` holds the single-shot path.
-- **Curated, guarded tools.** They live in `hexa-exec/src/tools/`. Read and verify tools only
+- **The loop is given what it uses.** `ExecDeps` carries its tools, worktrees, frontier
+  agent, run log and memory, each behind a port in `hexa-exec/src/ports.rs`;
+  `hexa_exec::default_deps()` wires the real ones. The loop never names an adapter.
+- **Curated, guarded tools.** Each is an adapter behind the `Tool` port, in
+  `hexa-exec/src/tools/`, registered by `hexa_exec::default_tools()`. Read and verify tools only
   (`repo_read`, `repo_grep`, `cargo_check`, `typescript_check`, `dep_audit`,
   `secret_scan`) plus the terminal `propose_edit`. No arbitrary shell. Tools reject
   path traversal, block critical paths, and cap output.
@@ -58,7 +62,8 @@ assembled for one loop, not the number of loops.
   mis-route costs latency and nothing else.
 - **Frontier delegation.** A `claude-code` candidate hands the whole task to the
   operator's logged-in `claude` CLI, inside the same worktree, gate and commit. No
-  API key, no VRAM ceiling.
+  API key, no VRAM ceiling. The call — budget, spawn, recorded spend — is the
+  `Frontier` port's; the do-loop and the adversarial harness both receive it.
 
 ## The build harness
 
@@ -81,7 +86,7 @@ to *refuting*, so plausible-but-wrong findings die before any edit is made.
 
 ## Workspace crates
 
-Eight crates, one binary. The dependency direction is the architecture:
+Seven crates, one binary. The dependency direction is the architecture:
 
 <p align="center">
   <picture>
@@ -92,13 +97,18 @@ Eight crates, one binary. The dependency direction is the architecture:
 
 | Crate | Role |
 |---|---|
-| **hexa-core** | The contract surface: the inference port and its mock, message/tool/validation types, value types. **Zero runtime dependencies**. Nothing below can bleed a runtime concern upward. |
-| **hexa-infer** | Every inference adapter (Ollama, OpenAI-compatible, Anthropic, frontier CLI), the endpoint registry, tier resolution, and the local provider's identity. **No file outside this crate names a provider or a model.** |
-| **hexa-exec** | The agent loop, per-run worktree isolation, the adversarial harness, transcript compression, the guarded tool library, the file-backed local store. |
-| **hexa-analysis** | Tree-sitter boundary checking, the layer classifier, dead-export and cycle detection, rule conformance, the architecture fingerprint, six health detectors. Powers `hexa analyze`. |
-| **hexa-graph** | The code knowledge graph: `context_for`, `rank_lessons`, community detection. Builds and reads `graph-out/graph.json`. |
+| **hexa-core** | The contract surface: the inference port and its mock, message/tool/validation types, value types, and `ports::edit` — the critical-path rule every editing adapter must obey. **Zero runtime dependencies**. Nothing below can bleed a runtime concern upward. |
+| **hexa-infer** | Every inference adapter (`adapters/secondary/`), behind its ports: `Backends`, `Discovery`, `EndpointRegistry`, and `LocalProvider`, the local runtime's identity. `complete.rs` is the use case; `wiring.rs` picks the adapter that serves a model. **No file outside this crate names a provider or a model.** |
+| **hexa-exec** | The agent loop, per-run worktree isolation, the adversarial harness, transcript compression, the guarded tool library, the file-backed local store — the loop and harness as use cases, everything they touch behind `Tool`, `Worktrees`, `Frontier`, `RunLog`, `MemoryStore` and `Provenance`. `do_task.rs` picks the loop for a task. |
+| **hexa-analysis** | Tree-sitter boundary checking (the parser behind `AstPort`), the one layer classifier and the project's layer map, cross-package import resolution, dead-export and cycle detection, the coverage ceiling, the layer inventory, rule conformance, the architecture fingerprint, six health detectors. Powers `hexa analyze`. |
+| **hexa-graph** | The code knowledge graph: `context_for`, `rank_lessons`, community detection. Builds and reads `graph-out/graph.json`. Its ports hold the extraction contract. |
 | **hexa-git** | Git plumbing over libgit2. |
-| **hexa-cli** | The binary, and the only composition root. The one place adapters are wired together. |
+| **hexa-cli** | The binary. Every verb is a primary adapter; it composes the crates. |
+
+Each library crate's root (`lib.rs`) is its composition root: it wires the crate's
+default adapters behind the crate's ports — `hexa_exec::default_deps()`,
+`hexa_infer::wiring`, `hexa_analysis::default_ast()` — so a caller asks for a port
+and never constructs an adapter.
 
 ## The loop, and the hooks that keep it
 
@@ -118,11 +128,11 @@ short process that reads the harness's JSON payload; the payload's
 |---|---|
 | `session-start` | prints the architecture fingerprint and where the work stands |
 | `route` | sizes the prompt (T1 trivial, T2 a change with a shape, T3 feature-sized); on T2 and T3 prints the loop, on T3 drafts a workplan |
-| `pre-edit` | boundary check; in a T2 or T3 session with no gate recorded, stops the edit in mandatory mode and warns in advisory mode |
+| `pre-edit` | boundary check; in a T2 or T3 session with no gate recorded, stops the edit in mandatory mode and warns in advisory mode. A block prints its reason on stderr; a file outside the project is not held to the project's rules |
 | `pre-bash` | stops destructive commands |
 | `pre-agent` | a code-writing subagent must have `isolation: "worktree"` |
 | `subagent-start`, `subagent-stop` | record the subagent; on stop, name worktree branches with unmerged commits |
-| `post-edit` | runs `hexa analyze --file` on the edited file |
+| `post-edit` | runs `hexa analyze --file` on the edited file — the grade's own check, for one file |
 
 `lifecycle_enforcement` in `.hexa/project.json` is `mandatory` (stop) or
 `advisory` (warn).
@@ -167,7 +177,9 @@ performance: measured here, the top-leaderboard local model scored last on the g
 ## Hexagonal rules, enforced
 
 `hexa analyze` walks the AST and checks these. hexa obeys them itself: **A+ / 100 /
-0 boundary violations**.
+0 boundary violations, 0 cycles, 149/149 files in a layer**, with every import
+between its crates checked. `hexa_grades_itself_by_ratchet` fails on any new
+violation.
 
 | # | Rule |
 |---|---|
@@ -176,17 +188,33 @@ performance: measured here, the top-leaderboard local model scored last on the g
 | 3 | `usecases/` imports `domain/` + `ports/` only |
 | 4 | adapters import `ports/` **only**, never the domain directly |
 | 5 | adapters never import other adapters |
-| 6 | the composition root is the only file that imports an adapter |
+| 6 | only a composition root — a crate's `lib.rs`, or a file declared one — imports an adapter |
 | 7 | relative imports in scaffolded TypeScript use `.js` extensions (NodeNext) |
+
+**Where a file's layer comes from**, first match wins: the project's declaration in
+`.hexa/project.json → analyze.layers` (a path prefix → a layer); a crate or package
+named for its layer (`app-domain`, `app_ports`); the folder names above. A flat
+`adapters/` folder counts as primary (ADR-2609122048). One classifier serves the
+grade, `--file`, the inventory and every other report.
+
+**What is checked:** every import, including imports between the workspace's own
+packages (Cargo crates, Go modules, npm packages) and, in Rust, `super::`, inline
+(`crate::x::y()`), nested and `pub use` paths. **What the grade claims:** no more
+than it could see. The score is capped at the share of files that have a layer, and
+A+ needs all of them (ADR-2609241707); the report names each file with none.
 
 Rule 4 is the one implementations break. An adapter needing a domain type gets it
 because the **port re-exports it**. Each adapter then has exactly one edge into
 the core.
 
-**Known gap:** the analyzer checks layer-to-layer edges and does not check
-third-party imports, so a project can pull a runtime into `domain/` and still score
-A+. Rule 1 is stricter than what is enforced. See
-[`docs/analysis/2609120100-real-io-proof.md`](docs/analysis/2609120100-real-io-proof.md).
+**What the grade trusts.** A composition root is exempt: that is what lets it wire
+adapters, and it means anything a crate root exports is unchecked. An import that
+leaves the project — `std::fs`, a process spawn, a runtime crate — is checked only
+where `[[import_policy]]` in `.hexa/ADR-rules.toml` says what a layer may know
+(ADR-2609211430; the gap it closed is in
+[`docs/analysis/2609120100-real-io-proof.md`](docs/analysis/2609120100-real-io-proof.md)).
+hexa's own rules file declares no policy, so a hexa use case that reads a file
+through `std::fs` is not flagged — several in `hexa-exec` still do.
 
 ## Governance
 

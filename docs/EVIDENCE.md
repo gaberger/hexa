@@ -73,19 +73,58 @@ penalty wrapped in a `u8`.
 hexa analyze .
 ```
 
-Expected: `Architecture grade: A+ — score 100/100`, `0 boundary violations`, and
-`score_components` all zero in `hexa analyze . --json`.
+Expected: `Architecture grade: A+ — score 100/100`, `0 boundary violations`,
+`coverage 149/149 files in a layer`, and `score_components` all zero (with
+`coverage_ceiling` 100) in `hexa analyze . --json`.
+
+```bash
+cargo test -p hexa-cli --test hexa_grades_itself_by_ratchet
+```
+
+Expected: `1 passed`. It asserts hexa's boundary violations are exactly the
+list in the test — now empty — so a new one fails, and so does a fixed one left
+listed.
 
 The scan covers every crate. The analyzer has no built-in knowledge of hexa's
-directory names. The one path hexa excludes is `hexa-cli/assets/scaffold`, the
-template files compiled into the binary, and it declares that in
-`.hexa/project.json` under `analyze.exclude`, the same way any project would.
+directory names. hexa excludes two paths — `hexa-cli/assets/scaffold`, the
+template files compiled into the binary, and `bench/fixtures`, benchmark data —
+and declares them in `.hexa/project.json` under `analyze.exclude`, the same way
+any project would. Its files' layers are declared there under `analyze.layers`.
 
 `hexa-cli/tests/scaffold_is_executable.rs::a_violation_planted_in_any_crate_is_seen`
 copies each crate, plants a domain-imports-adapter violation in it, and asserts
 the analyzer names the file and exits 1. This exists because an earlier build of
 the analyzer excluded `hexa-core/` and `hexa-cli/` by name, so hexa graded itself
 over six of eight crates and reported A+.
+
+## The grade covers every file, and every import
+
+**Claim.** A file the classifier cannot place, or an import it cannot follow,
+no longer passes silently. hexa graded itself A+ through each of these holes
+before they were closed (ADR-2609241707).
+
+```bash
+cargo test -p hexa-cli --test a_grade_cannot_exceed_what_it_classified \
+  --test a_project_declares_its_layers --test a_layer_crossing_between_packages_is_seen \
+  --test a_flat_module_is_still_checked --test every_rust_path_to_a_module_is_an_edge
+```
+
+Expected: five `test result: ok` lines, 28 tests in all. Between them:
+
+- one unclassified file withholds A+ and is named; half unclassified caps the
+  score at 50; declaring the layer restores it;
+- a layer declared in `analyze.layers` reaches the grade, the inventory and
+  `--file`; a misspelt layer stops the run;
+- an import between a workspace's own packages is an edge in Rust, Go and
+  TypeScript, and a third-party one is not;
+- a file directly in `src/` is checked, and a declared file matches the module
+  path an import resolves to;
+- a Rust file's `super::`, inline, nested and `pub use` paths are edges, and
+  test code and type paths (`Vec::new`, `Ordering::Less`) are not.
+
+Each group has controls that must stay clean, and each was shown failing
+before its fix. The two poles hold: `examples/stress/game-sokoban-rs-tangled`
+grades F 34, `examples/url-shortener-rs` A+ 100.
 
 ## Every detector reads all three languages, or says it does not
 
@@ -97,7 +136,8 @@ done
 ```
 
 Expected, for each language: `Architecture grade: A+ — score 100/100`,
-`0 boundary violations`, `dead layers 0`, `orphans 0`. For Go and
+`0 boundary violations`, every file in a layer (`coverage 6/6` for Rust, `5/5`
+for Go and TypeScript), `dead layers 0`, `orphans 0`. For Go and
 TypeScript, `cohesion`, `duplication` and `god types` print
 `n/a (no Rust files; detector is Rust-only)`; they never print a count for a
 tree they cannot read. A fresh scaffold has nothing dead, unused, orphaned or

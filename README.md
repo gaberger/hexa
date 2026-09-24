@@ -233,11 +233,20 @@ rules are short enough to state and strict enough to fail:
 | 3 | `usecases/` imports `domain/` + `ports/` only |
 | 4 | adapters import `ports/` **only**, never the domain directly |
 | 5 | adapters never import other adapters |
-| 6 | the composition root is the only file that imports an adapter |
+| 6 | only a composition root — a crate's `lib.rs`, or a file declared one — imports an adapter |
 
 Rule 4 is the one implementations break. An adapter that needs a domain type
 gets it because the **port re-exports it**. Every adapter then has exactly one
 edge into the core, and swapping a database means touching one file.
+
+A file's layer comes from its folder (`domain/`, `ports/`, `usecases/`,
+`adapters/primary|secondary/`), from a crate or package named for it
+(`app-domain`), or from what the project declares in `.hexa/project.json →
+analyze.layers` — so a codebase organised by crate or by feature is graded, not
+skipped. Every import is checked, including imports between a workspace's own
+packages. And the grade claims no more than it could see: it is capped at the
+share of files that have a layer, and A+ needs all of them. The report names
+each file with none.
 
 **Why this beats a linter.** A style rule tells you a line is ugly. These tell
 you a *dependency* is wrong, which is the thing that makes a codebase expensive
@@ -363,6 +372,13 @@ project, standard library, or external, per language:
 | TypeScript | relative paths, `tsconfig` path aliases | `node:` specifiers and bare Node built-ins | any other bare specifier, `import type` included |
 | Go | paths under the module path in `go.mod` | first element contains no dot | everything else |
 
+**What the grade trusts.** A composition root is exempt from the rules — that is
+what lets it wire adapters — so whatever a crate root exports is not checked.
+And an import that leaves the project is checked only where an
+`[[import_policy]]` says what the layer may know: a use case that reads a file
+through `std::fs` passes the boundary rules, and is caught only by a policy that
+denies it.
+
 An inline path counts too: `std::fs::read("x")` with no `use` line, a crate
 named only in a signature or an attribute, `extern crate`, `require("x")` and
 `import("x")` are all read (ADR-2609211600). So is a path written inside a
@@ -409,10 +425,14 @@ Measure your own with `hexa bench agentic`.
 
 ## Architecture
 
-Eight crates, one binary, about 51k lines. hexa obeys its own rules: **A+, 100 of
-100, zero boundary violations** on its own analyzer, over all eight crates. The
-only paths it excludes are its embedded scaffold templates, and it declares
-that in `.hexa/project.json` like any other project would. The map is in
+Seven crates, one binary, about 58k lines of source. hexa obeys its own rules:
+**A+, 100 of 100 — zero boundary violations, zero cycles** — with all 149 of its
+source files in a layer and every import between its crates checked, `super::`
+and inline Rust paths included. A ratchet test fails on any new violation. It
+excludes two paths, its embedded scaffold templates and its benchmark fixtures,
+and declares those and its layers in `.hexa/project.json` like any other project
+would. hexa's own rules file declares no `[[import_policy]]`, so its use cases'
+direct file and process I/O is not graded. The map is in
 [ARCHITECTURE.md](ARCHITECTURE.md). The decisions are in the append-only
 [ADR ledger](docs/adrs/INDEX.md).
 

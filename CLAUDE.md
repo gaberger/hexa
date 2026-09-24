@@ -19,11 +19,16 @@ operator's manual.
 
 | Component | Role |
 |---|---|
-| **hexa-cli** | The binary, and the only composition root. |
+| **hexa-cli** | The binary; every verb is a primary adapter. It composes the crates. |
 | **hexa-exec** | The agent loop, the guarded tool library, the adversarial harness, and the file-backed local store. |
 | **hexa-infer** | Every inference adapter, the endpoint registry, tier resolution. The single place a provider or model may be named. |
 | **hexa-core** | The contract surface. Zero runtime dependencies. |
 | **hexa-graph** · **hexa-analysis** · **hexa-git** | Code knowledge graph · boundary checking and health detectors · git plumbing. |
+
+Each library crate's `lib.rs` is its composition root: it wires the crate's
+default adapters behind its ports (`hexa_exec::default_deps()`,
+`hexa_infer::wiring`, `hexa_analysis::default_ast()`). Code asks for a port; it
+never constructs an adapter.
 
 All state is files: `~/.hexa/*.jsonl`, `~/.hexa/inference-servers.json`,
 `graph-out/graph.json`, `.hexa/project.json`, `.hexa/memory.jsonl`, `docs/`.
@@ -99,15 +104,24 @@ Checked by `hexa analyze .`:
 3. `usecases/` imports `domain/` + `ports/` only.
 4. `adapters/primary/` and `adapters/secondary/` import `ports/` only.
 5. Adapters NEVER import other adapters.
-6. The composition root is the ONLY file that imports from adapters.
+6. Only a composition root (a crate's `lib.rs`, or a file declared one) imports from adapters.
 7. All relative imports in scaffolded TypeScript MUST use `.js` extensions (NodeNext).
 
-hexa obeys these itself: **A+, 100/100, 0 violations**.
+A file's layer: `.hexa/project.json → analyze.layers` first, then a crate named
+for its layer, then the folder names above. The grade is capped at the share of
+files with a layer; A+ needs all of them (ADR-2609241707). Every import is
+checked — between crates, and `super::`/inline/nested/`pub use` paths in Rust.
+A new file outside the folder convention needs an `analyze.layers` entry, or it
+costs the grade.
+
+hexa obeys these itself: **A+, 100/100, 0 violations, 0 cycles, every file in a
+layer**. `hexa_grades_itself_by_ratchet` fails on any new violation — fix it, do
+not list it.
 
 ## File organization
 
 ```
-hexa-cli/          the binary + every verb; the composition root
+hexa-cli/          the binary + every verb (primary adapters)
   assets/           templates baked in via rust-embed (skills, agents, hooks)
 hexa-exec/         the agent loop, tools, local store, adversarial harness
 hexa-infer/        inference adapters, endpoint registry, tiers
