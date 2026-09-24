@@ -3,7 +3,7 @@
 # - [[hex_layer_rules]] read by `hexa enforce check-file` (layer boundary rules)
 # - [[adr_rules]]     read by `hexa analyze` (ADR compliance violation patterns)
 #
-# path_pattern is an unanchored substring match (see hexa_core::rules::boundary),
+# path_pattern is an unanchored substring match (see hexa_analysis::layer_classifier),
 # so these match regardless of language or package-name nesting under src/ —
 # e.g. "/domain/" matches both "src/domain/foo.ts" and "src/mypkg/core/domain/foo.py",
 # while the trailing slash avoids false positives like "src/domainxyz/foo.py".

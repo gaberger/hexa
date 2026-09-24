@@ -1,23 +1,55 @@
 //! Architecture health check command.
 //!
-//! `hexa analyze [path]` — checks hexa layer structure using `hexa_core::rules::boundary`
-//! types, and when nexus is running, delegates to the full tree-sitter boundary analysis.
+//! `hexa analyze [path]` — checks hexa layer structure with the one layer
+//! classifier and rule table the grade uses (`hexa_analysis::layer_classifier`),
+//! and runs the full tree-sitter boundary analysis in-process.
 
 use std::path::{Path, PathBuf};
 
 use colored::Colorize;
-use hexa_core::rules::boundary::{self, Layer};
+use hexa_analysis::ports::HexLayer as Layer;
+use hexa_analysis::layer_classifier::{get_violation_rule, LayerMap};
+
+/// An import that crosses layers the wrong way, from the offline import scan.
+///
+/// The scan used `hexa_core::rules::boundary` (since deleted): a second
+/// classifier and a second copy of the rule table, kept "in step" with the
+/// grade's by hand.
+/// Two tables encoding one rule answer differently depending on which
+/// command you ran, and the second one ignored the project's declared
+/// layers. There is one classifier now.
+#[derive(Debug, Clone)]
+struct ImportViolation {
+    source_file: String,
+    imported_path: String,
+    rule: String,
+}
+
+/// Each of `imports` that `file_path`'s layer may not reach, by the grade's rules.
+fn validate_imports(layers: &LayerMap, file_path: &str, imports: &[String]) -> Vec<ImportViolation> {
+    let from = layers.classify(file_path);
+    imports
+        .iter()
+        .filter_map(|imp| {
+            get_violation_rule(from, layers.classify(imp)).map(|rule| ImportViolation {
+                source_file: file_path.to_string(),
+                imported_path: imp.clone(),
+                rule: rule.to_string(),
+            })
+        })
+        .collect()
+}
 
 
-/// Layers shown in the "Hex layers" checklist, in display order. Detection itself is
-/// language-agnostic (`hexa_core::rules::boundary::detect_layer`, a path-substring
-/// matcher) — this is purely display labeling, not a second hardcoded detection path.
+/// Layers shown in the "Hex layers" checklist, in display order. Detection is the
+/// grade's classifier (`LayerMap::classify`, declared layers first, then path
+/// patterns) — this is purely display labeling, not a second detection path.
 const DISPLAY_LAYERS: &[(Layer, &str)] = &[
     (Layer::Domain, "Domain"),
     (Layer::Ports, "Ports"),
     (Layer::Usecases, "Use Cases"),
-    (Layer::AdapterPrimary, "Primary Adapters"),
-    (Layer::AdapterSecondary, "Secondary Adapters"),
+    (Layer::AdaptersPrimary, "Primary Adapters"),
+    (Layer::AdaptersSecondary, "Secondary Adapters"),
 ];
 
 /// The four inputs to the architecture grade.
@@ -49,7 +81,7 @@ pub async fn run(
 
     // Single-file mode: analyze just one file
     if let Some(file_path) = file {
-        return run_single_file(file_path, &root, quiet, violations_only, exit_code);
+        return run_single_file(file_path, &root, quiet, violations_only, exit_code).await;
     }
 
     refuse_an_empty_scan(&root)?;
@@ -57,7 +89,7 @@ pub async fn run(
     // A bad `analyze.layers` entry stops the run here. Further down, the
     // deep analysis's errors are absorbed, and a grade computed without the
     // declaration would claim to cover code it did not classify.
-    hexa_analysis::layer_classifier::LayerMap::from_project(&root).map_err(anyhow::Error::msg)?;
+    let layers = LayerMap::from_project(&root).map_err(anyhow::Error::msg)?;
 
     // JSON mode: collect results and emit structured output
     if json_output {
@@ -72,8 +104,7 @@ pub async fn run(
     println!();
 
     // Violations collected during boundary analysis (used by violations_only and exit_code)
-    let mut local_violations: Vec<boundary::Violation> = Vec::new();
-    let mut rust_violations: Vec<RustViolation> = Vec::new();
+    let mut local_violations: Vec<ImportViolation> = Vec::new();
     let mut all_violation_count = 0usize;
     // The final score, for the --grade floor at the end.
     let mut final_score: Option<u64> = None;
@@ -119,9 +150,9 @@ pub async fn run(
         println!("    docs/adrs/:   {}", if has_docs_adrs { "present" } else { "none" });
 
         // Check hexa architecture layers by classifying every source file under src/
-        // via hexa_core::rules::boundary::detect_layer — a path-substring matcher that's
-        // language-agnostic and tolerant of arbitrary package-name nesting (e.g. both
-        // "src/domain/x.ts" and "src/mypkg/core/domain/x.py" resolve to Layer::Domain).
+        // with the grade's classifier — the project's declared layers first, then
+        // path patterns tolerant of arbitrary package nesting (both "src/domain/x.ts"
+        // and "src/mypkg/core/domain/x.py" resolve to Layer::Domain).
         let mut layer_file_counts: Vec<(&str, usize)> = Vec::new();
         let mut layer_counts: std::collections::HashMap<Layer, usize> = std::collections::HashMap::new();
         // Rust and TypeScript keep layers under src/; Go keeps them at the
@@ -140,7 +171,7 @@ pub async fn run(
                 // The patterns are `/adapters/secondary/`; a path relative to
                 // the module root, `adapters/secondary/memory.go`, has no
                 // leading slash and matched nothing.
-                *layer_counts.entry(boundary::detect_layer(&format!("/{rel}"))).or_insert(0) += 1;
+                *layer_counts.entry(layers.classify(&rel)).or_insert(0) += 1;
             }
 
             // A layer that is not there is not a failure. A library has no
@@ -190,32 +221,21 @@ pub async fn run(
             }
         }
 
-        // Rust workspace layer detection (ADR-2026-03-28-3000)
-        let rust_layers = if has_cargo_toml {
-            let layers = scan_rust_workspace_layers(&root);
-            if !layers.is_empty() {
-                println!();
-                println!("  {}", "Rust workspace layers:".bold());
-                for (label, count) in &layers {
-                    let indicator = if *count > 0 { "\u{2713}".green() } else { "\u{2023}".dimmed() };
-                    println!("    {} {} ({} files)", indicator, label, count);
-                }
-            }
-            layers
+        // Rust files across the workspace's crates, for the scanned count. The
+        // per-layer breakdown is the layer inventory, by the grade's own
+        // classifier; a Rust-only one with its own rules printed here.
+        let rust_total: usize = if has_cargo_toml {
+            find_workspace_crate_dirs(&root)
+                .iter()
+                .map(|c| collect_rust_files(&c.join("src")).len())
+                .sum()
         } else {
-            Vec::new()
+            0
         };
 
         // Offline boundary check: scan for obvious violations without nexus
         local_violations = if has_src {
             scan_local_violations(&root)
-        } else {
-            Vec::new()
-        };
-
-        // Rust boundary violations
-        rust_violations = if has_cargo_toml {
-            scan_rust_boundary_violations(&root)
         } else {
             Vec::new()
         };
@@ -265,8 +285,6 @@ pub async fn run(
         if has_src {
             total_files += collect_source_files(&root.join("src")).len();
         }
-        // Add Rust workspace file counts
-        let rust_total: usize = rust_layers.iter().map(|(_, c)| c).sum();
         total_files += rust_total;
         total_files += go_files_total;
 
@@ -274,7 +292,7 @@ pub async fn run(
         println!("  {}", "Boundary analysis:".bold());
         println!("    {} {} source files scanned", "\u{2023}".dimmed(), total_files);
 
-        all_violation_count = local_violations.len() + rust_violations.len();
+        all_violation_count = local_violations.len();
         if all_violation_count > 0 {
             println!(
                 "    {} {} boundary violation(s) (import scan)",
@@ -288,15 +306,6 @@ pub async fn run(
                     v.source_file,
                     v.imported_path,
                     v.rule,
-                );
-            }
-            for v in &rust_violations {
-                println!(
-                    "      {} {}:{} — {}",
-                    "\u{2717}".red(),
-                    v.file,
-                    v.line,
-                    v.message,
                 );
             }
         }
@@ -507,12 +516,6 @@ pub async fn run(
             println!(
                 "VIOLATION {} \u{2192} {} ({})",
                 v.source_file, v.imported_path, v.rule,
-            );
-        }
-        for v in &rust_violations {
-            println!(
-                "VIOLATION {}:{} — {}",
-                v.file, v.line, v.message,
             );
         }
         for v in adr_violations {
@@ -782,7 +785,7 @@ fn rule_error_count(root: &Path) -> usize {
         .count()
 }
 
-fn run_single_file(
+async fn run_single_file(
     file_path: &str,
     root: &Path,
     quiet: bool,
@@ -800,7 +803,6 @@ fn run_single_file(
         eprintln!("hexa analyze --file: file not found: {}", file_path);
         std::process::exit(2);
     }
-
     // Determine relative path from root for layer detection
     let rel = abs_path
         .strip_prefix(root)
@@ -808,173 +810,16 @@ fn run_single_file(
         .to_string_lossy()
         .to_string();
 
-    let ext = abs_path.extension().and_then(|e| e.to_str()).unwrap_or("");
-
-    let mut violations: Vec<String> = Vec::new();
-
-    match ext {
-        "rs" => {
-            // Rust boundary check on this single file
-            let _src_dir = abs_path.parent().unwrap_or(root);
-            // Walk up to find the crate's src/ dir
-            let crate_src = find_crate_src_for_file(&abs_path);
-            let rel_to_src = if let Some(ref cs) = crate_src {
-                abs_path.strip_prefix(cs).unwrap_or(&abs_path).to_string_lossy().to_string()
-            } else {
-                rel.clone()
-            };
-
-            let layer = classify_rust_src_layer(&rel_to_src);
-            if let Some(layer_name) = layer {
-                let file_rel = abs_path.strip_prefix(root).unwrap_or(&abs_path).to_string_lossy().to_string();
-                if let Ok(content) = std::fs::read_to_string(&abs_path) {
-                    let mut in_test_section = false;
-                    for (idx, line) in content.lines().enumerate() {
-                        let trimmed = line.trim();
-                        if trimmed == "#[cfg(test)]" { in_test_section = true; }
-                        if in_test_section { continue; }
-                        if !trimmed.starts_with("use ") { continue; }
-
-                        if matches!(layer_name, "Domain" | "Ports")
-                            && (trimmed.contains("::adapters")
-                                || trimmed.contains("hexa_nexus::")
-                                || trimmed.contains("hexa_cli::")
-                                || trimmed.contains("hexa_agent::"))
-                            {
-                                violations.push(format!(
-                                    "{}:{} — {} layer must not import from adapters/downstream: {}",
-                                    file_rel, idx + 1, layer_name, trimmed.trim_end_matches(';')
-                                ));
-                            }
-                        if layer_name == "Secondary Adapters" {
-                            if let Some(rest) = trimmed.strip_prefix("use crate::adapters::") {
-                                let import_mod = rest.split("::").next().unwrap_or("").trim_end_matches(';');
-                                let current_mod = rel_to_src
-                                    .trim_start_matches("adapters/")
-                                    .split('/')
-                                    .next()
-                                    .unwrap_or("")
-                                    .trim_end_matches(".rs");
-                                if !import_mod.is_empty()
-                                    && import_mod != current_mod
-                                    && import_mod != "mod"
-                                    && import_mod != "super"
-                                {
-                                    violations.push(format!(
-                                        "{}:{} — Secondary adapter imports sibling '{}': {}",
-                                        file_rel, idx + 1, import_mod, trimmed.trim_end_matches(';')
-                                    ));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        "ts" | "js" => {
-            // TypeScript/JS boundary check using hexa_core
-            let source_layer = boundary::detect_layer(&rel);
-            if source_layer != Layer::Unknown && source_layer != Layer::CompositionRoot {
-                if let Ok(contents) = std::fs::read_to_string(&abs_path) {
-                    let imports = extract_import_paths(&contents, &rel);
-                    let viols = boundary::validate_imports(&rel, &imports);
-                    for v in viols {
-                        violations.push(format!(
-                            "{} \u{2192} {} ({})",
-                            v.source_file, v.imported_path, v.rule
-                        ));
-                    }
-                }
-            }
-        }
-        "go" => {
-            // Go boundary check using hexa layer conventions
-            if let Ok(content) = std::fs::read_to_string(&abs_path) {
-                let file_rel = abs_path
-                    .strip_prefix(root)
-                    .unwrap_or(&abs_path)
-                    .to_string_lossy()
-                    .to_string();
-
-                // Detect Go module prefix from go.mod for import resolution
-                let go_mod_prefix = find_go_module_prefix(root);
-
-                // Classify this file's layer
-                let layer_name = classify_go_layer(&file_rel);
-
-                if let Some(layer) = layer_name {
-                    for (idx, line) in content.lines().enumerate() {
-                        let trimmed = line.trim();
-                        // Match Go import lines: "path" or named imports
-                        if !trimmed.starts_with('"') && !trimmed.starts_with("//") {
-                            continue;
-                        }
-                        if !trimmed.starts_with('"') {
-                            continue;
-                        }
-
-                        let import_path = trimmed.trim_matches('"');
-
-                        // Resolve to project-relative path
-                        let resolved = if let Some(ref prefix) = go_mod_prefix {
-                            if let Some(rest) = import_path.strip_prefix(prefix.as_str()) {
-                                rest.strip_prefix('/').unwrap_or(rest).to_string()
-                            } else {
-                                continue; // stdlib or external — skip
-                            }
-                        } else {
-                            continue; // Can't resolve without go.mod
-                        };
-
-                        let target_layer = classify_go_layer(&resolved);
-
-                        // Enforce hexa rules
-                        if let Some(target) = &target_layer {
-                            let violation = match layer.as_str() {
-                                "domain" => {
-                                    if target != "domain" {
-                                        Some(format!("domain must not import {}", target))
-                                    } else {
-                                        None
-                                    }
-                                }
-                                "ports" => {
-                                    if target != "domain" && target != "ports" {
-                                        Some(format!("ports must not import {}", target))
-                                    } else {
-                                        None
-                                    }
-                                }
-                                "adapters" => {
-                                    // Check cross-adapter imports
-                                    if target == "adapters" && resolved != file_rel {
-                                        Some("adapters must not import other adapters".to_string())
-                                    } else {
-                                        None
-                                    }
-                                }
-                                _ => None,
-                            };
-
-                            if let Some(rule) = violation {
-                                violations.push(format!(
-                                    "{}:{} — {} layer violation: {} (imports {})",
-                                    file_rel,
-                                    idx + 1,
-                                    layer,
-                                    rule,
-                                    import_path,
-                                ));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        _ => {
-            // Unsupported extension — nothing to check
-        }
-    }
+    // The grade's own check on one file: tree-sitter imports, the project's
+    // packages and declared layers, the one rule table. This had three
+    // hand-written checkers, one per language, each with its own layer
+    // table — the Rust one still named crates deleted months earlier.
+    let violations: Vec<String> = hexa_analysis::analyzer::file_violations(root, &rel)
+        .await
+        .map_err(|e| anyhow::anyhow!("hexa analyze --file: {e}"))?
+        .iter()
+        .map(|v| format!("{}:{} \u{2192} {} ({})", v.edge.from_file, v.edge.line, v.edge.import_path, v.rule))
+        .collect();
 
     if violations.is_empty() {
         if !quiet && !violations_only {
@@ -993,76 +838,7 @@ fn run_single_file(
     std::process::exit(1);
 }
 
-/// Walk up from a file to find the enclosing crate's `src/` directory.
-fn find_crate_src_for_file(file: &Path) -> Option<PathBuf> {
-    let mut dir = file.parent()?;
-    loop {
-        if dir.join("Cargo.toml").is_file() {
-            let src = dir.join("src");
-            if src.is_dir() {
-                return Some(src);
-            }
-            return None;
-        }
-        dir = dir.parent()?;
-    }
-}
-
-// ── Go Layer Classification ─────────────────────────────────────────────
-
-#[allow(dead_code)]
-struct GoLayerRule {
-    label: &'static str,
-    layer: &'static str,
-    signals: &'static [&'static str],
-    matches: fn(&str) -> bool,
-}
-
-fn match_go_domain(s: &str) -> bool { s.contains("internal/domain") }
-fn match_go_ports(s: &str) -> bool { s.contains("internal/ports") }
-fn match_go_usecases(s: &str) -> bool { s.contains("internal/usecases") }
-fn match_go_adapters(s: &str) -> bool {
-    s.contains("internal/adapters") || s.contains("cmd/") || s.contains("pkg/")
-}
-fn match_go_internal_fallback(s: &str) -> bool { s.contains("internal/") }
-
-static GO_LAYER_RULES: &[GoLayerRule] = &[
-    GoLayerRule { label: "domain", layer: "domain", signals: &["internal/domain"], matches: match_go_domain },
-    GoLayerRule { label: "ports", layer: "ports", signals: &["internal/ports"], matches: match_go_ports },
-    GoLayerRule { label: "usecases", layer: "usecases", signals: &["internal/usecases"], matches: match_go_usecases },
-    GoLayerRule { label: "adapters", layer: "adapters", signals: &["internal/adapters", "cmd/", "pkg/"], matches: match_go_adapters },
-    GoLayerRule { label: "internal_fallback", layer: "usecases", signals: &["internal/"], matches: match_go_internal_fallback },
-];
-
-/// Classify a Go file path into its hexagonal layer.
-fn classify_go_layer(path: &str) -> Option<String> {
-    GO_LAYER_RULES
-        .iter()
-        .find(|r| (r.matches)(path))
-        .map(|r| r.layer.to_string())
-}
-
-/// Read go.mod to extract the module path.
-fn find_go_module_prefix(root: &Path) -> Option<String> {
-    let go_mod = root.join("go.mod");
-    if let Ok(content) = std::fs::read_to_string(go_mod) {
-        for line in content.lines() {
-            if let Some(rest) = line.strip_prefix("module ") {
-                return Some(rest.trim().to_string());
-            }
-        }
-    }
-    None
-}
-
-// ── Rust Workspace Analysis (ADR-2026-03-28-3000) ────────────────────────────
-
-/// A boundary violation found in Rust source.
-pub struct RustViolation {
-    pub file: String,
-    pub line: usize,
-    pub message: String,
-}
+// ── Rust workspace walk ──────────────────────────────────────────────────────
 
 /// Find workspace crate directories up to two levels deep.
 ///
@@ -1150,244 +926,6 @@ async fn print_layer_inventory(root: &Path) {
     }
 }
 
-#[allow(dead_code)]
-struct RustLayerRule {
-    label: &'static str,
-    layer: &'static str,
-    signals: &'static [&'static str],
-    matches: fn(&str) -> bool,
-}
-
-fn match_rust_primary(s: &str) -> bool {
-    s.starts_with("adapters/primary/") || s.starts_with("adapters/primary.rs")
-        || s.starts_with("commands/") || s.starts_with("routes/")
-}
-fn match_rust_secondary(s: &str) -> bool {
-    s.starts_with("adapters/secondary/") || s.starts_with("adapters/secondary.rs")
-        || s.starts_with("adapters/")
-}
-fn match_rust_domain(s: &str) -> bool {
-    s.starts_with("domain/") || s.starts_with("domain.rs")
-}
-fn match_rust_ports(s: &str) -> bool {
-    s.starts_with("ports/") || s.starts_with("ports.rs")
-}
-fn match_rust_usecases(s: &str) -> bool {
-    s.starts_with("orchestration/") || s.starts_with("usecases/")
-}
-
-static RUST_LAYER_RULES: &[RustLayerRule] = &[
-    RustLayerRule { label: "primary_adapters", layer: "Primary Adapters", signals: &["adapters/primary/", "commands/", "routes/"], matches: match_rust_primary },
-    RustLayerRule { label: "secondary_adapters", layer: "Secondary Adapters", signals: &["adapters/secondary/", "adapters/"], matches: match_rust_secondary },
-    RustLayerRule { label: "domain", layer: "Domain", signals: &["domain/", "domain.rs"], matches: match_rust_domain },
-    RustLayerRule { label: "ports", layer: "Ports", signals: &["ports/", "ports.rs"], matches: match_rust_ports },
-    RustLayerRule { label: "usecases", layer: "Use Cases", signals: &["orchestration/", "usecases/"], matches: match_rust_usecases },
-];
-
-
-/// Classify a hexa layer from the CRATE's path, for workspaces that put one layer per crate.
-///
-/// Two layouts are idiomatic for hexagonal Rust, and hexa must read both:
-///
-///   dir-per-layer     `hexa-core/src/domain/tokens.rs`        layer is a subdirectory of src/
-///   crate-per-layer   `okf-domain/src/lib.rs`                layer IS the crate
-///
-/// Only the first was recognised, so a crate-per-layer workspace classified every file as
-/// Infrastructure and `analyze` reported score 100 with zero violations — a vacuous pass
-/// indistinguishable from a clean one. That is the layout hexa should most approve of: with a crate
-/// per layer, Cargo refuses to resolve an undeclared import, so a boundary violation is a compile
-/// error rather than something a linter has to notice.
-///
-/// `crate_rel` is the crate directory relative to the workspace root, so nested adapter crates
-/// (`okf-adapters/secondary/yaml-serde`) are classified by their path, and flat layer crates
-/// (`okf-domain`) by the last `-`/`_` separated segment of the directory name.
-fn classify_rust_crate_layer(crate_rel: &str) -> Option<&'static str> {
-    let p = crate_rel.replace('\\', "/");
-    // Path form first: an adapter crate says which side it is on by where it lives.
-    if p.contains("adapters/primary/") {
-        return Some("Primary Adapters");
-    }
-    if p.contains("adapters/secondary/") {
-        return Some("Secondary Adapters");
-    }
-    // Otherwise the crate NAME carries the layer: okf-domain, my_app_ports, usecases.
-    let last = p.rsplit('/').next().unwrap_or(&p);
-    let seg = last.rsplit(['-', '_']).next().unwrap_or(last);
-    match seg {
-        "domain" => Some("Domain"),
-        "ports" | "port" => Some("Ports"),
-        "usecases" | "usecase" | "orchestration" => Some("Use Cases"),
-        _ => None,
-    }
-}
-
-/// Layer for a file, from the crate it lives in and its path under `src/`.
-/// The `src/` path wins so existing dir-per-layer workspaces classify exactly as before.
-fn classify_rust_layer(crate_rel: &str, rel_to_src: &str) -> Option<&'static str> {
-    classify_rust_src_layer(rel_to_src).or_else(|| classify_rust_crate_layer(crate_rel))
-}
-
-/// Classify a path relative to a crate's `src/` directory into a hexa layer label.
-/// Returns `None` for infrastructure (unclassified) files.
-fn classify_rust_src_layer(rel_to_src: &str) -> Option<&'static str> {
-    let p = rel_to_src.replace('\\', "/");
-    RUST_LAYER_RULES
-        .iter()
-        .find(|r| (r.matches)(&p))
-        .map(|r| r.layer)
-}
-
-/// Scan Rust workspace crates and return layer label → file count aggregated across all crates.
-fn scan_rust_workspace_layers(root: &Path) -> Vec<(String, usize)> {
-    let crate_dirs = find_workspace_crate_dirs(root);
-    let mut counts: std::collections::HashMap<&'static str, usize> = std::collections::HashMap::new();
-    let mut infra_count = 0usize;
-
-    for crate_dir in &crate_dirs {
-        let src_dir = crate_dir.join("src");
-        if !src_dir.is_dir() {
-            continue;
-        }
-        let files = collect_rust_files(&src_dir);
-        for file in &files {
-            let rel = file
-                .strip_prefix(&src_dir)
-                .unwrap_or(file)
-                .to_string_lossy()
-                .to_string();
-            let crate_rel = crate_dir.strip_prefix(root).unwrap_or(crate_dir).to_string_lossy().to_string();
-            match classify_rust_layer(&crate_rel, &rel) {
-                Some(layer) => *counts.entry(layer).or_insert(0) += 1,
-                None => infra_count += 1,
-            }
-        }
-    }
-
-    let order = ["Domain", "Ports", "Use Cases", "Primary Adapters", "Secondary Adapters"];
-    let mut result: Vec<(String, usize)> = order
-        .iter()
-        .filter(|&&l| counts.get(l).copied().unwrap_or(0) > 0)
-        .map(|&l| (l.to_string(), counts[l]))
-        .collect();
-    if infra_count > 0 {
-        result.push(("Infrastructure".to_string(), infra_count));
-    }
-    result
-}
-
-/// Returns true if the file path is inside a test directory or is a test file.
-fn is_test_path(path: &Path) -> bool {
-    path.components()
-        .any(|c| c.as_os_str() == "tests" || c.as_os_str() == "test")
-        || path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .map(|n| n.ends_with("_test.rs") || n.ends_with("_tests.rs"))
-            .unwrap_or(false)
-}
-
-/// Scan Rust workspace files for hexa boundary violations via `use` statement analysis.
-fn scan_rust_boundary_violations(root: &Path) -> Vec<RustViolation> {
-    let crate_dirs = find_workspace_crate_dirs(root);
-    let mut violations = Vec::new();
-
-    for crate_dir in &crate_dirs {
-        let src_dir = crate_dir.join("src");
-        if !src_dir.is_dir() {
-            continue;
-        }
-        let files = collect_rust_files(&src_dir);
-        for file_path in &files {
-            if is_test_path(file_path) {
-                continue;
-            }
-            let rel_to_src = file_path
-                .strip_prefix(&src_dir)
-                .unwrap_or(file_path)
-                .to_string_lossy()
-                .to_string();
-            let crate_rel = crate_dir.strip_prefix(root).unwrap_or(crate_dir).to_string_lossy().to_string();
-            let Some(layer) = classify_rust_layer(&crate_rel, &rel_to_src) else {
-                continue;
-            };
-            let file_rel = file_path
-                .strip_prefix(root)
-                .unwrap_or(file_path)
-                .to_string_lossy()
-                .to_string();
-
-            let Ok(content) = std::fs::read_to_string(file_path) else {
-                continue;
-            };
-
-            // Once we see #[cfg(test)] we're in the test section at end of file
-            let mut in_test_section = false;
-            for (idx, line) in content.lines().enumerate() {
-                let trimmed = line.trim();
-                if trimmed == "#[cfg(test)]" {
-                    in_test_section = true;
-                }
-                if in_test_section {
-                    continue;
-                }
-                if !trimmed.starts_with("use ") {
-                    continue;
-                }
-
-                // Rule 1: Domain and Ports must not import from adapters or downstream crates
-                if matches!(layer, "Domain" | "Ports")
-                    && (trimmed.contains("::adapters")
-                        || trimmed.contains("hexa_nexus::")
-                        || trimmed.contains("hexa_cli::")
-                        || trimmed.contains("hexa_agent::"))
-                    {
-                        violations.push(RustViolation {
-                            file: file_rel.clone(),
-                            line: idx + 1,
-                            message: format!(
-                                "{} layer must not import from adapters/downstream crates: {}",
-                                layer,
-                                trimmed.trim_end_matches(';')
-                            ),
-                        });
-                    }
-
-                // Rule 2: Secondary adapters must not import sibling secondary adapters
-                if layer == "Secondary Adapters" {
-                    // use crate::adapters::<sibling>::
-                    if let Some(rest) = trimmed.strip_prefix("use crate::adapters::") {
-                        let import_mod = rest.split("::").next().unwrap_or("").trim_end_matches(';');
-                        // Derive the current file's module name (e.g. "adapters/foo.rs" → "foo")
-                        let current_mod = rel_to_src
-                            .trim_start_matches("adapters/")
-                            .split('/')
-                            .next()
-                            .unwrap_or("")
-                            .trim_end_matches(".rs");
-                        if !import_mod.is_empty()
-                            && import_mod != current_mod
-                            && import_mod != "mod"
-                            && import_mod != "super"
-                        {
-                            violations.push(RustViolation {
-                                file: file_rel.clone(),
-                                line: idx + 1,
-                                message: format!(
-                                    "Secondary adapter imports sibling adapter '{}': {}",
-                                    import_mod,
-                                    trimmed.trim_end_matches(';')
-                                ),
-                            });
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    violations
-}
-
 /// Collect only `.rs` files recursively under a directory.
 fn collect_rust_files(dir: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
@@ -1410,11 +948,12 @@ fn collect_rust_files_recursive(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// Scan source files for boundary violations using `hexa_core::rules::boundary`.
+/// Scan source files for boundary violations with the grade's classifier and rules.
 ///
 /// This performs a lightweight offline check by inspecting Rust `use` and
 /// TypeScript `import` statements without needing tree-sitter.
-fn scan_local_violations(root: &Path) -> Vec<boundary::Violation> {
+fn scan_local_violations(root: &Path) -> Vec<ImportViolation> {
+    let layers = LayerMap::from_project(root).unwrap_or_default();
     let src = root.join("src");
     let mut all_violations = Vec::new();
 
@@ -1437,7 +976,7 @@ fn scan_local_violations(root: &Path) -> Vec<boundary::Violation> {
             continue;
         }
 
-        let source_layer = boundary::detect_layer(&rel);
+        let source_layer = layers.classify(&rel);
         if source_layer == Layer::Unknown || source_layer == Layer::CompositionRoot {
             continue;
         }
@@ -1445,7 +984,7 @@ fn scan_local_violations(root: &Path) -> Vec<boundary::Violation> {
         // Read file and extract import-like paths (best-effort, not a full parser)
         if let Ok(contents) = std::fs::read_to_string(path) {
             let imports = extract_import_paths(&contents, &rel);
-            let violations = boundary::validate_imports(&rel, &imports);
+            let violations = validate_imports(&layers, &rel, &imports);
             all_violations.extend(violations);
         }
     }
@@ -2542,24 +2081,6 @@ async fn run_json(root: &Path, strict: bool, adr_compliance_only: bool) -> anyho
             Vec::new()
         };
 
-        // Rust workspace layers and violations (ADR-2026-03-28-3000)
-        let has_cargo_toml = root.join("Cargo.toml").is_file();
-        let rust_layers_data: Vec<serde_json::Value> = if has_cargo_toml {
-            scan_rust_workspace_layers(root)
-                .iter()
-                .map(|(label, count)| serde_json::json!({"layer": label, "file_count": count}))
-                .collect()
-        } else {
-            Vec::new()
-        };
-        let rust_violations_data: Vec<serde_json::Value> = if has_cargo_toml {
-            scan_rust_boundary_violations(root)
-                .iter()
-                .map(|v| serde_json::json!({"file": v.file, "line": v.line, "message": v.message}))
-                .collect()
-        } else {
-            Vec::new()
-        };
 
         // Full tree-sitter analysis, in-process (ADR-2608241500 P6.2).
         let mut score: Option<u64> = None;
@@ -2605,7 +2126,7 @@ async fn run_json(root: &Path, strict: bool, adr_compliance_only: bool) -> anyho
         }
 
         // Compute local score if nexus didn't provide one
-        let total_violations = violations.len() + rust_violations_data.len();
+        let total_violations = violations.len();
         let final_score = score.unwrap_or_else(|| {
             let v = total_violations as u64;
             if v == 0 { 100 } else { 100u64.saturating_sub(v * 10) }
@@ -2616,8 +2137,6 @@ async fn run_json(root: &Path, strict: bool, adr_compliance_only: bool) -> anyho
         result["explain"] = explain_json();
         result["violations"] = serde_json::Value::Array(violations);
         result["boundary_errors"] = serde_json::Value::Array(boundary_errors);
-        result["rust_layers"] = serde_json::Value::Array(rust_layers_data);
-        result["rust_violations"] = serde_json::Value::Array(rust_violations_data);
         // What each layer holds, per language, over the files the grade reads.
         // An error is reported as one, not as an empty inventory.
         result["layer_inventory"] = match hexa_analysis::layer_inventory::inventory(root).await {
@@ -2681,13 +2200,6 @@ fn print_check(label: &str, present: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
-
-    fn write_file(base: &std::path::Path, rel: &str, content: &str) {
-        let p = base.join(rel);
-        fs::create_dir_all(p.parent().unwrap()).unwrap();
-        fs::write(&p, content).unwrap();
-    }
 
     // ── Test code is not a boundary violation ───────────────────────────────
 
@@ -2801,205 +2313,4 @@ mod tests {
         }
     }
 
-    // ── P5.1: scan_rust_workspace_layers ────────────────────────────────
-
-    #[test]
-    fn rust_workspace_detects_domain_and_secondary_adapter() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-
-        // Simulate hexa-core with domain + ports
-        write_file(root, "hexa-core/Cargo.toml", "[package]\nname=\"hexa-core\"");
-        write_file(root, "hexa-core/src/domain/mod.rs", "// domain");
-        write_file(root, "hexa-core/src/domain/tokens.rs", "// tokens");
-        write_file(root, "hexa-core/src/ports/mod.rs", "// ports");
-
-        // Simulate hexa-nexus with adapters
-        write_file(root, "hexa-nexus/Cargo.toml", "[package]\nname=\"hexa-nexus\"");
-        write_file(root, "hexa-nexus/src/adapters/spacetime.rs", "// adapter");
-        write_file(root, "hexa-nexus/src/adapters/mod.rs", "// mod");
-
-        let layers = scan_rust_workspace_layers(root);
-        let map: std::collections::HashMap<&str, usize> =
-            layers.iter().map(|(l, c)| (l.as_str(), *c)).collect();
-
-        assert_eq!(*map.get("Domain").unwrap_or(&0), 2, "expected 2 domain files");
-        assert_eq!(*map.get("Ports").unwrap_or(&0), 1, "expected 1 ports file");
-        assert_eq!(*map.get("Secondary Adapters").unwrap_or(&0), 2, "expected 2 adapter files");
-    }
-
-    #[test]
-    fn rust_workspace_infra_crate_no_recognized_dirs() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-
-        write_file(root, "hexa-parser/Cargo.toml", "[package]\nname=\"hexa-parser\"");
-        write_file(root, "hexa-parser/src/lib.rs", "// parser");
-        write_file(root, "hexa-parser/src/utils.rs", "// utils");
-
-        let layers = scan_rust_workspace_layers(root);
-        let map: std::collections::HashMap<&str, usize> =
-            layers.iter().map(|(l, c)| (l.as_str(), *c)).collect();
-
-        assert_eq!(*map.get("Domain").unwrap_or(&0), 0);
-        assert_eq!(*map.get("Infrastructure").unwrap_or(&0), 2, "parser files should be infrastructure");
-    }
-
-    #[test]
-    fn rust_workspace_empty_root_returns_empty() {
-        let tmp = tempfile::tempdir().unwrap();
-        let layers = scan_rust_workspace_layers(tmp.path());
-        assert!(layers.is_empty());
-    }
-
-    #[test]
-    fn rust_workspace_primary_adapter_commands_dir() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-
-        write_file(root, "hexa-cli/Cargo.toml", "[package]\nname=\"hexa-cli\"");
-        write_file(root, "hexa-cli/src/commands/analyze.rs", "// analyze");
-        write_file(root, "hexa-cli/src/commands/plan.rs", "// plan");
-
-        let layers = scan_rust_workspace_layers(root);
-        let map: std::collections::HashMap<&str, usize> =
-            layers.iter().map(|(l, c)| (l.as_str(), *c)).collect();
-
-        assert_eq!(*map.get("Primary Adapters").unwrap_or(&0), 2);
-    }
-
-    // ── P5.2: scan_rust_boundary_violations ─────────────────────────────
-
-    #[test]
-    fn rust_boundary_domain_importing_adapters_is_violation() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-
-        write_file(root, "my-crate/Cargo.toml", "[package]\nname=\"my-crate\"");
-        write_file(
-            root,
-            "my-crate/src/domain/bad.rs",
-            "use hexa_nexus::adapters::spacetime;\npub fn foo() {}",
-        );
-
-        let violations = scan_rust_boundary_violations(root);
-        assert_eq!(violations.len(), 1);
-        assert!(violations[0].message.contains("Domain layer must not import"));
-    }
-
-    #[test]
-    fn rust_boundary_secondary_adapter_importing_sibling_is_violation() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-
-        write_file(root, "my-crate/Cargo.toml", "[package]\nname=\"my-crate\"");
-        write_file(
-            root,
-            "my-crate/src/adapters/foo.rs",
-            "use crate::adapters::bar::BarClient;\npub fn run() {}",
-        );
-
-        let violations = scan_rust_boundary_violations(root);
-        assert_eq!(violations.len(), 1);
-        assert!(violations[0].message.contains("sibling adapter"));
-    }
-
-    #[test]
-    fn rust_boundary_use_in_cfg_test_is_ignored() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-
-        write_file(root, "my-crate/Cargo.toml", "[package]\nname=\"my-crate\"");
-        write_file(
-            root,
-            "my-crate/src/domain/clean.rs",
-            "pub fn foo() {}\n\n#[cfg(test)]\nmod tests {\n    use hexa_nexus::adapters::mock;\n}",
-        );
-
-        let violations = scan_rust_boundary_violations(root);
-        assert!(violations.is_empty(), "test-section imports must not be flagged");
-    }
-
-    #[test]
-    fn rust_boundary_clean_file_produces_no_violations() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-
-        write_file(root, "my-crate/Cargo.toml", "[package]\nname=\"my-crate\"");
-        write_file(
-            root,
-            "my-crate/src/domain/clean.rs",
-            "use std::collections::HashMap;\npub struct Foo { pub x: u32 }",
-        );
-        write_file(
-            root,
-            "my-crate/src/adapters/clean.rs",
-            "use hexa_core::ports::IFooPort;\npub struct FooAdapter;",
-        );
-
-        let violations = scan_rust_boundary_violations(root);
-        assert!(violations.is_empty());
-    }
-
-    // ── P5.3: classify_rust_src_layer ───────────────────────────────────
-
-    #[test]
-    fn classify_layer_maps_known_paths() {
-        assert_eq!(classify_rust_src_layer("domain/tokens.rs"), Some("Domain"));
-        assert_eq!(classify_rust_src_layer("ports/inference.rs"), Some("Ports"));
-        assert_eq!(classify_rust_src_layer("adapters/spacetime.rs"), Some("Secondary Adapters"));
-        assert_eq!(classify_rust_src_layer("adapters/primary/cli.rs"), Some("Primary Adapters"));
-        assert_eq!(classify_rust_src_layer("commands/analyze.rs"), Some("Primary Adapters"));
-        assert_eq!(classify_rust_src_layer("routes/chat.rs"), Some("Primary Adapters"));
-        assert_eq!(classify_rust_src_layer("orchestration/agent_manager.rs"), Some("Use Cases"));
-        assert_eq!(classify_rust_src_layer("lib.rs"), None);
-        assert_eq!(classify_rust_src_layer("main.rs"), None);
-    }
-
-    // ── P5.3: smoke test — zero violations on clean hexa-intf ────────────
-
-    #[test]
-    fn rust_boundary_zero_violations_on_hex_intf() {
-        // Find the repo root (two levels up from hexa-cli/src/commands/)
-        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR")); // hexa-cli/
-        let root = manifest.parent().unwrap(); // hexa-intf/
-
-        let violations = scan_rust_boundary_violations(root);
-        if !violations.is_empty() {
-            for v in &violations {
-                eprintln!("VIOLATION {}:{} — {}", v.file, v.line, v.message);
-            }
-        }
-        assert!(
-            violations.is_empty(),
-            "{} Rust boundary violation(s) found in hexa-intf — these are real bugs",
-            violations.len()
-        );
-    }
-
-    #[test]
-    fn go_layer_rule_table_invariants() {
-        assert_eq!(GO_LAYER_RULES.len(), 5, "expected 5 Go layer rules");
-        for rule in GO_LAYER_RULES {
-            assert!(!rule.label.is_empty());
-            assert!(!rule.signals.is_empty(), "rule {:?} has no signals", rule.label);
-        }
-        let domain_idx = GO_LAYER_RULES.iter().position(|r| r.label == "domain").unwrap();
-        let fallback_idx = GO_LAYER_RULES.iter().position(|r| r.label == "internal_fallback").unwrap();
-        assert!(domain_idx < fallback_idx,
-            "specific internal/ rules must precede internal_fallback");
-    }
-
-    #[test]
-    fn rust_layer_rule_table_invariants() {
-        assert_eq!(RUST_LAYER_RULES.len(), 5, "expected 5 Rust layer rules");
-        for rule in RUST_LAYER_RULES {
-            assert!(!rule.label.is_empty());
-            assert!(!rule.signals.is_empty(), "rule {:?} has no signals", rule.label);
-        }
-        let primary_idx = RUST_LAYER_RULES.iter().position(|r| r.label == "primary_adapters").unwrap();
-        let secondary_idx = RUST_LAYER_RULES.iter().position(|r| r.label == "secondary_adapters").unwrap();
-        assert!(primary_idx < secondary_idx,
-            "primary_adapters must precede secondary_adapters (adapters/ fallback)");
-    }
 }

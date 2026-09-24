@@ -15,7 +15,7 @@ use super::boundary_checker;
 use super::cycle_detector;
 use super::dead_export_finder::{self, FileData};
 use super::domain::{
-    ArchAnalysisResult, DeadExport, DependencyViolation, ImportEdge, Language,
+    ArchAnalysisResult, DeadExport, DependencyViolation, ImportEdge, ImportStatement, Language,
 };
 use super::frontend_checker;
 use super::layer_classifier::LayerMap;
@@ -89,6 +89,54 @@ fn is_source_file(path: &str) -> bool {
     SOURCE_EXTENSIONS.iter().any(|ext| {
         path.ends_with(&format!(".{}", ext))
     })
+}
+
+/// The import edges of one file: each import resolved (the project's own
+/// packages first) and both ends given a layer. The one place an edge is
+/// built, so the whole-project grade and the single-file check cannot
+/// disagree about an import.
+fn edges_of(
+    rel_path: &str,
+    imports: &[ImportStatement],
+    packages: &WorkspacePackages,
+    layers: &LayerMap,
+    go_module_prefix: Option<&str>,
+) -> Vec<ImportEdge> {
+    let from_file = normalize_path(rel_path);
+    imports
+        .iter()
+        .map(|imp| {
+            let resolved = resolve_in(packages, rel_path, &imp.raw_path, go_module_prefix);
+            // The importing file decides the language, not the resolved target.
+            let to_file = normalize_path_in(&resolved, Language::from_path(rel_path));
+            ImportEdge {
+                from_file: from_file.clone(),
+                from_layer: layers.classify(&from_file),
+                to_layer: layers.classify(&to_file),
+                to_file,
+                import_path: imp.raw_path.clone(),
+                line: imp.line,
+            }
+        })
+        .collect()
+}
+
+/// The boundary violations in one file, by exactly the rules the grade
+/// applies: its imports parsed by tree-sitter, resolved through the
+/// project's packages, classified by its declared layers. For the post-edit
+/// hook, which checks the file just written without grading the tree.
+pub async fn file_violations(root: &Path, rel_path: &str) -> Result<Vec<DependencyViolation>, AnalysisError> {
+    let lang = Language::from_path(rel_path);
+    if lang == Language::Unknown {
+        return Ok(Vec::new());
+    }
+    let layers = LayerMap::from_project(root).map_err(AnalysisError::Other)?;
+    let packages = discover_packages(root);
+    let go_mod = detect_go_module_prefix(root).await;
+    let source = tokio::fs::read_to_string(root.join(rel_path)).await?;
+    let imports = TreeSitterAdapter::new().extract_imports(Path::new(rel_path), &source, lang)?;
+    let edges = edges_of(rel_path, &imports, &packages, &layers, go_mod.as_deref());
+    Ok(boundary_checker::find_violations(&edges))
 }
 
 /// Resolve an import: the project's own packages first, then the language's
@@ -370,20 +418,7 @@ impl ArchAnalyzer {
 
             let from_file = normalize_path(rel_path);
 
-            // Build edges with resolved paths and layer classification
-            for imp in &imports {
-                let resolved = resolve_in(&packages, rel_path, &imp.raw_path, go_module_prefix);
-                // The importing file decides the language, not the resolved target.
-                let to_file = normalize_path_in(&resolved, Language::from_path(rel_path));
-                all_edges.push(ImportEdge {
-                    from_file: from_file.clone(),
-                    to_file: to_file.clone(),
-                    from_layer: layers.classify(&from_file),
-                    to_layer: layers.classify(&to_file),
-                    import_path: imp.raw_path.clone(),
-                    line: imp.line,
-                });
-            }
+            all_edges.extend(edges_of(rel_path, &imports, &packages, &layers, go_module_prefix));
 
             let members = self
                 .ast

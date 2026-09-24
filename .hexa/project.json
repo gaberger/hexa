@@ -56,7 +56,6 @@
       "hexa-cli/src/fmt.rs": "adapters/primary",
       "hexa-core/src/quantization.rs": "domain",
       "hexa-core/src/resource_governor.rs": "domain",
-      "hexa-core/src/rules": "domain",
       "hexa-core/src/validation.rs": "domain",
       "hexa-exec/src/adversarial.rs": "usecases",
       "hexa-exec/src/compress.rs": "usecases",

@@ -22,6 +22,7 @@ const LAYER_PATTERNS: &[(&str, HexLayer)] = &[
     // Rust conventional directories
     ("/src/bin/", HexLayer::AdaptersPrimary),       // Rust: binary entry points
     ("/src/routes/", HexLayer::AdaptersPrimary),    // Rust: web route handlers
+    ("/src/commands/", HexLayer::AdaptersPrimary),  // Rust: CLI subcommand handlers
     ("/src/handlers/", HexLayer::AdaptersPrimary),  // Rust/Go: HTTP handler modules
     ("/src/middleware/", HexLayer::AdaptersPrimary), // Rust/Go: HTTP middleware
     // Go naming conventions
@@ -30,6 +31,7 @@ const LAYER_PATTERNS: &[(&str, HexLayer)] = &[
     ("/domain/", HexLayer::Domain),
     ("/ports/", HexLayer::Ports),
     ("/usecases/", HexLayer::Usecases),
+    ("/orchestration/", HexLayer::Usecases),
     ("/adapters/primary/", HexLayer::AdaptersPrimary),
     ("/adapters/secondary/", HexLayer::AdaptersSecondary),
     // A flat `adapters/` directory, checked after the two specific ones.
@@ -122,6 +124,16 @@ pub fn classify_layer(file_path: &str) -> HexLayer {
         }
     }
 
+    // A crate or package named for its layer — `okf-domain`, `my_app_ports`,
+    // `app-usecases` — is that layer whatever its folders are called. This
+    // is the crate-per-layer workspace, where the build tool itself refuses
+    // an undeclared import; it was recognised only by a Rust-only display
+    // scan with its own rules, and the grade never saw it. Checked before
+    // file names, so the crate's `lib.rs` is the crate's layer.
+    if let Some(layer) = layer_named_package(&normalized) {
+        return layer;
+    }
+
     // Check filename-based patterns
     if let Some(m) = match_filename(&normalized) {
         return match m {
@@ -135,6 +147,21 @@ pub fn classify_layer(file_path: &str) -> HexLayer {
     }
 
     HexLayer::Unknown
+}
+
+/// The layer a directory segment is named for: its last `-`/`_`-separated
+/// part, when there is a separator. The file name itself is not a package.
+fn layer_named_package(normalized: &str) -> Option<HexLayer> {
+    let dirs = normalized.rsplit_once('/').map_or("", |(d, _)| d);
+    dirs.split('/').find_map(|seg| {
+        let (_, last) = seg.rsplit_once(['-', '_'])?;
+        match last {
+            "domain" => Some(HexLayer::Domain),
+            "ports" | "port" => Some(HexLayer::Ports),
+            "usecases" | "usecase" | "orchestration" => Some(HexLayer::Usecases),
+            _ => None,
+        }
+    })
 }
 
 // ── Project-declared layers ──────────────────────────────
@@ -238,11 +265,10 @@ fn allowed_targets(layer: HexLayer) -> &'static [HexLayer] {
         HexLayer::Domain => &[],
         HexLayer::Ports => &[HexLayer::Domain],
         HexLayer::Usecases => &[HexLayer::Domain, HexLayer::Ports],
-        // Primary adapters may drive use cases — see the matching allowance in
-        // hexa_core::rules::boundary::check_import. Kept in step with it
-        // deliberately: two tables encoding the same rule that disagree is
-        // worse than either answer, because which one you get depends on which
-        // command you happened to run.
+        // Primary adapters may drive use cases. This is the only table: a
+        // second copy in hexa_core::rules::boundary was kept "in step" by hand
+        // until it was deleted, because two tables encoding one rule answer
+        // differently depending on which command you happened to run.
         HexLayer::AdaptersPrimary => &[HexLayer::Ports, HexLayer::Usecases],
         // Secondary adapters are NOT granted it: a driven adapter calling back
         // into usecases inverts the dependency.
@@ -366,9 +392,28 @@ mod tests {
         assert!(is_allowed_import(HexLayer::AdaptersSecondary, HexLayer::Ports));
     }
 
-    /// The two rule tables in this workspace — this one and
-    /// hexa_core::rules::boundary — must agree that a driving adapter may
-    /// invoke the application layer, and that a driven one may not.
+    /// A driving adapter may invoke the application layer; a driven one may
+    /// not.
+    #[test]
+    fn a_crate_named_for_its_layer_is_that_layer() {
+        assert_eq!(classify_layer("okf-domain/src/order.rs"), HexLayer::Domain);
+        assert_eq!(classify_layer("okf-domain/src/lib.rs"), HexLayer::Domain);
+        assert_eq!(classify_layer("my_app_ports/src/store.rs"), HexLayer::Ports);
+        assert_eq!(classify_layer("crates/app-usecases/src/run.rs"), HexLayer::Usecases);
+        assert_eq!(classify_layer("okf-port/src/x.rs"), HexLayer::Ports);
+        // The segment must *end* in the layer name, after a separator.
+        assert_eq!(classify_layer("domainless/src/x.rs"), HexLayer::Unknown);
+        assert_eq!(classify_layer("hexa-core/src/x.rs"), HexLayer::Unknown);
+        // A file name is not a crate.
+        assert_eq!(classify_layer("src/my-domain.rs"), HexLayer::Unknown);
+    }
+
+    #[test]
+    fn commands_and_orchestration_are_read() {
+        assert_eq!(classify_layer("hexa-cli/src/commands/analyze.rs"), HexLayer::AdaptersPrimary);
+        assert_eq!(classify_layer("src/orchestration/agent_manager.rs"), HexLayer::Usecases);
+    }
+
     #[test]
     fn primary_adapters_may_drive_usecases_but_secondary_may_not() {
         assert!(is_allowed_import(

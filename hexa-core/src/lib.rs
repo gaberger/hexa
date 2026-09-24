@@ -7,8 +7,7 @@
 //! ```text
 //! hexa-core (this crate)
 //!   ├── domain/     — value objects (pure data, no I/O)
-//!   ├── ports/      — trait definitions (contracts between layers)
-//!   └── rules/      — hexagonal enforcement logic
+//!   └── ports/      — trait definitions (contracts between layers)
 //! ```
 //!
 //! Trimmed from 8,257 lines by ADR-2608241500 P7. What went: the state,
@@ -22,7 +21,6 @@ pub mod domain;
 pub mod ports;
 pub mod quantization;
 pub mod resource_governor;
-pub mod rules;
 pub mod validation;
 
 /// Re-exports for the types callers reach for most.

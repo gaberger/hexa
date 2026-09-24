@@ -19,10 +19,6 @@ use std::process::Command;
 
 /// (importing file, import) — each with the reason it is still here.
 const KNOWN: &[(&str, &str)] = &[
-    // The CLI's offline scanner uses hexa-core's second copy of the boundary
-    // rules. Goes when the three layer classifiers become one.
-    ("hexa-cli/src/commands/analyze.rs", "hexa_core::rules::boundary::self"),
-    ("hexa-cli/src/commands/analyze.rs", "hexa_core::rules::boundary::Layer"),
     // The Anthropic adapter records rate-limit headers nothing reads; the
     // domain's `update_limits_from_headers` was never wired to it. Goes when
     // the port carries rate limits, or the dead accessor goes.

@@ -125,3 +125,23 @@ fn a_third_party_package_is_still_not_an_edge() {
     write(r, "src/domain/mod.rs", "use serde::Serialize;\npub struct X;\n");
     assert!(violations(r).is_empty());
 }
+
+#[test]
+fn a_crate_named_for_its_layer_is_that_layer() {
+    // Crate-per-layer: `okf-domain` is the domain, whatever its folders are
+    // called, and a crossing out of it is seen. This lived only in a Rust-only
+    // display scan with its own rules; the grade never used it.
+    let d = tempfile::tempdir().unwrap();
+    let r = d.path();
+    write(r, "Cargo.toml", "[workspace]\nmembers = [\"okf-domain\", \"okf-store\"]\n");
+    write(r, "okf-domain/Cargo.toml", "[package]\nname = \"okf-domain\"\nversion = \"0.1.0\"\n");
+    write(r, "okf-domain/src/lib.rs", "pub mod order;\n");
+    write(r, "okf-domain/src/order.rs", "use okf_store::adapters::secondary::disk::Disk;\npub struct Order { pub d: Disk }\n");
+    write(r, "okf-store/Cargo.toml", "[package]\nname = \"okf-store\"\nversion = \"0.1.0\"\n");
+    write(r, "okf-store/src/lib.rs", "pub mod adapters;\n");
+    write(r, "okf-store/src/adapters/mod.rs", "pub mod secondary;\n");
+    write(r, "okf-store/src/adapters/secondary/mod.rs", "pub mod disk;\n");
+    write(r, "okf-store/src/adapters/secondary/disk.rs", "pub struct Disk;\n");
+    let v = violations(r);
+    assert!(v.iter().any(|(f, r)| f == "okf-domain/src/order.rs" && r.contains("domain")), "{v:?}");
+}
