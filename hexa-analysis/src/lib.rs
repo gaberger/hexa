@@ -14,6 +14,7 @@ pub mod treesitter_adapter;
 pub mod boundary_checker;
 pub mod cycle_detector;
 pub mod dead_export_finder;
+pub mod layer_inventory;
 pub mod analyzer;
 pub mod frontend_checker;
 // Architectural-health detectors, folded in from the hexa-analyzer crate

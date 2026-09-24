@@ -171,7 +171,7 @@ pub fn load_file_data_sync(root: &Path) -> Vec<FileData> {
 }
 
 /// Recursively collect source files under a directory.
-async fn collect_source_files(root: &Path) -> Result<Vec<String>, AnalysisError> {
+pub(crate) async fn collect_source_files(root: &Path) -> Result<Vec<String>, AnalysisError> {
     let mut files = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     let project_ex_owned = project_excludes(root);

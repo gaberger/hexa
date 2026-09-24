@@ -24,7 +24,7 @@ fn get_language(lang: Language) -> Result<TsLanguage, AnalysisError> {
     }
 }
 
-fn parse_source(source: &str, lang: Language) -> Result<Tree, AnalysisError> {
+pub(crate) fn parse_source(source: &str, lang: Language) -> Result<Tree, AnalysisError> {
     let ts_lang = get_language(lang)?;
     let mut parser = Parser::new();
     parser.set_language(&ts_lang).map_err(|e| AnalysisError::Other(e.to_string()))?;

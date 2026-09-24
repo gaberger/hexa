@@ -454,6 +454,10 @@ pub async fn run(
         }
     }
 
+    if !violations_only && !quiet {
+        print_layer_inventory(&root).await;
+    }
+
     // Architectural-health detectors (ADR-2608241500 P6.5). Folded in from the
     // hexa-analyzer binary, which fed the improver daemon — and which nothing
     // has run since the daemon went. They report; they do not gate.
@@ -1099,6 +1103,46 @@ fn find_workspace_crate_dirs(root: &Path) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     walk(root, 1, &mut dirs);
     dirs
+}
+
+/// The layer inventory as a table: one row per (layer, language) with files.
+async fn print_layer_inventory(root: &Path) {
+    use hexa_analysis::domain::Language;
+    println!();
+    println!("  {}", "Layer inventory:".bold());
+    println!("    {}", "what each layer holds, per language, over the files the grade reads".dimmed());
+    let rows = match hexa_analysis::layer_inventory::inventory(root).await {
+        Ok(rows) => rows,
+        Err(e) => {
+            println!("    {} not counted: {e}", "\u{2717}".red());
+            return;
+        }
+    };
+    if rows.is_empty() {
+        println!("    {} no source files", "\u{25cb}".dimmed());
+        return;
+    }
+    println!(
+        "    {:<20} {:<11} {:>6} {:>11} {:>6} {:>16} {:>10}",
+        "layer", "language", "files", "interfaces", "types", "implementations", "functions"
+    );
+    let mut last = String::new();
+    for r in &rows {
+        let layer = if r.layer == last { String::new() } else { r.layer.clone() };
+        last = r.layer.clone();
+        let lang = match r.language {
+            Language::Rust => "rust",
+            Language::Go => "go",
+            Language::TypeScript => "typescript",
+            Language::Unknown => "unknown",
+        };
+        // Go never declares an implementation; a dash, not a zero.
+        let impls = r.counts.implementations.map_or("—".to_string(), |n| n.to_string());
+        println!(
+            "    {:<20} {:<11} {:>6} {:>11} {:>6} {:>16} {:>10}",
+            layer, lang, r.files, r.counts.interfaces, r.counts.types, impls, r.counts.functions
+        );
+    }
 }
 
 #[allow(dead_code)]
@@ -2569,6 +2613,12 @@ async fn run_json(root: &Path, strict: bool, adr_compliance_only: bool) -> anyho
         result["boundary_errors"] = serde_json::Value::Array(boundary_errors);
         result["rust_layers"] = serde_json::Value::Array(rust_layers_data);
         result["rust_violations"] = serde_json::Value::Array(rust_violations_data);
+        // What each layer holds, per language, over the files the grade reads.
+        // An error is reported as one, not as an empty inventory.
+        result["layer_inventory"] = match hexa_analysis::layer_inventory::inventory(root).await {
+            Ok(rows) => serde_json::json!(rows),
+            Err(e) => serde_json::json!({ "error": e.to_string() }),
+        };
     }
 
     // ADR compliance
