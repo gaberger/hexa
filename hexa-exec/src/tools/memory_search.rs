@@ -28,7 +28,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::time::Instant;
 
-use super::{Tool, ToolResult};
+use crate::ports::{Tool, ToolResult};
 
 /// Default cap on returned memory entries. Memory rows are small
 /// (~500 bytes each per the seed conventions); 12 keeps the prompt

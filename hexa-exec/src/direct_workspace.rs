@@ -15,8 +15,9 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
-use hexa_git::worktree;
+use crate::ports::Worktrees;
 
 static RUN_SEQ: AtomicU64 = AtomicU64::new(1);
 
@@ -33,6 +34,7 @@ pub struct RunWorkspace {
     main_root: PathBuf,
     branch: Option<String>,
     isolated: bool,
+    worktrees: Arc<dyn Worktrees>,
 }
 
 impl RunWorkspace {
@@ -43,7 +45,7 @@ impl RunWorkspace {
     /// If isolation is requested but the worktree cannot be created, this returns
     /// `Err` — the caller MUST abort rather than silently fall back to the
     /// operator's tree (that fallback is exactly the race this prevents).
-    pub fn acquire(slug: &str, isolate: bool) -> Result<Self, String> {
+    pub fn acquire(slug: &str, isolate: bool, worktrees: Arc<dyn Worktrees>) -> Result<Self, String> {
         let main_root = crate::direct_exec::repo_root();
         if !isolate {
             return Ok(Self {
@@ -51,6 +53,7 @@ impl RunWorkspace {
                 main_root,
                 branch: None,
                 isolated: false,
+                worktrees,
             });
         }
         let branch = format!("hexa/auto/{slug}");
@@ -62,7 +65,8 @@ impl RunWorkspace {
             .unwrap_or_else(|| main_root.join(".hexa").join("worktrees"));
         let _ = std::fs::create_dir_all(&base);
         let wt_path = base.join(format!("auto-{slug}"));
-        worktree::create_worktree(&main_root, &branch, &wt_path)
+        worktrees
+            .create(&main_root, &branch, &wt_path)
             .map_err(|e| format!("create isolated worktree: {e}"))?;
         tracing::info!(branch = %branch, path = %wt_path.display(), "autonomous run isolated to worktree");
         Ok(Self {
@@ -70,6 +74,7 @@ impl RunWorkspace {
             main_root,
             branch: Some(branch),
             isolated: true,
+            worktrees,
         })
     }
 
@@ -108,8 +113,7 @@ impl RunWorkspace {
         if success {
             tracing::info!(branch = %branch, "isolated autonomous commit awaiting `hexa worktree merge`");
         } else {
-            let wt = self.workdir.to_string_lossy().to_string();
-            match worktree::remove_worktree(&self.main_root, &wt, true, true) {
+            match self.worktrees.remove(&self.main_root, &self.workdir) {
                 Ok(_) => tracing::info!(branch = %branch, "failed autonomous run: isolated worktree+branch removed"),
                 Err(e) => tracing::warn!(branch = %branch, error = %e, "failed to GC isolated worktree"),
             }
@@ -132,7 +136,7 @@ mod tests {
 
     #[test]
     fn non_isolated_uses_main_root_and_finish_is_noop() {
-        let ws = RunWorkspace::acquire("test-slug", false).expect("non-isolated acquire");
+        let ws = RunWorkspace::acquire("test-slug", false, Arc::new(crate::git_worktrees::GitWorktrees)).expect("non-isolated acquire");
         assert_eq!(ws.workdir(), crate::direct_exec::repo_root());
         assert!(!ws.is_isolated());
         assert!(ws.assert_off_operator_tree().is_ok());

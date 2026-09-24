@@ -15,7 +15,6 @@
 //! `max_steps` + duplicate-call detection + a no-progress guard, and the evidence
 //! gate as the ultimate authority on what commits.
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::{json, Value};
@@ -25,7 +24,8 @@ use crate::direct_exec::{self, DirectResult, DirectTask, Edit};
 use crate::simple_agent::{
     assistant_turn_content, extract_tool_uses, normalize_tool_input, strip_metadata_fields,
 };
-use crate::tools::ToolRegistry;
+use crate::direct_exec::ExecDeps;
+use crate::tool_registry::ToolRegistry;
 
 const DEFAULT_MAX_STEPS: u32 = 12;
 const MAX_TOKENS: u32 = 4096;
@@ -75,12 +75,12 @@ fn react_model_from_config() -> Option<String> {
 
 /// Run the ReAct loop end-to-end. Returns the result, the number of steps
 /// (tool calls) taken, and the model used, for the run feed.
-async fn react_execute(task: DirectTask) -> (DirectResult, u32, String) {
+async fn react_execute(deps: &ExecDeps, task: DirectTask) -> (DirectResult, u32, String) {
     // ADR-2606071323: confine the run to its own worktree unless the operator
     // opted out (`isolate:false`). Never silently fall back to the operator tree.
     let isolate = direct_exec::want_isolation(&task);
     let slug = crate::direct_workspace::next_run_slug();
-    let workspace = match crate::direct_workspace::RunWorkspace::acquire(&slug, isolate) {
+    let workspace = match crate::direct_workspace::RunWorkspace::acquire(&slug, isolate, deps.worktrees.clone()) {
         Ok(w) => w,
         Err(e) => {
             return (
@@ -96,13 +96,14 @@ async fn react_execute(task: DirectTask) -> (DirectResult, u32, String) {
     }
     let repo_root = workspace.workdir().to_path_buf();
     let factory = workspace.is_isolated();
-    let out = react_attempts(&task, &repo_root, factory).await;
+    let out = react_attempts(deps, &task, &repo_root, factory).await;
     workspace.finish(out.0.ok);
     out
 }
 
 /// The ReAct loop body, run inside the resolved workspace (ADR-2606071323).
 async fn react_attempts(
+    deps: &ExecDeps,
     task: &DirectTask,
     repo_root: &std::path::Path,
     factory: bool,
@@ -131,7 +132,7 @@ async fn react_attempts(
     };
 
     let context_block = direct_exec::gather_context(task).await;
-    let registry = Arc::new(ToolRegistry::default());
+    let registry = deps.tools.clone();
     let tools_schema = curated_schema(&registry);
     let system_prompt = build_system_prompt(&tools_schema);
     let seed = build_seed(task, &context_block, &abs_path);
@@ -621,7 +622,7 @@ mod tests {
 
     #[test]
     fn curated_schema_includes_propose_edit_and_excludes_persona_tools() {
-        let reg = ToolRegistry::default();
+        let reg = crate::default_tools();
         let schema = curated_schema(&reg);
         let names: Vec<&str> = schema.as_array().unwrap().iter().filter_map(|t| t.get("name").and_then(|v| v.as_str())).collect();
         assert!(names.contains(&"propose_edit"));
@@ -708,7 +709,7 @@ pub(crate) fn resolve_react_models(task: &DirectTask) -> Vec<String> {
 /// return the first that passes (it has already committed via the evidence gate);
 /// if none pass, return the last attempt. Per-candidate isolation/commit is handled
 /// by `react_execute`. (ADR-2606072044.)
-pub async fn react_execute_best_of_n(task: DirectTask) -> (DirectResult, u32, String) {
+pub async fn react_execute_best_of_n(deps: &ExecDeps, task: DirectTask) -> (DirectResult, u32, String) {
     let candidates = resolve_react_models(&task);
     // Resource governor (ADR-2606080915): only divert a local model to the frontier
     // when a frontier candidate actually exists later in the list — otherwise run it
@@ -744,9 +745,9 @@ pub async fn react_execute_best_of_n(task: DirectTask) -> (DirectResult, u32, St
         // task to `claude -p` (an agent, not a per-step completion) instead of the
         // local ReAct tool-loop. Same evidence gate + worktree isolation.
         let (result, steps, used) = if is_claude_model(&model) {
-            claude_execute(t).await
+            claude_execute(deps, t).await
         } else {
-            react_execute(t).await
+            react_execute(deps, t).await
         };
         total_steps += steps;
         if result.ok {
@@ -769,10 +770,10 @@ pub(crate) fn is_claude_model(m: &str) -> bool {
 /// ReAct path. `claude -p` is itself an agent, so it slots in as a task delegate
 /// (no per-step tool protocol). Uses the operator's logged-in `claude` CLI — no
 /// API key, no VRAM ceiling. Mirrors `react_execute`'s workspace lifecycle.
-async fn claude_execute(task: DirectTask) -> (DirectResult, u32, String) {
+async fn claude_execute(deps: &ExecDeps, task: DirectTask) -> (DirectResult, u32, String) {
     let isolate = direct_exec::want_isolation(&task);
     let slug = crate::direct_workspace::next_run_slug();
-    let workspace = match crate::direct_workspace::RunWorkspace::acquire(&slug, isolate) {
+    let workspace = match crate::direct_workspace::RunWorkspace::acquire(&slug, isolate, deps.worktrees.clone()) {
         Ok(w) => w,
         Err(e) => return (DirectResult::err(format!("workspace: {e}")), 0, "claude-code".to_string()),
     };

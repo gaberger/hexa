@@ -30,7 +30,7 @@ const WORKSPACE_CRATES: &[&str] =
 use std::path::Path;
 use std::time::Instant;
 
-use super::{Tool, ToolResult};
+use crate::ports::{Tool, ToolResult};
 use crate::tools::cargo_check::CargoCheck;
 
 const MAX_NEW_CONTENT: usize = 16 * 1024;

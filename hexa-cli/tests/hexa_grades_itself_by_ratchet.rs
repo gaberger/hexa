@@ -24,9 +24,6 @@ const KNOWN: &[(&str, &str)] = &[
     // to match its module path. They were always there; the grade could not
     // see them, and printed A+.
     // use case → adapter, no port between them.
-    ("hexa-exec/src/direct_react.rs", "crate::tools::ToolRegistry"),
-    ("hexa-exec/src/direct_workspace.rs", "hexa_git::worktree"),
-    ("hexa-exec/src/simple_agent.rs", "crate::tools::ToolRegistry"),
     // CLI command → adapter or infrastructure directly — the command is doing the composition root's wiring.
     ("hexa-cli/src/commands/assets_cmd.rs", "crate::assets::Assets"),
     ("hexa-cli/src/commands/doctor/mod.rs", "crate::assets::Assets"),

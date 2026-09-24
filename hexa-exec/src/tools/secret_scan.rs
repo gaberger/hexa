@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 use tokio::fs;
 
-use super::{Tool, ToolResult};
+use crate::ports::{Tool, ToolResult};
 
 const MAX_MATCHES_HARD_CAP: usize = 200;
 const MAX_FILES_DEFAULT: usize = 1000;

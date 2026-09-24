@@ -67,7 +67,7 @@ pub async fn run(action: DoAction) -> anyhow::Result<()> {
             println!("  {} {}  {} {}", "file".dimmed(), file, "evidence".dimmed(), evidence);
 
             let task: hexa_exec::direct_exec::DirectTask = serde_json::from_value(body)?;
-            let r = serde_json::to_value(hexa_exec::direct_exec::execute_direct(task).await)?;
+            let r = serde_json::to_value(hexa_exec::execute_direct(task).await)?;
 
             let ok = r.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
             let ev = r.get("evidence_passed").and_then(|v| v.as_bool()).unwrap_or(false);

@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use walkdir::WalkDir;
 
-use super::{Tool, ToolResult};
+use crate::ports::{Tool, ToolResult};
 
 /// Canonical workspace boundary rules from ADR-2026-05-09-0000, rewritten
 /// from the workspace as it is (ADR-2609132049 §3).

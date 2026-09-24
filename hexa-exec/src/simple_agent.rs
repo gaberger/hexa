@@ -14,7 +14,7 @@
 //! cargo_check + autonomous commit step land the artifact. The simple
 //! agent loop never bypasses safety; it bypasses ceremony.
 
-use crate::tools::ToolRegistry;
+use crate::tool_registry::ToolRegistry;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::{Duration, Instant};

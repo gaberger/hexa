@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 use tokio::process::Command;
 use tokio::time::timeout;
 
-use super::{Tool, ToolResult};
+use crate::ports::{Tool, ToolResult};
 
 pub struct TypescriptCheck;
 

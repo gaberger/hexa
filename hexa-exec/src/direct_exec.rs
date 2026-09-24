@@ -421,7 +421,15 @@ pub(crate) fn summary_of(runs: &[DirectRun]) -> Value {
 
 /// Run one task end-to-end and record it. Returns a structured, honest result —
 /// `ok` is true ONLY if the evidence command exited 0 and the change committed.
-pub async fn execute_direct(task: DirectTask) -> DirectResult {
+/// What a run is given rather than builds: its tools and its worktrees
+/// (the Deps pattern, ADR-014). `hexa_exec::default_deps()` wires the real ones.
+#[derive(Clone)]
+pub struct ExecDeps {
+    pub tools: std::sync::Arc<crate::tool_registry::ToolRegistry>,
+    pub worktrees: std::sync::Arc<dyn crate::ports::Worktrees>,
+}
+
+pub async fn execute_direct_with(deps: &ExecDeps, task: DirectTask) -> DirectResult {
     let started = std::time::Instant::now();
     let started_at = chrono::Utc::now().to_rfc3339();
     let Some(model) = resolve_model(&task) else {
@@ -432,14 +440,14 @@ pub async fn execute_direct(task: DirectTask) -> DirectResult {
     // explores (grep/read/cargo_check) before editing. `--fast` keeps the
     // single-shot path (read → one edit → evidence → retry) for trivial edits.
     if task.fast {
-        let result = execute_direct_inner(task.clone()).await;
+        let result = execute_direct_inner(deps, task.clone()).await;
         record_run(started_at, &task, &model, &result, started.elapsed().as_millis() as u64);
         result
     } else {
         // Evidence-gated best-of-N across candidate models (ADR-2606072044): try
         // each in order, commit the first that passes. Single-model configs resolve
         // to a one-element list, so this is a no-op for them.
-        let (result, steps, used_model) = crate::direct_react::react_execute_best_of_n(task.clone()).await;
+        let (result, steps, used_model) = crate::direct_react::react_execute_best_of_n(deps, task.clone()).await;
         record_react_run(
             started_at,
             &task,
@@ -496,7 +504,7 @@ impl DirectResult {
     }
 }
 
-async fn execute_direct_inner(task: DirectTask) -> DirectResult {
+async fn execute_direct_inner(deps: &ExecDeps, task: DirectTask) -> DirectResult {
     // Serialize the whole acquire→read→edit→evidence→commit→finish section.
     let _exec_guard = EXEC_LOCK.lock().await;
 
@@ -504,7 +512,7 @@ async fn execute_direct_inner(task: DirectTask) -> DirectResult {
     // explicitly opted out. Never silently fall back to the operator's tree.
     let isolate = want_isolation(&task);
     let slug = crate::direct_workspace::next_run_slug();
-    let workspace = match crate::direct_workspace::RunWorkspace::acquire(&slug, isolate) {
+    let workspace = match crate::direct_workspace::RunWorkspace::acquire(&slug, isolate, deps.worktrees.clone()) {
         Ok(w) => w,
         Err(e) => return DirectResult::err(format!("workspace: {e}")),
     };

@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::time::Instant;
 
-use super::{Tool, ToolResult};
+use crate::ports::{Tool, ToolResult};
 
 const DEFAULT_WINDOW_SECS: u64 = 3600;
 const MAX_GROUPS: usize = 16;

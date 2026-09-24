@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::time::Instant;
 
-use super::{Tool, ToolResult};
+use crate::ports::{Tool, ToolResult};
 
 const MIN_BODY: usize = 200;
 // CTO ADR-2026-05-08-2600 — halved from 50_000 to 24_000 (BSATN crash mitigation).

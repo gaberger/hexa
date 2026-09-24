@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use tokio::process::Command;
 use tokio::time::timeout;
 
-use super::{Tool, ToolResult};
+use crate::ports::{Tool, ToolResult};
 
 const MAX_MATCHES_DEFAULT: usize = 50;
 const MAX_MATCHES_HARD_CAP: usize = 200;

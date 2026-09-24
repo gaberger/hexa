@@ -15,10 +15,13 @@ pub mod compress;
 pub mod direct_exec;
 pub mod direct_react;
 pub mod frontier;
+pub mod git_worktrees;
+pub mod ports;
 pub mod direct_workspace;
 pub mod resource_governor;
 pub mod simple_agent;
 pub mod telegram_notifier;
+pub mod tool_registry;
 pub mod tools;
 
 /// The repository the tools operate on.
@@ -38,4 +41,43 @@ pub fn repo_root() -> String {
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|_| ".".to_string())
     })
+}
+
+/// The tools the agent loop may call — every adapter behind the [`ports::Tool`]
+/// port, registered here, at the crate root, so the loop never names one.
+pub fn default_tools() -> tool_registry::ToolRegistry {
+    use std::sync::Arc;
+    use tools::*;
+    let mut reg = tool_registry::ToolRegistry::new();
+    reg.register(Arc::new(cargo_check::CargoCheck));
+    reg.register(Arc::new(dep_audit::DepAudit));
+    reg.register(Arc::new(repo_grep::RepoGrep));
+    reg.register(Arc::new(repo_read::RepoRead));
+    reg.register(Arc::new(secret_scan::SecretScan));
+    reg.register(Arc::new(web_search::WebSearch));
+    reg.register(Arc::new(adr_draft::AdrDraft));
+    reg.register(Arc::new(spec_draft::SpecDraft));
+    reg.register(Arc::new(code_patch::CodePatch));
+    reg.register(Arc::new(cost_meter::CostMeter));
+    reg.register(Arc::new(workplan_emit::WorkplanEmit));
+    reg.register(Arc::new(adr_status_set::AdrStatusSet));
+    reg.register(Arc::new(workspace_boundary_check::WorkspaceBoundaryCheck));
+    reg.register(Arc::new(escalate_to_operator::EscalateToOperator));
+    reg.register(Arc::new(typescript_check::TypescriptCheck));
+    reg.register(Arc::new(memory_search::MemorySearch));
+    reg
+}
+
+/// A run's dependencies, wired: the default tools, and worktrees on git.
+pub fn default_deps() -> direct_exec::ExecDeps {
+    direct_exec::ExecDeps {
+        tools: std::sync::Arc::new(default_tools()),
+        worktrees: std::sync::Arc::new(git_worktrees::GitWorktrees),
+    }
+}
+
+/// Run one direct task on the default dependencies.
+/// See [`direct_exec::execute_direct_with`].
+pub async fn execute_direct(task: direct_exec::DirectTask) -> direct_exec::DirectResult {
+    direct_exec::execute_direct_with(&default_deps(), task).await
 }

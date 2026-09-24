@@ -169,7 +169,7 @@ async fn run_one(fx: &Fixture, arm: &str, model: Option<&str>) -> ArmResult {
     let _ = std::io::stdout().flush();
 
     let t0 = Instant::now();
-    let r = hexa_exec::direct_exec::execute_direct(task).await;
+    let r = hexa_exec::execute_direct(task).await;
     let wall_ms = t0.elapsed().as_millis();
 
     let ok = r.ok;

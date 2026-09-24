@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 use std::path::Path;
 use std::time::Instant;
 
-use super::{Tool, ToolResult};
+use crate::ports::{Tool, ToolResult};
 
 const MAX_BYTES_DEFAULT: usize = 32 * 1024;
 const MAX_BYTES_HARD_CAP: usize = 64 * 1024;

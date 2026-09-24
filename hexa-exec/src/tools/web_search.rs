@@ -19,7 +19,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 
-use super::{Tool, ToolResult};
+use crate::ports::{Tool, ToolResult};
 
 const MAX_RESULTS_DEFAULT: usize = 5;
 const MAX_RESULTS_HARD: usize = 10;
