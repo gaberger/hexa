@@ -584,6 +584,13 @@ async fn pre_edit(project_dir: &Path) -> Result<()> {
 
     if let Ok(input) = serde_json::from_str::<serde_json::Value>(&tool_input) {
         if let Some(file_path) = input["file_path"].as_str() {
+            // Everything below is this project's rules. A file outside it —
+            // a shell profile, another repository — is not held to them.
+            let path = Path::new(file_path);
+            if path.is_absolute() && !path.starts_with(project_dir) {
+                return Ok(());
+            }
+
             // Existing hexa boundary check
             validate_boundary_edit(project_dir, file_path)?;
 
@@ -619,7 +626,9 @@ async fn pre_edit(project_dir: &Path) -> Result<()> {
                 if !has_gate {
                     let msg = "No gate recorded for this work. Write the command that must exit 0, then `hexa loop gate '<command>'`, then edit.";
                     if mode == "mandatory" {
-                        println!("\u{26d4} {msg}");
+                        // stderr: on exit 2 it is the only stream Claude Code
+                        // shows, and a block with no reason reads as a crash.
+                        eprintln!("\u{26d4} {msg}");
                         std::process::exit(2);
                     }
                     println!("\u{26a0}\u{fe0f} {msg}");
@@ -643,7 +652,7 @@ async fn pre_edit(project_dir: &Path) -> Result<()> {
                         file_path, state.allowed_paths
                     );
                     if boundary_mode == "mandatory" {
-                        println!("{}", msg);
+                        eprintln!("{}", msg);
                         std::process::exit(2);
                     } else {
                         println!("WARNING: {}", msg);
@@ -701,7 +710,7 @@ async fn pre_agent() -> Result<()> {
         .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
     let who = if subagent_type.is_empty() { "subagent".to_string() } else { format!("{subagent_type} subagent") };
     if enforcement_mode(&project_dir) == "mandatory" {
-        println!(
+        eprintln!(
             "\u{26d4} {who} blocked: it would edit on this branch. Give it its own worktree: isolation: \"worktree\" on the Agent call."
         );
         std::process::exit(2);
@@ -978,7 +987,7 @@ async fn route(project_dir: &Path) -> Result<()> {
                                     Err(e) => {
                                         // Fall back to the old warning/block behavior if spawn fails
                                         if mode == "mandatory" {
-                                            println!(
+                                            eprintln!(
                                                 "BLOCKED: Cannot proceed without an active workplan. Run: hexa plan create <name> (draft spawn failed: {})",
                                                 e
                                             );
@@ -993,7 +1002,7 @@ async fn route(project_dir: &Path) -> Result<()> {
                                 }
                             } else if mode == "mandatory" {
                                 // Auto-plan disabled but enforcement is mandatory — keep old behavior
-                                println!(
+                                eprintln!(
                                     "BLOCKED: Cannot proceed without an active workplan. Run: hexa plan create <name>"
                                 );
                                 std::process::exit(2);
@@ -1159,7 +1168,7 @@ fn validate_workplan_boundary(project_dir: &Path, file_path: &str, workplan_id: 
     if !in_boundary {
         let mode = enforcement_mode(project_dir);
         if mode == "mandatory" {
-            println!(
+            eprintln!(
                 "BLOCKED: File '{}' is outside workplan boundary. Declared files: {:?}",
                 rel,
                 &declared_files[..declared_files.len().min(5)]
