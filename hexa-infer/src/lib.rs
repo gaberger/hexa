@@ -17,7 +17,7 @@ pub mod registry;
 pub mod spend;
 pub mod tiers;
 
-pub use adapters::{
+pub use adapters::secondary::{
     AnthropicAdapter, ClaudeCodeInferenceAdapter, OllamaInferenceAdapter, OpenAiCompatAdapter,
 };
 pub use endpoint::Endpoint;

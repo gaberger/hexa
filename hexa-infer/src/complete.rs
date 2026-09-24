@@ -11,7 +11,7 @@ use hexa_core::domain::messages::{ContentBlock, Message, Role};
 use hexa_core::domain::messages::StopReason;
 use hexa_core::ports::inference::{IInferencePort, InferenceRequest, Priority};
 
-use crate::adapters::{
+use crate::adapters::secondary::{
     AnthropicAdapter, ClaudeCodeInferenceAdapter, OllamaInferenceAdapter, OpenAiCompatAdapter,
 };
 use crate::endpoint::Endpoint;
@@ -309,7 +309,7 @@ pub async fn complete_raw(req: &serde_json::Value) -> Result<serde_json::Value, 
     // invented a JSON-in-text convention that `extract_tool_uses` cannot see, and the loop
     // reported "ended with no edit" as though the model were incapable.
     let response = if !request.tools.is_empty() && !model.to_lowercase().starts_with("claude") {
-        crate::adapters::ollama_chat::chat(
+        crate::adapters::secondary::ollama_chat::chat(
             &crate::local_provider().base_url(),
             std::time::Duration::from_secs(600),
             request,
