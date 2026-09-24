@@ -74,6 +74,7 @@
       "hexa-graph/src/context.rs": "usecases",
       "hexa-graph/src/extract": "adapters/secondary",
       "hexa-graph/src/model.rs": "domain",
+      "hexa-graph/src/ports.rs": "ports",
       "hexa-graph/src/query.rs": "usecases",
       "hexa-graph/src/semantic.rs": "usecases",
       "hexa-infer/src/complete.rs": "usecases",

@@ -22,7 +22,7 @@ use clap::{Args, Subcommand};
 use colored::Colorize;
 use serde_json::json;
 
-use hexa_graph::model::KnowledgeGraph;
+use hexa_graph::ports::KnowledgeGraph;
 use hexa_graph::query as gquery;
 use hexa_graph::semantic::{
     NoopSemanticExtractor, SemanticContext, SemanticExtractor, SemanticTriple,

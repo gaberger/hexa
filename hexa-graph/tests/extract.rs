@@ -4,7 +4,7 @@ use hexa_graph::extract::code::{extract_file, Language};
 use hexa_graph::extract::markdown::extract_doc;
 use hexa_graph::model::NodeKind;
 
-fn kind_of(fx: &hexa_graph::extract::code::FileExtract, name: &str) -> Option<NodeKind> {
+fn kind_of(fx: &hexa_graph::ports::FileExtract, name: &str) -> Option<NodeKind> {
     fx.entities.iter().find(|e| e.name == name).map(|e| e.kind)
 }
 

@@ -37,8 +37,6 @@ const KNOWN: &[(&str, &str)] = &[
     ("hexa-cli/src/commands/spend_cmd.rs", "hexa_infer::spend::Totals"),
     ("hexa-cli/src/commands/spend_cmd.rs", "hexa_infer::spend::self"),
     // adapter → domain type the port does not re-export.
-    ("hexa-cli/src/commands/graph.rs", "hexa_graph::model::KnowledgeGraph"),
-    ("hexa-graph/src/extract/code.rs", "crate::model::NodeKind"),
 ];
 
 #[test]

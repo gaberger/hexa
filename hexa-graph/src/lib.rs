@@ -12,6 +12,7 @@ pub mod community;
 pub mod context;
 pub mod extract;
 pub mod model;
+pub mod ports;
 pub mod query;
 pub mod semantic;
 

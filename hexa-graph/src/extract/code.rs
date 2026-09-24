@@ -7,7 +7,7 @@
 
 use tree_sitter::{Language as TsLanguage, Node, Parser};
 
-use crate::model::NodeKind;
+use crate::ports::{Entity, FileExtract, NodeKind, RawImport};
 
 /// Languages the AST extractor understands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,31 +44,6 @@ impl Language {
             Language::Rust => tree_sitter_rust::LANGUAGE.into(),
         }
     }
-}
-
-/// A declared entity (function, type, etc.).
-#[derive(Debug, Clone)]
-pub struct Entity {
-    pub name: String,
-    pub kind: NodeKind,
-    pub line: usize,
-}
-
-/// A raw import statement (paths not yet resolved to files).
-#[derive(Debug, Clone)]
-pub struct RawImport {
-    /// The path as written (`./foo`, `crate::a::b`, `net/http`).
-    pub raw_path: String,
-    /// Imported symbol names (`*` for whole-module).
-    pub names: Vec<String>,
-    pub line: usize,
-}
-
-/// Everything pulled out of a single source file.
-#[derive(Debug, Clone, Default)]
-pub struct FileExtract {
-    pub entities: Vec<Entity>,
-    pub imports: Vec<RawImport>,
 }
 
 /// Parse `source` and extract entities + imports. Returns an empty extract on
