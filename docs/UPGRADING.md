@@ -7,7 +7,7 @@ exists, and the one command that resolves it.
 A change that needs nothing from you is not listed here; it is in the commit
 log.
 
-## What the grade leaves out is decided by folder, not substring (`c3708ff`)
+## What the grade leaves out is decided by folder, not substring (`9672371`)
 
 The built-in exclusions matched substrings: `dist` left out
 `src/domain/distance.ts`, `examples` anything with that word in its path,
