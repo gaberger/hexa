@@ -16,11 +16,9 @@
 //! | `temperature`     | `temperature`                                    |
 //! | `grammar`         | ignored — Anthropic has no GBNF equivalent       |
 
-use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use hexa_core::domain::api_optimization::RateLimitHeaders;
 use hexa_core::ports::inference::{ContentBlock, StopReason};
 use hexa_core::ports::inference::ToolDefinition;
 use hexa_core::ports::inference::{
@@ -44,8 +42,6 @@ pub struct AnthropicAdapter {
     /// Whether prompt caching is enabled by default, when the request does
     /// not ask for it explicitly.
     enable_cache: bool,
-    /// Last parsed rate limit headers, for callers that throttle proactively.
-    last_rate_limit_headers: Mutex<Option<RateLimitHeaders>>,
 }
 
 impl AnthropicAdapter {
@@ -63,7 +59,6 @@ impl AnthropicAdapter {
             base_url: "https://api.anthropic.com".into(),
             model,
             enable_cache: false,
-            last_rate_limit_headers: Mutex::new(None),
         }
     }
 
@@ -88,11 +83,6 @@ impl AnthropicAdapter {
     pub fn with_cache(mut self, enabled: bool) -> Self {
         self.enable_cache = enabled;
         self
-    }
-
-    /// Get the last rate limit headers from the most recent API response.
-    pub fn last_rate_limit_headers(&self) -> Option<RateLimitHeaders> {
-        self.last_rate_limit_headers.lock().ok()?.clone()
     }
 
     /// The model this request should use: the request's own model when set,
@@ -159,26 +149,6 @@ impl AnthropicAdapter {
         tools_json
     }
 
-    /// Parse rate limit headers from an HTTP response.
-    fn parse_rate_limit_headers(headers: &reqwest::header::HeaderMap) -> RateLimitHeaders {
-        let get_u32 = |name: &str| -> Option<u32> { headers.get(name)?.to_str().ok()?.parse().ok() };
-        let get_u64 = |name: &str| -> Option<u64> { headers.get(name)?.to_str().ok()?.parse().ok() };
-
-        RateLimitHeaders {
-            rpm_limit: get_u32("anthropic-ratelimit-requests-limit"),
-            rpm_remaining: get_u32("anthropic-ratelimit-requests-remaining"),
-            input_tpm_limit: get_u64("anthropic-ratelimit-input-tokens-limit"),
-            input_tpm_remaining: get_u64("anthropic-ratelimit-input-tokens-remaining"),
-            output_tpm_limit: get_u64("anthropic-ratelimit-output-tokens-limit"),
-            output_tpm_remaining: get_u64("anthropic-ratelimit-output-tokens-remaining"),
-            retry_after_ms: headers
-                .get("retry-after")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|s| s.parse::<u64>().ok())
-                .map(|s| s * 1000),
-        }
-    }
-
     /// Beta headers required by the features this request switches on.
     fn extra_headers(request: &InferenceRequest, default_cache: bool) -> Vec<(&'static str, String)> {
         let mut hdrs = vec![];
@@ -191,8 +161,7 @@ impl AnthropicAdapter {
         hdrs
     }
 
-    /// POST to `/v1/messages`, capture rate-limit headers, and map HTTP
-    /// status onto [`InferenceError`]. Shared by `complete` and `stream`.
+    /// POST to `/v1/messages` and map HTTP status onto [`InferenceError`]. Shared by `complete` and `stream`.
     async fn post_messages(
         &self,
         request: &InferenceRequest,
@@ -216,12 +185,6 @@ impl AnthropicAdapter {
             .send()
             .await
             .map_err(|e| InferenceError::ProviderUnavailable(format!("{}: {}", self.base_url, e)))?;
-
-        // Capture rate limit headers before the body is consumed.
-        let rate_headers = Self::parse_rate_limit_headers(response.headers());
-        if let Ok(mut guard) = self.last_rate_limit_headers.lock() {
-            *guard = Some(rate_headers);
-        }
 
         let status = response.status().as_u16();
         if status == 429 {
@@ -709,18 +672,6 @@ mod tests {
         assert!(matches!(stop_reason_from(Some("max_tokens")), StopReason::MaxTokens));
         assert!(matches!(stop_reason_from(Some("stop_sequence")), StopReason::StopSequence));
         assert!(matches!(stop_reason_from(None), StopReason::EndTurn));
-    }
-
-    #[test]
-    fn rate_limit_headers_are_parsed_from_the_response() {
-        let mut h = reqwest::header::HeaderMap::new();
-        h.insert("anthropic-ratelimit-requests-remaining", "42".parse().unwrap());
-        h.insert("anthropic-ratelimit-input-tokens-limit", "1000".parse().unwrap());
-        h.insert("retry-after", "3".parse().unwrap());
-        let parsed = AnthropicAdapter::parse_rate_limit_headers(&h);
-        assert_eq!(parsed.rpm_remaining, Some(42));
-        assert_eq!(parsed.input_tpm_limit, Some(1000));
-        assert_eq!(parsed.retry_after_ms, Some(3000));
     }
 
     #[test]

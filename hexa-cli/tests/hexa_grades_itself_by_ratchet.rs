@@ -19,10 +19,6 @@ use std::process::Command;
 
 /// (importing file, import) — each with the reason it is still here.
 const KNOWN: &[(&str, &str)] = &[
-    // The Anthropic adapter records rate-limit headers nothing reads; the
-    // domain's `update_limits_from_headers` was never wired to it. Goes when
-    // the port carries rate limits, or the dead accessor goes.
-    ("hexa-infer/src/adapters/secondary/anthropic.rs", "hexa_core::domain::api_optimization::RateLimitHeaders"),
 ];
 
 #[test]
