@@ -137,6 +137,90 @@ pub fn classify_layer(file_path: &str) -> HexLayer {
     HexLayer::Unknown
 }
 
+// ── Project-declared layers ──────────────────────────────
+
+/// Layers a project declares for paths the built-in patterns cannot read,
+/// from `.hexa/project.json`:
+///
+/// ```json
+/// { "analyze": { "layers": { "hexa-cli/src/commands": "adapters/primary" } } }
+/// ```
+///
+/// A key is a project-relative path prefix, matched on whole path segments;
+/// the longest matching key wins, and a path no key matches falls back to
+/// [`classify_layer`]. Layout is the project's business — code organised by
+/// crate or by concern is as hexagonal as code organised by folder name —
+/// so, as with `analyze.exclude`, the names live in the project's config and
+/// not in the analyzer. Without this, an unrecognised file was Unknown and
+/// every edge touching it went unchecked.
+#[derive(Debug, Clone, Default)]
+pub struct LayerMap {
+    /// (prefix, layer), longest prefix first.
+    entries: Vec<(String, HexLayer)>,
+}
+
+impl LayerMap {
+    /// Read `analyze.layers` from `<root>/.hexa/project.json`. No file, or no
+    /// `layers` key, is an empty map. A layer name that is not one of the
+    /// hexagon's is an error that names it: a declaration dropped silently
+    /// would leave the grade claiming to cover code it does not check.
+    pub fn from_project(root: &std::path::Path) -> Result<Self, String> {
+        let Ok(text) = std::fs::read_to_string(root.join(".hexa").join("project.json")) else {
+            return Ok(Self::default());
+        };
+        let v: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|e| format!(".hexa/project.json is not JSON: {e}"))?;
+        let Some(layers) = v.get("analyze").and_then(|a| a.get("layers")) else {
+            return Ok(Self::default());
+        };
+        let obj = layers
+            .as_object()
+            .ok_or("analyze.layers must be an object of path prefix → layer")?;
+        let mut entries = Vec::with_capacity(obj.len());
+        for (prefix, name) in obj {
+            let name = name.as_str().unwrap_or("");
+            let layer = parse_layer(name).ok_or_else(|| {
+                format!(
+                    "analyze.layers[\"{prefix}\"] = \"{name}\" is not a layer; use one of: {}",
+                    LAYER_NAMES.iter().map(|(n, _)| *n).collect::<Vec<_>>().join(", ")
+                )
+            })?;
+            entries.push((prefix.trim_matches('/').to_string(), layer));
+        }
+        entries.sort_by_key(|(p, _)| std::cmp::Reverse(p.len()));
+        Ok(Self { entries })
+    }
+
+    /// The declared layer for `path`, else the built-in classification.
+    pub fn classify(&self, path: &str) -> HexLayer {
+        for (prefix, layer) in &self.entries {
+            let hit = path == prefix
+                || path.strip_prefix(prefix.as_str()).is_some_and(|rest| rest.starts_with('/'));
+            if hit {
+                return *layer;
+            }
+        }
+        classify_layer(path)
+    }
+}
+
+/// Layer names as `HexLayer`'s `Display` writes them, so what a project
+/// declares is what every report prints.
+const LAYER_NAMES: &[(&str, HexLayer)] = &[
+    ("domain", HexLayer::Domain),
+    ("ports", HexLayer::Ports),
+    ("usecases", HexLayer::Usecases),
+    ("adapters/primary", HexLayer::AdaptersPrimary),
+    ("adapters/secondary", HexLayer::AdaptersSecondary),
+    ("infrastructure", HexLayer::Infrastructure),
+    ("composition-root", HexLayer::CompositionRoot),
+    ("entry-point", HexLayer::EntryPoint),
+];
+
+fn parse_layer(name: &str) -> Option<HexLayer> {
+    LAYER_NAMES.iter().find(|(n, _)| *n == name).map(|(_, l)| *l)
+}
+
 /// Check whether an import from `from_layer` to `to_layer` is allowed.
 ///
 /// Same-layer imports are always allowed. Cross-layer imports follow

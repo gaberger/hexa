@@ -9,7 +9,7 @@
 use std::collections::{HashMap, HashSet};
 
 use super::domain::{DeadExport, ExportDeclaration, ExportKind, HexLayer, ImportStatement};
-use super::layer_classifier::classify_layer;
+use super::layer_classifier::LayerMap;
 use super::path_normalizer::normalize_path;
 
 /// Entry-point function names that are never dead despite having no importers.
@@ -49,8 +49,8 @@ fn is_entry_point(file_path: &str) -> bool {
 ///
 /// Ports and adapters are consumed via composition-root DI (often dynamic),
 /// making their exports invisible to static import tracing.
-fn should_skip_dead_export_check(file_path: &str) -> bool {
-    let layer = classify_layer(file_path);
+fn should_skip_dead_export_check(file_path: &str, layers: &LayerMap) -> bool {
+    let layer = layers.classify(file_path);
 
     // Ports are contracts — they ARE the public API. Never flag as dead.
     if layer == HexLayer::Ports {
@@ -101,6 +101,16 @@ fn is_reexporter(file: &FileData) -> bool {
 pub fn find_dead_exports(
     source_files: &[FileData],
     additional_consumers: &[FileData],
+) -> Vec<DeadExport> {
+    find_dead_exports_with(source_files, additional_consumers, &LayerMap::default())
+}
+
+/// [`find_dead_exports`], with the project's declared layers deciding which
+/// files are ports and adapters.
+pub fn find_dead_exports_with(
+    source_files: &[FileData],
+    additional_consumers: &[FileData],
+    layers: &LayerMap,
 ) -> Vec<DeadExport> {
     // Step 1: Build per-name direct import map
     let mut imported_names: HashMap<String, HashSet<String>> = HashMap::new();
@@ -206,7 +216,7 @@ pub fn find_dead_exports(
         if is_entry_point(&normalized) {
             continue;
         }
-        if should_skip_dead_export_check(&normalized) {
+        if should_skip_dead_export_check(&normalized, layers) {
             continue;
         }
         // Skip re-exporter files themselves (they're just pass-through)

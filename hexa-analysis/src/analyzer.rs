@@ -18,7 +18,7 @@ use super::domain::{
     ArchAnalysisResult, DeadExport, DependencyViolation, ImportEdge, Language,
 };
 use super::frontend_checker;
-use super::layer_classifier::classify_layer;
+use super::layer_classifier::LayerMap;
 use super::path_normalizer::{normalize_path, normalize_path_in, resolve_import_path};
 use super::ports::{AnalysisError, AstPort, ArchAnalysisPort};
 use super::treesitter_adapter::TreeSitterAdapter;
@@ -261,6 +261,7 @@ impl ArchAnalyzer {
         go_module_prefix: Option<&str>,
     ) -> Result<(Vec<ImportEdge>, Vec<FileData>), AnalysisError> {
         let source_files = collect_source_files(root).await?;
+        let layers = LayerMap::from_project(root).map_err(AnalysisError::Other)?;
         let mut all_edges = Vec::new();
         let mut all_file_data = Vec::new();
 
@@ -289,8 +290,8 @@ impl ArchAnalyzer {
                 all_edges.push(ImportEdge {
                     from_file: from_file.clone(),
                     to_file: to_file.clone(),
-                    from_layer: classify_layer(&from_file),
-                    to_layer: classify_layer(&to_file),
+                    from_layer: layers.classify(&from_file),
+                    to_layer: layers.classify(&to_file),
                     import_path: imp.raw_path.clone(),
                     line: imp.line,
                 });
@@ -385,7 +386,8 @@ impl ArchAnalysisPort for ArchAnalyzer {
         let test_file_data = self
             .collect_test_file_data(root_path, go_mod.as_deref())
             .await?;
-        let dead_exports = dead_export_finder::find_dead_exports(&file_data, &test_file_data);
+        let layers = LayerMap::from_project(root_path).map_err(AnalysisError::Other)?;
+        let dead_exports = dead_export_finder::find_dead_exports_with(&file_data, &test_file_data, &layers);
 
         // Orphan files: no incoming or outgoing edges
         let connected: HashSet<&str> = edges
@@ -486,7 +488,8 @@ impl ArchAnalysisPort for ArchAnalyzer {
         let (_, file_data) = self.collect_file_data(root_path, go_mod.as_deref()).await?;
         // Test files consume; an export only a test names is alive.
         let tests = self.collect_test_file_data(root_path, go_mod.as_deref()).await?;
-        Ok(dead_export_finder::find_dead_exports(&file_data, &tests))
+        let layers = LayerMap::from_project(root_path).map_err(AnalysisError::Other)?;
+        Ok(dead_export_finder::find_dead_exports_with(&file_data, &tests, &layers))
     }
 
     async fn detect_circular_deps(

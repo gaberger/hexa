@@ -28,7 +28,7 @@ use tree_sitter::Node;
 
 use crate::analyzer::collect_source_files;
 use crate::domain::{HexLayer, Language};
-use crate::layer_classifier::classify_layer;
+use crate::layer_classifier::LayerMap;
 use crate::ports::AnalysisError;
 use crate::treesitter_adapter::parse_source;
 
@@ -191,6 +191,7 @@ fn ts_declaration(d: Node<'_>, c: &mut ItemCounts) {
 /// Inventory the project at `root`: one row per (language, layer) that has
 /// at least one file, in layer order then language order.
 pub async fn inventory(root: &Path) -> Result<Vec<InventoryRow>, AnalysisError> {
+    let layers = LayerMap::from_project(root).map_err(AnalysisError::Other)?;
     let mut cells: BTreeMap<(usize, usize), (Language, usize, ItemCounts)> = BTreeMap::new();
     for rel in collect_source_files(root).await? {
         let lang = Language::from_path(&rel);
@@ -200,7 +201,7 @@ pub async fn inventory(root: &Path) -> Result<Vec<InventoryRow>, AnalysisError> 
         let Ok(source) = tokio::fs::read_to_string(root.join(&rel)).await else { continue };
         let counts = count_items(&source, lang)?;
         let cell = cells
-            .entry((layer_rank(classify_layer(&rel)), lang as usize))
+            .entry((layer_rank(layers.classify(&rel)), lang as usize))
             .or_insert((lang, 0, ItemCounts { implementations: counts.implementations.map(|_| 0), ..Default::default() }));
         cell.1 += 1;
         cell.2.add(&counts);

@@ -54,6 +54,11 @@ pub async fn run(
 
     refuse_an_empty_scan(&root)?;
 
+    // A bad `analyze.layers` entry stops the run here. Further down, the
+    // deep analysis's errors are absorbed, and a grade computed without the
+    // declaration would claim to cover code it did not classify.
+    hexa_analysis::layer_classifier::LayerMap::from_project(&root).map_err(anyhow::Error::msg)?;
+
     // JSON mode: collect results and emit structured output
     if json_output {
         return run_json(&root, strict, adr_compliance_only).await;

@@ -6,10 +6,12 @@
 use async_trait::async_trait;
 use std::path::Path;
 
-use super::domain::{
-    ArchAnalysisResult, DeadExport, DependencyViolation, ExportDeclaration, ImportStatement,
-    Language,
-};
+use super::domain::{ArchAnalysisResult, DeadExport, DependencyViolation};
+
+/// The value types `AstPort` speaks, re-exported so an adapter reaches them
+/// through the port rather than the domain — the convention hexa's own
+/// scaffold emits (`pub use crate::domain::Count as CountValue`).
+pub use super::domain::{ExportDeclaration, ExportKind, ImportStatement, Language};
 
 // ── Error Type ───────────────────────────────────────────
 

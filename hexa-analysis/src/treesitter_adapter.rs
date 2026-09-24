@@ -8,8 +8,9 @@
 use std::path::Path;
 use tree_sitter::{Language as TsLanguage, Parser, Tree};
 
-use super::domain::{ExportDeclaration, ExportKind, ImportStatement, Language};
-use super::ports::{AnalysisError, AstPort};
+use super::ports::{
+    AnalysisError, AstPort, ExportDeclaration, ExportKind, ImportStatement, Language,
+};
 
 // ── Grammar Loading ──────────────────────────────────────
 
