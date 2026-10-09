@@ -17,6 +17,10 @@
 //! sharing a database. What stays is what a crate outside this one actually
 //! uses — checked, not assumed.
 
+// `#[async_trait]` marks each method `#[must_use]` and returns a boxed future, which is
+// already must-use; clippy 1.99's `double_must_use` flags the pair in the expansion.
+#![allow(clippy::double_must_use)]
+
 pub mod domain;
 pub mod ports;
 pub mod quantization;
