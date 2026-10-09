@@ -171,6 +171,9 @@ pub struct ArchAnalysisResult {
     /// How much of what was read could be placed in a layer (ADR-2609241707).
     #[serde(default)]
     pub coverage: Coverage,
+    /// The API contract's errors and unserved ports (ADR-2610092245 §6).
+    #[serde(default)]
+    pub api: ApiFindings,
 }
 
 /// The share of the graded files that have a layer. An import touching an
@@ -384,4 +387,245 @@ pub enum ReferenceKind {
     /// A load whose name is not a literal, so nothing can be judged about it.
     /// `raw_path` is the expression as written.
     ComputedLoad,
+}
+
+// ── API contract (ADR-2610092245) ────────────────────────
+
+/// A type as a signature or a field writes it, lowered out of its language.
+///
+/// `Named` is a reference the contract builder resolves against the
+/// project's declarations. `Unsupported` carries the type as written: it is
+/// an error wherever it reaches the wire, never an empty schema.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TypeRef {
+    String,
+    Integer,
+    Number,
+    Boolean,
+    Unit,
+    Array(Box<TypeRef>),
+    Optional(Box<TypeRef>),
+    /// String-keyed map.
+    Map(Box<TypeRef>),
+    Named(String),
+    Unsupported(String),
+}
+
+/// How a port method reports failure.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ErrorChannel {
+    /// It cannot fail.
+    None,
+    /// It can fail, with nothing typed to say how: `error`, a rejected promise.
+    Opaque,
+    /// It fails with a declared type, whose variants may carry statuses.
+    Typed(TypeRef),
+}
+
+/// One method of a trait or interface, as the parser read it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApiMethodDecl {
+    pub name: String,
+    pub line: usize,
+    /// Doc text with every `@hexa:` line removed.
+    pub doc: String,
+    /// The text after `@hexa:api`, when the method is tagged.
+    pub tag: Option<String>,
+    /// The text after each `@hexa:status`.
+    pub statuses: Vec<String>,
+    /// Parameters the API sees: no receiver, no context.
+    pub params: Vec<(String, TypeRef)>,
+    pub returns: TypeRef,
+    pub error: ErrorChannel,
+}
+
+/// A trait or interface carrying `@hexa:api`, or holding a method that does.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApiPortDecl {
+    pub name: String,
+    pub line: usize,
+    /// The text after `@hexa:api` on the interface; `None` when only its
+    /// methods are tagged, which is an error the builder reports.
+    pub tag: Option<String>,
+    pub statuses: Vec<String>,
+    pub methods: Vec<ApiMethodDecl>,
+}
+
+/// A field as it goes over the wire: its wire name is already decided by the
+/// language's own rules (serde renames, Go `json:` tags).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FieldDecl {
+    pub wire_name: String,
+    pub ty: TypeRef,
+    /// Absent from the wire when empty: `omitempty`, `?:`.
+    pub optional: bool,
+    pub line: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VariantDecl {
+    pub name: String,
+    /// The text after `@hexa:status`, if the variant has one.
+    pub status: Option<String>,
+    /// No payload, so it serializes as its name.
+    pub unit: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TypeBody {
+    Struct(Vec<FieldDecl>),
+    /// A named type that is another type on the wire: `struct Id(String)`,
+    /// `type ID string`.
+    Newtype(TypeRef),
+    /// Another name for a type: `pub use … as X`, `type X = Y`.
+    Alias(TypeRef),
+    Enum(Vec<VariantDecl>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TypeDecl {
+    pub name: String,
+    pub line: usize,
+    pub body: TypeBody,
+}
+
+/// What one file says about the API: its tagged ports, the types it
+/// declares, and the line of every `@hexa:api` tag that is not on a port or
+/// a port's method.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApiFacts {
+    pub ports: Vec<ApiPortDecl>,
+    pub types: Vec<TypeDecl>,
+    pub stray_tags: Vec<usize>,
+}
+
+/// One thing wrong with the contract, where it is written.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ApiDiagnostic {
+    pub file: String,
+    pub line: usize,
+    pub message: String,
+}
+
+impl fmt::Display for ApiDiagnostic {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}: {}", self.file, self.line, self.message)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ParamLocation {
+    Path,
+    Query,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApiParam {
+    pub name: String,
+    pub location: ParamLocation,
+    /// Resolved: no `Named` but a schema name, no `Optional` (see `required`).
+    pub ty: TypeRef,
+    pub required: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ApiBody {
+    /// One parameter is the body.
+    Whole(TypeRef),
+    /// Several parameters, gathered into one object: (wire name, type, required).
+    Fields(Vec<(String, TypeRef, bool)>),
+}
+
+/// One operation of the resolved contract. Every type in it is resolved:
+/// `Named` names an entry in [`ApiContract::schemas`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApiOperation {
+    pub service: String,
+    pub port: String,
+    pub method_name: String,
+    pub operation_id: String,
+    pub http_method: String,
+    pub path: String,
+    pub description: String,
+    pub params: Vec<ApiParam>,
+    pub body: Option<ApiBody>,
+    pub success: u16,
+    /// `None` when the method returns nothing.
+    pub response: Option<TypeRef>,
+    /// Error statuses, sorted.
+    pub errors: Vec<u16>,
+    pub file: String,
+    pub line: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ApiSchema {
+    /// (wire name, type, required), in declaration order.
+    Object(Vec<(String, TypeRef, bool)>),
+    /// A unit-only enum: its variant names.
+    StringEnum(Vec<String>),
+}
+
+/// The language-neutral contract, from which the OpenAPI document is rendered.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApiContract {
+    pub title: String,
+    pub version: String,
+    pub operations: Vec<ApiOperation>,
+    pub schemas: std::collections::BTreeMap<String, ApiSchema>,
+}
+
+/// What `hexa analyze` reports about the API (ADR-2610092245 §6).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApiFindings {
+    pub operations: usize,
+    /// Each one costs what a rule error costs.
+    pub errors: Vec<ApiDiagnostic>,
+    /// Tagged ports no primary adapter names: declared, not served.
+    pub unserved: Vec<String>,
+}
+
+/// The words of an identifier in any of the three languages' conventions:
+/// `saved_at`, `SavedAt` and `savedAt` are all `saved`, `at`; `GetURL` is
+/// `get`, `url`.
+pub fn split_words(name: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut cur = String::new();
+    let chars: Vec<char> = name.chars().collect();
+    for (i, &c) in chars.iter().enumerate() {
+        if c == '_' || c == '-' {
+            if !cur.is_empty() {
+                words.push(std::mem::take(&mut cur));
+            }
+            continue;
+        }
+        let boundary = c.is_uppercase()
+            && !cur.is_empty()
+            && (chars[i - 1].is_lowercase() || chars.get(i + 1).is_some_and(|n| n.is_lowercase()));
+        if boundary {
+            words.push(std::mem::take(&mut cur));
+        }
+        cur.extend(c.to_lowercase());
+    }
+    if !cur.is_empty() {
+        words.push(cur);
+    }
+    words
+}
+
+pub fn capitalize(word: &str) -> String {
+    let mut c = word.chars();
+    c.next().map_or(String::new(), |f| f.to_uppercase().chain(c).collect())
+}
+
+/// One spelling for a name across languages, so the same port written in
+/// Rust, Go and TypeScript has the same operation ids: `list_by_tag`,
+/// `ListByTag` and `listByTag` are all `listByTag`.
+pub fn lower_camel(name: &str) -> String {
+    split_words(name)
+        .iter()
+        .enumerate()
+        .map(|(i, w)| if i == 0 { w.clone() } else { capitalize(w) })
+        .collect()
 }

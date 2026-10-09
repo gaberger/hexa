@@ -9,7 +9,7 @@ use std::path::Path;
 use tree_sitter::{Language as TsLanguage, Node as TsNode, Parser, Tree};
 
 use super::ports::{
-    AnalysisError, AstPort, ExportDeclaration, ExportKind, ImportStatement, ItemCounts, Language,
+    AnalysisError, ApiFacts, AstPort, ExportDeclaration, ExportKind, ImportStatement, ItemCounts, Language,
     ModuleReference, ReferenceKind,
 };
 
@@ -261,6 +261,10 @@ impl AstPort for TreeSitterAdapter {
         let mut out = std::collections::HashMap::new();
         collect_references(&tree.root_node(), source, &mut out);
         Ok(out)
+    }
+
+    fn extract_api(&self, _path: &Path, source: &str, lang: Language) -> Result<ApiFacts, AnalysisError> {
+        super::treesitter_api::extract(source, lang)
     }
 
     fn extract_members(

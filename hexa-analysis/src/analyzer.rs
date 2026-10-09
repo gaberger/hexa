@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
+use super::api_contract;
 use super::boundary_checker;
 use super::cycle_detector;
 use super::dead_export_finder::{self, FileData};
@@ -142,8 +143,8 @@ pub fn apply_rule_errors(result: &mut ArchAnalysisResult, rule_errors: usize) {
         result.violations.len(),
         result.circular_deps.len(),
         result.dead_exports.len(),
-        result.unused_ports.len(),
-        rule_errors,
+        result.unused_ports.len() + result.api.unserved.len(),
+        rule_errors + result.api.errors.len(),
     )
     .min(result.coverage.ceiling());
 }
@@ -635,12 +636,17 @@ impl ArchAnalysisPort for ArchAnalyzer {
         // term (ADR-2609211430 §1) — in hexa's case `analyze::deep_analysis`,
         // which is the one door every graded surface goes through.
         let coverage = coverage_of(&file_data, &layers);
+
+        // The API contract (ADR-2610092245 §6): a tag that cannot be read is
+        // a rule error, and a tagged port no primary adapter names is a port
+        // nothing uses.
+        let api = api_contract::findings(root_path, &source_files_sync(root_path), self.ast.as_ref())?;
         let health_score = ArchAnalysisResult::compute_health_score(
             violations.len(),
             circular_deps.len(),
             dead_exports.len(),
-            unused_ports.len(),
-            0,
+            unused_ports.len() + api.unserved.len(),
+            api.errors.len(),
         )
         .min(coverage.ceiling());
 
@@ -658,6 +664,7 @@ impl ArchAnalysisPort for ArchAnalyzer {
             edge_count: edges.len(),
             frontend,
             coverage,
+            api,
         })
     }
 

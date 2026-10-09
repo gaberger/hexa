@@ -26,6 +26,9 @@ pub async fn run() -> anyhow::Result<()> {
     // Gate 5: Embedded assets must be project-generic (ADR-2026-04-11-1142)
     all_passed &= gate_embedded_assets_generic();
 
+    // Gate 7: the API contract still matches its tags (ADR-2610092245)
+    all_passed &= gate_api_contract();
+
     // Gate 6 is gone with the modules it guarded. It compared hexa-cli/assets/wasm/<x>.wasm against
     // spacetime-modules/<x>/src/ — both deleted in the solo collapse. A freshness check against a
     // source tree that does not exist cannot fail honestly, and a gate that cannot fail is worse
@@ -188,6 +191,29 @@ async fn gate_analyze() -> bool {
                 println!("      ... and {} more", violations.len() - 5);
             }
             false
+        }
+        Err(e) => {
+            println!("{} ({})", "fail".red(), e);
+            false
+        }
+    }
+}
+
+/// The `@hexa:api` contract reads, and a committed document hexa wrote still
+/// matches it. A project that tags nothing has no API gate and says so.
+fn gate_api_contract() -> bool {
+    print!("  {} API contract .............. ", "\u{25cb}".dimmed());
+    match super::api::ci_gate(std::path::Path::new(".")) {
+        Ok(None) => {
+            println!("{}", "skip (no @hexa:api ports)".dimmed());
+            true
+        }
+        Ok(Some((passed, lines))) => {
+            println!("{}", if passed { "pass".green() } else { "fail".red() });
+            for l in lines.iter().take(8) {
+                println!("      {}", l.dimmed());
+            }
+            passed
         }
         Err(e) => {
             println!("{} ({})", "fail".red(), e);

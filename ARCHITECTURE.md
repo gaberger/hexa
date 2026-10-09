@@ -84,6 +84,23 @@ in-process fan-out of inference calls:
 What keeps it disciplined: the gate is the only authority, and the verifier defaults
 to *refuting*, so plausible-but-wrong findings die before any edit is made.
 
+## The API contract
+
+A driving port tagged `@hexa:api` is the project's API. The tag sits in the
+doc comment of a trait or interface in `ports/` and of each method it
+exposes (`@hexa:api GET /bookmarks/{id}`), and it reads the same in Rust, Go
+and TypeScript. `hexa api spec` writes the OpenAPI 3.1 document the tags
+declare, `hexa api check` fails when the committed document has drifted, and
+`hexa api list` names each operation with its file and line.
+
+The contract is architecture, so the grade reads it: a tag outside a driving
+port, or one that cannot be resolved to a schema, costs what a rule error
+costs, and a tagged port no primary adapter drives counts as an unused port.
+Parsing is `hexa-analysis/src/treesitter_api.rs`; resolution across files is
+the `api_contract` use case; rendering is the pure `openapi::render`. What it
+cannot check is that the adapter sends what the port declares
+(ADR-2610092245).
+
 ## Workspace crates
 
 Seven crates, one binary. The dependency direction is the architecture:
