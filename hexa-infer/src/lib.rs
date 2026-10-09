@@ -8,6 +8,10 @@
 //! consumer names a provider, and this is the enforcement point: callers hold the trait, and which
 //! adapter is behind it is a composition decision.
 
+// `#[async_trait]` marks each method `#[must_use]` and returns a boxed future, which is
+// already must-use; clippy 1.99's `double_must_use` flags the pair in the expansion.
+#![allow(clippy::double_must_use)]
+
 pub mod adapters;
 pub mod complete;
 pub mod endpoint;

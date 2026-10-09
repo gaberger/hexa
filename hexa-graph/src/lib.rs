@@ -8,6 +8,10 @@
 //! The engine is network-free and deterministic — the LLM, the daemon, and the
 //! filesystem walk policy are the only impure inputs, all explicit.
 
+// `#[async_trait]` marks each method `#[must_use]` and returns a boxed future, which is
+// already must-use; clippy 1.99's `double_must_use` flags the pair in the expansion.
+#![allow(clippy::double_must_use)]
+
 pub mod community;
 pub mod context;
 pub mod extract;
