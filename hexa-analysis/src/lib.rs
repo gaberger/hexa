@@ -18,6 +18,7 @@ pub mod treesitter_adapter;
 pub mod treesitter_api;
 pub mod api_contract;
 pub mod api_conformance;
+pub mod api_adapter;
 pub mod openapi;
 pub mod boundary_checker;
 pub mod cycle_detector;

@@ -437,6 +437,20 @@ pub struct ApiMethodDecl {
     pub params: Vec<(String, TypeRef)>,
     pub returns: TypeRef,
     pub error: ErrorChannel,
+    /// Every parameter as the signature writes it, context included, in
+    /// order — what a generated adapter calls the method with.
+    pub written: Vec<WrittenParam>,
+    /// `async fn`, or a TypeScript method returning a `Promise`.
+    pub is_async: bool,
+}
+
+/// One parameter as written: its name, its type's source text, and whether
+/// it is the context a Go method takes first.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WrittenParam {
+    pub name: String,
+    pub written: String,
+    pub context: bool,
 }
 
 /// A trait or interface carrying `@hexa:api`, or holding a method that does.
@@ -464,7 +478,10 @@ pub struct FieldDecl {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VariantDecl {
+    /// The name on the wire, after any serde rename.
     pub name: String,
+    /// The name in source, for code that matches on it.
+    pub ident: String,
     /// The text after `@hexa:status`, if the variant has one.
     pub status: Option<String>,
     /// No payload, so it serializes as its name.
@@ -557,6 +574,41 @@ pub struct ApiOperation {
     pub errors: Vec<u16>,
     pub file: String,
     pub line: usize,
+    /// The method's arguments in order, each with where its value comes from.
+    pub args: Vec<ApiArg>,
+    pub is_async: bool,
+    /// Whether the method can fail at all.
+    pub fails: bool,
+    /// The error type as the signature names it, when it is a declared enum,
+    /// with each variant's identifier and status (ADR-2610100005).
+    pub error_type: Option<String>,
+    pub error_variants: Vec<(String, u16)>,
+}
+
+/// Where an argument's value comes from in an HTTP request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ArgSource {
+    /// The `{segment}` of this name.
+    Path(String),
+    /// The query parameter of this wire name.
+    Query(String),
+    /// The whole JSON body.
+    Body,
+    /// One field, by wire name, of the JSON body object.
+    BodyField(String),
+    /// Go's `context.Context`: the request's own.
+    Context,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApiArg {
+    pub name: String,
+    /// The type as the port writes it.
+    pub written: String,
+    pub source: ArgSource,
+    /// Resolved, `Optional` stripped; `Unit` for a context.
+    pub ty: TypeRef,
+    pub required: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

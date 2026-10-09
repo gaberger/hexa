@@ -15,7 +15,7 @@ pub use super::domain::{
     ConformanceReport, OperationVerdict, ProbeRequest, ProbeResponse, Verdict,
     capitalize, lower_camel, split_words, ApiFacts, ApiMethodDecl, ApiPortDecl, ArchAnalysisResult, Coverage, ErrorChannel, ExportDeclaration,
     ExportKind, FieldDecl, HexLayer, ImportStatement, ItemCounts, Language, ModuleReference, ReferenceKind,
-    TypeBody, TypeDecl, TypeRef, VariantDecl,
+    TypeBody, TypeDecl, TypeRef, VariantDecl, WrittenParam,
 };
 
 // ── Error Type ───────────────────────────────────────────

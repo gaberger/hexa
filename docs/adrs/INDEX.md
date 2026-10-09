@@ -6,7 +6,7 @@
 > [`ARCHITECTURE.md`](../../ARCHITECTURE.md); for *why* a decision was made,
 > read the ADR itself.
 
-**41 ADRs** across 1 epochs.
+**42 ADRs** across 1 epochs.
 
 ## Epoch: `single-agent` — **current**
 
@@ -14,6 +14,7 @@ _One gateway-mediated agent loop; code-graph context as the differentiator_
 
 | ADR | Status | Title | Superseded-By |
 |-----|--------|-------|---------------|
+| ADR-2610100005 | accepted | ADR-2610100005: The HTTP adapter is generated from the contract |  |
 | ADR-2610092245 | accepted | ADR-2610092245: The API contract is a tagged driving port |  |
 | ADR-2610092329 | accepted | ADR-2610092329: The contract is proven against the server |  |
 | ADR-2609241707 | accepted | ADR-2609241707: A grade cannot exceed the code it could classify |  |

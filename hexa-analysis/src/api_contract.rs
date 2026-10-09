@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 
 use super::domain::{
-    lower_camel, ApiBody, ApiContract, ApiDiagnostic, ApiFacts, ApiFindings, ApiMethodDecl, ApiOperation,
+    lower_camel, ApiArg, ApiBody, ArgSource, ApiContract, ApiDiagnostic, ApiFacts, ApiFindings, ApiMethodDecl, ApiOperation,
     ApiParam, ApiPortDecl, ApiSchema, ErrorChannel, HexLayer, Language, ParamLocation, TypeBody, TypeDecl,
     TypeRef,
 };
@@ -244,6 +244,8 @@ impl<'a> Builder<'a> {
         // Path parameters, in path order.
         let mut remaining: Vec<&(String, TypeRef)> = m.params.iter().collect();
         let mut params = Vec::new();
+        // Where each argument's value comes from, by its name in the signature.
+        let mut sources: HashMap<String, (ArgSource, TypeRef, bool)> = HashMap::new();
         for seg in path_segments(&path) {
             let found = remaining
                 .iter()
@@ -256,6 +258,7 @@ impl<'a> Builder<'a> {
             let (name, ty) = remaining.remove(i);
             match self.resolve(ty, file, m.line) {
                 Some(t) if is_scalar(&t) => {
+                    sources.insert(name.clone(), (ArgSource::Path(seg.clone()), t.clone(), true));
                     params.push(ApiParam { name: seg.clone(), location: ParamLocation::Path, ty: t, required: true })
                 }
                 Some(_) => {
@@ -292,19 +295,30 @@ impl<'a> Builder<'a> {
                     ok = false;
                     continue;
                 }
+                sources.insert(name.clone(), (ArgSource::Query(lower_camel(name)), inner.clone(), required));
                 params.push(ApiParam { name: lower_camel(name), location: ParamLocation::Query, ty: inner, required });
             }
         } else {
             let mut fields = Vec::new();
+            let mut names = Vec::new();
             for (name, ty) in &remaining {
                 match self.resolve(ty, file, m.line) {
-                    Some(t) => fields.push((lower_camel(name), t)),
+                    Some(t) => {
+                        fields.push((lower_camel(name), t));
+                        names.push(name.clone());
+                    }
                     None => ok = false,
                 }
             }
+            let whole = matches!(fields.as_slice(), [(_, t)] if matches!(unwrap_optional(t.clone()).0, TypeRef::Named(_)));
+            for (name, (wire, t)) in names.iter().zip(&fields) {
+                let (inner, required) = unwrap_optional(t.clone());
+                let source = if whole { ArgSource::Body } else { ArgSource::BodyField(wire.clone()) };
+                sources.insert(name.clone(), (source, inner, required));
+            }
             body = match fields.as_slice() {
                 [] => None,
-                [(_, t)] if matches!(unwrap_optional(t.clone()).0, TypeRef::Named(_)) => Some(ApiBody::Whole(t.clone())),
+                [(_, t)] if whole => Some(ApiBody::Whole(t.clone())),
                 _ => Some(ApiBody::Fields(
                     fields
                         .into_iter()
@@ -333,11 +347,20 @@ impl<'a> Builder<'a> {
                 errors.insert(code);
             }
         }
+        let mut error_type = None;
+        let mut error_variants = Vec::new();
         if let ErrorChannel::Typed(TypeRef::Named(e)) = &m.error {
-            for (vfile, line, text) in self.variant_statuses(e) {
-                if let Some(code) = self.status(&vfile, line, &text) {
-                    errors.insert(code);
-                }
+            let variants = self.variant_statuses(e);
+            if !variants.is_empty() {
+                error_type = Some(e.clone());
+            }
+            for (vfile, line, ident, text) in variants {
+                let code = match text {
+                    Some(t) => self.status(&vfile, line, &t).unwrap_or(500),
+                    None => 500,
+                };
+                errors.insert(code);
+                error_variants.push((ident, code));
             }
         }
         if m.error != ErrorChannel::None {
@@ -359,6 +382,22 @@ impl<'a> Builder<'a> {
             errors: errors.into_iter().collect(),
             file: file.to_string(),
             line: m.line,
+            args: m
+                .written
+                .iter()
+                .map(|w| {
+                    let (source, ty, required) = if w.context {
+                        (ArgSource::Context, TypeRef::Unit, true)
+                    } else {
+                        sources.get(&w.name).cloned().unwrap_or((ArgSource::Body, TypeRef::Unit, true))
+                    };
+                    ApiArg { name: w.name.clone(), written: w.written.clone(), source, ty, required }
+                })
+                .collect(),
+            is_async: m.is_async,
+            fails: m.error != ErrorChannel::None,
+            error_type,
+            error_variants,
         })
     }
 
@@ -373,17 +412,15 @@ impl<'a> Builder<'a> {
         real.or(alias).copied()
     }
 
-    /// The `@hexa:status` of each variant of an error enum, where written.
-    fn variant_statuses(&self, name: &str) -> Vec<(String, usize, String)> {
+    /// Each variant of an error enum: where the enum is, the variant's
+    /// identifier, and its `@hexa:status` text if it has one.
+    fn variant_statuses(&self, name: &str) -> Vec<(String, usize, String, Option<String>)> {
         let mut name = name.to_string();
         for _ in 0..8 {
             match self.lookup(&name) {
                 Some((_, TypeDecl { body: TypeBody::Alias(TypeRef::Named(t)), .. })) => name = t.clone(),
                 Some((file, TypeDecl { body: TypeBody::Enum(vs), line, .. })) => {
-                    return vs
-                        .iter()
-                        .filter_map(|v| v.status.clone().map(|s| (file.to_string(), *line, s)))
-                        .collect()
+                    return vs.iter().map(|v| (file.to_string(), *line, v.ident.clone(), v.status.clone())).collect()
                 }
                 _ => break,
             }

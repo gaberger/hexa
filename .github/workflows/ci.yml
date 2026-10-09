@@ -37,16 +37,25 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      # The Go scaffold gate and the generated net/http adapter's gate build
+      # Go code; ServeMux method patterns need Go 1.22+ (ADR-2610100005).
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: false
       - name: Build
         run: cargo build --workspace --release --locked
       # HEXA_TEST_NPM lets the TypeScript scaffold gate reach the network for
       # its one `npm install`. Off by default — a test that silently reaches
       # the network is a coin flip — and on here, where the network exists.
       # ADR-2609132158: a gate that never runs on the branch is not a gate.
+      # HEXA_TEST_CARGO_NET does the same for the generated axum adapter's gate,
+      # which fetches axum from crates.io (ADR-2610100005).
       - name: Test
         run: cargo test --workspace --release --locked
         env:
           HEXA_TEST_NPM: 1
+          HEXA_TEST_CARGO_NET: 1
       # Structural gates before the style one. A failing step stops the job,
       # so with Lint first a clippy idiom warning skipped the architecture
       # grade and the asset check — and did, on v26.9.7 and v26.9.8, which

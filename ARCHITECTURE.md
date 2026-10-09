@@ -97,9 +97,21 @@ The contract is architecture, so the grade reads it: a tag outside a driving
 port, or one that cannot be resolved to a schema, costs what a rule error
 costs, and a tagged port no primary adapter drives counts as an unused port.
 Parsing is `hexa-analysis/src/treesitter_api.rs`; resolution across files is
-the `api_contract` use case; rendering is the pure `openapi::render`. What it
-cannot check is that the adapter sends what the port declares
+the `api_contract` use case; rendering is the pure `openapi::render`
 (ADR-2610092245).
+
+What static analysis cannot see, the server answers. `hexa api test
+--base-url <url>` sends every operation, creates first and deletes last, and
+judges each answer against the contract: proven, violation (at its JSON
+path), unproven, or unreachable. A run that proves nothing exits 2. The call
+goes through the `HttpProbe` port; the run is the `api_conformance` use case
+(ADR-2610092329).
+
+`hexa api adapter` writes the primary adapter that serves a tagged port:
+axum in Rust, `net/http` in Go, `node:http` in TypeScript. It is one file
+that imports the port only, written once and owned by the project. Its gate
+builds each language's adapter into a real server and requires `hexa api
+test` to prove it (ADR-2610100005).
 
 ## Workspace crates
 

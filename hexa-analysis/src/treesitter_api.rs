@@ -16,7 +16,7 @@ use tree_sitter::Node;
 
 use super::ports::{
     capitalize, lower_camel, split_words, AnalysisError, ApiFacts, ApiMethodDecl, ApiPortDecl, ErrorChannel,
-    FieldDecl, Language, TypeBody, TypeDecl, TypeRef, VariantDecl,
+    FieldDecl, Language, TypeBody, TypeDecl, TypeRef, VariantDecl, WrittenParam,
 };
 
 const API_TAG: &str = "@hexa:api";
@@ -266,6 +266,7 @@ impl<'s> Extractor<'s> {
         name: &str,
         params: Vec<(String, TypeRef)>,
         (returns, error): (TypeRef, ErrorChannel),
+        (written, is_async): (Vec<WrittenParam>, bool),
     ) -> (ApiMethodDecl, Vec<usize>) {
         let doc = doc_of(n, self.src);
         let decl = ApiMethodDecl {
@@ -277,6 +278,8 @@ impl<'s> Extractor<'s> {
             params,
             returns,
             error,
+            written,
+            is_async,
         };
         (decl, doc.tag_comments)
     }
@@ -293,17 +296,23 @@ impl<'s> Extractor<'s> {
                 }
                 let Some(mname) = self.field_text(item, "name") else { continue };
                 let mut params = Vec::new();
+                let mut written = Vec::new();
                 if let Some(ps) = item.child_by_field_name("parameters") {
                     for p in named_children(ps).into_iter().filter(|p| p.kind() == "parameter") {
                         let pname = self.field_text(p, "pattern").unwrap_or("");
                         let pname = pname.strip_prefix("mut ").unwrap_or(pname).trim().to_string();
                         let ty = p.child_by_field_name("type").map_or(TypeRef::Unit, |t| lower_rust(t, self.src));
+                        let text = self.field_text(p, "type").unwrap_or("").to_string();
+                        written.push(WrittenParam { name: pname.clone(), written: text, context: false });
                         params.push((pname, ty));
                     }
                 }
+                let is_async = named_children(item)
+                    .iter()
+                    .any(|c| c.kind() == "function_modifiers" && self.text(*c).contains("async"));
                 let ret = item.child_by_field_name("return_type");
                 let signature = ret.map_or((TypeRef::Unit, ErrorChannel::None), |r| rust_return(r, self.src));
-                methods.push(self.method(item, mname, params, signature));
+                methods.push(self.method(item, mname, params, signature, (written, is_async)));
             }
         }
         let doc = doc_of(n, self.src);
@@ -376,6 +385,7 @@ impl<'s> Extractor<'s> {
                     .unwrap_or_else(|| rename(vname, rename_all.as_deref()));
                 variants.push(VariantDecl {
                     name: wire,
+                    ident: vname.to_string(),
                     status: vdoc.statuses.into_iter().next(),
                     unit: v.child_by_field_name("body").is_none(),
                 });
@@ -404,9 +414,10 @@ impl<'s> Extractor<'s> {
                 let mut methods = Vec::new();
                 for m in named_children(ty).into_iter().filter(|m| matches!(m.kind(), "method_elem" | "method_spec")) {
                     let Some(mname) = self.field_text(m, "name") else { continue };
-                    let params = m.child_by_field_name("parameters").map(|p| go_params(p, self.src)).unwrap_or_default();
+                    let (params, written) =
+                        m.child_by_field_name("parameters").map(|p| go_params(p, self.src)).unwrap_or_default();
                     let signature = go_result(m.child_by_field_name("result"), self.src);
-                    methods.push(self.method(m, mname, params, signature));
+                    methods.push(self.method(m, mname, params, signature, (written, false)));
                 }
                 // The doc of a lone `type X interface` sits above `type`.
                 let holder = match n.parent() {
@@ -465,11 +476,18 @@ impl<'s> Extractor<'s> {
         for m in named_children(body).into_iter().filter(|m| m.kind() == "method_signature") {
             let Some(mname) = self.field_text(m, "name") else { continue };
             let params = m.child_by_field_name("parameters").map(|p| ts_params(p, self.src)).unwrap_or_default();
+            let written = params
+                .iter()
+                .map(|(name, _)| WrittenParam { name: name.clone(), written: String::new(), context: false })
+                .collect();
+            let is_async = self
+                .field_text(m, "return_type")
+                .is_some_and(|r| r.trim_start_matches(':').trim_start().starts_with("Promise"));
             let returns = m
                 .child_by_field_name("return_type")
                 .and_then(|a| named_children(a).into_iter().next())
                 .map_or(TypeRef::Unsupported("no return type".into()), |t| ts_unwrap_promise(t, self.src));
-            methods.push(self.method(m, mname, params, (returns, ErrorChannel::Opaque)));
+            methods.push(self.method(m, mname, params, (returns, ErrorChannel::Opaque), (written, is_async)));
         }
         let fields = ts_fields(body, self.src);
         let doc = doc_of(n, self.src);
@@ -636,22 +654,29 @@ fn is_go_context(n: Node, src: &str) -> bool {
     n.kind() == "qualified_type" && &src[n.byte_range()] == "context.Context"
 }
 
-fn go_params(list: Node, src: &str) -> Vec<(String, TypeRef)> {
+/// The parameters the API sees, and every parameter as written.
+fn go_params(list: Node, src: &str) -> (Vec<(String, TypeRef)>, Vec<WrittenParam>) {
     let mut out = Vec::new();
+    let mut written = Vec::new();
     for p in named_children(list) {
         if !matches!(p.kind(), "parameter_declaration" | "variadic_parameter_declaration") {
             continue;
         }
         let Some(ty) = p.child_by_field_name("type") else { continue };
-        if is_go_context(ty, src) {
+        let text = src[ty.byte_range()].to_string();
+        let mut c = p.walk();
+        let names: Vec<String> = p.children_by_field_name("name", &mut c).map(|nm| src[nm.byte_range()].to_string()).collect();
+        let context = is_go_context(ty, src);
+        for name in if names.is_empty() { vec![String::new()] } else { names.clone() } {
+            written.push(WrittenParam { name, written: text.clone(), context });
+        }
+        if context {
             continue;
         }
         let mut lowered = lower_go(ty, src);
         if p.kind() == "variadic_parameter_declaration" {
             lowered = TypeRef::Array(Box::new(lowered));
         }
-        let mut c = p.walk();
-        let names: Vec<String> = p.children_by_field_name("name", &mut c).map(|nm| src[nm.byte_range()].to_string()).collect();
         if names.is_empty() {
             out.push((String::new(), lowered.clone()));
         }
@@ -659,7 +684,7 @@ fn go_params(list: Node, src: &str) -> Vec<(String, TypeRef)> {
             out.push((name, lowered.clone()));
         }
     }
-    out
+    (out, written)
 }
 
 /// A trailing `error` makes the method fail; what is left is its answer.

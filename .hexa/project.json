@@ -38,6 +38,7 @@
       ".opencode/plugins": "adapters/primary",
       "hexa-analysis/src/analyzer.rs": "usecases",
       "hexa-analysis/src/analyzers": "usecases",
+      "hexa-analysis/src/api_adapter.rs": "usecases",
       "hexa-analysis/src/api_conformance.rs": "usecases",
       "hexa-analysis/src/api_contract.rs": "usecases",
       "hexa-analysis/src/boundary_checker.rs": "usecases",

@@ -10,6 +10,7 @@ use clap::{Subcommand, ValueEnum};
 use colored::Colorize;
 use std::path::{Path, PathBuf};
 
+use hexa_analysis::api_adapter::{self, Target};
 use hexa_analysis::api_conformance;
 use hexa_analysis::api_contract::{self, ApiBuild};
 use hexa_analysis::ports::Verdict;
@@ -51,6 +52,21 @@ pub enum ApiAction {
         #[arg(long)]
         examples: Option<String>,
     },
+    /// Generate the primary HTTP adapter that serves a tagged port: axum, net/http or node:http
+    Adapter {
+        /// Project root
+        #[arg(default_value = ".")]
+        path: String,
+        /// The tagged port to serve; required when more than one is tagged
+        #[arg(long)]
+        port: Option<String>,
+        /// Where to write it, inside the project. Default: the conventional primary-adapter path
+        #[arg(long)]
+        out: Option<String>,
+        /// Replace an existing file
+        #[arg(long)]
+        force: bool,
+    },
     /// One line per operation: method, path, port method, file:line
     List {
         /// Project root
@@ -72,6 +88,7 @@ pub async fn run(action: ApiAction) -> anyhow::Result<()> {
         ApiAction::Spec { path, out, format } => spec(&root_of(&path)?, out.as_deref(), format)?,
         ApiAction::Check { path, spec } => check(&root_of(&path)?, spec.as_deref())?,
         ApiAction::List { path } => list(&root_of(&path)?)?,
+        ApiAction::Adapter { path, port, out, force } => adapter(&root_of(&path)?, port.as_deref(), out.as_deref(), force)?,
         ApiAction::Test { path, base_url, examples } => test(&root_of(&path)?, &base_url, examples.as_deref()).await?,
     };
     if code != 0 {
@@ -326,4 +343,91 @@ async fn test(root: &Path, base_url: &str, examples: Option<&str>) -> anyhow::Re
         eprintln!("{} nothing was proven: a run that proves nothing is not a pass", "✗".red());
     }
     Ok(code)
+}
+
+/// A project-relative path that stays inside the project: no root, no `..`.
+fn inside(rel: &str) -> Option<String> {
+    use std::path::Component;
+    let p = Path::new(rel);
+    let ok = p.components().all(|c| matches!(c, Component::Normal(_) | Component::CurDir));
+    (ok && !rel.is_empty()).then(|| rel.trim_start_matches("./").replace('\\', "/"))
+}
+
+fn go_module(root: &Path) -> anyhow::Result<String> {
+    let text = std::fs::read_to_string(root.join("go.mod"))
+        .map_err(|e| anyhow::anyhow!("a Go adapter imports the port by module path, and {}/go.mod: {e}", root.display()))?;
+    text.lines()
+        .find_map(|l| l.trim().strip_prefix("module ").map(|m| m.trim().to_string()))
+        .ok_or_else(|| anyhow::anyhow!("go.mod names no module"))
+}
+
+fn adapter(root: &Path, port: Option<&str>, out: Option<&str>, force: bool) -> anyhow::Result<i32> {
+    let built = match contract(root)? {
+        Ok(b) => b,
+        Err(code) => return Ok(code),
+    };
+    let mut ports: Vec<&str> = built.contract.operations.iter().map(|o| o.port.as_str()).collect();
+    ports.dedup();
+    ports.sort_unstable();
+    ports.dedup();
+    let chosen = match (port, ports.as_slice()) {
+        (Some(p), _) if ports.contains(&p) => p,
+        (Some(p), _) => {
+            eprintln!("{} `{p}` is not a tagged port; the tagged ports are: {}", "✗".red(), ports.join(", "));
+            return Ok(1);
+        }
+        (None, [only]) => only,
+        (None, _) => {
+            eprintln!("{} more than one port is tagged ({}); choose one with --port", "✗".red(), ports.join(", "));
+            return Ok(1);
+        }
+    };
+    let Some(op) = built.contract.operations.iter().find(|o| o.port == chosen) else { return Ok(2) };
+    let port_file = op.file.clone();
+    let lang = hexa_analysis::ports::Language::from_path(&port_file);
+    use hexa_analysis::ports::Language;
+    let default_out = match lang {
+        Language::Rust => "src/adapters/primary/http.rs",
+        Language::Go => "adapters/primary/httpapi/handler.go",
+        Language::TypeScript => "src/adapters/primary/http-handler.ts",
+        Language::Unknown => anyhow::bail!("{port_file}: no adapter for this language"),
+    };
+    let Some(rel) = inside(out.unwrap_or(default_out)) else {
+        eprintln!("{} --out must be a path inside the project, without `..`", "✗".red());
+        return Ok(1);
+    };
+    let dest = root.join(&rel);
+    if dest.exists() && !force {
+        eprintln!("{} {} exists; it belongs to the project now. Pass --force to replace it.", "✗".red(), dest.display());
+        return Ok(1);
+    }
+    let target = match lang {
+        Language::Rust => Target::Rust { module: api_adapter::rust_module_of(&port_file) },
+        Language::Go => Target::Go {
+            import: api_adapter::go_import_of(&go_module(root)?, &port_file),
+            package: api_adapter::go_package_of(&rel),
+        },
+        _ => Target::TypeScript { import: api_adapter::ts_import_of(&rel, &port_file) },
+    };
+    let text = match api_adapter::generate(&built.contract, chosen, &target) {
+        Ok(t) => t,
+        Err(why) => {
+            eprintln!("{} {why}", "✗".red());
+            return Ok(1);
+        }
+    };
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&dest, text)?;
+    let ops = built.contract.operations.iter().filter(|o| o.port == chosen).count();
+    println!("{} {} serves {chosen}: {ops} operation(s) → {}", "✓".green(), rel, dest.display());
+    let next = match lang {
+        Language::Rust => "It needs axum 0.8, serde (derive) and tokio. Declare its module, then serve `router(Arc::new(<impl>))` from the composition root.",
+        Language::Go => "It needs nothing beyond the standard library (Go 1.22+). Serve `NewHandler(<impl>)` from the composition root.",
+        _ => "It needs nothing beyond node:http. Serve `createServer(createHandler(<impl>))` from the composition root.",
+    };
+    println!("  {next}");
+    println!("  Then prove it: hexa api test --base-url <url>");
+    Ok(0)
 }
