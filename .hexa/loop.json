@@ -137,13 +137,13 @@
       "updated": "2026-09-16T21:37:14.436969878+00:00"
     },
     "b9c6ffc9-fa43-5885-8b3b-b05a86188c1c": {
-      "adr": "ADR-2610092245",
-      "evidence": "cargo test -p hexa-cli --test a_tagged_port_is_the_api_contract 2>&1 | tail -3",
-      "gate": "cargo test -p hexa-cli --test a_tagged_port_is_the_api_contract",
+      "adr": "ADR-2610092329",
+      "evidence": "cargo test -p hexa-cli --test the_contract_is_proven_against_the_server 2>&1 | tail -3",
+      "gate": "cargo test -p hexa-cli --test the_contract_is_proven_against_the_server",
       "pid": 96,
       "pid_start": 355,
       "stage": "done",
-      "updated": "2026-10-09T23:20:19.453602370+00:00"
+      "updated": "2026-10-09T23:34:12.569906436+00:00"
     }
   }
 }

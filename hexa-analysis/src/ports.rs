@@ -12,6 +12,7 @@ use super::domain::{DeadExport, DependencyViolation};
 /// through the port rather than the domain — the convention hexa's own
 /// scaffold emits (`pub use crate::domain::Count as CountValue`).
 pub use super::domain::{
+    ConformanceReport, OperationVerdict, ProbeRequest, ProbeResponse, Verdict,
     capitalize, lower_camel, split_words, ApiFacts, ApiMethodDecl, ApiPortDecl, ArchAnalysisResult, Coverage, ErrorChannel, ExportDeclaration,
     ExportKind, FieldDecl, HexLayer, ImportStatement, ItemCounts, Language, ModuleReference, ReferenceKind,
     TypeBody, TypeDecl, TypeRef, VariantDecl,
@@ -117,6 +118,16 @@ pub trait AstPort: Send + Sync {
         let _ = (path, source, lang);
         Ok(ApiFacts::default())
     }
+}
+
+// ── HTTP Probe Port ──────────────────────────────────────
+
+/// Send one request to the server under test (ADR-2610092329). The contract
+/// test is a use case; the network is behind this.
+#[async_trait]
+pub trait HttpProbe: Send + Sync {
+    /// The answer, or why there was none (refused, timed out).
+    async fn send(&self, request: &ProbeRequest) -> Result<ProbeResponse, String>;
 }
 
 // ── Architecture Analysis Port ───────────────────────────

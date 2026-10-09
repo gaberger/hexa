@@ -629,3 +629,70 @@ pub fn lower_camel(name: &str) -> String {
         .map(|(i, w)| if i == 0 { w.clone() } else { capitalize(w) })
         .collect()
 }
+
+// ── Contract test (ADR-2610092329) ───────────────────────
+
+/// One request the contract test sends.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProbeRequest {
+    pub method: String,
+    /// Path and query, already encoded: `/bookmarks?tag=x`.
+    pub path_and_query: String,
+    /// A JSON body, serialized.
+    pub body: Option<String>,
+}
+
+/// What the server answered.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProbeResponse {
+    pub status: u16,
+    pub body: String,
+}
+
+/// What one answer proves about the contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Verdict {
+    /// The declared success status, with a body the schema accepts.
+    Proven,
+    /// An undeclared status, or a body the schema refuses.
+    Violation,
+    /// A declared error, or no input to send: nothing wrong, nothing proven.
+    Unproven,
+    /// The request did not reach a server.
+    Unreachable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OperationVerdict {
+    /// `POST /bookmarks`.
+    pub route: String,
+    pub verdict: Verdict,
+    pub status: Option<u16>,
+    /// Why, line by line: each violation at its JSON path.
+    pub details: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConformanceReport {
+    pub operations: Vec<OperationVerdict>,
+}
+
+impl ConformanceReport {
+    pub fn count(&self, v: Verdict) -> usize {
+        self.operations.iter().filter(|o| o.verdict == v).count()
+    }
+
+    /// 0 every operation proven; 2 none proven, which is a vacuous run;
+    /// 1 anything else.
+    pub fn exit_code(&self) -> i32 {
+        let proven = self.count(Verdict::Proven);
+        if proven == 0 {
+            2
+        } else if proven == self.operations.len() {
+            0
+        } else {
+            1
+        }
+    }
+}

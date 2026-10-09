@@ -10,7 +10,9 @@ use clap::{Subcommand, ValueEnum};
 use colored::Colorize;
 use std::path::{Path, PathBuf};
 
+use hexa_analysis::api_conformance;
 use hexa_analysis::api_contract::{self, ApiBuild};
+use hexa_analysis::ports::Verdict;
 use hexa_analysis::openapi;
 
 #[derive(Subcommand, Debug)]
@@ -36,6 +38,19 @@ pub enum ApiAction {
         #[arg(long)]
         spec: Option<String>,
     },
+    /// Prove the contract against a running server: every operation sent, every answer judged.
+    /// It creates and deletes data — point it at a test instance
+    Test {
+        /// Project root
+        #[arg(default_value = ".")]
+        path: String,
+        /// Where the server listens, e.g. http://127.0.0.1:8080
+        #[arg(long = "base-url")]
+        base_url: String,
+        /// A JSON object mapping a wire name to the value to send for it
+        #[arg(long)]
+        examples: Option<String>,
+    },
     /// One line per operation: method, path, port method, file:line
     List {
         /// Project root
@@ -57,6 +72,7 @@ pub async fn run(action: ApiAction) -> anyhow::Result<()> {
         ApiAction::Spec { path, out, format } => spec(&root_of(&path)?, out.as_deref(), format)?,
         ApiAction::Check { path, spec } => check(&root_of(&path)?, spec.as_deref())?,
         ApiAction::List { path } => list(&root_of(&path)?)?,
+        ApiAction::Test { path, base_url, examples } => test(&root_of(&path)?, &base_url, examples.as_deref()).await?,
     };
     if code != 0 {
         std::process::exit(code);
@@ -264,4 +280,50 @@ fn list(root: &Path) -> anyhow::Result<i32> {
         );
     }
     Ok(0)
+}
+
+async fn test(root: &Path, base_url: &str, examples: Option<&str>) -> anyhow::Result<i32> {
+    let built = match contract(root)? {
+        Ok(b) => b,
+        Err(code) => return Ok(code),
+    };
+    let examples: serde_json::Map<String, serde_json::Value> = match examples {
+        None => serde_json::Map::new(),
+        Some(f) => match serde_json::from_str(&std::fs::read_to_string(f)?)? {
+            serde_json::Value::Object(m) => m,
+            _ => anyhow::bail!("{f}: --examples is a JSON object mapping a wire name to a value"),
+        },
+    };
+    println!(
+        "{} sending {} operation(s) to {base_url}. This creates and deletes data: use a test instance.",
+        "⚠".yellow(),
+        built.contract.operations.len()
+    );
+    let probe = crate::default_probe(base_url);
+    let report = api_conformance::run(&built.contract, probe.as_ref(), &examples).await;
+    for op in &report.operations {
+        let (mark, word) = match op.verdict {
+            Verdict::Proven => ("✓".green(), "proven".green()),
+            Verdict::Violation => ("✗".red(), "violation".red()),
+            Verdict::Unproven => ("○".yellow(), "unproven".yellow()),
+            Verdict::Unreachable => ("✗".red(), "unreachable".red()),
+        };
+        let status = op.status.map(|s| s.to_string()).unwrap_or_else(|| "—".into());
+        println!("  {mark} {word:<11} {:<32} {status}", op.route);
+        for d in &op.details {
+            println!("      {d}");
+        }
+    }
+    println!(
+        "  {} proven · {} violation(s) · {} unproven · {} unreachable",
+        report.count(Verdict::Proven),
+        report.count(Verdict::Violation),
+        report.count(Verdict::Unproven),
+        report.count(Verdict::Unreachable)
+    );
+    let code = report.exit_code();
+    if code == 2 {
+        eprintln!("{} nothing was proven: a run that proves nothing is not a pass", "✗".red());
+    }
+    Ok(code)
 }
