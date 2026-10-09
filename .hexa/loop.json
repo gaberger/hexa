@@ -135,6 +135,14 @@
       "pid_start": 26669617,
       "stage": "build",
       "updated": "2026-09-16T21:37:14.436969878+00:00"
+    },
+    "b9c6ffc9-fa43-5885-8b3b-b05a86188c1c": {
+      "adr": "ADR-2610092245",
+      "gate": "cargo test -p hexa-cli --test a_tagged_port_is_the_api_contract",
+      "pid": 86,
+      "pid_start": 330,
+      "stage": "gate",
+      "updated": "2026-10-09T22:50:56.974253707+00:00"
     }
   }
 }
