@@ -7,6 +7,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-3fb950?style=flat-square" alt="License"></a>
   <img src="https://img.shields.io/badge/self--grade-A%2B%20100%2F100-3fb950?style=flat-square" alt="A+ 100/100">
   <a href="#limits"><img src="https://img.shields.io/badge/Release-Alpha-bc8cff?style=flat-square" alt="Alpha"></a>
+  <a href="#built-with-hexa"><img src=".github/assets/badges/built-with-hexa.svg" alt="built with hexa" height="20"></a>
 </p>
 
 <p align="center">
@@ -341,6 +342,27 @@ keeps the misses in.
 Every number above has a command that checks it in
 [`docs/EVIDENCE.md`](docs/EVIDENCE.md). Behaviour changes that need something
 from an existing project are in [`docs/UPGRADING.md`](docs/UPGRADING.md).
+
+---
+
+## Built with hexa
+
+<a href="https://github.com/gaberger/hexa"><img src=".github/assets/badges/built-with-hexa.svg" alt="built with hexa" height="20"></a>
+
+| Project | What it is | Its gate |
+|---|---|---|
+| [Wardian](https://github.com/weave-registry/wardian) | Small apps, sealed, served from your own machine | `hexa analyze . --grade A` and `hexa adr gates` before every release |
+
+Built something with hexa? Put the badge in your README. Copy
+[`built-with-hexa.svg`](.github/assets/badges/built-with-hexa.svg) into your
+repository and link it here:
+
+```html
+<a href="https://github.com/gaberger/hexa"><img src=".github/assets/built-with-hexa.svg" alt="built with hexa" height="20"></a>
+```
+
+The badge says how the project was made, not how it grades today. Keep
+`hexa analyze .` in your CI so the grade stays a fact.
 
 ---
 
