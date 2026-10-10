@@ -713,7 +713,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("bad.rs"), [0xff, 0xfe, 0x00]).unwrap();
         let ast = crate::default_ast();
-        let files = vec!["bad.rs".to_string(), "missing.rs".to_string()];
+        let files = ["bad.rs".to_string(), "missing.rs".to_string()];
         let err = from_project(dir.path(), &files[..1], ast.as_ref()).unwrap_err();
         assert!(err.to_string().contains("bad.rs"), "{err}");
         let err = findings(dir.path(), &files[1..], ast.as_ref()).unwrap_err();

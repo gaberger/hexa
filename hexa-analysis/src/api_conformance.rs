@@ -504,16 +504,18 @@ mod tests {
     #[tokio::test]
     async fn an_id_is_the_one_its_own_resource_created_and_a_read_never_replaces_it() {
         let item = Some(TypeRef::Unsupported("any".into()));
-        let mut c = ApiContract::default();
-        c.operations = vec![
-            op("POST", "/users", 201, item.clone(), 1),
-            op("POST", "/posts", 201, item.clone(), 2),
-            op("GET", "/users", 200, item.clone(), 3),
-            op("GET", "/users/{id}", 200, item.clone(), 4),
-            op("DELETE", "/users/{id}", 200, item.clone(), 5),
-            op("GET", "/posts/{id}", 200, item.clone(), 6),
-            op("DELETE", "/posts/{id}", 200, item, 7),
-        ];
+        let c = ApiContract {
+            operations: vec![
+                op("POST", "/users", 201, item.clone(), 1),
+                op("POST", "/posts", 201, item.clone(), 2),
+                op("GET", "/users", 200, item.clone(), 3),
+                op("GET", "/users/{id}", 200, item.clone(), 4),
+                op("DELETE", "/users/{id}", 200, item.clone(), 5),
+                op("GET", "/posts/{id}", 200, item.clone(), 6),
+                op("DELETE", "/posts/{id}", 200, item, 7),
+            ],
+            ..ApiContract::default()
+        };
         let report = run(&c, &Server, &Map::new()).await;
         let unproven: Vec<_> = report.operations.iter().filter(|o| o.verdict != Verdict::Proven).collect();
         assert!(unproven.is_empty(), "{unproven:?}");
@@ -538,13 +540,15 @@ mod tests {
     #[tokio::test]
     async fn a_delete_never_reaches_a_record_the_run_did_not_create() {
         let item = Some(TypeRef::Unsupported("any".into()));
-        let mut c = ApiContract::default();
-        c.operations = vec![
-            op("POST", "/users", 201, item.clone(), 1),
-            op("GET", "/users", 200, item.clone(), 2),
-            op("PUT", "/users/{id}", 200, item.clone(), 3),
-            op("DELETE", "/users/{id}", 200, item, 4),
-        ];
+        let c = ApiContract {
+            operations: vec![
+                op("POST", "/users", 201, item.clone(), 1),
+                op("GET", "/users", 200, item.clone(), 2),
+                op("PUT", "/users/{id}", 200, item.clone(), 3),
+                op("DELETE", "/users/{id}", 200, item, 4),
+            ],
+            ..ApiContract::default()
+        };
         let mut examples = Map::new();
         examples.insert("id".into(), json!("mine"));
         let probe = Recorder(Default::default());

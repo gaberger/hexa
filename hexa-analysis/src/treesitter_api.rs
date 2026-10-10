@@ -794,7 +794,7 @@ fn go_result(result: Option<Node>, src: &str) -> (TypeRef, ErrorChannel) {
                 // `(a, b T)` is one declaration but two results.
                 let mut c = p.walk();
                 let names = p.children_by_field_name("name", &mut c).count();
-                Some(std::iter::repeat(ty).take(names.max(1)))
+                Some(std::iter::repeat_n(ty, names.max(1)))
             })
             .flatten()
             .collect(),

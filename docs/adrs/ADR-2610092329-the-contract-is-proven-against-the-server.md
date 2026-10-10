@@ -83,3 +83,9 @@ test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 Decision 4 called a list that validates *proven*. An empty list validates against any item schema, so that verdict claimed a check that never happened. A server whose create silently dropped the tags returned `[]` for the list by tag, and the list read *proven* beside the create's violation. An empty list for a declared array response is now **unproven**, and the verdict says so: there was nothing to check the items against. A non-empty list is judged item by item, as before.
 
 One consequence for the gate: a server that refuses the synthesized create now proves nothing at all, because its list is empty too. That run exits 2, not 1. Gate case added: `an_empty_list_proves_nothing_about_its_items`.
+
+## Amendment, 2026-10-10: only what the run created is reused
+
+Decision 2 said each successful JSON answer teaches its scalar fields. `hexa harden` showed what that costs: a list or a read returns records that were on the server before the run, and an id learned from one replaced the id the run's own create returned. The closing delete then removed a record the run never made. A test that deletes production data is worse than no test.
+
+So **only a create's answer is learned**, and each learned value is kept under the resource path that created it, so `/users` and `/posts` keep their own `id`. A read, update or delete takes its path parameter from the create of its own resource, from `--examples`, or not at all, in which case it is unproven. The same pass extended the empty-list amendment above: an empty or `null` answer is unproven wherever it checked nothing, including an optional list and a map. Gate cases: `a_delete_never_reaches_a_record_the_run_did_not_create` and `an_id_is_the_one_its_own_resource_created_and_a_read_never_replaces_it` (unit tests in `api_conformance`).
