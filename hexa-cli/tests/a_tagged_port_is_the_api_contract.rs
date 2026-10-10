@@ -152,6 +152,22 @@ fn a_path_segment_with_no_parameter_fails_and_names_the_line() {
 }
 
 #[test]
+fn routes_differing_only_in_parameter_name_are_one_route() {
+    let d = copy_of("rust");
+    edit(
+        d.path(),
+        "src/ports/mod.rs",
+        "    /// Not part of the API: no tag.",
+        "    /// @hexa:api GET /bookmarks/{key}\n    fn find(&self, key: &str) -> Result<BookmarkValue, ApiError>;\n\n    /// Not part of the API: no tag.",
+    );
+    let out = hexa(d.path(), &["api", "spec", "."]);
+    assert_ne!(out.status.code(), Some(0), "{}", text(&out));
+    let all = text(&out);
+    assert!(all.contains("already declared"), "{all}");
+    assert!(!d.path().join("openapi.json").exists(), "a failed contract writes no document");
+}
+
+#[test]
 fn an_unresolvable_type_fails_and_is_never_an_empty_schema() {
     let d = copy_of("go");
     edit(d.path(), "internal/domain/bookmark.go", "Title   string     `json:\"title\"`", "Title   Headline   `json:\"title\"`");

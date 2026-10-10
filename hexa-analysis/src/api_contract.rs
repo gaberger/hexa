@@ -39,6 +39,12 @@ pub struct ApiBuild {
 const BODY_METHODS: &[&str] = &["POST", "PUT", "PATCH"];
 const QUERY_METHODS: &[&str] = &["GET", "DELETE", "HEAD"];
 
+/// A file the grade reads that cannot be read is an error, not a file that
+/// says nothing: skipping it would drop its tagged ports without a word.
+fn read_source(root: &Path, rel: &str) -> Result<String, AnalysisError> {
+    std::fs::read_to_string(root.join(rel)).map_err(|e| AnalysisError::Other(format!("cannot read {rel}: {e}")))
+}
+
 /// Read `files` (project-relative, the set the grade reads) for what each
 /// says about the API.
 fn read_project(root: &Path, files: &[String], ast: &dyn AstPort) -> Result<Vec<FileApi>, AnalysisError> {
@@ -47,7 +53,7 @@ fn read_project(root: &Path, files: &[String], ast: &dyn AstPort) -> Result<Vec<
     for rel in files {
         let rel = rel.clone();
         let lang = Language::from_path(&rel);
-        let Ok(source) = std::fs::read_to_string(root.join(&rel)) else { continue };
+        let source = read_source(root, &rel)?;
         let facts = ast.extract_api(Path::new(&rel), &source, lang)?;
         if facts == ApiFacts::default() {
             continue;
@@ -75,7 +81,7 @@ pub fn findings(root: &Path, files: &[String], ast: &dyn AstPort) -> Result<ApiF
         if layers.classify(rel) != HexLayer::AdaptersPrimary {
             continue;
         }
-        let Ok(source) = std::fs::read_to_string(root.join(rel)) else { continue };
+        let source = read_source(root, rel)?;
         let refs = ast.extract_references(Path::new(rel), &source, Language::from_path(rel))?;
         named.extend(refs.into_keys());
     }
@@ -97,7 +103,7 @@ pub fn build(files: &[FileApi]) -> ApiBuild {
     let mut operations: Vec<ApiOperation> = Vec::new();
     let mut ports = Vec::new();
     let mut services: BTreeSet<String> = BTreeSet::new();
-    let mut version: Option<String> = None;
+    let mut version: Option<(String, String, usize)> = None;
 
     for f in files {
         for &line in &f.facts.stray_tags {
@@ -111,8 +117,15 @@ pub fn build(files: &[FileApi]) -> ApiBuild {
         for port in &f.facts.ports {
             let Some(header) = b.port_header(f, port) else { continue };
             services.insert(header.service.clone());
-            if version.is_none() {
-                version = header.version.clone();
+            if let Some(v) = &header.version {
+                match &version {
+                    None => version = Some((v.clone(), f.file.clone(), port.line)),
+                    Some((first, file, line)) if first != v => {
+                        let message = format!("version `{v}` conflicts with `{first}` declared at {file}:{line}; a contract has one version");
+                        b.error(&f.file, port.line, message);
+                    }
+                    Some(_) => {}
+                }
             }
             ports.push(port.name.clone());
             for m in port.methods.iter().filter(|m| m.tag.is_some()) {
@@ -126,7 +139,7 @@ pub fn build(files: &[FileApi]) -> ApiBuild {
     let mut seen_routes: HashMap<(String, String), (String, usize)> = HashMap::new();
     let mut seen_ids: HashMap<String, (String, usize)> = HashMap::new();
     for op in &operations {
-        let route = (op.http_method.clone(), op.path.clone());
+        let route = (op.http_method.clone(), route_shape(&op.path));
         if let Some((file, line)) = seen_routes.get(&route) {
             b.error(&op.file, op.line, format!("`{} {}` is already declared at {file}:{line}", op.http_method, op.path));
         } else {
@@ -146,13 +159,22 @@ pub fn build(files: &[FileApi]) -> ApiBuild {
     ApiBuild {
         contract: ApiContract {
             title: services.into_iter().collect::<Vec<_>>().join(", "),
-            version: version.unwrap_or_else(|| "0.0.0".into()),
+            version: version.map_or_else(|| "0.0.0".into(), |(v, _, _)| v),
             operations,
             schemas: b.schemas,
         },
         errors,
         ports,
     }
+}
+
+/// A path with every `{name}` segment reduced to `{}`: OpenAPI treats
+/// `/users/{id}` and `/users/{userId}` as the same templated path.
+fn route_shape(path: &str) -> String {
+    path.split('/')
+        .map(|seg| if seg.starts_with('{') && seg.ends_with('}') { "{}" } else { seg })
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 struct PortHeader {
@@ -435,6 +457,9 @@ impl<'a> Builder<'a> {
         self.resolve_depth(ty, file, line, 0)
     }
 
+    /// `depth` counts only alias and newtype hops: a struct cycle ends at its
+    /// placeholder in `self.schemas`, so only an alias cycle needs a bound,
+    /// and deep but acyclic nesting is legitimate.
     fn resolve_depth(&mut self, ty: &TypeRef, file: &str, line: usize, depth: usize) -> Option<TypeRef> {
         if depth > 32 {
             self.error(file, line, "type aliases form a cycle".into());
@@ -443,9 +468,9 @@ impl<'a> Builder<'a> {
         let wrap = |b: fn(Box<TypeRef>) -> TypeRef, t: Option<TypeRef>| t.map(|t| b(Box::new(t)));
         match ty {
             TypeRef::String | TypeRef::Integer | TypeRef::Number | TypeRef::Boolean | TypeRef::Unit => Some(ty.clone()),
-            TypeRef::Array(t) => wrap(TypeRef::Array, self.resolve_depth(t, file, line, depth + 1)),
-            TypeRef::Optional(t) => wrap(TypeRef::Optional, self.resolve_depth(t, file, line, depth + 1)),
-            TypeRef::Map(t) => wrap(TypeRef::Map, self.resolve_depth(t, file, line, depth + 1)),
+            TypeRef::Array(t) => wrap(TypeRef::Array, self.resolve_depth(t, file, line, depth)),
+            TypeRef::Optional(t) => wrap(TypeRef::Optional, self.resolve_depth(t, file, line, depth)),
+            TypeRef::Map(t) => wrap(TypeRef::Map, self.resolve_depth(t, file, line, depth)),
             TypeRef::Unsupported(text) => {
                 self.error(
                     file,
@@ -455,6 +480,19 @@ impl<'a> Builder<'a> {
                 None
             }
             TypeRef::Named(name) => {
+                let real: Vec<&str> = self
+                    .types
+                    .get(name.as_str())
+                    .map(|v| v.iter().filter(|(_, d)| !matches!(d.body, TypeBody::Alias(_))).map(|(f, _)| *f).collect())
+                    .unwrap_or_default();
+                if real.len() > 1 {
+                    self.error(
+                        file,
+                        line,
+                        format!("`{name}` is declared more than once ({}), so it has no single schema", real.join(", ")),
+                    );
+                    return None;
+                }
                 let Some((decl_file, decl)) = self.lookup(name) else {
                     self.error(file, line, format!("`{name}` is not declared in this project, so it has no schema"));
                     return None;
@@ -471,7 +509,7 @@ impl<'a> Builder<'a> {
                         let mut props = Vec::new();
                         let mut ok = true;
                         for field in fields {
-                            match self.resolve_depth(&field.ty, decl_file, field.line, depth + 1) {
+                            match self.resolve_depth(&field.ty, decl_file, field.line, depth) {
                                 Some(t) => {
                                     let (inner, required) = unwrap_optional(t);
                                     props.push((field.wire_name.clone(), inner, required && !field.optional));
@@ -572,6 +610,146 @@ mod tests {
         assert!(parse_operation_tag("GET /a 404").is_err());
         assert!(parse_operation_tag("GET /a 200 x").is_err());
         assert!(parse_operation_tag("").is_err());
+    }
+
+    fn decl(name: &str, body: TypeBody) -> TypeDecl {
+        TypeDecl { name: name.into(), line: 1, body }
+    }
+
+    fn resolve_in(decls: &[TypeDecl], start: &str) -> (Option<TypeRef>, Vec<ApiDiagnostic>) {
+        let mut types: HashMap<&str, Vec<(&str, &TypeDecl)>> = HashMap::new();
+        for d in decls {
+            types.entry(d.name.as_str()).or_default().push(("a.rs", d));
+        }
+        let mut b = Builder { types, schemas: BTreeMap::new(), errors: Vec::new() };
+        let out = b.resolve(&TypeRef::Named(start.into()), "a.rs", 1);
+        (out, b.errors)
+    }
+
+    #[test]
+    fn deep_acyclic_nesting_is_not_an_alias_cycle() {
+        let field = |ty| crate::ports::FieldDecl { wire_name: "next".into(), ty, optional: false, line: 1 };
+        let mut decls = Vec::new();
+        for i in 0..50 {
+            let inner = if i == 49 { TypeRef::String } else { TypeRef::Named(format!("S{}", i + 1)) };
+            let ty = TypeRef::Array(Box::new(TypeRef::Optional(Box::new(inner))));
+            decls.push(decl(&format!("S{i}"), TypeBody::Struct(vec![field(ty)])));
+        }
+        let (out, errors) = resolve_in(&decls, "S0");
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(out, Some(TypeRef::Named("S0".into())));
+    }
+
+    #[test]
+    fn two_types_with_one_name_are_ambiguous_not_first_wins() {
+        let decls = [
+            decl("User", TypeBody::Struct(Vec::new())),
+            decl("User", TypeBody::Enum(Vec::new())),
+        ];
+        let (out, errors) = resolve_in(&decls, "User");
+        assert_eq!(out, None);
+        assert!(errors.iter().any(|e| e.message.contains("declared more than once")), "{errors:?}");
+    }
+
+    #[test]
+    fn an_alias_cycle_is_still_reported() {
+        let decls = [
+            decl("A", TypeBody::Alias(TypeRef::Named("B".into()))),
+            decl("B", TypeBody::Alias(TypeRef::Array(Box::new(TypeRef::Named("A".into()))))),
+        ];
+        let (out, errors) = resolve_in(&decls, "A");
+        assert_eq!(out, None);
+        assert!(errors.iter().any(|e| e.message.contains("cycle")), "{errors:?}");
+    }
+
+    fn get_method(name: &str, line: usize, tag: &str, param: &str) -> ApiMethodDecl {
+        ApiMethodDecl {
+            name: name.into(),
+            line,
+            doc: String::new(),
+            tag: Some(tag.into()),
+            statuses: Vec::new(),
+            params: vec![(param.into(), TypeRef::String)],
+            returns: TypeRef::Unit,
+            error: ErrorChannel::None,
+            written: Vec::new(),
+            is_async: false,
+        }
+    }
+
+    fn build_port(methods: Vec<ApiMethodDecl>) -> ApiBuild {
+        let port = ApiPortDecl { name: "Users".into(), line: 1, tag: Some(String::new()), statuses: Vec::new(), methods };
+        build(&[FileApi {
+            file: "ports/users.rs".into(),
+            layer: HexLayer::Ports,
+            facts: ApiFacts { ports: vec![port], ..ApiFacts::default() },
+        }])
+    }
+
+    #[test]
+    fn renamed_path_parameters_are_the_same_route() {
+        let built = build_port(vec![
+            get_method("get_user", 10, "GET /users/{id}", "id"),
+            get_method("fetch_user", 20, "GET /users/{userId}", "userId"),
+        ]);
+        assert!(
+            built.errors.iter().any(|e| e.line == 20 && e.message.contains("already declared at ports/users.rs:10")),
+            "{:?}",
+            built.errors
+        );
+    }
+
+    #[test]
+    fn different_routes_are_not_duplicates() {
+        let built = build_port(vec![
+            get_method("get_user", 10, "GET /users/{id}", "id"),
+            get_method("get_team", 20, "GET /teams/{id}", "id"),
+        ]);
+        assert!(built.errors.is_empty(), "{:?}", built.errors);
+    }
+
+    #[test]
+    fn an_unreadable_file_is_an_error_not_a_skip() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("bad.rs"), [0xff, 0xfe, 0x00]).unwrap();
+        let ast = crate::default_ast();
+        let files = vec!["bad.rs".to_string(), "missing.rs".to_string()];
+        let err = from_project(dir.path(), &files[..1], ast.as_ref()).unwrap_err();
+        assert!(err.to_string().contains("bad.rs"), "{err}");
+        let err = findings(dir.path(), &files[1..], ast.as_ref()).unwrap_err();
+        assert!(err.to_string().contains("missing.rs"), "{err}");
+    }
+
+    fn versioned_port(file: &str, name: &str, version: &str) -> FileApi {
+        let port = ApiPortDecl {
+            name: name.into(),
+            line: 3,
+            tag: Some(format!("version={version}")),
+            statuses: Vec::new(),
+            methods: Vec::new(),
+        };
+        FileApi {
+            file: file.into(),
+            layer: HexLayer::Ports,
+            facts: ApiFacts { ports: vec![port], ..ApiFacts::default() },
+        }
+    }
+
+    #[test]
+    fn conflicting_port_versions_are_an_error_not_first_wins() {
+        let built = build(&[versioned_port("ports/a.rs", "A", "1"), versioned_port("ports/b.rs", "B", "2")]);
+        assert!(
+            built.errors.iter().any(|e| e.file == "ports/b.rs" && e.message.contains("conflicts with `1` declared at ports/a.rs:3")),
+            "{:?}",
+            built.errors
+        );
+    }
+
+    #[test]
+    fn agreeing_port_versions_are_not_a_conflict() {
+        let built = build(&[versioned_port("ports/a.rs", "A", "2"), versioned_port("ports/b.rs", "B", "2")]);
+        assert!(built.errors.is_empty(), "{:?}", built.errors);
+        assert_eq!(built.contract.version, "2");
     }
 
     #[test]
