@@ -384,7 +384,20 @@ fn go_parse(var: &str, raw: &str, a: &ApiArg, package: &str, uses: &mut BTreeSet
         TypeRef::String => format!("\t\t{var} := {ty}({raw})\n"),
         TypeRef::Integer => {
             uses.insert("strconv");
-            format!("\t\tn{var}, err := strconv.ParseInt({raw}, 10, 64)\n\t\tif err != nil {{\n{fail}\t\t}}\n\t\t{var} := {ty}(n{var})\n")
+            // Parse at the written type's own width so an overflow is a 400, not a silent wrap.
+            let (parse, bits) = match a.written.trim_start_matches('*') {
+                "int" => ("ParseInt", 0),
+                "int8" => ("ParseInt", 8),
+                "int16" => ("ParseInt", 16),
+                "int32" | "rune" => ("ParseInt", 32),
+                "uint" => ("ParseUint", 0),
+                "uint8" | "byte" => ("ParseUint", 8),
+                "uint16" => ("ParseUint", 16),
+                "uint32" => ("ParseUint", 32),
+                "uint64" | "uintptr" => ("ParseUint", 64),
+                _ => ("ParseInt", 64),
+            };
+            format!("\t\tn{var}, err := strconv.{parse}({raw}, 10, {bits})\n\t\tif err != nil {{\n{fail}\t\t}}\n\t\t{var} := {ty}(n{var})\n")
         }
         TypeRef::Number => {
             uses.insert("strconv");
@@ -398,8 +411,12 @@ fn go_parse(var: &str, raw: &str, a: &ApiArg, package: &str, uses: &mut BTreeSet
     })
 }
 
+const GO_PORT_ALIAS: &str = "ports";
+
 fn go(port: &str, ops: &[&ApiOperation], import: &str, package: &str) -> Result<String, String> {
-    let pkg = import.rsplit('/').next().unwrap_or(import).to_string();
+    // The import path cannot name the package (`ports/v2`, `my-ports`, a module
+    // ending `/v2`), so import it under a fixed alias instead of guessing.
+    let pkg = GO_PORT_ALIAS;
     let mut uses: BTreeSet<&'static str> = BTreeSet::from(["encoding/json", "errors", "net/http"]);
     let mut body = String::new();
     for op in ops {
@@ -421,7 +438,7 @@ fn go(port: &str, ops: &[&ApiOperation], import: &str, package: &str) -> Result<
                     call.push("r.Context()".to_string());
                     continue;
                 }
-                ArgSource::Path(seg) => s.push_str(&go_parse(&var, &format!("r.PathValue(\"{seg}\")"), a, &pkg, &mut uses)?),
+                ArgSource::Path(seg) => s.push_str(&go_parse(&var, &format!("r.PathValue(\"{seg}\")"), a, pkg, &mut uses)?),
                 ArgSource::Query(wire) => {
                     let pointer = a.written.trim_start().starts_with('*');
                     if let TypeRef::Array(e) = &a.ty {
@@ -430,19 +447,19 @@ fn go(port: &str, ops: &[&ApiOperation], import: &str, package: &str) -> Result<
                         }
                         s.push_str(&format!("\t\t{var} := q[\"{wire}\"]\n"));
                     } else if pointer || !a.required {
-                        s.push_str(&format!("\t\tvar {var} {}\n\t\tif q.Has(\"{wire}\") {{\n", go_qualify(&a.written, &pkg)));
-                        let inner = go_parse("v", &format!("q.Get(\"{wire}\")"), a, &pkg, &mut uses)?;
+                        s.push_str(&format!("\t\tvar {var} {}\n\t\tif q.Has(\"{wire}\") {{\n", go_qualify(&a.written, pkg)));
+                        let inner = go_parse("v", &format!("q.Get(\"{wire}\")"), a, pkg, &mut uses)?;
                         s.push_str(&inner.replace("\n\t\t", "\n\t\t\t").replacen("\t\t", "\t\t\t", 1));
                         s.push_str(&format!("\t\t\t{var} = {}v\n\t\t}}\n", if pointer { "&" } else { "" }));
                     } else {
                         s.push_str(&format!("\t\tif !q.Has(\"{wire}\") {{\n\t\t\twriteStatus(w, http.StatusBadRequest)\n\t\t\treturn\n\t\t}}\n"));
-                        s.push_str(&go_parse(&var, &format!("q.Get(\"{wire}\")"), a, &pkg, &mut uses)?);
+                        s.push_str(&go_parse(&var, &format!("q.Get(\"{wire}\")"), a, pkg, &mut uses)?);
                     }
                 }
                 ArgSource::Body => {
                     s.push_str(&format!(
-                        "\t\tvar {var} {}\n\t\tif err := json.NewDecoder(r.Body).Decode(&{var}); err != nil {{\n\t\t\twriteStatus(w, http.StatusBadRequest)\n\t\t\treturn\n\t\t}}\n",
-                        go_qualify(&a.written, &pkg)
+                        "\t\tvar {var} {}\n\t\tif err := decodeBody(w, r, &{var}); err != nil {{\n\t\t\twriteStatus(w, http.StatusBadRequest)\n\t\t\treturn\n\t\t}}\n",
+                        go_qualify(&a.written, pkg)
                     ));
                 }
                 ArgSource::BodyField(_) => {
@@ -456,9 +473,9 @@ fn go(port: &str, ops: &[&ApiOperation], import: &str, package: &str) -> Result<
             let mut decl = String::from("\t\tvar body struct {\n");
             for a in &fields {
                 let ArgSource::BodyField(wire) = &a.source else { continue };
-                decl.push_str(&format!("\t\t\t{} {} `json:\"{wire}\"`\n", pascal(&a.name), go_qualify(&a.written, &pkg)));
+                decl.push_str(&format!("\t\t\t{} {} `json:\"{wire}\"`\n", pascal(&a.name), go_qualify(&a.written, pkg)));
             }
-            decl.push_str("\t\t}\n\t\tif err := json.NewDecoder(r.Body).Decode(&body); err != nil {\n\t\t\twriteStatus(w, http.StatusBadRequest)\n\t\t\treturn\n\t\t}\n");
+            decl.push_str("\t\t}\n\t\tif err := decodeBody(w, r, &body); err != nil {\n\t\t\twriteStatus(w, http.StatusBadRequest)\n\t\t\treturn\n\t\t}\n");
             s.push_str(&decl);
         }
         let invoke = format!("api.{}({})", op.method_name, call.join(", "));
@@ -481,7 +498,7 @@ fn go(port: &str, ops: &[&ApiOperation], import: &str, package: &str) -> Result<
     for u in &uses {
         out.push_str(&format!("\t\"{u}\"\n"));
     }
-    out.push_str(&format!("\n\t\"{import}\"\n)\n\n"));
+    out.push_str(&format!("\n\t{pkg} \"{import}\"\n)\n\n"));
     out.push_str(&format!(
         "// NewHandler serves the contract's routes from api.\nfunc NewHandler(api {pkg}.{port}) http.Handler {{\n\tmux := http.NewServeMux()\n\n{body}\treturn mux\n}}\n\n"
     ));
@@ -489,7 +506,7 @@ fn go(port: &str, ops: &[&ApiOperation], import: &str, package: &str) -> Result<
         "type httpStatuser interface{ HTTPStatus() int }\n\n\
 // writeError answers with the error's own status, or 500.\nfunc writeError(w http.ResponseWriter, err error) {\n\tstatus := http.StatusInternalServerError\n\tvar s httpStatuser\n\tif errors.As(err, &s) {\n\t\tstatus = s.HTTPStatus()\n\t}\n\twriteStatus(w, status)\n}\n\n\
 func writeStatus(w http.ResponseWriter, status int) {\n\twriteJSON(w, status, map[string]string{\"error\": http.StatusText(status)})\n}\n\n\
-func writeJSON(w http.ResponseWriter, status int, v any) {\n\tw.Header().Set(\"Content-Type\", \"application/json\")\n\tw.WriteHeader(status)\n\t_ = json.NewEncoder(w).Encode(v)\n}\n",
+// maxBodyBytes caps a request body, as axum's `Json` does (2 MB).\nconst maxBodyBytes = 2 << 20\n\n// decodeBody reads a bounded JSON body; one past the cap fails the decode.\nfunc decodeBody(w http.ResponseWriter, r *http.Request, v any) error {\n\treturn json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes)).Decode(v)\n}\n\nfunc writeJSON(w http.ResponseWriter, status int, v any) {\n\tw.Header().Set(\"Content-Type\", \"application/json\")\n\tw.WriteHeader(status)\n\t_ = json.NewEncoder(w).Encode(v)\n}\n",
     );
     Ok(out)
 }
@@ -498,13 +515,17 @@ func writeJSON(w http.ResponseWriter, status int, v any) {\n\tw.Header().Set(\"C
 
 fn typescript(port: &str, ops: &[&ApiOperation], import: &str) -> String {
     let mut routes = String::new();
+    // First match wins, so a literal segment must be tried before a `{param}` one
+    // (axum and ServeMux prefer the literal path); the sort is stable otherwise.
+    let mut ops: Vec<&ApiOperation> = ops.to_vec();
+    ops.sort_by_key(|op| op.path.split('/').filter(|s| !s.is_empty()).map(|s| s.starts_with('{')).collect::<Vec<_>>());
     for op in ops {
         let param = |i: usize| format!("Parameters<{port}['{}']>[{i}]", op.method_name);
         let mut lines = Vec::new();
         let mut call = Vec::new();
         let fields = op.args.iter().any(|a| matches!(a.source, ArgSource::BodyField(_)));
         if fields {
-            lines.push("const fields = (await readJson(req)) as Record<string, unknown>;".to_string());
+            lines.push("const fields = await readObject(req);".to_string());
         }
         for (i, a) in op.args.iter().enumerate() {
             let var = lower_camel(&format!("arg_{}", a.name));
@@ -563,11 +584,12 @@ fn typescript(port: &str, ops: &[&ApiOperation], import: &str) -> String {
         ));
     }
     let mut out = String::new();
-    out.push_str(&format!("/**\n * The HTTP adapter for `{port}`, {}\n *\n * A thrown value with a numeric `status` answers with it; anything else is 500.\n */\n", HEADER.replace('\n', "\n * ")));
+    out.push_str(&format!("/**\n * The HTTP adapter for `{port}`, {}\n *\n * A thrown value with an integer `status` of 400-599 answers with it; anything else is 500.\n */\n", HEADER.replace('\n', "\n * ")));
     out.push_str("import type { IncomingMessage, ServerResponse } from 'node:http';\n");
     out.push_str(&format!("import type {{ {port} }} from '{import}';\n\n"));
     out.push_str("type Handler = (req: IncomingMessage, res: ServerResponse) => void;\n\n");
-    out.push_str("/** Malformed input: a path, query or body that does not parse. */\nclass BadRequest extends Error {\n  readonly status = 400;\n}\n\n");
+    out.push_str("/** Malformed input: a path, query or body that does not parse. */\nclass BadRequest extends Error {\n  readonly status = 400;\n  constructor() {\n    super('Bad Request');\n  }\n}\n\n");
+    out.push_str("/** A request body past the cap (2 MB, as axum's `Json` does). */\nconst MAX_BODY_BYTES = 2 * 1024 * 1024;\n\nclass PayloadTooLarge extends Error {\n  readonly status = 413;\n  constructor() {\n    super('Payload Too Large');\n  }\n}\n\n");
     out.push_str(&format!(
         "/** The contract's routes, served by `api`. */\nexport function createHandler(api: {port}): Handler {{\n  return (req, res) => {{\n    route(api, req, res).catch((error: unknown) => sendError(res, error));\n  }};\n}}\n\n"
     ));
@@ -575,19 +597,24 @@ fn typescript(port: &str, ops: &[&ApiOperation], import: &str) -> String {
         "async function route(api: {port}, req: IncomingMessage, res: ServerResponse): Promise<void> {{\n  const url = new URL(req.url ?? '/', 'http://localhost');\n{routes}  send(res, 404, {{ error: 'Not Found' }});\n}}\n\n"
     ));
     out.push_str(
-        "function match(pattern: string, path: string): Record<string, string> | null {\n  const want = pattern.split('/').filter(Boolean);\n  const got = path.split('/').filter(Boolean);\n  if (want.length !== got.length) return null;\n  const params: Record<string, string> = {};\n  for (let i = 0; i < want.length; i++) {\n    const w = want[i] ?? '';\n    const g = got[i] ?? '';\n    if (w.startsWith('{')) params[w.slice(1, -1)] = decodeURIComponent(g);\n    else if (w !== g) return null;\n  }\n  return params;\n}\n\n\
-async function readJson(req: IncomingMessage): Promise<unknown> {\n  const chunks: Buffer[] = [];\n  for await (const chunk of req) chunks.push(chunk as Buffer);\n  try {\n    return JSON.parse(Buffer.concat(chunks).toString('utf8'));\n  } catch {\n    throw new BadRequest();\n  }\n}\n\n\
+        "function match(pattern: string, path: string): Record<string, string> | null {\n  const want = pattern.split('/').filter(Boolean);\n  const got = path.split('/').filter(Boolean);\n  if (want.length !== got.length) return null;\n  const params: Record<string, string> = {};\n  for (let i = 0; i < want.length; i++) {\n    const w = want[i] ?? '';\n    const g = got[i] ?? '';\n    if (w.startsWith('{')) params[w.slice(1, -1)] = decodePathSegment(g);\n    else if (w !== g) return null;\n  }\n  return params;\n}\n\n\
+function decodePathSegment(raw: string): string {\n  try {\n    return decodeURIComponent(raw);\n  } catch {\n    throw new BadRequest();\n  }\n}\n\n\
+async function readJson(req: IncomingMessage): Promise<unknown> {\n  const chunks: Buffer[] = [];\n  let size = 0;\n  for await (const chunk of req) {\n    size += (chunk as Buffer).length;\n    if (size > MAX_BODY_BYTES) throw new PayloadTooLarge();\n    chunks.push(chunk as Buffer);\n  }\n  let body: unknown;\n  try {\n    body = JSON.parse(Buffer.concat(chunks).toString('utf8'));\n  } catch {\n    throw new BadRequest();\n  }\n  if (body === null) throw new BadRequest();\n  return body;\n}\n\n\
+async function readObject(req: IncomingMessage): Promise<Record<string, unknown>> {\n  const body = await readJson(req);\n  if (typeof body !== 'object' || Array.isArray(body)) throw new BadRequest();\n  return body as Record<string, unknown>;\n}\n\n\
 function toNumber(raw: string): number {\n  const n = Number(raw);\n  if (raw.trim() === '' || Number.isNaN(n)) throw new BadRequest();\n  return n;\n}\n\n\
+function toInteger(raw: string): number {\n  if (!/^[+-]?[0-9]+$/.test(raw)) throw new BadRequest();\n  const n = Number(raw);\n  if (!Number.isSafeInteger(n)) throw new BadRequest();\n  return n;\n}\n\n\
+function toBoolean(raw: string): boolean {\n  if (raw === 'true') return true;\n  if (raw === 'false') return false;\n  throw new BadRequest();\n}\n\n\
 function send(res: ServerResponse, status: number, body?: unknown): void {\n  if (body === undefined) {\n    res.writeHead(status).end();\n    return;\n  }\n  res.writeHead(status, { 'Content-Type': 'application/json' }).end(JSON.stringify(body));\n}\n\n\
-function sendError(res: ServerResponse, error: unknown): void {\n  const status = (error as { status?: unknown } | null)?.status;\n  const code = typeof status === 'number' ? status : 500;\n  send(res, code, { error: code === 500 ? 'Internal Server Error' : String((error as Error).message ?? code) });\n}\n",
+function sendError(res: ServerResponse, error: unknown): void {\n  if (res.headersSent) {\n    res.destroy();\n    return;\n  }\n  const status = (error as { status?: unknown } | null)?.status;\n  const code = typeof status === 'number' && Number.isInteger(status) && status >= 400 && status <= 599 ? status : 500;\n  send(res, code, { error: code === 500 ? 'Internal Server Error' : String((error as Error | null)?.message ?? code) });\n}\n",
     );
     out
 }
 
 fn ts_convert(raw: &str, ty: &TypeRef) -> String {
     match ty {
-        TypeRef::Integer | TypeRef::Number => format!("toNumber({raw})"),
-        TypeRef::Boolean => format!("({raw} === 'true')"),
+        TypeRef::Integer => format!("toInteger({raw})"),
+        TypeRef::Number => format!("toNumber({raw})"),
+        TypeRef::Boolean => format!("toBoolean({raw})"),
         _ => raw.to_string(),
     }
 }
@@ -627,5 +654,347 @@ mod tests {
         assert_eq!(go_qualify("[]Tag", "ports"), "[]ports.Tag");
         assert_eq!(go_qualify("map[string]Tag", "ports"), "map[string]ports.Tag");
         assert_eq!(go_qualify("time.Time", "ports"), "time.Time");
+    }
+
+    #[test]
+    fn go_port_import_is_aliased_not_named_after_its_path() {
+        let op = ApiOperation {
+            service: "Bookmarks".into(),
+            port: "BookmarkApi".into(),
+            method_name: "add".into(),
+            operation_id: "add".into(),
+            http_method: "POST".into(),
+            path: "/bookmarks".into(),
+            description: String::new(),
+            params: vec![],
+            body: None,
+            success: 201,
+            response: None,
+            errors: vec![],
+            file: "api.go".into(),
+            line: 1,
+            args: vec![ApiArg { name: "input".into(), written: "NewBookmark".into(), source: ArgSource::Body, ty: TypeRef::String, required: true }],
+            is_async: true,
+            fails: false,
+            error_type: None,
+            error_variants: vec![],
+        };
+        let contract = ApiContract { title: "t".into(), version: "1".into(), operations: vec![op], schemas: Default::default() };
+        for import in ["example.com/x/ports/v2", "example.com/x/my-ports", "example.com/foo/v2"] {
+            let target = Target::Go { import: import.into(), package: "httpapi".into() };
+            let go = generate(&contract, "BookmarkApi", &target).unwrap();
+            assert!(go.contains(&format!("\tports \"{import}\"\n")), "{go}");
+            assert!(go.contains("api ports.BookmarkApi"), "{go}");
+            assert!(!go.contains("v2.") && !go.contains("my-ports."), "{go}");
+        }
+    }
+
+    #[test]
+    fn go_integers_are_parsed_at_the_written_width() {
+        let arg = |written: &str| ApiArg {
+            name: "n".into(),
+            written: written.into(),
+            source: ArgSource::Path("n".into()),
+            ty: TypeRef::Integer,
+            required: true,
+        };
+        let parse = |written: &str| go_parse("argN", "raw", &arg(written), "ports", &mut BTreeSet::new()).unwrap();
+        assert!(parse("uint8").contains("strconv.ParseUint(raw, 10, 8)"), "{}", parse("uint8"));
+        assert!(parse("uint").contains("strconv.ParseUint(raw, 10, 0)"), "{}", parse("uint"));
+        assert!(parse("int32").contains("strconv.ParseInt(raw, 10, 32)"), "{}", parse("int32"));
+        assert!(parse("*int16").contains("strconv.ParseInt(raw, 10, 16)"), "{}", parse("*int16"));
+        assert!(parse("int64").contains("strconv.ParseInt(raw, 10, 64)"), "{}", parse("int64"));
+    }
+
+    #[test]
+    fn typescript_bad_request_carries_the_bad_request_message() {
+        let op = ApiOperation {
+            service: "Bookmarks".into(),
+            port: "BookmarkApi".into(),
+            method_name: "get".into(),
+            operation_id: "get".into(),
+            http_method: "GET".into(),
+            path: "/bookmarks/{id}".into(),
+            description: String::new(),
+            params: vec![],
+            body: None,
+            success: 200,
+            response: None,
+            errors: vec![],
+            file: "api.ts".into(),
+            line: 1,
+            args: vec![],
+            is_async: true,
+            fails: false,
+            error_type: None,
+            error_variants: vec![],
+        };
+        let contract = ApiContract {
+            title: "t".into(),
+            version: "1".into(),
+            operations: vec![op],
+            schemas: Default::default(),
+        };
+        let target = Target::TypeScript { import: "./api.js".into() };
+        let out = generate(&contract, "BookmarkApi", &target).unwrap();
+        let class = out.split("class BadRequest").nth(1).expect("BadRequest is defined");
+        let body = class.split("\n}\n").next().unwrap_or(class);
+        assert!(body.contains("super('Bad Request')"), "an empty message is not replaced by `??`, so the 400 body would be {{\"error\":\"\"}}: {body}");
+    }
+
+    #[test]
+    fn typescript_error_path_cannot_itself_throw() {
+        let op = ApiOperation {
+            service: "Bookmarks".into(),
+            port: "BookmarkApi".into(),
+            method_name: "get".into(),
+            operation_id: "get".into(),
+            http_method: "GET".into(),
+            path: "/bookmarks".into(),
+            description: String::new(),
+            params: vec![],
+            body: None,
+            success: 200,
+            response: None,
+            errors: vec![],
+            file: "api.ts".into(),
+            line: 1,
+            args: vec![],
+            is_async: true,
+            fails: false,
+            error_type: None,
+            error_variants: vec![],
+        };
+        let contract = ApiContract {
+            title: "t".into(),
+            version: "1".into(),
+            operations: vec![op],
+            schemas: Default::default(),
+        };
+        let target = Target::TypeScript { import: "./api.js".into() };
+        let out = generate(&contract, "BookmarkApi", &target).unwrap();
+        let body = out.split("function sendError").nth(1).expect("sendError is defined");
+        assert!(body.contains("headersSent"), "writeHead after headers were sent throws inside .catch: {body}");
+        assert!(body.contains("Number.isInteger(status)"), "42, 1.5 and NaN make writeHead throw: {body}");
+        assert!(body.contains("status >= 400 && status <= 599"), "1000 and 200 are not error codes: {body}");
+        assert!(body.contains("?.message"), "a thrown null has no `message`: {body}");
+    }
+
+    #[test]
+    fn typescript_path_parameter_with_bad_percent_escape_is_a_bad_request() {
+        let op = ApiOperation {
+            service: "Bookmarks".into(),
+            port: "BookmarkApi".into(),
+            method_name: "get".into(),
+            operation_id: "get".into(),
+            http_method: "GET".into(),
+            path: "/bookmarks/{id}".into(),
+            description: String::new(),
+            params: vec![],
+            body: None,
+            success: 200,
+            response: None,
+            errors: vec![],
+            file: "api.ts".into(),
+            line: 1,
+            args: vec![],
+            is_async: true,
+            fails: false,
+            error_type: None,
+            error_variants: vec![],
+        };
+        let contract = ApiContract {
+            title: "t".into(),
+            version: "1".into(),
+            operations: vec![op],
+            schemas: Default::default(),
+        };
+        let target = Target::TypeScript { import: "./api.js".into() };
+        let out = generate(&contract, "BookmarkApi", &target).unwrap();
+        assert!(!out.contains("= decodeURIComponent(g)"), "a bare decodeURIComponent throws URIError, answered 500");
+        let helper = out.split("function decodePathSegment").nth(1).expect("decoding goes through a helper");
+        let body = helper.split("\n}\n").next().unwrap_or(helper);
+        assert!(body.contains("catch") && body.contains("throw new BadRequest()"), "{body}");
+    }
+
+    #[test]
+    fn ts_literal_route_is_tried_before_a_parameterized_one() {
+        let mk = |name: &str, path: &str| ApiOperation {
+            service: "Bookmarks".into(),
+            port: "BookmarkApi".into(),
+            method_name: name.into(),
+            operation_id: name.into(),
+            http_method: "GET".into(),
+            path: path.into(),
+            description: String::new(),
+            params: vec![],
+            body: None,
+            success: 200,
+            response: None,
+            errors: vec![],
+            file: "api.ts".into(),
+            line: 1,
+            args: vec![],
+            is_async: true,
+            fails: false,
+            error_type: None,
+            error_variants: vec![],
+        };
+        let contract = ApiContract {
+            title: "t".into(),
+            version: "1".into(),
+            operations: vec![mk("get", "/bookmarks/{id}"), mk("search", "/bookmarks/search")],
+            schemas: Default::default(),
+        };
+        let target = Target::TypeScript { import: "./api.js".into() };
+        let out = generate(&contract, "BookmarkApi", &target).unwrap();
+        let literal = out.find("match('/bookmarks/search'").expect("literal route");
+        let param = out.find("match('/bookmarks/{id}'").expect("param route");
+        assert!(literal < param, "the literal route must be tried first");
+    }
+
+    #[test]
+    fn ts_boolean_input_other_than_true_or_false_is_a_400() {
+        assert_eq!(ts_convert("raw", &TypeRef::Boolean), "toBoolean(raw)");
+        let op = ApiOperation {
+            service: "Bookmarks".into(),
+            port: "BookmarkApi".into(),
+            method_name: "list".into(),
+            operation_id: "list".into(),
+            http_method: "GET".into(),
+            path: "/bookmarks".into(),
+            description: String::new(),
+            params: vec![],
+            body: None,
+            success: 200,
+            response: None,
+            errors: vec![],
+            file: "api.ts".into(),
+            line: 1,
+            args: vec![],
+            is_async: true,
+            fails: false,
+            error_type: None,
+            error_variants: vec![],
+        };
+        let contract = ApiContract { title: "t".into(), version: "1".into(), operations: vec![op], schemas: Default::default() };
+        let target = Target::TypeScript { import: "./api.js".into() };
+        let out = generate(&contract, "BookmarkApi", &target).unwrap();
+        let helper = out.split("function toBoolean").nth(1).expect("booleans go through a helper");
+        let body = helper.split("\n}\n").next().unwrap_or(helper);
+        assert!(body.contains("'true'") && body.contains("'false'") && body.contains("throw new BadRequest()"), "{body}");
+    }
+
+    #[test]
+    fn ts_integer_input_that_is_not_a_plain_integer_is_a_400() {
+        assert_eq!(ts_convert("raw", &TypeRef::Integer), "toInteger(raw)");
+        assert_eq!(ts_convert("raw", &TypeRef::Number), "toNumber(raw)");
+        let op = ApiOperation {
+            service: "Bookmarks".into(),
+            port: "BookmarkApi".into(),
+            method_name: "list".into(),
+            operation_id: "list".into(),
+            http_method: "GET".into(),
+            path: "/bookmarks".into(),
+            description: String::new(),
+            params: vec![],
+            body: None,
+            success: 200,
+            response: None,
+            errors: vec![],
+            file: "api.ts".into(),
+            line: 1,
+            args: vec![],
+            is_async: true,
+            fails: false,
+            error_type: None,
+            error_variants: vec![],
+        };
+        let contract = ApiContract { title: "t".into(), version: "1".into(), operations: vec![op], schemas: Default::default() };
+        let target = Target::TypeScript { import: "./api.js".into() };
+        let out = generate(&contract, "BookmarkApi", &target).unwrap();
+        let helper = out.split("function toInteger").nth(1).expect("integers go through a helper");
+        let body = helper.split("\n}\n").next().unwrap_or(helper);
+        assert!(body.contains("[0-9]+") && body.contains("isSafeInteger") && body.contains("throw new BadRequest()"), "{body}");
+    }
+
+    #[test]
+    fn ts_json_null_or_non_object_body_is_a_400_not_a_type_error() {
+        let arg = |name: &str, source: ArgSource| ApiArg { name: name.into(), written: "string".into(), source, ty: TypeRef::String, required: true };
+        let gen = |args: Vec<ApiArg>| {
+            let op = ApiOperation {
+                service: "Bookmarks".into(),
+                port: "BookmarkApi".into(),
+                method_name: "add".into(),
+                operation_id: "add".into(),
+                http_method: "POST".into(),
+                path: "/bookmarks".into(),
+                description: String::new(),
+                params: vec![],
+                body: None,
+                success: 201,
+                response: None,
+                errors: vec![],
+                file: "api.ts".into(),
+                line: 1,
+                args,
+                is_async: true,
+                fails: false,
+                error_type: None,
+                error_variants: vec![],
+            };
+            let contract = ApiContract { title: "t".into(), version: "1".into(), operations: vec![op], schemas: Default::default() };
+            generate(&contract, "BookmarkApi", &Target::TypeScript { import: "./api.js".into() }).unwrap()
+        };
+        let fn_body = |out: &str, name: &str| {
+            let helper = out.split(&format!("function {name}")).nth(1).unwrap_or_else(|| panic!("{name} is defined")).to_string();
+            helper.split("\n}\n").next().unwrap_or(&helper).to_string()
+        };
+        let fields = gen(vec![arg("url", ArgSource::BodyField("url".into()))]);
+        assert!(!fields.contains("(await readJson(req)) as Record<string, unknown>"), "an unchecked cast lets a `null` body reach `fields['url']`: TypeError, 500");
+        let object = fn_body(&fields, "readObject");
+        assert!(object.contains("typeof body !== 'object'") && object.contains("Array.isArray") && object.contains("throw new BadRequest()"), "{object}");
+        let whole = gen(vec![arg("input", ArgSource::Body)]);
+        let json = fn_body(&whole, "readJson");
+        assert!(json.contains("=== null") && json.contains("throw new BadRequest()"), "a `null` body must not reach the port: {json}");
+    }
+
+    #[test]
+    fn request_bodies_are_size_capped_in_go_and_ts() {
+        let arg = |source: ArgSource| ApiArg { name: "input".into(), written: "string".into(), source, ty: TypeRef::String, required: true };
+        let gen = |args: Vec<ApiArg>, target: Target| {
+            let op = ApiOperation {
+                service: "Bookmarks".into(),
+                port: "BookmarkApi".into(),
+                method_name: "add".into(),
+                operation_id: "add".into(),
+                http_method: "POST".into(),
+                path: "/bookmarks".into(),
+                description: String::new(),
+                params: vec![],
+                body: None,
+                success: 201,
+                response: None,
+                errors: vec![],
+                file: "api.ts".into(),
+                line: 1,
+                args,
+                is_async: true,
+                fails: false,
+                error_type: None,
+                error_variants: vec![],
+            };
+            let contract = ApiContract { title: "t".into(), version: "1".into(), operations: vec![op], schemas: Default::default() };
+            generate(&contract, "BookmarkApi", &target).unwrap()
+        };
+        for source in [ArgSource::Body, ArgSource::BodyField("input".into())] {
+            let go = gen(vec![arg(source)], Target::Go { import: "example.com/x/ports".into(), package: "ports".into() });
+            assert!(!go.contains("json.NewDecoder(r.Body)"), "an unbounded body read is an OOM: {go}");
+            assert!(go.contains("decodeBody(w, r, &") && go.contains("http.MaxBytesReader(w, r.Body, maxBodyBytes)"), "{go}");
+        }
+        let ts = gen(vec![arg(ArgSource::Body)], Target::TypeScript { import: "./api.js".into() });
+        let read = ts.split("function readJson").nth(1).unwrap().split("\n}\n").next().unwrap();
+        assert!(read.contains("MAX_BODY_BYTES") && read.contains("throw new PayloadTooLarge()"), "{read}");
+        assert!(read.find("PayloadTooLarge").unwrap() < read.find("chunks.push").unwrap(), "the cap must be checked before buffering: {read}");
     }
 }
