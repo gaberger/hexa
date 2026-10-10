@@ -139,11 +139,18 @@
     "b9c6ffc9-fa43-5885-8b3b-b05a86188c1c": {
       "adr": "ADR-2610100005",
       "evidence": "HEXA_TEST_NPM=1 HEXA_TEST_CARGO_NET=1 cargo test -p hexa-cli --test an_adapter_is_generated_from_the_contract 2>&1 | tail -3",
-      "gate": "cargo test -p hexa-cli --test an_adapter_is_generated_from_the_contract",
-      "pid": 96,
-      "pid_start": 355,
-      "stage": "done",
-      "updated": "2026-10-09T23:48:52.222661327+00:00"
+      "gate": "cargo test -q -j 4 -p hexa-analysis --lib && cargo test -q -j 4 -p hexa-cli --test a_tagged_port_is_the_api_contract --test the_contract_is_proven_against_the_server --test an_adapter_is_generated_from_the_contract",
+      "pid": 97,
+      "pid_start": 363,
+      "running": {
+        "message": "4 lenses on hexa-analysis/src/api_contract.rs, in parallel; any that fall back to the local reviewer take their turn",
+        "phase": "hunt",
+        "started": "2026-10-10T00:39:39.489339243+00:00",
+        "updated": "2026-10-10T00:39:39.495779594+00:00",
+        "verb": "harden"
+      },
+      "stage": "harden",
+      "updated": "2026-10-10T00:39:39.496017839+00:00"
     }
   }
 }
