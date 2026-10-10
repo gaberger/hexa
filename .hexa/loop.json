@@ -143,14 +143,14 @@
       "pid": 97,
       "pid_start": 363,
       "running": {
-        "message": "4 lenses on hexa-analysis/src/api_adapter.rs, in parallel; any that fall back to the local reviewer take their turn",
+        "message": "4 lenses on hexa-analysis/src/treesitter_api.rs, in parallel; any that fall back to the local reviewer take their turn",
         "phase": "hunt",
-        "started": "2026-10-10T00:48:55.084609237+00:00",
-        "updated": "2026-10-10T00:48:55.091185894+00:00",
+        "started": "2026-10-10T01:00:26.806679786+00:00",
+        "updated": "2026-10-10T01:00:26.812791590+00:00",
         "verb": "harden"
       },
       "stage": "harden",
-      "updated": "2026-10-10T00:48:55.091557832+00:00"
+      "updated": "2026-10-10T01:00:26.813026988+00:00"
     }
   }
 }
