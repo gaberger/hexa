@@ -15,12 +15,16 @@
 use tree_sitter::Node;
 
 use super::ports::{
-    capitalize, lower_camel, split_words, AnalysisError, ApiFacts, ApiMethodDecl, ApiPortDecl, ErrorChannel,
+    AnalysisError, ApiFacts, ApiMethodDecl, ApiPortDecl, ErrorChannel,
     FieldDecl, Language, TypeBody, TypeDecl, TypeRef, VariantDecl, WrittenParam,
 };
 
 const API_TAG: &str = "@hexa:api";
 const STATUS_TAG: &str = "@hexa:status";
+
+/// Deepest tree this module will walk. The walkers and type lowerers recurse
+/// once per level, so a deeper file is refused instead of overflowing the stack.
+const MAX_TREE_DEPTH: usize = 512;
 
 /// Read `source` for its tagged ports, its type declarations and its stray tags.
 pub fn extract(source: &str, lang: Language) -> Result<ApiFacts, AnalysisError> {
@@ -39,6 +43,9 @@ pub fn extract(source: &str, lang: Language) -> Result<ApiFacts, AnalysisError> 
         .parse(source, None)
         .ok_or_else(|| AnalysisError::Other("tree-sitter parse returned None".to_string()))?;
     let root = tree.root_node();
+    if tree_depth(root) > MAX_TREE_DEPTH {
+        return Err(AnalysisError::Other(format!("syntax tree nests deeper than {MAX_TREE_DEPTH} levels")));
+    }
     let mut x = Extractor { src: source, facts: ApiFacts::default(), consumed: Vec::new() };
     x.walk(root, lang);
 
@@ -53,6 +60,26 @@ pub fn extract(source: &str, lang: Language) -> Result<ApiFacts, AnalysisError> 
         .collect();
     x.facts.stray_tags.sort_unstable();
     Ok(x.facts)
+}
+
+/// The depth of `root`'s tree, counted without recursion so that measuring a
+/// pathological tree cannot itself overflow the stack.
+fn tree_depth(root: Node) -> usize {
+    let mut cursor = root.walk();
+    let (mut depth, mut deepest) = (1, 1);
+    loop {
+        if cursor.goto_first_child() {
+            depth += 1;
+            deepest = deepest.max(depth);
+        } else {
+            while !cursor.goto_next_sibling() {
+                if !cursor.goto_parent() {
+                    return deepest;
+                }
+                depth -= 1;
+            }
+        }
+    }
 }
 
 /// A file with no tag still declares types a tagged port elsewhere may
@@ -133,6 +160,14 @@ fn last_row(n: Node) -> usize {
     }
 }
 
+/// Whether a comment sits on the row where the code before it ends
+/// (`fn a(); // note`): it annotates that code, not the item below.
+fn trails_code(comment: Node) -> bool {
+    comment
+        .prev_sibling()
+        .is_some_and(|p| !is_comment(p.kind()) && last_row(p) == comment.start_position().row)
+}
+
 fn doc_of(node: Node, src: &str) -> Doc {
     let anchor = match node.parent() {
         Some(p) if p.kind() == "export_statement" => p,
@@ -145,7 +180,7 @@ fn doc_of(node: Node, src: &str) -> Doc {
     while let Some(prev) = cur.prev_sibling() {
         if prev.kind() == "attribute_item" {
             attrs.push(src[prev.byte_range()].to_string());
-        } else if is_comment(prev.kind()) && last_row(prev) + 1 >= top {
+        } else if is_comment(prev.kind()) && last_row(prev) + 1 >= top && !trails_code(prev) {
             comments.push(prev);
         } else {
             break;
@@ -332,16 +367,18 @@ impl<'s> Extractor<'s> {
                         "attribute_item" => attrs.push(self.text(ch)),
                         "field_declaration" => {
                             let skip = attrs.iter().any(|a| serde_flag(a, "skip") || serde_flag(a, "skip_serializing"));
+                            // A flattened field has no key of its own: serde inlines its type's fields.
+                            let flatten = attrs.iter().any(|a| serde_flag(a, "flatten"));
                             let renamed = attrs.iter().find_map(|a| serde_value(a, "rename"));
                             attrs.clear();
-                            if skip {
+                            if skip || flatten {
                                 continue;
                             }
                             let (Some(fname), Some(ty)) = (self.field_text(ch, "name"), ch.child_by_field_name("type"))
                             else {
                                 continue;
                             };
-                            let wire_name = renamed.unwrap_or_else(|| rename(fname, rename_all.as_deref()));
+                            let wire_name = renamed.unwrap_or_else(|| rename(fname, rename_all.as_deref(), false));
                             fields.push(FieldDecl {
                                 wire_name,
                                 ty: lower_rust(ty, self.src),
@@ -382,7 +419,7 @@ impl<'s> Extractor<'s> {
                     .attrs
                     .iter()
                     .find_map(|a| serde_value(a, "rename"))
-                    .unwrap_or_else(|| rename(vname, rename_all.as_deref()));
+                    .unwrap_or_else(|| rename(vname, rename_all.as_deref(), true));
                 variants.push(VariantDecl {
                     name: wire,
                     ident: vname.to_string(),
@@ -439,6 +476,19 @@ impl<'s> Extractor<'s> {
                     let tag = self.field_text(f, "tag").unwrap_or("");
                     let mut c = f.walk();
                     let names: Vec<&str> = f.children_by_field_name("name", &mut c).map(|nm| self.text(nm)).collect();
+                    if names.is_empty() {
+                        // Embedded: encoding/json inlines an untagged one, which needs the embedded
+                        // type's fields. Say so rather than drop them; a tagged one is a plain field.
+                        let written = self.text(fty);
+                        let base = written.trim_start_matches('*').rsplit('.').next().unwrap_or(written);
+                        let (wire, ty, optional) = match go_json_tag(tag) {
+                            Some((w, _)) if w == "-" => continue,
+                            Some((w, o)) if !w.is_empty() => (w, lower_go(fty, self.src), o),
+                            _ => (base.to_string(), TypeRef::Unsupported(format!("embedded {written}")), false),
+                        };
+                        fields.push(FieldDecl { wire_name: wire, ty, optional, line: line_of(f) });
+                        continue;
+                    }
                     for fname in names {
                         if !fname.starts_with(|ch: char| ch.is_ascii_uppercase()) {
                             continue;
@@ -529,7 +579,7 @@ fn type_args(n: Node) -> Vec<Node> {
 
 fn scalar(name: &str) -> Option<TypeRef> {
     Some(match name {
-        "String" | "str" | "char" | "string" | "rune" => TypeRef::String,
+        "String" | "str" | "char" | "string" => TypeRef::String,
         "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64" | "u128" | "usize"
         | "int" | "int8" | "int16" | "int32" | "int64" | "uint" | "uint8" | "uint16" | "uint32" | "uint64"
         | "byte" | "uintptr" => TypeRef::Integer,
@@ -607,16 +657,55 @@ fn serde_parts(attr: &str) -> impl Iterator<Item = &str> {
     inner.split(',')
 }
 
-/// A Rust name under serde's `rename_all`.
-fn rename(name: &str, rule: Option<&str>) -> String {
-    let words: Vec<String> = split_words(name);
+/// A Rust name under serde's `rename_all`. Mirrors serde_derive's own rules,
+/// which differ for fields (`snake_case` idents) and variants (`PascalCase`
+/// idents) and do not treat acronyms as words: `GetURL` is `getURL`,
+/// `get_u_r_l` and `GET_U_R_L`.
+fn rename(name: &str, rule: Option<&str>, variant: bool) -> String {
+    // serde drops the `r#` of a raw identifier before it applies any rule.
+    let name = name.strip_prefix("r#").unwrap_or(name);
+    let snake = || {
+        if !variant {
+            return name.to_string();
+        }
+        let mut out = String::new();
+        for (i, ch) in name.char_indices() {
+            if i > 0 && ch.is_uppercase() {
+                out.push('_');
+            }
+            out.extend(ch.to_lowercase());
+        }
+        out
+    };
+    let pascal = || {
+        if variant {
+            return name.to_string();
+        }
+        let mut out = String::new();
+        let mut up = true;
+        for ch in name.chars() {
+            if ch == '_' {
+                up = true;
+            } else if up {
+                out.extend(ch.to_uppercase());
+                up = false;
+            } else {
+                out.push(ch);
+            }
+        }
+        out
+    };
     match rule {
-        Some("camelCase") => lower_camel(name),
-        Some("PascalCase") => words.iter().map(|w| capitalize(w)).collect(),
-        Some("snake_case") => words.join("_"),
-        Some("SCREAMING_SNAKE_CASE") => words.join("_").to_uppercase(),
-        Some("kebab-case") => words.join("-"),
-        Some("SCREAMING-KEBAB-CASE") => words.join("-").to_uppercase(),
+        Some("camelCase") => {
+            let p = pascal();
+            let mut c = p.chars();
+            c.next().map_or(String::new(), |f| f.to_lowercase().chain(c).collect())
+        }
+        Some("PascalCase") => pascal(),
+        Some("snake_case") => snake(),
+        Some("SCREAMING_SNAKE_CASE") => snake().to_uppercase(),
+        Some("kebab-case") => snake().replace('_', "-"),
+        Some("SCREAMING-KEBAB-CASE") => snake().to_uppercase().replace('_', "-"),
         Some("lowercase") => name.to_lowercase(),
         Some("UPPERCASE") => name.to_uppercase(),
         _ => name.to_string(),
@@ -630,6 +719,8 @@ fn lower_go(n: Node, src: &str) -> TypeRef {
     match n.kind() {
         "type_identifier" => match text {
             "error" | "any" => TypeRef::Unsupported(text.to_string()),
+            // Go's `rune` is an alias for int32; encoding/json writes it as a number.
+            "rune" => TypeRef::Integer,
             _ => scalar(text).unwrap_or_else(|| TypeRef::Named(text.to_string())),
         },
         "qualified_type" => {
@@ -639,6 +730,11 @@ fn lower_go(n: Node, src: &str) -> TypeRef {
         "pointer_type" => named_children(n)
             .first()
             .map_or(TypeRef::Unsupported(text.into()), |t| TypeRef::Optional(Box::new(lower_go(*t, src)))),
+        // encoding/json writes `[]byte` (and its alias `[]uint8`) as a base64 string,
+        // not an array of numbers. A fixed `[N]byte` stays an array.
+        "slice_type" if n.child_by_field_name("element").is_some_and(|e| {
+            e.kind() == "type_identifier" && matches!(&src[e.byte_range()], "byte" | "uint8")
+        }) => TypeRef::String,
         "slice_type" | "array_type" => n
             .child_by_field_name("element")
             .map_or(TypeRef::Unsupported(text.into()), |e| TypeRef::Array(Box::new(lower_go(e, src)))),
@@ -693,7 +789,14 @@ fn go_result(result: Option<Node>, src: &str) -> (TypeRef, ErrorChannel) {
         None => Vec::new(),
         Some(r) if r.kind() == "parameter_list" => named_children(r)
             .into_iter()
-            .filter_map(|p| p.child_by_field_name("type"))
+            .filter_map(|p| {
+                let ty = p.child_by_field_name("type")?;
+                // `(a, b T)` is one declaration but two results.
+                let mut c = p.walk();
+                let names = p.children_by_field_name("name", &mut c).count();
+                Some(std::iter::repeat(ty).take(names.max(1)))
+            })
+            .flatten()
             .collect(),
         Some(r) => vec![r],
     };
@@ -825,6 +928,7 @@ fn ts_fields(body: Node, src: &str) -> Vec<FieldDecl> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::lower_camel;
 
     #[test]
     fn names_split_into_the_same_words_in_every_case() {
@@ -833,9 +937,43 @@ mod tests {
         assert_eq!(lower_camel("listByTag"), "listByTag");
         assert_eq!(lower_camel("GetURL"), "getUrl");
         assert_eq!(lower_camel("ID"), "id");
-        assert_eq!(rename("saved_at", Some("camelCase")), "savedAt");
-        assert_eq!(rename("saved_at", Some("kebab-case")), "saved-at");
-        assert_eq!(rename("saved_at", None), "saved_at");
+        assert_eq!(rename("saved_at", Some("camelCase"), false), "savedAt");
+        assert_eq!(rename("saved_at", Some("kebab-case"), false), "saved-at");
+        assert_eq!(rename("saved_at", None, false), "saved_at");
+    }
+
+    #[test]
+    fn raw_identifiers_lose_their_prefix_on_the_wire() {
+        assert_eq!(rename("r#type", None, false), "type");
+        assert_eq!(rename("r#type", Some("camelCase"), false), "type");
+        assert_eq!(rename("r#Type", None, true), "Type");
+        let src = "pub struct S { pub r#type: String }\npub enum E { r#Match, Plain }\n";
+        let facts = extract(src, Language::Rust).unwrap();
+        let t = |n: &str| facts.types.iter().find(|t| t.name == n).unwrap().body.clone();
+        let TypeBody::Struct(f) = t("S") else { panic!() };
+        assert_eq!(f[0].wire_name, "type");
+        let TypeBody::Enum(v) = t("E") else { panic!() };
+        assert_eq!(v[0].name, "Match");
+    }
+
+    #[test]
+    fn flattened_fields_have_no_wire_key_of_their_own() {
+        let src = "pub struct S { pub id: u32, #[serde(flatten)] pub inner: Inner }\n";
+        let facts = extract(src, Language::Rust).unwrap();
+        let TypeBody::Struct(f) = &facts.types.iter().find(|t| t.name == "S").unwrap().body else { panic!() };
+        let names: Vec<&str> = f.iter().map(|f| f.wire_name.as_str()).collect();
+        assert_eq!(names, ["id"]);
+    }
+
+    #[test]
+    fn rename_all_follows_serde_for_acronyms() {
+        assert_eq!(rename("GetURL", Some("camelCase"), true), "getURL");
+        assert_eq!(rename("GetURL", Some("snake_case"), true), "get_u_r_l");
+        assert_eq!(rename("GetURL", Some("SCREAMING_SNAKE_CASE"), true), "GET_U_R_L");
+        assert_eq!(rename("GetURL", Some("kebab-case"), true), "get-u-r-l");
+        assert_eq!(rename("GetURL", Some("PascalCase"), true), "GetURL");
+        assert_eq!(rename("user_id", Some("PascalCase"), false), "UserId");
+        assert_eq!(rename("user_id", Some("SCREAMING_SNAKE_CASE"), false), "USER_ID");
     }
 
     #[test]
@@ -854,11 +992,69 @@ mod tests {
     }
 
     #[test]
+    fn a_trailing_comment_is_not_the_doc_of_the_next_member() {
+        let src = "/// @hexa:api GET /t\npub trait T {\n    fn a(&self); // @hexa:api GET /a\n    fn b(&self);\n}\n";
+        let facts = extract(src, Language::Rust).unwrap();
+        let m = &facts.ports[0].methods;
+        assert_eq!(m[1].name, "b");
+        assert_eq!(m[1].tag, None);
+        assert_eq!(m[1].doc, "");
+        let ts = "/** @hexa:api GET /t */\ninterface T {\n  a(): void; // note\n  b(): void;\n}\n";
+        let facts = extract(ts, Language::TypeScript).unwrap();
+        assert_eq!(facts.ports[0].methods[1].doc, "");
+    }
+
+    #[test]
     fn a_tag_on_a_free_function_is_stray() {
         let src = "/// @hexa:api GET /health\npub fn health() {}\n";
         let facts = extract(src, Language::Rust).unwrap();
         assert_eq!(facts.stray_tags, vec![1]);
         assert!(facts.ports.is_empty());
+    }
+
+    #[test]
+    fn a_go_rune_is_an_integer_on_the_wire() {
+        let src = "package p\ntype T struct { Rune rune `json:\"rune\"` }\n";
+        let facts = extract(src, Language::Go).unwrap();
+        let TypeBody::Struct(f) = &facts.types.iter().find(|t| t.name == "T").unwrap().body else { panic!() };
+        assert_eq!(f[0].ty, TypeRef::Integer);
+    }
+
+    #[test]
+    fn a_go_byte_slice_is_a_base64_string_on_the_wire() {
+        let src = "package p\ntype T struct {\n\tA []byte `json:\"a\"`\n\tB []uint8 `json:\"b\"`\n\tC [4]byte `json:\"c\"`\n\tD []int `json:\"d\"`\n}\n";
+        let facts = extract(src, Language::Go).unwrap();
+        let TypeBody::Struct(f) = &facts.types.iter().find(|t| t.name == "T").unwrap().body else { panic!() };
+        assert_eq!(f[0].ty, TypeRef::String);
+        assert_eq!(f[1].ty, TypeRef::String);
+        assert_eq!(f[2].ty, TypeRef::Array(Box::new(TypeRef::Integer)));
+        assert_eq!(f[3].ty, TypeRef::Array(Box::new(TypeRef::Integer)));
+    }
+
+    #[test]
+    fn a_go_embedded_struct_is_not_silently_dropped() {
+        let src = "package p\ntype T struct {\n\tBase\n\t*pkg.Other\n\tTagged `json:\"t\"`\n\tSkip `json:\"-\"`\n\tName string\n}\n";
+        let facts = extract(src, Language::Go).unwrap();
+        let TypeBody::Struct(f) = &facts.types.iter().find(|t| t.name == "T").unwrap().body else { panic!() };
+        let got: Vec<(&str, &TypeRef)> = f.iter().map(|f| (f.wire_name.as_str(), &f.ty)).collect();
+        assert_eq!(got.len(), 4, "{got:?}");
+        assert_eq!(got[0], ("Base", &TypeRef::Unsupported("embedded Base".into())));
+        assert_eq!(got[1], ("Other", &TypeRef::Unsupported("embedded pkg.Other".into())));
+        assert_eq!(got[2], ("t", &TypeRef::Named("Tagged".into())));
+        assert_eq!(got[3].0, "Name");
+    }
+
+    #[test]
+    fn a_grouped_go_result_declaration_counts_every_name() {
+        let src = "package p\n// @hexa:api GET /s\ntype S interface {\n\tA() (x, y int)\n\tB() (a, b string, err error)\n\tC() (n int, err error)\n\tD() (int, error)\n}\n";
+        let facts = extract(src, Language::Go).unwrap();
+        let m = &facts.ports[0].methods;
+        let several = TypeRef::Unsupported("several results".into());
+        assert_eq!(m[0].returns, several);
+        assert_eq!(m[1].returns, several);
+        assert_eq!(m[1].error, ErrorChannel::Opaque);
+        assert_eq!(m[2].returns, TypeRef::Integer);
+        assert_eq!(m[3].returns, TypeRef::Integer);
     }
 
     #[test]
@@ -875,5 +1071,25 @@ mod tests {
         assert_eq!(serde_value(a, "rename"), None);
         assert!(serde_flag("#[serde(skip)]", "skip"));
         assert!(!serde_flag("#[serde(skip_serializing_if = \"x\")]", "skip"));
+    }
+
+    #[test]
+    fn a_pathologically_deep_tree_is_an_error_not_a_stack_overflow() {
+        let n = 50_000;
+        let cases = [
+            (Language::Rust, format!("type T = {}u8{};\n", "Vec<".repeat(n), ">".repeat(n))),
+            (Language::TypeScript, format!("type T = {}number{};\n", "Array<".repeat(n), ">".repeat(n))),
+            (Language::TypeScript, format!("type T = {}number;\n", "number | ".repeat(n))),
+            (Language::Go, format!("package p\ntype T {}int\n", "[]".repeat(n))),
+        ];
+        for (lang, src) in cases {
+            assert!(extract(&src, lang).is_err(), "{lang:?} should be refused");
+        }
+    }
+
+    #[test]
+    fn ordinary_nesting_is_still_read() {
+        let src = "type T = Vec<Option<Vec<u8>>>;\n";
+        assert_eq!(extract(src, Language::Rust).unwrap().types.len(), 1);
     }
 }
