@@ -143,14 +143,14 @@
       "pid": 97,
       "pid_start": 363,
       "running": {
-        "message": "4 lenses on hexa-analysis/src/api_contract.rs, in parallel; any that fall back to the local reviewer take their turn",
-        "phase": "hunt",
-        "started": "2026-10-10T00:39:39.489339243+00:00",
-        "updated": "2026-10-10T00:39:39.495779594+00:00",
+        "message": "5 claims, default refute, in parallel; any that fall back to the local reviewer take their turn",
+        "phase": "verify",
+        "started": "2026-10-10T00:44:55.609116619+00:00",
+        "updated": "2026-10-10T00:45:25.238613147+00:00",
         "verb": "harden"
       },
       "stage": "harden",
-      "updated": "2026-10-10T00:39:39.496017839+00:00"
+      "updated": "2026-10-10T00:45:25.238778983+00:00"
     }
   }
 }
