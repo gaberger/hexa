@@ -1,4 +1,5 @@
 pub mod adr;
+pub mod api;
 pub mod assets_cmd;
 pub mod bootstrap;
 pub mod ci;

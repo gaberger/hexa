@@ -64,6 +64,9 @@ struct ScoreItems {
     dead: Vec<String>,
     unused: Vec<String>,
     coverage: hexa_analysis::ports::Coverage,
+    /// The API contract's errors as `file:line: message`, and its unserved ports.
+    api_errors: Vec<String>,
+    api_unserved: Vec<String>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -370,6 +373,8 @@ pub async fn run(
                         .collect::<Vec<_>>(),
                     unused: result.unused_ports.clone(),
                     coverage: result.coverage.clone(),
+                    api_errors: result.api.errors.iter().map(|e| e.to_string()).collect(),
+                    api_unserved: result.api.unserved.clone(),
                 });
                 Some(result.health_score as u64)
             }
@@ -429,7 +434,9 @@ pub async fn run(
                 score_colored,
             );
         }
-        if let Some(ScoreItems { violations, cycles, dead, unused, coverage }) = &score_components.clone().filter(|_| !nothing_parsed) {
+        if let Some(ScoreItems { violations, cycles, dead, unused, coverage, api_errors, api_unserved }) =
+            &score_components.clone().filter(|_| !nothing_parsed)
+        {
             println!(
                 "    violations {} · cycles {} · dead exports {} · unused ports {}",
                 violations,
@@ -481,9 +488,27 @@ pub async fn run(
             for u in unused.iter().take(8) {
                 println!("      unused port   {}", u);
             }
+            // ADR-2610092245 §6: an unreadable contract costs what a rule
+            // error costs; a declared API nothing serves, what an unused port does.
+            for e in api_errors.iter().take(8) {
+                println!("      api error     {}", e);
+            }
+            if api_errors.len() > 8 {
+                println!("      … and {} more API errors (`hexa api list` names them all)", api_errors.len() - 8);
+            }
+            for u in api_unserved.iter().take(8) {
+                println!("      api unserved  {} (tagged @hexa:api; no primary adapter drives it)", u);
+            }
             println!("    {}", SCORE_FORMULA.dimmed());
             println!("    {}", GRADE_BANDS.dimmed());
-            if *violations > 0 || !cycles.is_empty() || !dead.is_empty() || !unused.is_empty() || !coverage.unclassified.is_empty() {
+            if *violations > 0
+                || !cycles.is_empty()
+                || !dead.is_empty()
+                || !unused.is_empty()
+                || !coverage.unclassified.is_empty()
+                || !api_errors.is_empty()
+                || !api_unserved.is_empty()
+            {
                 // Said here because it was not done: an agent relayed "B, 87,
                 // unchanged" five times and fixed only the two items its own
                 // diff had added. The grade is a property of the tree.
@@ -1947,7 +1972,7 @@ fn check_adr_compliance_inner(root: &Path, announce: bool) -> AdrCompliance {
 /// carried in `--json` under `explain`, so a person and a model read the
 /// same sentence.
 const SCORE_FORMULA: &str =
-    "score = 100 − 10·(violations + rule errors) − 15·cycles − dead exports (max 20) − unused ports (max 10), capped at the % of files in a layer (A+ needs all)";
+    "score = 100 − 10·(violations + rule errors + api errors) − 15·cycles − dead exports (max 20) − (unused ports + api unserved) (max 10), capped at the % of files in a layer (A+ needs all)";
 const GRADE_BANDS: &str = "A+ 95–100 · A 90–94 · B 80–89 · C 70–79 · D 60–69 · F below 60";
 const HEALTH_NOTE: &str = "read next to the grade; none of these move the score";
 
@@ -1958,9 +1983,9 @@ const HEALTH_NOTE: &str = "read next to the grade; none of these move the score"
 fn explain_json() -> serde_json::Value {
     serde_json::json!({
         "score": {
-            "formula": "min(100 - 10*(violations + rule_errors) - 15*circular_deps - min(dead_exports, 20) - min(unused_ports, 10), coverage_ceiling) where coverage_ceiling = 100 if every file has a layer, else min(floor(classified*100/total), 94)",
+            "formula": "min(100 - 10*(violations + rule_errors + api_errors) - 15*circular_deps - min(dead_exports, 20) - min(unused_ports + api_unserved, 10), coverage_ceiling) where coverage_ceiling = 100 if every file has a layer, else min(floor(classified*100/total), 94)",
             "grade_bands": { "A+": "95-100", "A": "90-94", "B": "80-89", "C": "70-79", "D": "60-69", "F": "0-59" },
-            "in_score": ["violations", "rule_errors", "circular_deps", "dead_exports", "unused_ports", "coverage"],
+            "in_score": ["violations", "rule_errors", "api_errors", "circular_deps", "dead_exports", "unused_ports", "api_unserved", "coverage"],
             "not_in_score": ["cohesion", "duplication", "god_types", "dead_layers", "orphans"]
         },
         "components": {
@@ -1988,6 +2013,16 @@ fn explain_json() -> serde_json::Value {
                 "weight": 1, "cap": 10,
                 "meaning": "a port that no adapter or use case names",
                 "fix": "wire an adapter to it, or delete the port"
+            },
+            "api_errors": {
+                "weight": 10,
+                "meaning": "an @hexa:api contract that cannot be read: a tag outside a driving port in ports/, a malformed tag, a path parameter no argument fills, a type with no schema (ADR-2610092245)",
+                "fix": "`hexa api list` names each one with its file and line"
+            },
+            "api_unserved": {
+                "weight": 1, "cap": 10, "shared_cap_with": "unused_ports",
+                "meaning": "an @hexa:api port that no primary adapter names: the API is declared and nothing serves it",
+                "fix": "drive the port from a primary adapter, or remove its tag"
             }
         },
         "health": {
@@ -2122,8 +2157,13 @@ async fn run_json(root: &Path, strict: bool, adr_compliance_only: bool) -> anyho
                 "circular_deps": deep.circular_deps.len(),
                 "dead_exports": deep.dead_exports.len(),
                 "unused_ports": deep.unused_ports.len(),
+                "api_errors": deep.api.errors.len(),
+                "api_unserved": deep.api.unserved.len(),
                 "coverage_ceiling": deep.coverage.ceiling(),
             });
+            // The API contract's findings, each traceable to a line
+            // (ADR-2610092245 §6).
+            result["api"] = serde_json::json!(deep.api);
             // And the items themselves, so a count can be checked. This
             // held for two of the four inputs and not for the two that
             // carry the most weight: `violations` below is the import-scan

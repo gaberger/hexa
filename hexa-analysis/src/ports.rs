@@ -12,8 +12,10 @@ use super::domain::{DeadExport, DependencyViolation};
 /// through the port rather than the domain — the convention hexa's own
 /// scaffold emits (`pub use crate::domain::Count as CountValue`).
 pub use super::domain::{
-    ArchAnalysisResult, Coverage, ExportDeclaration, ExportKind, HexLayer, ImportStatement, ItemCounts, Language,
-    ModuleReference, ReferenceKind,
+    ConformanceReport, OperationVerdict, ProbeRequest, ProbeResponse, Verdict,
+    capitalize, lower_camel, split_words, ApiFacts, ApiMethodDecl, ApiPortDecl, ArchAnalysisResult, Coverage, ErrorChannel, ExportDeclaration,
+    ExportKind, FieldDecl, HexLayer, ImportStatement, ItemCounts, Language, ModuleReference, ReferenceKind,
+    TypeBody, TypeDecl, TypeRef, VariantDecl, WrittenParam,
 };
 
 // ── Error Type ───────────────────────────────────────────
@@ -106,6 +108,26 @@ pub trait AstPort: Send + Sync {
         let _ = (path, source, lang);
         Ok(std::collections::HashMap::new())
     }
+
+    /// What the file says about the API (ADR-2610092245): its `@hexa:api`
+    /// ports with their signatures lowered to [`TypeRef`]s, every type it
+    /// declares with wire names already decided by the language's rules, and
+    /// the line of each tag that sits on neither a port nor a port's method.
+    /// The contract builder, a use case, resolves names across files.
+    fn extract_api(&self, path: &Path, source: &str, lang: Language) -> Result<ApiFacts, AnalysisError> {
+        let _ = (path, source, lang);
+        Ok(ApiFacts::default())
+    }
+}
+
+// ── HTTP Probe Port ──────────────────────────────────────
+
+/// Send one request to the server under test (ADR-2610092329). The contract
+/// test is a use case; the network is behind this.
+#[async_trait]
+pub trait HttpProbe: Send + Sync {
+    /// The answer, or why there was none (refused, timed out).
+    async fn send(&self, request: &ProbeRequest) -> Result<ProbeResponse, String>;
 }
 
 // ── Architecture Analysis Port ───────────────────────────

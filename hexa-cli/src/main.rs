@@ -204,6 +204,11 @@ enum Commands {
         #[command(subcommand)]
         action: MemoryAction,
     },
+    /// The API contract: OpenAPI from @hexa:api-tagged driving ports (spec, check, list)
+    Api {
+        #[command(subcommand)]
+        action: commands::api::ApiAction,
+    },
     /// Where this project's work stands: Decide → Gate → Build → Harden
     Loop {
         #[command(subcommand)]
@@ -441,6 +446,7 @@ async fn run() -> anyhow::Result<()> {
             };
             commands::memory::run(action, scope).await
         }
+        Commands::Api { action } => commands::api::run(action).await,
         Commands::Loop { action } => commands::loop_cmd::run(action).await,
         Commands::Spend(args) => commands::spend_cmd::run(args).await,
         Commands::Adr { action } => commands::adr::run(action).await,

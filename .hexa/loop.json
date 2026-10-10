@@ -135,6 +135,16 @@
       "pid_start": 26669617,
       "stage": "build",
       "updated": "2026-09-16T21:37:14.436969878+00:00"
+    },
+    "b9c6ffc9-fa43-5885-8b3b-b05a86188c1c": {
+      "adr": "ADR-2610100005",
+      "evidence": "HEXA_TEST_NPM=1 HEXA_TEST_CARGO_NET=1 cargo test -p hexa-cli --test an_adapter_is_generated_from_the_contract 2>&1 | tail -3",
+      "gate": "cargo test -q -j 4 -p hexa-analysis --lib && cargo test -q -j 4 -p hexa-cli --test a_tagged_port_is_the_api_contract --test the_contract_is_proven_against_the_server --test an_adapter_is_generated_from_the_contract",
+      "pid": 97,
+      "pid_start": 363,
+      "running": null,
+      "stage": "harden",
+      "updated": "2026-10-10T01:09:56.959702193+00:00"
     }
   }
 }
