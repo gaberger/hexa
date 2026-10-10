@@ -216,7 +216,20 @@ fn judge(op: &ApiOperation, contract: &ApiContract, status: u16, body: &str) -> 
         };
         let mut errors = Vec::new();
         validate(&v, t, "$", contract, &mut errors);
-        return if errors.is_empty() { (Verdict::Proven, Vec::new()) } else { (Verdict::Violation, errors) };
+        if !errors.is_empty() {
+            return (Verdict::Violation, errors);
+        }
+        // An empty list fits any item schema, so it checked nothing the
+        // contract says about the items: valid, and proof of nothing.
+        if matches!(t, TypeRef::Array(_)) && v.as_array().is_some_and(Vec::is_empty) {
+            return (
+                Verdict::Unproven,
+                vec![format!(
+                    "answered {status} with an empty list: nothing to check its items against. An earlier create should have made one; check it, or give inputs in --examples"
+                )],
+            );
+        }
+        return (Verdict::Proven, Vec::new());
     }
     if op.errors.contains(&status) {
         return (
@@ -352,6 +365,35 @@ mod tests {
     #[test]
     fn encoding_keeps_unreserved_characters() {
         assert_eq!(encode("a b/c-d"), "a%20b%2Fc-d");
+    }
+
+    #[test]
+    fn an_empty_list_is_unproven_and_a_full_one_is_judged() {
+        let c = contract();
+        let op = ApiOperation {
+            service: "s".into(),
+            port: "P".into(),
+            method_name: "list".into(),
+            operation_id: "list".into(),
+            http_method: "GET".into(),
+            path: "/b".into(),
+            description: String::new(),
+            params: vec![],
+            body: None,
+            success: 200,
+            response: Some(TypeRef::Array(Box::new(TypeRef::Named("B".into())))),
+            errors: vec![500],
+            file: "f".into(),
+            line: 1,
+            args: vec![],
+            is_async: false,
+            fails: true,
+            error_type: None,
+            error_variants: vec![],
+        };
+        assert_eq!(judge(&op, &c, 200, "[]").0, Verdict::Unproven);
+        assert_eq!(judge(&op, &c, 200, r#"[{"id":"x","tags":[]}]"#).0, Verdict::Proven);
+        assert_eq!(judge(&op, &c, 200, r#"[{"tags":[]}]"#).0, Verdict::Violation);
     }
 
     #[test]

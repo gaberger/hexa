@@ -25,6 +25,9 @@ enum Mode {
     StrictUrl,
     /// Everything is 404 — declared, and proves nothing.
     AllNotFound,
+    /// The create keeps no tags, so the list by tag comes back empty — a
+    /// valid answer that says nothing about the items it would hold.
+    ForgetsTags,
 }
 
 struct Server {
@@ -107,7 +110,7 @@ fn route(mode: Mode, store: &Mutex<Vec<Value>>, method: &str, target: &str, body
                 "id": format!("bm-{}", bookmarks.len() + 1),
                 "url": url,
                 "title": req["title"],
-                "tags": req["tags"],
+                "tags": if mode == Mode::ForgetsTags { json!([]) } else { req["tags"].clone() },
                 "savedAt": "2026-10-09T00:00:00Z",
             });
             bookmarks.push(b.clone());
@@ -199,8 +202,8 @@ fn a_property_the_schema_does_not_name_is_a_violation() {
 fn a_refused_input_is_unproven_until_an_example_is_given() {
     let s = serve(Mode::StrictUrl);
     let (code, all) = api_test(&s.base, &[]);
-    // The list still answers (an empty one), so something is proven: 1, not 2.
-    assert_eq!(code, Some(1), "the create, and the reads that need its id, are unproven: {all}");
+    // Nothing was created, so the list is empty and proves nothing either: 2.
+    assert_eq!(code, Some(2), "the create, the empty list and the reads that need an id are unproven: {all}");
     assert!(all.contains("unproven"), "{all}");
     assert!(all.contains("--examples"), "{all}");
 
@@ -239,4 +242,15 @@ fn a_project_with_no_tags_has_no_contract_to_test() {
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(2));
+}
+
+#[test]
+fn an_empty_list_proves_nothing_about_its_items() {
+    let s = serve(Mode::ForgetsTags);
+    let (code, all) = api_test(&s.base, &[]);
+    assert_eq!(code, Some(1), "{all}");
+    // The list's own line, not the read by id.
+    let list = all.lines().find(|l| l.contains(" GET /bookmarks ")).unwrap_or_default();
+    assert!(list.contains("unproven"), "the empty list must be unproven: {all}");
+    assert!(all.contains("empty list"), "and say why: {all}");
 }

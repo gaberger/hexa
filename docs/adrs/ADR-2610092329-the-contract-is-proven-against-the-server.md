@@ -77,3 +77,9 @@ Three things make a contract test easy to fake:
 
 test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
 ```
+
+## Amendment, 2026-10-10: an empty list proves nothing
+
+Decision 4 called a list that validates *proven*. An empty list validates against any item schema, so that verdict claimed a check that never happened. A server whose create silently dropped the tags returned `[]` for the list by tag, and the list read *proven* beside the create's violation. An empty list for a declared array response is now **unproven**, and the verdict says so: there was nothing to check the items against. A non-empty list is judged item by item, as before.
+
+One consequence for the gate: a server that refuses the synthesized create now proves nothing at all, because its list is empty too. That run exits 2, not 1. Gate case added: `an_empty_list_proves_nothing_about_its_items`.
