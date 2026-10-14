@@ -673,8 +673,24 @@ pub fn candidate_models(explicit: Option<&str>, configured: &[String]) -> Vec<St
 /// set only `react_model` ran fine in the do-loop and reported nothing
 /// configured everywhere else. What stays here is precedence, which is a
 /// do-loop concern.
+///
+/// Precedence: explicit (`--model` / `HEXA_REACT_MODEL`) →
+/// `inference.react_models` / `react_model` → `inference.tier_models.t2` →
+/// nothing.
 pub fn react_models_from_config_value(cfg: &serde_json::Value, explicit: Option<&str>) -> Vec<String> {
-    candidate_models(explicit, &hexa_infer::react_models_in_config(cfg))
+    let mut configured = hexa_infer::react_models_in_config(cfg);
+    if configured.is_empty() {
+        if let Some(t2) = cfg
+            .get("inference")
+            .and_then(|i| i.get("tier_models"))
+            .and_then(|t| t.get("t2"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+        {
+            configured = vec![t2.to_string()];
+        }
+    }
+    candidate_models(explicit, &configured)
 }
 
 /// Pick the best-of-N winner from per-candidate outcomes in priority order: the
@@ -694,9 +710,10 @@ pub fn select_best_of_n(
     last.expect("select_best_of_n: outcomes must be non-empty")
 }
 
-/// Resolve the ordered candidate-model list for a run: explicit `task.model` or
-/// `HEXA_REACT_MODEL` wins; else whatever `.hexa/project.json` declares; else
-/// nothing, and the caller says `NO_MODEL_CONFIGURED`. There is no default
+/// Resolve the ordered candidate-model list for a run. Precedence: explicit
+/// (`--model` / `HEXA_REACT_MODEL`) → `inference.react_models` / `react_model`
+/// → `inference.tier_models.t2` → nothing, and the caller says
+/// `NO_MODEL_CONFIGURED`. There is no default
 /// pair — the doc comment claimed one for long after the code stopped having
 /// one. (ADR-2606072044.)
 pub(crate) fn resolve_react_models(task: &DirectTask) -> Vec<String> {
@@ -719,6 +736,9 @@ pub(crate) fn resolve_react_models(task: &DirectTask) -> Vec<String> {
 /// by `react_execute`. (ADR-2606072044.)
 pub async fn react_execute_best_of_n(deps: &ExecDeps, task: DirectTask) -> (DirectResult, u32, String) {
     let candidates = resolve_react_models(&task);
+    if candidates.is_empty() {
+        return (DirectResult::err(direct_exec::NO_MODEL_CONFIGURED.to_string()), 0, String::new());
+    }
     // Resource governor (ADR-2606080915): only divert a local model to the frontier
     // when a frontier candidate actually exists later in the list — otherwise run it
     // best-effort rather than skip the only option.
@@ -767,10 +787,11 @@ pub async fn react_execute_best_of_n(deps: &ExecDeps, task: DirectTask) -> (Dire
     (result, total_steps, model)
 }
 
-/// A candidate that should be served by `claude -p` rather than the local loop.
+/// A model the frontier CLI serves is an agent, so the whole task is delegated
+/// to it — the per-step loop cannot drive it, and sending it tool steps is
+/// refused by `hexa-infer`.
 pub(crate) fn is_claude_model(m: &str) -> bool {
-    let m = m.to_ascii_lowercase();
-    m == "claude-code" || m == "claude" || m.starts_with("claude-code")
+    hexa_infer::wiring::served_by_frontier_cli(m)
 }
 
 /// Frontier fallback: delegate the whole task to `claude -p` inside an isolated
@@ -783,11 +804,11 @@ async fn claude_execute(deps: &ExecDeps, task: DirectTask) -> (DirectResult, u32
     let slug = crate::direct_workspace::next_run_slug();
     let workspace = match crate::direct_workspace::RunWorkspace::acquire(&slug, isolate, deps.worktrees.clone(), direct_exec::repo_root()) {
         Ok(w) => w,
-        Err(e) => return (DirectResult::err(format!("workspace: {e}")), 0, "claude-code".to_string()),
+        Err(e) => return (DirectResult::err(format!("workspace: {e}")), 0, task.model.clone().unwrap_or_else(|| "claude-code".into())),
     };
     if let Err(e) = workspace.assert_off_operator_tree() {
         workspace.finish(false);
-        return (DirectResult::err(e), 0, "claude-code".to_string());
+        return (DirectResult::err(e), 0, task.model.clone().unwrap_or_else(|| "claude-code".into()));
     }
     let repo_root = workspace.workdir().to_path_buf();
     let factory = workspace.is_isolated();
@@ -802,7 +823,22 @@ async fn claude_attempts(
     repo_root: &std::path::Path,
     factory: bool,
 ) -> (DirectResult, u32, String) {
-    let model = "claude-code".to_string();
+    let model = task.model.clone().unwrap_or_else(|| "claude-code".to_string());
+    let agent = match hexa_infer::wiring::frontier_model_arg(&model) {
+        None => deps.frontier.clone(),
+        Some(id) => match deps.frontier.on_model(&id) {
+            Some(a) => a,
+            None => {
+                return (
+                    DirectResult::err(format!(
+                        "the frontier agent cannot be pinned to model '{id}' — this adapter runs only its own default"
+                    )),
+                    0,
+                    model,
+                )
+            }
+        },
+    };
     // Snapshot pre-run dirty files so the commit includes the supporting files the
     // evidence depends on (do-loop commit-gap fix).
     let start_dirty = direct_exec::dirty_paths(repo_root).await;
@@ -828,7 +864,7 @@ async fn claude_attempts(
         std::env::var("CLAUDE_TIMEOUT_SECS").ok().and_then(|s| s.parse().ok()).unwrap_or(300),
     );
 
-    match deps.frontier.run(&prompt, repo_root, timeout, "react").await {
+    match agent.run(&prompt, repo_root, timeout, "react").await {
         // claude finished (or errored); the evidence gate decides. Its usage
         // and cost were recorded by the adapter either way: they were spent.
         Ok(_) => {}
