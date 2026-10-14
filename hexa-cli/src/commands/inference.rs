@@ -2047,7 +2047,7 @@ pub(crate) fn set_model(cfg: &mut serde_json::Value, key: &str, model: &str) -> 
 /// models this project uses. hexa never picks a model; this is how a project
 /// chooses one (founding goal G1).
 pub fn run_model(key: Option<String>, model: Option<String>) -> anyhow::Result<()> {
-    let dir = hexa_infer::tiers::project_root().join(".hexa");
+    let dir = hexa_infer::project_root().join(".hexa");
     let file = dir.join("project.json");
     let read = || -> anyhow::Result<serde_json::Value> {
         match std::fs::read_to_string(&file) {
