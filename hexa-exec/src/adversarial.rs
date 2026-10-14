@@ -60,7 +60,12 @@ struct VerdictEnvelope {
 pub struct ReviewReport {
     pub candidate: usize,
     pub confirmed: Vec<Finding>,
+    /// Findings whose fix passed the gate AND was committed, one commit per
+    /// fix (ADR-2610141733 §6).
     pub fixed: Vec<String>,
+    /// Findings whose fix passed the gate but was not committed: it touched
+    /// a file the operator had already changed, or the commit failed.
+    pub uncommitted: Vec<String>,
     pub gate_passed: bool,
     /// Whether the final gate was run at all. A pass that returned before
     /// it did not fail the gate; it never asked (ADR-2609131646).
@@ -86,6 +91,7 @@ impl Default for ReviewReport {
             candidate: 0,
             confirmed: Vec::new(),
             fixed: Vec::new(),
+            uncommitted: Vec::new(),
             gate_passed: false,
             gate_run: false,
             notes: Vec::new(),
@@ -133,11 +139,17 @@ impl ReviewReport {
         };
         let cut = if self.truncated { " · target truncated" } else { "" };
         let cal = self.calibration.note().map(|n| format!(" · {n}")).unwrap_or_default();
+        let held = if self.uncommitted.is_empty() {
+            String::new()
+        } else {
+            format!(" · {} gate-passed, not committed", self.uncommitted.len())
+        };
         format!(
-            "{} candidate(s) → {} confirmed real → {} fixed (gate-passed){}{}{}",
+            "{} candidate(s) → {} confirmed real → {} fixed (gate-passed){}{}{}{}",
             self.candidate,
             self.confirmed.len(),
             self.fixed.len(),
+            held,
             scope,
             by,
             cut
@@ -644,6 +656,96 @@ async fn dirty_paths(repo_root: &Path) -> std::collections::HashSet<String> {
         .collect()
 }
 
+/// Every path git reports as changed, from `git status --porcelain=v1 -z -uall`,
+/// with its current bytes (`None` = deleted).
+///
+/// `-uall` lists each file inside an untracked directory, and the bytes tell a
+/// second edit to an already-dirty file from no edit at all (ADR-2610141733 §6).
+async fn changed_files(repo_root: &Path) -> std::collections::BTreeMap<String, Option<Vec<u8>>> {
+    let mut files = std::collections::BTreeMap::new();
+    let out = tokio::process::Command::new("git")
+        .args(["status", "--porcelain=v1", "-z", "-uall"])
+        .current_dir(repo_root)
+        .output()
+        .await;
+    let Ok(out) = out else {
+        return files;
+    };
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    let mut entries = stdout.split('\0');
+    while let Some(entry) = entries.next() {
+        let (Some(xy), Some(path)) = (entry.get(..2), entry.get(3..)) else {
+            continue;
+        };
+        if xy.starts_with('R') || xy.starts_with('C') {
+            // The source path of a rename or copy follows as its own entry.
+            entries.next();
+        }
+        if path.is_empty() {
+            continue;
+        }
+        files.insert(path.to_string(), std::fs::read(repo_root.join(path)).ok());
+    }
+    files
+}
+
+/// The commit HEAD names, if there is one.
+async fn head(repo_root: &Path) -> Option<String> {
+    let out = tokio::process::Command::new("git")
+        .args(["rev-parse", "--verify", "-q", "HEAD"])
+        .current_dir(repo_root)
+        .output()
+        .await
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let sha = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!sha.is_empty()).then_some(sha)
+}
+
+/// Run git quietly in `repo_root`; true iff it exited 0.
+async fn git_ok(repo_root: &Path, args: &[&str]) -> bool {
+    tokio::process::Command::new("git")
+        .args(args)
+        .current_dir(repo_root)
+        .output()
+        .await
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Put each of `touched` back as it was in `before`: its old bytes, absent,
+/// or — not in `before` at all — as HEAD has it.
+async fn revert_paths(
+    repo_root: &Path,
+    touched: &[String],
+    before: &std::collections::BTreeMap<String, Option<Vec<u8>>>,
+) {
+    for p in touched {
+        let full = repo_root.join(p);
+        match before.get(p) {
+            Some(Some(bytes)) => {
+                if let Some(parent) = full.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let _ = std::fs::write(&full, bytes);
+            }
+            Some(None) => {
+                if full.exists() {
+                    let _ = std::fs::remove_file(&full);
+                }
+            }
+            None => {
+                let _ = git_ok(repo_root, &["reset", "-q", "--", p]).await;
+                if !git_ok(repo_root, &["checkout", "-q", "HEAD", "--", p]).await && full.exists() {
+                    let _ = std::fs::remove_file(&full);
+                }
+            }
+        }
+    }
+}
+
 /// Stage and commit `paths` using a commit-local factory identity
 /// (ADR-2606071323 §4) so autonomous commits are attributable and never masquerade as
 /// the operator. Non-fatal by design: any failure (nothing to commit, git missing,
@@ -653,18 +755,20 @@ async fn dirty_paths(repo_root: &Path) -> std::collections::HashSet<String> {
 /// `paths` is every file the pass changed, not just its target. Committing the
 /// target alone shipped eleven fixes and left the five tests proving them
 /// uncommitted (ADR-2609122048).
+///
+/// Returns true iff `git commit` succeeded.
 async fn commit_result(
     repo_root: &Path,
     paths: &[String],
     subject: &str,
     trailer: &str,
     notes: &mut Vec<String>,
-) {
+) -> bool {
     if paths.is_empty() {
         notes.push("nothing new to commit".to_string());
-        return;
+        return false;
     }
-    let mut add_args: Vec<&str> = vec!["add", "--"];
+    let mut add_args: Vec<&str> = vec!["add", "-A", "--"];
     add_args.extend(paths.iter().map(String::as_str));
     let add = tokio::process::Command::new("git")
         .args(&add_args)
@@ -678,11 +782,11 @@ async fn commit_result(
                 "git add failed (non-fatal): {}",
                 String::from_utf8_lossy(&out.stderr).trim()
             ));
-            return;
+            return false;
         }
         Err(e) => {
             notes.push(format!("git not found — skipping auto-commit (non-fatal): {e}"));
-            return;
+            return false;
         }
     }
     let subject: String = subject.lines().next().unwrap_or(subject).chars().take(72).collect();
@@ -699,7 +803,10 @@ async fn commit_result(
         .output()
         .await;
     match commit {
-        Ok(out) if out.status.success() => notes.push("auto-committed result (hexa-factory)".to_string()),
+        Ok(out) if out.status.success() => {
+            notes.push("auto-committed result (hexa-factory)".to_string());
+            true
+        }
         Ok(out) => {
             let stderr = String::from_utf8_lossy(&out.stderr);
             if stderr.contains("nothing to commit") {
@@ -707,14 +814,18 @@ async fn commit_result(
             } else {
                 notes.push(format!("git commit failed (non-fatal): {}", stderr.trim()));
             }
+            false
         }
-        Err(e) => notes.push(format!("git not found — skipping auto-commit (non-fatal): {e}")),
+        Err(e) => {
+            notes.push(format!("git not found — skipping auto-commit (non-fatal): {e}"));
+            false
+        }
     }
 }
 
 /// Run the adversarial review pipeline over `target` (a path), gated by `gate` (a
-/// shell command that must exit 0). Fixes are applied to the working tree and left
-/// uncommitted for operator review.
+/// shell command that must exit 0). Each fix that passes the gate is committed on
+/// its own; one that fails the gate is reverted (ADR-2610141733 §6).
 pub async fn run_review(frontier: Arc<dyn Frontier>, target: &str, gate: &str, repo_root: &Path) -> ReviewReport {
     run_review_with(frontier, target, gate, repo_root, silent()).await
 }
@@ -728,9 +839,9 @@ pub async fn run_review_with(
     reporter: Reporter,
 ) -> ReviewReport {
     let mut report = ReviewReport::default();
-    // What the operator had already changed. Anything dirty after the pass and
-    // not in this set is the pass's own work, tests included.
-    let dirty_before = dirty_paths(repo_root).await;
+    // What the operator had already changed. A fix that touches any of these
+    // is left in the tree for review, never committed over the operator's work.
+    let dirty_before: std::collections::BTreeSet<String> = changed_files(repo_root).await.into_keys().collect();
 
     // The local reviewer cannot go and read the code, so it is read once
     // here and carried in every prompt (ADR-2609131702 §1).
@@ -860,17 +971,38 @@ pub async fn run_review_with(
         fix.note(format!("fixing: {}", f.title));
         let prompt = format!(
             "Fix this CONFIRMED bug in the code under `{target}`, then add a regression test that \
-             fails without the fix. Make a minimal, correct change. Bug:\ntitle: {title}\nlocation: {loc}\ndescription: {desc}",
+             fails without the fix. Make a minimal, correct change. Do not commit; hexa gates and \
+             commits each fix. Bug:\ntitle: {title}\nlocation: {loc}\ndescription: {desc}",
             target = target, title = f.title, loc = f.location, desc = f.description
         );
         // Only the frontier can edit files; a completion has no way to
         // (ADR-2609131702 §1). And a reply is not an edit: the frontier
         // exits 0 when it declines, so the tree itself is the evidence.
-        let before = dirty_paths(repo_root).await;
+        let before_head = head(repo_root).await;
+        let before = changed_files(repo_root).await;
         match claude_run_retry(&*frontier, &prompt, repo_root, 900, DEFAULT_RETRIES).await {
             Ok(reply) => {
-                let after = dirty_paths(repo_root).await;
-                if after == before {
+                if let Some(bh) = &before_head {
+                    if head(repo_root).await.as_ref() != Some(bh)
+                        && git_ok(repo_root, &["reset", "-q", "--soft", bh]).await
+                    {
+                        fix.note(format!("agent committed its own change: {}", f.title));
+                        report.notes.push(format!(
+                            "the agent committed its own change for '{}'; folded back to be gated",
+                            f.title
+                        ));
+                    }
+                }
+                let after = changed_files(repo_root).await;
+                let touched: Vec<String> = before
+                    .keys()
+                    .chain(after.keys())
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .into_iter()
+                    .filter(|p| before.get(*p) != after.get(*p))
+                    .cloned()
+                    .collect();
+                if touched.is_empty() {
                     fix.note(format!("NO EDIT — {}: {}", f.title, first_line(&reply)));
                     report.notes.push(format!("no fix applied for '{}': the tree did not change — {}", f.title, first_line(&reply)));
                     continue;
@@ -879,10 +1011,40 @@ pub async fn run_review_with(
                 let (passed, _) = crate::direct_exec::run_evidence(gate, repo_root).await;
                 if passed {
                     fix.note(format!("gate passed: {}", f.title));
-                    report.fixed.push(f.title.clone());
+                    let held: Vec<&str> = touched
+                        .iter()
+                        .filter(|p| dirty_before.contains(*p))
+                        .map(String::as_str)
+                        .collect();
+                    if !held.is_empty() {
+                        report.uncommitted.push(f.title.clone());
+                        report.notes.push(format!(
+                            "fix for '{}': gate passed, but it touched files that had uncommitted changes before the pass: {}; left in the tree for review",
+                            f.title,
+                            held.join(", ")
+                        ));
+                        continue;
+                    }
+                    let mut scratch = Vec::new();
+                    if commit_result(
+                        repo_root,
+                        &touched,
+                        &format!("fix(harden): {}", f.title),
+                        "hexa-harden",
+                        &mut scratch,
+                    )
+                    .await
+                    {
+                        fix.note(format!("committed: {}", f.title));
+                        report.fixed.push(f.title.clone());
+                    } else {
+                        report.uncommitted.push(f.title.clone());
+                        report.notes.extend(scratch);
+                    }
                 } else {
                     fix.note(format!("gate FAILED after: {}", f.title));
-                    report.notes.push(format!("fix for '{}' did not pass the gate", f.title));
+                    revert_paths(repo_root, &touched, &before).await;
+                    report.notes.push(format!("fix for '{}' did not pass the gate — reverted", f.title));
                 }
             }
             Err(e) => fix.note(format!("no fix produced for {}: {e}", f.title)),
@@ -896,27 +1058,6 @@ pub async fn run_review_with(
     report.gate_passed = passed;
     report.gate_run = true;
     final_gate.finish(if passed { "passed" } else { "FAILED" });
-    if passed && report.reviewed() && !report.fixed.is_empty() {
-        let mut paths: Vec<String> = dirty_paths(repo_root)
-            .await
-            .into_iter()
-            .filter(|p| !dirty_before.contains(p))
-            .collect();
-        if !paths.iter().any(|p| p == target) {
-            paths.push(target.to_string());
-        }
-        paths.sort();
-        let commit = Phase::start(&reporter, "commit", format!("{} as hexa-harden", plural(paths.len(), "path")), HEARTBEAT);
-        commit_result(
-            repo_root,
-            &paths,
-            &format!("fix: adversarial review pass on {target}"),
-            "hexa-harden",
-            &mut report.notes,
-        )
-        .await;
-        commit.finish("done");
-    }
     report
 }
 
