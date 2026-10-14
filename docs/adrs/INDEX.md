@@ -53,7 +53,7 @@ _One gateway-mediated agent loop; code-graph context as the differentiator_
 | ADR-2609132122 | accepted | ADR-2609132122: A recorded gate is run, or it is prose |  |
 | ADR-2609132158 | accepted | ADR-2609132158: A gate that never runs on the branch is not a gate |  |
 | ADR-2609121400 | accepted | ADR-2609121400: hexa is a scaffolding system with two gates |  |
-| ADR-2609121710 | proposed | ADR-2609121710: Registered local providers must be able to authenticate, and `test` must prove it |  |
-| ADR-2609121843 | proposed | ADR-2609121843: `hexa build` must prove it built something |  |
+| ADR-2609121710 | accepted | ADR-2609121710: Registered local providers must be able to authenticate, and `test` must prove it |  |
+| ADR-2609121843 | accepted | ADR-2609121843: `hexa build` must prove it built something |  |
 | ADR-2609122048 | accepted | ADR-2609122048: a tool that reports "nothing found" must prove it looked |  |
 

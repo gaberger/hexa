@@ -1,6 +1,6 @@
 # ADR-2609121843: `hexa build` must prove it built something
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-09-12
 **Drivers:** a `hexa build` run on an existing green repository reported `✓ 3 designs → 3 critiques → spec 53ch → build GREEN` having changed not one file. The gate passed because it was already passing. Observed on blacksheep (github.com/gaberger — the Diffy re-implementation), phase 2, 2026-09-12.
 
@@ -78,3 +78,19 @@ sentence reads as though it does.
 - docs/guides/development-workflow.md ("A gate that passes having run nothing is rejected")
 - ADR-2609121400 (two gates; a document that cannot fail cannot be trusted)
 - Observed 2026-09-12 on blacksheep phase 2: spec 53ch, 0 files changed, `build GREEN`.
+
+## Status at acceptance (2026-10-14)
+
+Checked against `main` at 43f5c5c. The decision still stands. No later ADR supersedes or contradicts it, and ADR-2609132059 ("done means the gate ran") points the same way. **None of it is built yet.**
+
+| Item | State | Where |
+|---|---|---|
+| 1. A build must change the tree | **Not built** | `hexa-exec/src/adversarial.rs:1075-1076`: `build_ok` is still the gate's exit code alone. There is no `tree_fingerprint` and no `files_changed` |
+| 2. A spec under `MIN_SPEC_CHARS` fails before the build agent | **Not built** | `adversarial.rs:1059`: `spec_chars` is recorded and never judged. There is no `MIN_SPEC_CHARS` |
+| 3. The summary line counts the files changed | **Not built** | `hexa-cli/src/commands/build.rs:138` prints only `GREEN` or `FAILED` |
+| 4. A claimed success with nothing to commit fails the run | **Not built** | `adversarial.rs:1078-1096`: `commit_result` still records "nothing new to commit" as a non-fatal note |
+
+No test holds any of the four yet.
+
+**Remaining work**, to queue: everything under Implementation. That is the tree fingerprint around the build agent, `MIN_SPEC_CHARS`, the file count in the summary line, the fatal empty commit, and the three stub tests.
+

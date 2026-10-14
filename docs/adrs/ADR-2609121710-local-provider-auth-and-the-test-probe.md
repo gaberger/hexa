@@ -1,6 +1,6 @@
 # ADR-2609121710: Registered local providers must be able to authenticate, and `test` must prove it
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-09-12
 **Drivers:** registering a Tenstorrent vLLM server (gpt-oss-120b on :7000, bearer-protected) as a hexa provider on tt-quietbox. Three separate things stood between `hexa config inference add` and a working local model, and none of them said so.
 
@@ -70,3 +70,17 @@ the work. That is the failure hexa's founding goal G1 is meant to prevent.
 - hexa-cli/src/commands/inference.rs (`test`, the `/v1/models` fallback)
 - ADR-2609121400 (two gates; a document that cannot fail cannot be trusted)
 - Observed on tt-quietbox, 2026-09-12, registering `openai/gpt-oss-120b` on `http://127.0.0.1:7000`.
+
+## Status at acceptance (2026-10-14)
+
+Checked against `main` at 43f5c5c. The decision stands, and no later ADR supersedes it. ADR-2609131811 extends Decision 2 by letting a reference resolve from a key file. ADR-2609131702 amends Decision 4: harden's hunt and verify phases now fall back to the tier-mapped model, while the fix phase stays on the frontier.
+
+| Item | State | Where | Test that holds it |
+|---|---|---|---|
+| 1. Auth follows the key, not the provider class | **Built** | `hexa-cli/src/commands/inference.rs:460` (`requires_auth: key.is_some()`), `hexa-infer/src/registry.rs:104` (defaults to whether a key is present), `hexa-infer/src/wiring.rs:100` (`resolve_key` runs for every endpoint), `hexa-infer/src/adapters/secondary/openai_compat.rs:346,511` (bearer sent whenever there is a key) | `hexa-infer/src/registry.rs:330` `the_api_key_reference_is_carried_as_a_variable_name`. No test drives a key-protected `vllm` stub end to end |
+| 2. `--key-env` vs a literal `--key`; an unresolved reference is a named error | **Partly built** | References now resolve from the environment, then `HEXA_ENV_FILE`, `~/.hexa/.env` and the project `.env` (`wiring.rs:100–131`, ADR-2609131811) | `wiring.rs` env-file tests (`the_ordinary_env_file_format_parses` and the others). Not built: there is no `--key-env` flag, a literal that does not start with `sk-` is still read as a variable name (`wiring.rs:118`), and an unresolved reference only logs `tracing::warn!` (`wiring.rs:121`). It is not an error, and the request goes out unauthenticated |
+| 3. `test` sends the credential, does one chat round trip, exits non-zero on failure | **Not built** | `inference.rs:1068` and `probe` at `inference.rs:1104` GET `/v1/models` without auth. `test_single_provider` returns `Ok(())` on every failure path | none |
+| 4. scaffold/build/harden keep the frontier | **Holds as amended** | ADR-2609131702 §1 | ADR-2609131702's tests |
+
+**Remaining work**, to queue: Decision 2's `--key-env` flag, the literal/reference split, and a named dispatch error for a reference that does not resolve. Decision 3's authenticated probe, chat round trip and exit code. The bearer-stub test from Implementation.
+
