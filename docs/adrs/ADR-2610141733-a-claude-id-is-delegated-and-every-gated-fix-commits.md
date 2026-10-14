@@ -73,3 +73,17 @@ The refusal is right. Founding goal G1, and `candidate_models`' own oracle, say 
 - ADR-2606080915: the frontier fallback as a delegate, not a per-step backend.
 - ADR-2609122048: harden commits the tests it wrote. Kept: each fix's commit carries its test.
 - ADR-2609131646: a gate that never ran is not a failed gate.
+
+## Evidence
+
+`cargo test -p hexa-exec --test harden_commits_every_fix --test react_models_config_oracle; cargo test -p hexa-exec --lib direct_react::tests` at e6d092f on 2026-10-14:
+
+```text
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 118 filtered out; finished in 0.00s
+```
+
+The same tests at feb2af3, before any fix: 3 of 3 harden cases failed (`fixed = ["bug-1"]` with "no fix applied for 'bug-2': the tree did not change"), the t2 case returned `[]`, and both routing/refusal cases failed.
+
+End to end with the release build, in a scratch repository: `hexa do run --model claude-opus-5-5 --file big.txt` on a 20,000-line file committed with `evidence pass · 1 step(s)` (run `2026-10-14T21:54:36.732733851+00:00#1`). A t2-only project reached inference instead of panicking. An unconfigured one printed the new refusal.
