@@ -475,10 +475,15 @@ pub(crate) fn resolve_model(task: &DirectTask) -> Option<String> {
         .or_else(|| hexa_infer::tier_model("t2"))
 }
 
-/// What to tell an operator whose project configures no model for the do-loop.
+/// What to tell an operator whose project configures no model for the do-loop:
+/// a verb that sets one, and every key the loop reads. hexa does not pick a
+/// model nobody chose (founding goal G1, ADR-2610141733).
 pub(crate) const NO_MODEL_CONFIGURED: &str =
-    "no model configured — set inference.tier_models.t2 in .hexa/project.json, \
-     pass --model, or set HEXA_DIRECT_MODEL";
+    "no model configured — run `hexa config model t2 <model>` \
+     (or `hexa config model react <model>` for the ReAct loop's list), \
+     or pass --model <model>; it reads inference.react_models, \
+     then inference.tier_models.t2, in .hexa/project.json \
+     (env: HEXA_REACT_MODEL, HEXA_DIRECT_MODEL)";
 
 /// Should this run be isolated to its own worktree? Default TRUE (ADR-2606071323)
 /// — only the operator path opts out via `isolate:false`.

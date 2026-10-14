@@ -11,14 +11,18 @@ use crate::direct_react;
 pub async fn execute_direct_with(deps: &ExecDeps, task: DirectTask) -> DirectResult {
     let started = std::time::Instant::now();
     let started_at = chrono::Utc::now().to_rfc3339();
-    let Some(model) = direct_exec::resolve_model(&task) else {
-        return DirectResult::err(direct_exec::NO_MODEL_CONFIGURED.to_string());
-    };
 
     // Default (ADR-2606071XXX): the multi-step ReAct tool-use loop — the agent
     // explores (grep/read/cargo_check) before editing. `--fast` keeps the
     // single-shot path (read → one edit → evidence → retry) for trivial edits.
     if task.fast {
+        // Each branch checks for a model with the resolver of the loop it runs
+        // (ADR-2610141733 Decision 4). A shared single-shot precheck refused a
+        // project configured with only inference.react_models, and passed one
+        // with only t2 that the ReAct loop then could not use.
+        let Some(model) = direct_exec::resolve_model(&task) else {
+            return DirectResult::err(direct_exec::NO_MODEL_CONFIGURED.to_string());
+        };
         let result = direct_exec::execute_direct_inner(deps, task.clone()).await;
         direct_exec::record_run(&*deps.runs, started_at, &task, &model, &result, started.elapsed().as_millis() as u64);
         result

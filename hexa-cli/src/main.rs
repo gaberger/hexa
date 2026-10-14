@@ -50,6 +50,13 @@ enum ConfigAction {    /// Manage inference providers (Ollama, vLLM, self-hosted
         #[command(subcommand)]
         action: commands::inference::InferenceAction,
     },
+    /// Show or set this project's models (tiers, and the hexa do loop's list)
+    Model {
+        /// t1, t2, t2.5, t3, or react — the list hexa do run tries first
+        key: Option<String>,
+        /// The model id to set; omit both to show what is configured
+        model: Option<String>,
+    },
 }
 
 // ── P3: hexa dev — groups analyze, validate, test, ci, worktree, init, new, report + session ──
@@ -406,6 +413,7 @@ async fn run() -> anyhow::Result<()> {
         // ── Grouped parent commands (P2/P3/P4) ──────────────────────
         Commands::Config { action } => match action {
             ConfigAction::Inference { action } => commands::inference::run(action).await,
+            ConfigAction::Model { key, model } => commands::inference::run_model(key, model),
         },
         Commands::Dev { action } => match action {
             DevGroupAction::Analyze { path, strict, adr_compliance, json, file, quiet, violations_only, exit_code, grade } => {

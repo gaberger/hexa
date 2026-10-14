@@ -15,6 +15,7 @@
 use serde_json::Value;
 
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -28,6 +29,50 @@ fn claude_binary() -> String {
     std::env::var("HEXA_CLAUDE_BINARY").unwrap_or_else(|_| "claude".to_string())
 }
 
+/// The arguments of one `claude -p` call. With a model, `--model` pins the
+/// run to the model the operator named instead of the CLI's default.
+fn claude_args(model: Option<&str>, prompt: &str) -> Vec<String> {
+    let mut args = vec!["-p".to_string()];
+    args.extend(OUTPUT_JSON.iter().map(|a| a.to_string()));
+    if let Some(m) = model {
+        args.push("--model".to_string());
+        args.push(m.to_string());
+    }
+    args.push("--dangerously-skip-permissions".to_string());
+    args.push(prompt.to_string());
+    args
+}
+
+/// One `claude -p` call: the budget asked first, the answer's usage recorded
+/// under `source`. `model` is passed as `--model` when given.
+async fn run_claude(
+    model: Option<&str>,
+    prompt: &str,
+    cwd: &Path,
+    timeout: Duration,
+    source: &str,
+) -> Result<String, FrontierError> {
+    // Refuse to spend when the project's daily budget is reached.
+    hexa_infer::spend_budget_check().map_err(FrontierError::OverBudget)?;
+    let binary = claude_binary();
+    let fut = tokio::process::Command::new(&binary)
+        .args(claude_args(model, prompt))
+        // hexa's own prompt. The project's hooks run inside this claude and must
+        // not treat it as a person's work: `route` once drafted workplans from the
+        // harden reviewer prompts. `hexa hook` returns early when this is set.
+        .env("HEXA_INTERNAL", "1")
+        .current_dir(cwd)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output();
+    match tokio::time::timeout(timeout, fut).await {
+        // Its usage and cost are recorded either way: they were spent.
+        Ok(Ok(o)) => Ok(take_answer(&String::from_utf8_lossy(&o.stdout), source)),
+        Ok(Err(e)) => Err(FrontierError::Spawn(format!("{binary}: {e}"))),
+        Err(_) => Err(FrontierError::Timeout(timeout)),
+    }
+}
+
 /// [`Frontier`] on the operator's logged-in `claude` CLI. Both loops that
 /// used it — the do-loop's frontier fallback and the adversarial harness —
 /// spawned it themselves, identically; this is that spawn, once.
@@ -36,28 +81,30 @@ pub struct ClaudeCli;
 #[async_trait]
 impl Frontier for ClaudeCli {
     async fn run(&self, prompt: &str, cwd: &Path, timeout: Duration, source: &str) -> Result<String, FrontierError> {
-        // Refuse to spend when the project's daily budget is reached.
-        hexa_infer::spend_budget_check().map_err(FrontierError::OverBudget)?;
-        let binary = claude_binary();
-        let fut = tokio::process::Command::new(&binary)
-            .arg("-p")
-            .args(OUTPUT_JSON)
-            // hexa's own prompt. The project's hooks run inside this claude and must
-            // not treat it as a person's work: `route` once drafted workplans from the
-            // harden reviewer prompts. `hexa hook` returns early when this is set.
-            .env("HEXA_INTERNAL", "1")
-            .arg("--dangerously-skip-permissions")
-            .arg(prompt)
-            .current_dir(cwd)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .output();
-        match tokio::time::timeout(timeout, fut).await {
-            // Its usage and cost are recorded either way: they were spent.
-            Ok(Ok(o)) => Ok(take_answer(&String::from_utf8_lossy(&o.stdout), source)),
-            Ok(Err(e)) => Err(FrontierError::Spawn(format!("{binary}: {e}"))),
-            Err(_) => Err(FrontierError::Timeout(timeout)),
-        }
+        run_claude(None, prompt, cwd, timeout, source).await
+    }
+
+    /// A [`PinnedClaudeCli`] on `model`.
+    fn on_model(&self, model: &str) -> Option<Arc<dyn Frontier>> {
+        Some(Arc::new(PinnedClaudeCli { model: model.to_string() }))
+    }
+}
+
+/// [`ClaudeCli`] pinned to one model: it passes `--model` so the run uses the
+/// model the operator named. The spend record still takes the model from the
+/// answer's JSON, so it names what actually ran.
+pub struct PinnedClaudeCli {
+    model: String,
+}
+
+#[async_trait]
+impl Frontier for PinnedClaudeCli {
+    async fn run(&self, prompt: &str, cwd: &Path, timeout: Duration, source: &str) -> Result<String, FrontierError> {
+        run_claude(Some(&self.model), prompt, cwd, timeout, source).await
+    }
+
+    fn on_model(&self, model: &str) -> Option<Arc<dyn Frontier>> {
+        Some(Arc::new(PinnedClaudeCli { model: model.to_string() }))
     }
 }
 
@@ -89,5 +136,24 @@ mod tests {
     #[test]
     fn plain_text_passes_through() {
         assert_eq!(take_answer("not json\n", "test"), "not json\n");
+    }
+
+    #[test]
+    fn no_model_passes_no_model_flag_and_ends_with_the_prompt() {
+        let args = claude_args(None, "p");
+        assert!(!args.iter().any(|a| a == "--model"));
+        assert_eq!(args.last().map(String::as_str), Some("p"));
+    }
+
+    #[test]
+    fn a_model_is_passed_after_the_model_flag() {
+        let args = claude_args(Some("claude-opus-5-5"), "p");
+        let i = args.iter().position(|a| a == "--model").expect("--model");
+        assert_eq!(args[i + 1], "claude-opus-5-5");
+    }
+
+    #[test]
+    fn the_cli_can_be_pinned_to_a_model() {
+        assert!(ClaudeCli.on_model("m").is_some());
     }
 }
