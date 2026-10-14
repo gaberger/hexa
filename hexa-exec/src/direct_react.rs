@@ -603,6 +603,31 @@ mod tests {
         assert!(parse_propose_edit(&json!({ "mode": "replace", "new_string": "x" })).is_err());
     }
 
+    /// 2026-10-14, weave: `hexa do run --model claude-opus-5-5` ended "loop
+    /// ended with no edit" four times while the edit sat on disk. A claude id
+    /// was not recognised as a frontier model, so it went to the per-step tool
+    /// loop, whose `claude -p` backend cannot take hexa's tools: it ran its own
+    /// agent, edited the file with its own Edit tool, and answered in prose.
+    /// The loop saw no `propose_edit`, so it never ran the gate or committed.
+    /// Any claude id no registered endpoint serves belongs to the delegate.
+    #[test]
+    fn a_claude_model_id_goes_to_the_frontier_delegate_not_the_tool_loop() {
+        assert!(is_claude_model("claude-code"));
+        assert!(is_claude_model("claude-opus-5-5"), "the id from the failing runs");
+        assert!(is_claude_model("claude-sonnet-4-5"));
+        assert!(!is_claude_model("qwen3-coder:30b"));
+    }
+
+    /// The refusal names a command that sets the model, and every key the
+    /// do-loop reads. It named one key the default loop then ignored.
+    #[test]
+    fn no_model_configured_says_how_to_configure_one() {
+        let m = direct_exec::NO_MODEL_CONFIGURED;
+        assert!(m.contains("hexa config model t2 <model>"), "{m}");
+        assert!(m.contains("--model"), "{m}");
+        assert!(m.contains("inference.react_models"), "{m}");
+    }
+
     #[test]
     fn curated_schema_includes_propose_edit_and_excludes_persona_tools() {
         let reg = crate::default_tools();
