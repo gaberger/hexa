@@ -69,6 +69,12 @@ pub struct HardenArgs {
     /// The run then belongs to no terminal and no host tool (ADR-2609131611).
     #[arg(long)]
     pub detach: bool,
+    /// Pin the frontier agent (the reviewer that reads the repository and the
+    /// only one that edits) to this model, passed to it as --model. Must be a
+    /// model the frontier CLI serves; the local fallback reviewer stays on
+    /// inference.tier_models.
+    #[arg(long)]
+    pub model: Option<String>,
 }
 
 /// Can this run reach a model at all?
@@ -260,6 +266,22 @@ fn running_done(repo_root: &std::path::Path) {
 /// `hexa harden` — hunt the target for bugs by lens, verify each finding
 /// skeptically, and fix the confirmed ones under the gate.
 pub async fn run_harden(args: HardenArgs) -> anyhow::Result<()> {
+    if let Some(m) = args.model.as_deref() {
+        if !hexa_infer::wiring::served_by_frontier_cli(m) {
+            anyhow::bail!(
+                "model '{m}' is not served by the frontier CLI: harden's --model pins the frontier agent; \
+                 the local fallback reviewer is configured with inference.tier_models (hexa config model)"
+            );
+        }
+    }
+    let frontier = hexa_exec::frontier_agent();
+    let frontier = match args.model.as_deref().and_then(hexa_infer::wiring::frontier_model_arg) {
+        None => frontier,
+        Some(id) => match frontier.on_model(&id) {
+            Some(pinned) => pinned,
+            None => anyhow::bail!("the frontier adapter cannot be pinned to '{id}'"),
+        },
+    };
     if args.detach {
         return detach("harden", &args.target);
     }
@@ -273,14 +295,16 @@ pub async fn run_harden(args: HardenArgs) -> anyhow::Result<()> {
         let _ = crate::commands::loop_cmd::update_loop(&cwd, serde_json::json!({ "gate": args.gate.clone(), "stage": "harden" }));
     }
     let repo_root = std::env::current_dir()?;
+    let model = args.model.as_deref().map(|m| format!(" · model {m}")).unwrap_or_default();
     println!(
-        "{} {} (gate: {})",
+        "{} {} (gate: {}){}",
         "⬡ harden".cyan().bold(),
         args.target.yellow(),
-        args.gate.dimmed()
+        args.gate.dimmed(),
+        model
     );
     println!("  hunt → skeptical-verify → fix-loop");
-    let report = hexa_exec::adversarial::run_review_with(hexa_exec::frontier_agent(), &args.target, &args.gate, &repo_root, reporter("harden", &repo_root)).await;
+    let report = hexa_exec::adversarial::run_review_with(frontier, &args.target, &args.gate, &repo_root, reporter("harden", &repo_root)).await;
     running_done(&repo_root);
     print_review(&report, "  ");
     // A pass that reviewed nothing is not a pass: `hexa harden && ship`
@@ -298,7 +322,13 @@ fn print_review(report: &hexa_exec::adversarial::ReviewReport, indent: &str) {
     let mark = if report.reviewed() { "\u{2713}".green().bold() } else { "\u{26d4}".red().bold() };
     println!("{}{} {}", indent, mark, report.verdict_line());
     for f in &report.confirmed {
-        let mark = if report.fixed.contains(&f.title) { "✓".green() } else { "•".yellow() };
+        let mark = if report.fixed.contains(&f.title) {
+            "✓".green()
+        } else if report.uncommitted.contains(&f.title) {
+            "◐".yellow()
+        } else {
+            "•".yellow()
+        };
         println!("{}  {} [{}] {} {}", indent, mark, f.lens, f.title, f.location.dimmed());
     }
     for n in &report.notes {
