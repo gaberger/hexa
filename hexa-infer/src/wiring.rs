@@ -27,6 +27,14 @@ impl Backends for RegistryBackends {
         // multi-step loop got neither its tools nor its transcript. It did not fail loudly: the model
         // invented a JSON-in-text convention that `extract_tool_uses` cannot see, and the loop
         // reported "ended with no edit" as though the model were incapable.
+        if !request.tools.is_empty() && served_by_frontier_cli(&request.model) {
+            return Err(InferenceError::ProviderUnavailable(format!(
+                "'{}' is served by the claude -p agent, which cannot take hexa's tools and would edit \
+                 files on its own outside the run's workspace, so a tool-using step is refused; the \
+                 do-loop delegates such a model whole (hexa do run routes it to the frontier delegate)",
+                request.model
+            )));
+        }
         if !request.tools.is_empty() && !request.model.to_lowercase().starts_with("claude") {
             return crate::adapters::secondary::ollama_chat::chat(
                 &crate::local_provider().base_url(),
@@ -41,6 +49,36 @@ impl Backends for RegistryBackends {
 
     fn record_spend(&self, model: &str, input_tokens: u64, output_tokens: u64) {
         crate::spend::record(model, input_tokens, output_tokens);
+    }
+}
+
+/// Whether `model` is served by the frontier CLI (`claude -p`).
+///
+/// Such a model is an agent, not a per-step completion: it runs its own tools and edits files on
+/// its own. So the do-loop does not drive it step by step — it delegates the whole task to it.
+pub fn served_by_frontier_cli(model: &str) -> bool {
+    served_by_frontier_cli_in(&registry::load(), model)
+}
+
+/// [`served_by_frontier_cli`] against a given registry: the registry decides when an endpoint
+/// serves the model, otherwise the same prefix rule [`adapter_for`] uses.
+pub(crate) fn served_by_frontier_cli_in(endpoints: &[Endpoint], model: &str) -> bool {
+    if let Some(endpoint) = registry::serving(endpoints, model) {
+        return matches!(endpoint.provider.to_ascii_lowercase().as_str(), "claude-code" | "claude_code");
+    }
+    model.to_lowercase().starts_with("claude")
+}
+
+/// The `--model` argument to pass the frontier CLI, if any.
+///
+/// `claude-code` and `claude` (and any id starting `claude-code`) are code-path names meaning the
+/// CLI's own default model, so they pass no argument; any other id is passed as-is.
+pub fn frontier_model_arg(model: &str) -> Option<String> {
+    let lower = model.to_lowercase();
+    if lower == "claude" || lower.starts_with("claude-code") {
+        None
+    } else {
+        Some(model.to_string())
     }
 }
 
@@ -254,5 +292,48 @@ TRAILING=xyz
         assert_eq!(parse_env_value("", "K"), None);
         assert_eq!(parse_env_value("\n\n#only comments\n", "K"), None);
         assert_eq!(parse_env_value("=novalue\n", "K"), None);
+    }
+}
+
+#[cfg(test)]
+mod frontier_cli {
+    use super::{frontier_model_arg, served_by_frontier_cli_in};
+    use crate::endpoint::Endpoint;
+
+    fn ep(provider: &str, model: &str) -> Endpoint {
+        Endpoint {
+            id: "e".into(),
+            provider: provider.into(),
+            model: model.into(),
+            models: vec![model.into()],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn an_unregistered_claude_id_is_served_by_the_cli() {
+        assert!(served_by_frontier_cli_in(&[], "claude-opus-5-5"));
+    }
+
+    #[test]
+    fn an_unregistered_local_id_is_not() {
+        assert!(!served_by_frontier_cli_in(&[], "qwen3-coder:30b"));
+    }
+
+    #[test]
+    fn a_claude_id_registered_to_the_api_is_not() {
+        assert!(!served_by_frontier_cli_in(&[ep("anthropic", "claude-opus-5-5")], "claude-opus-5-5"));
+    }
+
+    #[test]
+    fn a_claude_id_registered_to_claude_code_is() {
+        assert!(served_by_frontier_cli_in(&[ep("claude-code", "claude-opus-5-5")], "claude-opus-5-5"));
+    }
+
+    #[test]
+    fn code_path_names_pass_no_model_argument() {
+        assert_eq!(frontier_model_arg("claude-code"), None);
+        assert_eq!(frontier_model_arg("claude"), None);
+        assert_eq!(frontier_model_arg("claude-opus-5-5").as_deref(), Some("claude-opus-5-5"));
     }
 }
