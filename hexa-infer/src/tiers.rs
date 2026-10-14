@@ -101,7 +101,9 @@ pub fn react_models_in_config(cfg: &serde_json::Value) -> Vec<String> {
 }
 
 /// The repository this process is working in.
-pub(crate) fn project_root() -> PathBuf {
+/// It is public so `hexa config model` writes the same `.hexa/project.json`
+/// the tier and react-model readers read (ADR-2610141733).
+pub fn project_root() -> PathBuf {
     if let Ok(p) = std::env::var("HEXA_PROJECT_ROOT") {
         return PathBuf::from(p);
     }
