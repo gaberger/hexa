@@ -29,7 +29,7 @@ pub use adapters::secondary::{
     AnthropicAdapter, ClaudeCodeInferenceAdapter, OllamaInferenceAdapter, OpenAiCompatAdapter,
 };
 pub use endpoint::Endpoint;
-pub use tiers::{react_models, react_models_in_config, tier_model};
+pub use tiers::{project_root, react_models, react_models_in_config, tier_model};
 pub use local_provider::configured_tiers;
 pub use ports::{local_provider, LocalProvider};
 pub use discover::enumerate_models;
