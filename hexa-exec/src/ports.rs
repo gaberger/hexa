@@ -123,6 +123,14 @@ pub trait Frontier: Send + Sync {
         timeout: std::time::Duration,
         source: &str,
     ) -> Result<String, FrontierError>;
+
+    /// The same agent, pinned to `model`. An adapter that cannot choose a model
+    /// returns `None`, and a caller given `None` must fail the run naming the
+    /// model rather than run on the agent's default in silence (ADR-2610141733).
+    fn on_model(&self, model: &str) -> Option<std::sync::Arc<dyn Frontier>> {
+        let _ = model;
+        None
+    }
 }
 
 /// Where finished runs are kept — the feed `hexa do runs` reads.
