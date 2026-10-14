@@ -2003,3 +2003,161 @@ async fn bench_provider(
     Ok(())
 }
 
+
+const MODEL_KEYS: &str = "t1, t2, t2.5, t3, react";
+
+/// Set the model a project uses for one tier, or for the do-loop (`react`),
+/// in a parsed `.hexa/project.json`. Returns the JSON key path written.
+/// Every other field of `cfg` is kept.
+pub(crate) fn set_model(cfg: &mut serde_json::Value, key: &str, model: &str) -> Result<String, String> {
+    let model = model.trim();
+    if model.is_empty() {
+        return Err(format!("the model is empty; give one for {} (one of {})", key, MODEL_KEYS));
+    }
+    if !matches!(key, "t1" | "t2" | "t2.5" | "t3" | "react") {
+        return Err(format!("unknown key '{}'; the valid keys are {}", key, MODEL_KEYS));
+    }
+    if !cfg.is_object() {
+        *cfg = serde_json::json!({});
+    }
+    let root = cfg.as_object_mut().expect("cfg is an object");
+    let inference = root.entry("inference").or_insert_with(|| serde_json::json!({}));
+    if !inference.is_object() {
+        *inference = serde_json::json!({});
+    }
+    let inference = inference.as_object_mut().expect("inference is an object");
+    if key == "react" {
+        // The plural key wins over the singular `react_model`
+        // (hexa_infer::react_models_in_config), so the singular is left alone.
+        inference.insert("react_models".to_string(), serde_json::json!([model]));
+        return Ok("inference.react_models".to_string());
+    }
+    let tiers = inference.entry("tier_models").or_insert_with(|| serde_json::json!({}));
+    if !tiers.is_object() {
+        *tiers = serde_json::json!({});
+    }
+    tiers
+        .as_object_mut()
+        .expect("tier_models is an object")
+        .insert(key.to_string(), serde_json::Value::String(model.to_string()));
+    Ok(format!("inference.tier_models.{}", key))
+}
+
+/// `hexa config model [<t1|t2|t2.5|t3|react> <model>]` — show or set the
+/// models this project uses. hexa never picks a model; this is how a project
+/// chooses one (founding goal G1).
+pub fn run_model(key: Option<String>, model: Option<String>) -> anyhow::Result<()> {
+    let dir = hexa_infer::tiers::project_root().join(".hexa");
+    let file = dir.join("project.json");
+    let read = || -> anyhow::Result<serde_json::Value> {
+        match std::fs::read_to_string(&file) {
+            Ok(s) => serde_json::from_str(&s).map_err(|e| {
+                anyhow::anyhow!("{} is not valid JSON ({}); fix it by hand — hexa will not overwrite it", file.display(), e)
+            }),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(serde_json::json!({})),
+            Err(e) => Err(anyhow::anyhow!("cannot read {}: {}", file.display(), e)),
+        }
+    };
+
+    let Some(key) = key else {
+        let cfg = read()?;
+        let tiers = cfg.get("inference").and_then(|i| i.get("tier_models"));
+        println!("{} {}", "Models in".bold(), file.display());
+        match tiers.and_then(|t| t.as_object()).filter(|t| !t.is_empty()) {
+            Some(map) => {
+                println!("  tier_models:");
+                for (k, v) in map {
+                    println!("    {:<5} {}", k, v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string()));
+                }
+            }
+            None => println!("  tier_models:  (none)"),
+        }
+        let react = hexa_infer::react_models_in_config(&cfg);
+        if react.is_empty() {
+            println!("  react:        (none)");
+        } else {
+            println!("  react:        {}", react.join(", "));
+        }
+        let t2 = tiers.and_then(|t| t.get("t2")).and_then(|v| v.as_str()).filter(|s| !s.is_empty());
+        let used = react
+            .first()
+            .cloned()
+            .or_else(|| t2.map(str::to_string))
+            .unwrap_or_else(|| "none — set one with hexa config model t2 <model>".to_string());
+        println!("  hexa do run without --model uses: {}", used);
+        return Ok(());
+    };
+
+    let Some(model) = model else {
+        anyhow::bail!("usage: hexa config model <t1|t2|t2.5|t3|react> <model>");
+    };
+
+    let mut cfg = read()?;
+    let path = set_model(&mut cfg, &key, &model).map_err(|e| anyhow::anyhow!(e))?;
+    std::fs::create_dir_all(&dir)?;
+    let mut out = serde_json::to_string_pretty(&cfg)?;
+    out.push('\n');
+    std::fs::write(&file, out)?;
+    println!("{} {} = {} in {}", "✓".green(), path, model.trim(), file.display());
+    Ok(())
+}
+
+#[cfg(test)]
+mod config_model {
+    use super::set_model;
+    use serde_json::json;
+
+    #[test]
+    fn t2_into_an_empty_object_writes_tier_models_t2() {
+        let mut cfg = json!({});
+        let path = set_model(&mut cfg, "t2", "m-two").unwrap();
+        assert_eq!(path, "inference.tier_models.t2");
+        assert_eq!(cfg, json!({"inference": {"tier_models": {"t2": "m-two"}}}));
+    }
+
+    #[test]
+    fn a_non_object_cfg_is_replaced() {
+        let mut cfg = json!([1, 2]);
+        set_model(&mut cfg, "t1", "m").unwrap();
+        assert_eq!(cfg, json!({"inference": {"tier_models": {"t1": "m"}}}));
+    }
+
+    #[test]
+    fn react_writes_react_models_list_and_leaves_singular() {
+        let mut cfg = json!({"inference": {"react_model": "old"}});
+        let path = set_model(&mut cfg, "react", "m-react").unwrap();
+        assert_eq!(path, "inference.react_models");
+        assert_eq!(cfg["inference"]["react_models"], json!(["m-react"]));
+        assert_eq!(cfg["inference"]["react_model"], json!("old"));
+        assert_eq!(hexa_infer::react_models_in_config(&cfg), vec!["m-react".to_string()]);
+    }
+
+    #[test]
+    fn unrelated_fields_survive() {
+        let mut cfg = json!({
+            "analyze": {"exclude": ["target"]},
+            "inference": {"timeout_secs": 90, "tier_models": {"t1": "small"}}
+        });
+        set_model(&mut cfg, "t2.5", "big").unwrap();
+        assert_eq!(cfg["analyze"]["exclude"], json!(["target"]));
+        assert_eq!(cfg["inference"]["timeout_secs"], json!(90));
+        assert_eq!(cfg["inference"]["tier_models"]["t1"], json!("small"));
+        assert_eq!(cfg["inference"]["tier_models"]["t2.5"], json!("big"));
+    }
+
+    #[test]
+    fn unknown_key_is_an_error_naming_valid_keys() {
+        let mut cfg = json!({});
+        let err = set_model(&mut cfg, "t4", "m").unwrap_err();
+        assert!(err.contains("t2.5") && err.contains("react"), "{}", err);
+        assert_eq!(cfg, json!({}));
+    }
+
+    #[test]
+    fn empty_model_is_an_error() {
+        let mut cfg = json!({});
+        assert!(set_model(&mut cfg, "t2", "").is_err());
+        assert!(set_model(&mut cfg, "t2", "   ").is_err());
+        assert_eq!(cfg, json!({}));
+    }
+}
