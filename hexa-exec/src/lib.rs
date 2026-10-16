@@ -20,6 +20,7 @@ pub mod direct_exec;
 pub mod direct_react;
 pub mod do_task;
 pub mod frontier;
+pub mod git_history;
 pub mod git_worktrees;
 pub mod ports;
 pub mod direct_workspace;
@@ -82,6 +83,11 @@ pub fn default_deps() -> direct_exec::ExecDeps {
         runs: std::sync::Arc::new(local_store::LocalRuns),
         memory: std::sync::Arc::new(memory()),
     }
+}
+
+/// The branch history harden's batch bisection moves, on git (ADR-2610160756 §4).
+pub fn default_git_history() -> std::sync::Arc<dyn ports::GitHistory> {
+    std::sync::Arc::new(git_history::GitHistoryCli)
 }
 
 /// Run one direct task on the default dependencies.

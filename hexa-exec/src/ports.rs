@@ -62,6 +62,19 @@ pub trait Worktrees: Send + Sync {
     fn remove(&self, repo: &Path, path: &Path) -> Result<(), String>;
 }
 
+/// The current branch's history, moved by harden's batch bisection
+/// (ADR-2610160756 §4). Neither operation may touch the operator's
+/// uncommitted files (ADR-2610141733 §6).
+pub trait GitHistory: Send + Sync {
+    /// Move the current branch to `sha`, keeping uncommitted changes
+    /// (`git reset --keep`); refuse rather than overwrite one.
+    fn reset_to(&self, repo: &Path, sha: &str) -> Result<(), String>;
+
+    /// Apply commit `sha` on HEAD under hexa's own identity. On failure the
+    /// pick is aborted and HEAD, the index and the tree are as they were.
+    fn cherry_pick(&self, repo: &Path, sha: &str) -> Result<(), String>;
+}
+
 /// Which store a memory call reads or writes.
 ///
 /// `Project` is the default everywhere. `Shared` is the old per-user file, kept
