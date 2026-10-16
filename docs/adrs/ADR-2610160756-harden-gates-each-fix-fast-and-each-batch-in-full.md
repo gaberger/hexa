@@ -103,3 +103,61 @@ Most of what the per-fix gate catches is caught by a far smaller command: the fi
 - ADR-2610141733: harden commits each fix that passes the gate. Kept; this ADR changes which gate a fix must pass.
 - ADR-2609131646: a gate that never ran is not a failed gate.
 - ADR-2609121400: the executable gate replaces the written spec.
+
+## Evidence
+
+The gate was written by hand from this ADR and committed failing at ce2af53, before any code. All code after it was written by `hexa do run --model claude-opus-5-5`, one run per file, with the gate as evidence (6dfb5c3, 6509505, a5fc0c6, df63368, 0a0ec54, ef350b9, 8144643, 0e8edf9).
+
+`cargo test -p hexa-exec --test harden_batched_gate` at ce2af53, before the code:
+
+```text
+error[E0432]: unresolved imports `hexa_exec::adversarial::run_review_gated`, `hexa_exec::adversarial::HardenGates`
+error[E0425]: cannot find function `default_git_history` in crate `hexa_exec`
+error: could not compile `hexa-exec` (test "harden_batched_gate") due to 25 previous errors
+```
+
+The same gate, with `harden_commits_every_fix` unchanged, at 0e8edf9:
+
+```text
+test a_touched_path_with_a_space_is_one_argument ... ok
+test a_vacuous_fast_gate_rejects_the_fix ... ok
+test without_a_fast_gate_every_fix_gets_the_full_gate ... ok
+test five_clean_fixes_cost_one_full_gate ... ok
+test a_flaky_full_gate_is_reported_and_drops_no_fix ... ok
+test a_fix_that_needed_a_later_fix_is_retried_last_and_committed ... ok
+test a_fix_that_breaks_an_untouched_file_is_found_by_bisection ... ok
+test result: ok. 10 passed; 0 failed   (harden_batched_gate, with harden's 3 added cases)
+test result: ok. 3 passed; 0 failed    (harden_commits_every_fix)
+```
+
+The supporting gates, failing at ce2af53 / dde8d8c and passing at 0e8edf9:
+
+| Test | Before | After |
+|---|---|---|
+| `hexa-git --test history_ops` (reset `--keep`, cherry-pick as hexa-factory, abort on conflict) | 8 compile errors | 4 passed |
+| `hexa-cli --test harden_takes_a_fast_gate` | 0 passed, 3 failed | 3 passed |
+| `hexa-cli --test adr_transition_rewrites_both_status_lines` | 1 passed, 4 failed | 5 passed |
+| `hexa-exec --test harden_ignores_its_own_loop_state` (d8531a6) | 0 passed, 2 failed | 2 passed |
+
+`hexa harden --model claude-opus-5-5 --gate "cargo test --workspace" hexa-exec/src/adversarial.rs` (installed v26.10.0): 10 candidates, 10 confirmed, 10 fixes passed the gate, 0 committed, final gate PASS. Every fix was held back as touching `.hexa/loop.json`: the progress heartbeat rewrites it while a fix runs, and it was dirty before the pass. The fixes (a UTF-8 truncation panic in `read_target`, envelope extraction past a bracket in prose, calibration probing the frontier instead of the local reviewer, `run_build` committing the operator's edits, two final-gate shortcuts on a changed tree, same-titled findings) were landed by `hexa do run` gated on `cargo test --workspace` (8144643), and the loop-state fault got a failing test (d8531a6) and a fix (0e8edf9).
+
+Gates at 0e8edf9: `cargo check --workspace` clean; `cargo test --workspace` 82 suites, 1203 passed, 0 failed; `cargo clippy --workspace -- -D clippy::correctness -D clippy::suspicious` clean; `hexa adr doctor` no findings; no line added outside `hexa-infer` names a model. `hexa analyze .`: A+ 100/100, 156/156 files in a layer before; A+ 100/100, 158/158 after (`hexa-git/src/history.rs` and `hexa-exec/src/git_history.rs` are `adapters/secondary`).
+
+End to end with the release build, in a scratch repository: `hexa harden --model claude-opus-5-5 --gate "bash full.sh" --fast-gate "bash fast.sh {touched}" src/stats.py` on a three-function Python module with seeded bugs:
+
+```text
+  0m12s  fix: fast gate after fix: bash …/fast.sh 'src/stats.py' 'tests/test_stats.py'
+  …
+  0m00s  batch: 3 fixes, one full gate: bash …/full.sh
+  0m00s  batch: green
+  0m00s  gate: passed (not run again)
+  ✓ 8 candidate(s) → 6 confirmed real → 3 fixed (gate-passed) · reviewed by frontier · 1 full gate · batches: 3 fixes green
+```
+
+The gate log read `fast`, `fast`, `fast`, `full`: three fast gates and a single full gate, against the four full gates the per-fix design runs. Each of the three commits carries the trailer:
+
+```text
+b1921e9 fix(harden): median() crashes with IndexError on an empty sequence
+Hexa-Gate: fast
+Co-Authored-By: hexa-harden <noreply@hexa.local>
+```
