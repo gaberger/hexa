@@ -62,9 +62,19 @@ pub struct BuildArgs {
 pub struct HardenArgs {
     /// Path to review (file or directory), repo-relative.
     pub target: String,
-    /// Ground-truth gate: a shell command that must exit 0 after each fix.
+    /// Ground-truth gate: a shell command that must exit 0 after each fix,
+    /// or after each batch of fixes with --fast-gate.
     #[arg(long)]
     pub gate: String,
+    /// Gate each fix fast with this command and each batch with --gate in
+    /// full (ADR-2610160756). `{touched}` in it is replaced by the fix's
+    /// changed paths, shell-quoted. Without it every fix gets the full --gate.
+    #[arg(long)]
+    pub fast_gate: Option<String>,
+    /// Full-gate the batch after this many fast-gated fixes (default: all of
+    /// them, one batch). Needs --fast-gate.
+    #[arg(long, requires = "fast_gate")]
+    pub batch: Option<usize>,
     /// Run in its own process group, output to `~/.hexa/runs/`, and return.
     /// The run then belongs to no terminal and no host tool (ADR-2609131611).
     #[arg(long)]
@@ -292,19 +302,38 @@ pub async fn run_harden(args: HardenArgs) -> anyhow::Result<()> {
     }
     // The gate is recorded in the loop, so the hooks can see the work is under one.
     if let Ok(cwd) = std::env::current_dir() {
-        let _ = crate::commands::loop_cmd::update_loop(&cwd, serde_json::json!({ "gate": args.gate.clone(), "stage": "harden" }));
+        let mut update = serde_json::json!({ "gate": args.gate.clone(), "stage": "harden" });
+        if let Some(fast) = &args.fast_gate {
+            update["fast_gate"] = serde_json::Value::String(fast.clone());
+        }
+        let _ = crate::commands::loop_cmd::update_loop(&cwd, update);
     }
     let repo_root = std::env::current_dir()?;
     let model = args.model.as_deref().map(|m| format!(" · model {m}")).unwrap_or_default();
+    let fast = args.fast_gate.as_deref().map(|f| format!(" · fast gate: {}", f.dimmed())).unwrap_or_default();
     println!(
-        "{} {} (gate: {}){}",
+        "{} {} (gate: {}{}){}",
         "⬡ harden".cyan().bold(),
         args.target.yellow(),
         args.gate.dimmed(),
+        fast,
         model
     );
     println!("  hunt → skeptical-verify → fix-loop");
-    let report = hexa_exec::adversarial::run_review_with(frontier, &args.target, &args.gate, &repo_root, reporter("harden", &repo_root)).await;
+    let gates = hexa_exec::adversarial::HardenGates {
+        gate: args.gate.clone(),
+        fast_gate: args.fast_gate.clone(),
+        batch: args.batch,
+    };
+    let report = hexa_exec::adversarial::run_review_gated_with(
+        frontier,
+        hexa_exec::default_git_history(),
+        &args.target,
+        &gates,
+        &repo_root,
+        reporter("harden", &repo_root),
+    )
+    .await;
     running_done(&repo_root);
     print_review(&report, "  ");
     // A pass that reviewed nothing is not a pass: `hexa harden && ship`
@@ -333,6 +362,15 @@ fn print_review(report: &hexa_exec::adversarial::ReviewReport, indent: &str) {
     }
     for n in &report.notes {
         println!("{}  {} {}", indent, "·".dimmed(), n.dimmed());
+    }
+    // How each fix was proven: what the full gate dropped, and what it could
+    // not reproduce (ADR-2610160756 §8).
+    for d in &report.dropped {
+        let why = d.evidence.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
+        println!("{}  {} dropped: {} {}", indent, "✗".red(), d.title, why.dimmed());
+    }
+    for f in &report.flakes {
+        println!("{}  {} flaky: {}", indent, "~".yellow(), f.dimmed());
     }
     let gate = match report.gate_line() {
         "PASS" => "PASS".green(),
