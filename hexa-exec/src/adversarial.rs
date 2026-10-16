@@ -110,6 +110,9 @@ pub struct Batch {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Dropped {
     pub title: String,
+    /// The fix's commit: two lenses may name two fixes alike, and only this
+    /// tells them apart.
+    pub sha: String,
     /// The red full-gate output that blamed it, or why it did not apply.
     pub evidence: String,
 }
@@ -257,7 +260,9 @@ fn first_line(text: &str) -> String {
 /// Read one agent's reply as the envelope it was asked for.
 fn read_answer<T: serde::de::DeserializeOwned>(result: Result<Result<String, String>, String>) -> Answer<T> {
     match result {
-        Ok(Ok(out)) => match extract_json(&out).and_then(|js| serde_json::from_str::<T>(js).ok()) {
+        // Every bracket is a candidate: prose like "1 issue [see below]:"
+        // may precede the envelope, and the first balanced span is not it.
+        Ok(Ok(out)) => match json_candidates(&out).find_map(|js| serde_json::from_str::<T>(js).ok()) {
             Some(v) => Answer::Answered(v),
             None => Answer::NotAnswered(first_line(&out)),
         },
@@ -268,9 +273,21 @@ fn read_answer<T: serde::de::DeserializeOwned>(result: Result<Result<String, Str
 
 /// Extract the first balanced JSON value (object or array) from agent prose. Pure and
 /// testable — `claude -p` often wraps JSON in markdown fences or commentary.
+#[cfg(test)]
 fn extract_json(text: &str) -> Option<&str> {
+    json_candidates(text).next()
+}
+
+/// Every balanced JSON-looking span in `text`, one per opening bracket, in
+/// order. The caller keeps the first that parses as what it asked for.
+fn json_candidates(text: &str) -> impl Iterator<Item = &str> {
     let bytes = text.as_bytes();
-    let start = bytes.iter().position(|&b| b == b'{' || b == b'[')?;
+    (0..bytes.len()).filter(move |&i| bytes[i] == b'{' || bytes[i] == b'[').filter_map(move |start| balanced_from(text, start))
+}
+
+/// The balanced span opening at byte `start` (a `{` or `[`), if it closes.
+fn balanced_from(text: &str, start: usize) -> Option<&str> {
+    let bytes = text.as_bytes();
     let (open, close) = if bytes[start] == b'{' { (b'{', b'}') } else { (b'[', b']') };
     let mut depth = 0i32;
     let mut in_str = false;
@@ -459,7 +476,11 @@ fn read_target(target: &str, repo_root: &Path) -> (String, bool) {
         let name = f.strip_prefix(repo_root).unwrap_or(&f).display().to_string();
         let header = format!("\n// ── {name} ──\n");
         if out.len() + header.len() + text.len() > LOCAL_CONTEXT_CAP {
-            let room = LOCAL_CONTEXT_CAP.saturating_sub(out.len() + header.len());
+            let mut room = LOCAL_CONTEXT_CAP.saturating_sub(out.len() + header.len()).min(text.len());
+            // The cap is in bytes; the cut must still land on a char boundary.
+            while !text.is_char_boundary(room) {
+                room -= 1;
+            }
             if room > 0 {
                 out.push_str(&header);
                 out.push_str(&text[..room.min(text.len())]);
@@ -639,17 +660,21 @@ fn probe_found_it(findings: &[Finding]) -> bool {
 }
 
 /// Ask the local reviewer to find the planted defect in [`PROBE_CODE`].
-async fn calibrate(frontier: &dyn Frontier, repo_root: &Path) -> Calibration {
+///
+/// `local` is the local reviewer itself, called with the probe prompt; the
+/// harness passes [`local_run`]. Never [`ask`]: the empty result being judged
+/// is the local model's, and a frontier that recovered from a transient
+/// failure would answer the probe and calibrate a model it never tested.
+async fn calibrate<F, Fut>(local: F) -> Calibration
+where
+    F: FnOnce(String) -> Fut,
+    Fut: std::future::Future<Output = Result<String, String>>,
+{
     let prompt = "You are an adversarial code reviewer. Hunt this code for concurrency defects: races, \
          lost updates, work done outside a lock. Report exclusively REAL bugs you can point to. \
          Output ONLY a JSON object: \
          {\"findings\":[{\"title\":\"...\",\"location\":\"file:line or fn\",\"description\":\"the concrete failure\",\"lens\":\"concurrency\"}]}".to_string();
-    let (answer, who) = ask::<FindingsEnvelope>(frontier, &prompt, PROBE_CODE, false, repo_root, 600, 1).await;
-    // `who` is deliberately not recorded on the report: the probe reviewed a
-    // snippet, not the target, and `reviewed_by` names who reviewed the code
-    // the findings are about.
-    let _ = who;
-    match answer {
+    match read_answer::<FindingsEnvelope>(Ok(local(prompt).await)) {
         Answer::Answered(env) if probe_found_it(&env.findings) => Calibration::Calibrated,
         Answer::Answered(_) => Calibration::Missed,
         Answer::NotAnswered(why) => Calibration::Unrun(why),
@@ -693,27 +718,6 @@ fn retry_prompt(prompt: &str, attempt: u32, attempts: u32, last_err: &str) -> St
     } else {
         format!("{prompt}\n\n(retry {attempt}/{attempts} — the previous attempt failed: {last_err})")
     }
-}
-
-/// Paths git reports as changed, from `git status --porcelain`.
-///
-/// Used to tell the operator's edits from the pass's own. A rename line
-/// (`R  old -> new`) contributes the new path.
-async fn dirty_paths(repo_root: &Path) -> std::collections::HashSet<String> {
-    let out = tokio::process::Command::new("git")
-        .args(["status", "--porcelain"])
-        .current_dir(repo_root)
-        .output()
-        .await;
-    let Ok(out) = out else {
-        return Default::default();
-    };
-    String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .filter_map(|l| l.get(3..))
-        .map(|p| p.rsplit(" -> ").next().unwrap_or(p).trim().to_string())
-        .filter(|p| !p.is_empty())
-        .collect()
 }
 
 /// Every path git reports as changed, from `git status --porcelain=v1 -z -uall`,
@@ -1023,7 +1027,7 @@ async fn review(
     let local_only = report.reviewed_by.iter().any(|r| r != "frontier");
     if candidates.is_empty() && local_only {
         let probe = Phase::start(&reporter, "calibrate", "one planted defect, to see if an empty review means anything", HEARTBEAT);
-        report.calibration = calibrate(&*frontier, repo_root).await;
+        report.calibration = calibrate(|prompt| async move { local_run(&prompt, PROBE_CODE, false).await }).await;
         probe.finish(report.calibration.note().unwrap_or_else(|| "not needed".into()));
     }
     if !report.reviewed() {
@@ -1098,6 +1102,7 @@ async fn review(
             pending: Vec::new(),
             retry: Vec::new(),
             last_green: None,
+            green_changes: Default::default(),
         }),
         _ => None,
     };
@@ -1204,9 +1209,13 @@ async fn review(
 
     // ── Final gate ───────────────────────────────────────────────────────────
     // The last full gate is the final gate when it ran on this very tree
-    // (ADR-2610160756 §7).
+    // (ADR-2610160756 §7): the same HEAD, and the same uncommitted changes —
+    // a fix left in the tree after it was seen only by the fast gate.
     if let Some(b) = &batching {
-        if b.last_green.is_some() && head(repo_root).await == b.last_green {
+        if b.last_green.is_some()
+            && head(repo_root).await == b.last_green
+            && changed_files(repo_root).await == b.green_changes
+        {
             let final_gate = Phase::start(&reporter, "gate", "the last full gate ran on this tree", HEARTBEAT);
             report.gate_passed = true;
             report.gate_run = true;
@@ -1256,6 +1265,8 @@ struct Batching<'a> {
     retry: Vec<Landed>,
     /// HEAD when a full gate last passed (§7).
     last_green: Option<String>,
+    /// The uncommitted changes in the tree that gate passed on (§7).
+    green_changes: std::collections::BTreeMap<String, Option<Vec<u8>>>,
 }
 
 impl Batching<'_> {
@@ -1265,6 +1276,7 @@ impl Batching<'_> {
         report.full_gates += 1;
         if passed {
             self.last_green = head(self.repo_root).await;
+            self.green_changes = changed_files(self.repo_root).await;
         }
         (passed, out)
     }
@@ -1465,9 +1477,12 @@ impl Batching<'_> {
     /// Take `l` out of what the pass claims, keep why, and owe it a last
     /// chance (§4, §6).
     fn drop_fix(&mut self, l: &Landed, evidence: String, report: &mut ReviewReport) {
-        report.fixed.retain(|t| *t != l.title);
+        // One entry per commit: a same-titled fix that passed stays claimed.
+        if let Some(i) = report.fixed.iter().position(|t| *t == l.title) {
+            report.fixed.remove(i);
+        }
         report.notes.push(format!("fix for '{}' dropped from its batch: {}", l.title, first_line(&evidence)));
-        report.dropped.push(Dropped { title: l.title.clone(), evidence });
+        report.dropped.push(Dropped { title: l.title.clone(), sha: l.sha.clone(), evidence });
         self.retry.push(l.clone());
     }
 
@@ -1494,7 +1509,7 @@ impl Batching<'_> {
             if full {
                 phase.note(format!("landed: {}", l.title));
                 report.fixed.push(l.title.clone());
-                report.dropped.retain(|d| d.title != l.title);
+                report.dropped.retain(|d| d.sha != l.sha);
                 report.notes.push(format!("fix for '{}' landed on its last chance", l.title));
                 landed += 1;
             } else {
@@ -1558,7 +1573,9 @@ pub async fn run_build_with(
     reporter: Reporter,
 ) -> BuildReport {
     let mut report = BuildReport::default();
-    let dirty_before = dirty_paths(repo_root).await;
+    // Per file (`-uall`): a directory-level entry would hide an operator's
+    // file inside the build's target directory.
+    let dirty_before: std::collections::BTreeSet<String> = changed_files(repo_root).await.into_keys().collect();
     let n = n_designs.clamp(2, DESIGN_PRIORITIES.len());
 
     // ── Phase 1: diverge — N designs from competing priorities ───────────────
@@ -1666,15 +1683,14 @@ pub async fn run_build_with(
     report.build_ok = ok;
     build.finish(if ok { "gate passed" } else { "gate FAILED" });
     if ok {
-        let mut paths: Vec<String> = dirty_paths(repo_root)
+        // Only the files the build changed. The target is not added back: it
+        // is a pathspec, and would commit the operator's own edits to it or
+        // to any file under it.
+        let paths: Vec<String> = changed_files(repo_root)
             .await
-            .into_iter()
+            .into_keys()
             .filter(|p| !dirty_before.contains(p))
             .collect();
-        if !paths.iter().any(|p| p == target) {
-            paths.push(target.to_string());
-        }
-        paths.sort();
         commit_result(
             repo_root,
             &paths,
@@ -1715,6 +1731,22 @@ mod answered_tests {
         // Markdown fences still parse: that is why extract_json exists.
         let a: Answer<FindingsEnvelope> =
             read_answer(ok("Here you go:\n```json\n{\"findings\":[{\"title\":\"t\",\"location\":\"l\",\"description\":\"d\",\"lens\":\"x\"}]}\n```"));
+        assert!(matches!(a, Answer::Answered(ref e) if e.findings.len() == 1), "{a:?}");
+    }
+
+    /// A bracket in the prose before the envelope is not the answer: the
+    /// envelope after it still is.
+    #[test]
+    fn an_envelope_after_a_bracket_in_prose_is_answered() {
+        let a: Answer<FindingsEnvelope> = read_answer(ok(
+            "Found 1 issue [see below]:\n{\"findings\":[{\"title\":\"t\",\"location\":\"l\",\"description\":\"d\",\"lens\":\"x\"}]}",
+        ));
+        assert!(matches!(a, Answer::Answered(ref e) if e.findings.len() == 1), "{a:?}");
+
+        // `[42]` is valid JSON but not the envelope; `{ok}` is not JSON at all.
+        let a: Answer<FindingsEnvelope> = read_answer(ok(
+            "see line [42]; it returns {ok} early.\n{\"findings\":[{\"title\":\"t\",\"location\":\"l\",\"description\":\"d\",\"lens\":\"x\"}]}",
+        ));
         assert!(matches!(a, Answer::Answered(ref e) if e.findings.len() == 1), "{a:?}");
     }
 
@@ -1813,6 +1845,24 @@ mod answered_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// The cap is a byte count, but a source file is UTF-8: a cut that lands
+    /// inside a multi-byte character must back off to its start, not panic.
+    #[test]
+    fn truncating_at_the_cap_never_splits_a_utf8_character() {
+        let dir = std::env::temp_dir().join(format!("hexa-target-utf8-{}-{:?}", std::process::id(), std::thread::current().id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        // Every offset in a run of 3-byte `—` is hit, whatever the header
+        // length: one of these three files puts the cut mid-character.
+        for pad in 0..3 {
+            std::fs::write(dir.join("src/wide.rs"), format!("{}{}", "x".repeat(pad), "—".repeat(LOCAL_CONTEXT_CAP / 3 + 10))).unwrap();
+            let (code, truncated) = read_target("src/wide.rs", &dir);
+            assert!(truncated, "over the cap");
+            assert!(code.len() <= LOCAL_CONTEXT_CAP && code.len() + 3 > LOCAL_CONTEXT_CAP, "shown {} bytes, cap {}", code.len(), LOCAL_CONTEXT_CAP);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Both paths shut means both reasons: the frontier's names the budget,
     /// the local one names what the model said (ADR-2609131948).
     #[test]
@@ -1861,6 +1911,34 @@ mod answered_tests {
         let unrun = Calibration::Unrun("spend limit".into()).note().unwrap();
         assert!(unrun.starts_with("calibration did not run: spend limit"), "{unrun}");
         assert!(!unrun.contains("not evidence"), "an unrun probe accuses nobody: {unrun}");
+    }
+
+    /// §2: the probe judges the local reviewer whose empty result it
+    /// qualifies. A local model that misses the planted defect is Missed —
+    /// it is the one asked, not a frontier that recovered and would find it.
+    #[test]
+    fn calibration_judges_the_local_reviewer_it_asks() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let asked = std::sync::atomic::AtomicUsize::new(0);
+            let blind = calibrate(|prompt| {
+                asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                assert!(prompt.contains("concurrency"), "{prompt}");
+                async { Ok::<_, String>(r#"{"findings":[]}"#.to_string()) }
+            })
+            .await;
+            assert_eq!(blind, Calibration::Missed, "the local model saw nothing, so its empty result is not evidence");
+            assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 1, "the local reviewer is the one asked");
+
+            let sharp = calibrate(|_| async {
+                Ok::<_, String>(r#"{"findings":[{"title":"Lock dropped before the write","location":"bump","description":"the guard is released, then the map is written, so callers race","lens":"concurrency"}]}"#.to_string())
+            })
+            .await;
+            assert_eq!(sharp, Calibration::Calibrated);
+
+            let down = calibrate(|_| async { Err::<String, _>("gateway refused".to_string()) }).await;
+            assert_eq!(down, Calibration::Unrun("gateway refused".into()));
+        });
     }
 
     /// The verdict line carries the qualification where the count is read.

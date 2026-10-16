@@ -56,12 +56,14 @@ enum Fix {
 
 struct FakeFrontier {
     fixes: Vec<Fix>,
+    /// Each finding's title; `bug-n` unless a test names them alike.
+    titles: Vec<String>,
     handed_out: AtomicBool,
 }
 
 impl FakeFrontier {
-    fn new(fixes: Vec<Fix>) -> Arc<Self> {
-        Arc::new(Self { fixes, handed_out: AtomicBool::new(false) })
+    fn new(fixes: Vec<Fix>, titles: Vec<String>) -> Arc<Self> {
+        Arc::new(Self { fixes, titles, handed_out: AtomicBool::new(false) })
     }
 }
 
@@ -74,7 +76,10 @@ impl Frontier for FakeFrontier {
                 return Ok(r#"{"findings":[]}"#.to_string());
             }
             let findings: Vec<String> = (1..=self.fixes.len())
-                .map(|n| format!(r#"{{"title":"bug-{n}","location":"{TARGET}:{n}","description":"defect {n}","lens":"correctness"}}"#))
+                .map(|n| {
+                    let title = &self.titles[n - 1];
+                    format!(r#"{{"title":"{title}","location":"{TARGET}:{n}","description":"defect {n}","lens":"correctness"}}"#)
+                })
                 .collect();
             return Ok(format!(r#"{{"findings":[{}]}}"#, findings.join(",")));
         }
@@ -83,8 +88,8 @@ impl Frontier for FakeFrontier {
         }
         if prompt.contains("Fix this CONFIRMED bug") {
             let n = (1..=self.fixes.len())
-                .find(|n| prompt.contains(&format!("title: bug-{n}\n")))
-                .expect("the fix prompt names its bug");
+                .find(|n| prompt.contains(&format!("location: {TARGET}:{n}\n")))
+                .expect("the fix prompt names its bug's location");
             let (path, body) = match self.fixes[n - 1] {
                 Fix::Good => (format!("src/fix_{n}.txt"), format!("fix {n}\n")),
                 Fix::Poisons => (format!("src/fix_{n}.txt"), format!("fix {n}\nPOISON\n")),
@@ -199,8 +204,14 @@ impl Scratch {
     }
 
     async fn harden(&self, fixes: Vec<Fix>, fast_gate: Option<String>) -> ReviewReport {
+        let titles = titles(&(1..=fixes.len()).collect::<Vec<_>>());
+        self.harden_titled(fixes, titles, fast_gate).await
+    }
+
+    /// [`Scratch::harden`], with each finding's title given.
+    async fn harden_titled(&self, fixes: Vec<Fix>, titles: Vec<String>, fast_gate: Option<String>) -> ReviewReport {
         let gates = HardenGates { gate: self.full(), fast_gate, batch: None };
-        run_review_gated(FakeFrontier::new(fixes), hexa_exec::default_git_history(), TARGET, &gates, &self.dir).await
+        run_review_gated(FakeFrontier::new(fixes, titles), hexa_exec::default_git_history(), TARGET, &gates, &self.dir).await
     }
 
     /// Fix commits on HEAD since `init`, oldest first: (subject, Hexa-Gate trailer).
@@ -327,6 +338,40 @@ async fn a_fix_that_breaks_an_untouched_file_is_found_by_bisection() {
     assert!(report.verdict_line().contains("bug-3"), "the verdict names the dropped fix: {}", report.verdict_line());
 }
 
+/// Two lenses name two fixes alike. Bisection drops the poisoned one; the
+/// other passed its full gate and stays committed, so it stays claimed.
+#[tokio::test]
+async fn dropping_a_fix_keeps_a_same_titled_fix_that_landed() {
+    let s = Scratch::new();
+    let dup = || "missing bounds check".to_string();
+    let report = s.harden_titled(vec![Fix::Good, Fix::Poisons], vec![dup(), dup()], Some(s.fast())).await;
+
+    assert!(s.exists("src/fix_1.txt") && !s.exists("src/fix_2.txt"), "fix 1 is in, fix 2 is out");
+    assert_eq!(s.subjects(), vec!["fix(harden): missing bounds check"], "one fix is committed");
+    assert_eq!(report.fixed, vec![dup()], "the committed fix is still claimed; notes: {:?}", report.notes);
+    let dropped: Vec<&str> = report.dropped.iter().map(|d| d.title.as_str()).collect();
+    assert_eq!(dropped, vec![dup().as_str()], "the poisoned fix is dropped");
+}
+
+/// A fix lands on its last chance while a same-titled fix stays dropped:
+/// only the one that landed leaves `dropped`.
+#[tokio::test]
+async fn a_last_chance_landing_keeps_a_same_titled_fix_dropped() {
+    let s = Scratch::new();
+    let dup = || "missing bounds check".to_string();
+    let report = s
+        .harden_titled(vec![Fix::Needs(3), Fix::Poisons, Fix::Good], vec![dup(), dup(), "bug-3".to_string()], Some(s.fast()))
+        .await;
+
+    assert!(s.exists("src/fix_1.txt") && !s.exists("src/fix_2.txt"), "fix 1 landed last, fix 2 is out");
+    let mut fixed = report.fixed.clone();
+    fixed.sort();
+    assert_eq!(fixed, vec!["bug-3".to_string(), dup()], "notes: {:?}", report.notes);
+    let dropped: Vec<&str> = report.dropped.iter().map(|d| d.title.as_str()).collect();
+    assert_eq!(dropped, vec![dup().as_str()], "the poisoned fix is still out: notes: {:?}", report.notes);
+    assert!(report.verdict_line().contains("dropped by bisection"), "{}", report.verdict_line());
+}
+
 /// Fix 2 passes only once fix 4 is in. The fast gate rejects it, it is
 /// retried last on the final tree, and it lands (§6).
 #[tokio::test]
@@ -396,6 +441,34 @@ async fn a_touched_path_with_a_space_is_one_argument() {
     args.sort();
     assert_eq!(args, vec!["src/my file 1.txt".to_string(), "tests/bug_1.txt".to_string()]);
     assert_eq!(report.fixed, titles(&[1]), "notes: {:?}", report.notes);
+}
+
+/// With `--batch 1`, fix 1 closes a green batch. Fix 2 poisons the build but
+/// touches a file the operator had already changed, so it is left in the tree
+/// uncommitted, seen only by the fast gate. HEAD is still the green head, yet
+/// the tree is not the one the full gate passed on: the final gate runs, and
+/// it fails (§7).
+#[tokio::test]
+async fn an_uncommitted_fast_gated_fix_is_not_covered_by_the_last_green_gate() {
+    let s = Scratch::new();
+    std::fs::create_dir_all(s.dir.join("tests")).unwrap();
+    std::fs::write(s.dir.join("tests/bug_2.txt"), "operator draft\n").unwrap();
+    let gates = HardenGates { gate: s.full(), fast_gate: Some(s.fast()), batch: Some(1) };
+    let report = run_review_gated(
+        FakeFrontier::new(vec![Fix::Good, Fix::Poisons], titles(&[1, 2])),
+        hexa_exec::default_git_history(),
+        TARGET,
+        &gates,
+        &s.dir,
+    )
+    .await;
+
+    assert_eq!(report.fixed, titles(&[1]), "notes: {:?}", report.notes);
+    assert_eq!(report.uncommitted, titles(&[2]), "fix 2 is left in the tree: {:?}", report.notes);
+    assert!(s.exists("src/fix_2.txt"), "fix 2's poison is in the tree");
+    assert!(report.gate_run, "{}", report.gate_line());
+    assert!(!report.gate_passed, "the tree holds POISON the full gate never saw: {}", report.gate_line());
+    assert_eq!(s.runs("full"), 2, "the batch's full gate, then the final gate on the changed tree");
 }
 
 /// Without `--fast-gate` nothing changes: the full gate runs after each fix
