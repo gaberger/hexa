@@ -179,9 +179,9 @@ fn find_adr_file(adr_id: &str) -> anyhow::Result<PathBuf> {
     }
 }
 
-/// Rewrite the `Status:` header line (preserving its style), optionally inserting
-/// a `Superseded-By:` backlink. Mirrors the adr_status_set tool — the file is the
-/// single source of truth.
+/// Rewrite the ADR's status lines, optionally inserting a `Superseded-By:`
+/// backlink. Mirrors the adr_status_set tool — the file is the single source
+/// of truth.
 async fn set_adr_status(
     adr_id: &str,
     new_status: &str,
@@ -191,41 +191,9 @@ async fn set_adr_status(
     let path = find_adr_file(adr_id)?;
     let content = std::fs::read_to_string(&path)?;
     let old = parse_adr_status(&content).to_string();
-    let already_has_sb = content.to_lowercase().contains("superseded-by:");
-
-    let mut out = String::with_capacity(content.len() + 80);
-    let mut found = false;
-    for line in content.split_inclusive('\n') {
-        let trimmed = line.trim_start();
-        let lower = trimmed.to_lowercase();
-        let nl = if line.ends_with('\n') { "\n" } else { "" };
-        let indent = &line[..line.len() - trimmed.len()];
-        let (label, is_status) = if lower.starts_with("**status:**") {
-            ("**Status:** ", true)
-        } else if lower.starts_with("status:") && !lower.starts_with("status_") {
-            ("Status: ", true)
-        } else {
-            ("", false)
-        };
-        if !found && is_status {
-            out.push_str(indent);
-            out.push_str(label);
-            out.push_str(new_status);
-            out.push_str(nl);
-            found = true;
-            if let (Some(by), false) = (superseded_by, already_has_sb) {
-                out.push_str(indent);
-                out.push_str(if label.starts_with("**") { "**Superseded-By:** " } else { "Superseded-By: " });
-                out.push_str(by);
-                out.push('\n');
-            }
-        } else {
-            out.push_str(line);
-        }
-    }
-    if !found {
+    let Some(out) = rewrite_adr_status(&content, new_status, superseded_by) else {
         anyhow::bail!("no `Status:` header line in {} — unexpected ADR format", path.display());
-    }
+    };
     std::fs::write(&path, out)?;
     let id = path.file_stem().and_then(|s| s.to_str()).unwrap_or(adr_id);
     println!("{} {} : {} → {}", "\u{2b21}".cyan(), id, old.dimmed(), new_status.green().bold());
@@ -235,6 +203,94 @@ async fn set_adr_status(
     println!("  {}", rationale.dimmed());
     println!("  {} file updated (uncommitted — commit to record the transition in history)", "\u{2192}".dimmed());
     Ok(())
+}
+
+/// `new` in the case of `old`: all-lowercase `old` → lowercase, otherwise
+/// capitalised (`Accepted`).
+fn status_in_case_of(old: &str, new: &str) -> String {
+    if !old.is_empty() && old == old.to_lowercase() {
+        return new.to_lowercase();
+    }
+    let lower = new.to_lowercase();
+    let mut chars = lower.chars();
+    match chars.next() {
+        Some(c) => c.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}
+
+/// Pure rewrite behind `set_adr_status`. Updates the frontmatter `status:`
+/// line (only inside the leading `---` block, key kept as written) and the
+/// first body `**Status:**` line — or, in a body-only ADR, the first plain
+/// `Status:` line — each with its value in the old value's case. Inserts the
+/// `Superseded-By:` backlink once, after the body status line when there is
+/// one. `None` when the ADR has no status line at all.
+fn rewrite_adr_status(content: &str, new_status: &str, superseded_by: Option<&str>) -> Option<String> {
+    let lines: Vec<&str> = content.split_inclusive('\n').collect();
+    let bare = |l: &str| l.trim_end_matches(['\n', '\r']).to_string();
+    // The leading frontmatter block: lines[1..fm_end] are inside it.
+    let fm_end = if lines.first().map(|l| bare(l).trim() == "---").unwrap_or(false) {
+        lines.iter().skip(1).position(|l| bare(l).trim() == "---").map(|p| p + 1)
+    } else {
+        None
+    };
+    let has_fm = fm_end.is_some();
+    let body_start = fm_end.map(|e| e + 1).unwrap_or(0);
+    let already_has_sb = content.to_lowercase().contains("superseded-by:");
+
+    let mut fm_line: Option<usize> = None;
+    if let Some(end) = fm_end {
+        fm_line = (1..end).find(|&i| bare(lines[i]).trim_start().to_lowercase().starts_with("status:"));
+    }
+    let body_line = (body_start..lines.len()).find(|&i| {
+        let lower = bare(lines[i]).trim_start().to_lowercase();
+        lower.starts_with("**status:**")
+            || (!has_fm && lower.starts_with("status:") && !lower.starts_with("status_"))
+    });
+    if fm_line.is_none() && body_line.is_none() {
+        return None;
+    }
+
+    let mut out = String::with_capacity(content.len() + 80);
+    for (i, line) in lines.iter().enumerate() {
+        let is_fm = fm_line == Some(i);
+        if !is_fm && body_line != Some(i) {
+            out.push_str(line);
+            continue;
+        }
+        let text = bare(line);
+        let eol = &line[text.len()..];
+        let trimmed = text.trim_start();
+        let indent = &text[..text.len() - trimmed.len()];
+        let bold = trimmed.starts_with("**");
+        let key_len = if bold { "**status:**".len() } else { "status:".len() };
+        let key = &trimmed[..key_len];
+        let value = status_in_case_of(trimmed[key_len..].trim(), new_status);
+        out.push_str(indent);
+        out.push_str(key);
+        out.push(' ');
+        out.push_str(&value);
+        // The backlink goes after the body line, or after the frontmatter line
+        // when the body has none.
+        let link_here = if body_line.is_some() { !is_fm } else { is_fm };
+        match (superseded_by, already_has_sb, link_here) {
+            (Some(by), false, true) => {
+                let label = match (bold, is_fm) {
+                    (true, _) => "**Superseded-By:**",
+                    (false, true) if key.starts_with('s') => "superseded-by:",
+                    _ => "Superseded-By:",
+                };
+                out.push_str(if eol.is_empty() { "\n" } else { eol });
+                out.push_str(indent);
+                out.push_str(label);
+                out.push(' ');
+                out.push_str(by);
+                out.push_str(eol);
+            }
+            _ => out.push_str(eol),
+        }
+    }
+    Some(out)
 }
 
 /// Is the ADR's implementation confirmed? True iff a workplan referencing it
@@ -1662,6 +1718,70 @@ mod tests {
     #[test]
     fn parse_status_case_insensitive() {
         assert_eq!(parse_adr_status("---\nstatus: ACCEPTED\n---\n"), "accepted");
+    }
+
+    const LEDGER_SHAPE: &str = "---\nid: ADR-1\nstatus: proposed\n---\n# ADR-1: A\n\n**Status:** Proposed\n**Date:** 2026-10-16\n\nThe status: of prose stays.\n";
+
+    #[test]
+    fn rewrite_status_updates_frontmatter_and_body_in_their_own_styles() {
+        let out = rewrite_adr_status(LEDGER_SHAPE, "Accepted", None).unwrap();
+        assert_eq!(out, LEDGER_SHAPE.replace("status: proposed", "status: accepted").replace("**Status:** Proposed", "**Status:** Accepted"));
+    }
+
+    #[test]
+    fn rewrite_status_keeps_a_capitalised_frontmatter_key_and_value() {
+        let adr = LEDGER_SHAPE.replace("status: proposed", "Status: Proposed");
+        let out = rewrite_adr_status(&adr, "Accepted", None).unwrap();
+        assert!(out.lines().any(|l| l == "Status: Accepted"), "{out}");
+        assert!(out.lines().any(|l| l == "**Status:** Accepted"), "{out}");
+    }
+
+    #[test]
+    fn rewrite_status_lowercase_body_value_stays_lowercase() {
+        let out = rewrite_adr_status("# A\n\n**Status:** proposed\n", "Accepted", None).unwrap();
+        assert_eq!(out, "# A\n\n**Status:** accepted\n");
+    }
+
+    #[test]
+    fn rewrite_status_body_only_plain_header_and_no_frontmatter_invented() {
+        let out = rewrite_adr_status("# A\n\nStatus: Proposed\nLater Status: prose\n", "Accepted", None).unwrap();
+        assert_eq!(out, "# A\n\nStatus: Accepted\nLater Status: prose\n");
+    }
+
+    #[test]
+    fn rewrite_status_ignores_plain_status_in_body_when_frontmatter_exists() {
+        let adr = "---\nstatus: proposed\n---\n# A\n\nStatus: of the rollout is unclear\n";
+        let out = rewrite_adr_status(adr, "Accepted", None).unwrap();
+        assert_eq!(out, adr.replace("status: proposed", "status: accepted"));
+    }
+
+    #[test]
+    fn rewrite_status_only_touches_the_first_body_status_line() {
+        let adr = "# A\n\n**Status:** Proposed\n\n**Status:** Proposed in the old draft\n";
+        let out = rewrite_adr_status(adr, "Accepted", None).unwrap();
+        assert_eq!(out, "# A\n\n**Status:** Accepted\n\n**Status:** Proposed in the old draft\n");
+    }
+
+    #[test]
+    fn rewrite_status_supersede_links_once_after_the_body_line() {
+        let out = rewrite_adr_status(LEDGER_SHAPE, "Superseded", Some("ADR-2")).unwrap();
+        assert_eq!(out.matches("ADR-2").count(), 1, "{out}");
+        assert!(out.contains("status: superseded\n---"), "{out}");
+        assert!(out.contains("**Status:** Superseded\n**Superseded-By:** ADR-2\n**Date:**"), "{out}");
+        // A second supersede does not add another backlink.
+        let again = rewrite_adr_status(&out, "Superseded", Some("ADR-2")).unwrap();
+        assert_eq!(again.matches("ADR-2").count(), 1, "{again}");
+    }
+
+    #[test]
+    fn rewrite_status_supersede_frontmatter_only_links_in_frontmatter() {
+        let out = rewrite_adr_status("---\nstatus: accepted\n---\n# A\n", "Superseded", Some("ADR-2")).unwrap();
+        assert_eq!(out, "---\nstatus: superseded\nsuperseded-by: ADR-2\n---\n# A\n");
+    }
+
+    #[test]
+    fn rewrite_status_none_without_a_status_line() {
+        assert!(rewrite_adr_status("# A\n\nJust text.\n", "Accepted", None).is_none());
     }
 
     #[test]

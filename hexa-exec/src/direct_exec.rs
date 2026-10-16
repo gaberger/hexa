@@ -941,6 +941,29 @@ pub(crate) fn apply_edit(abs_path: &std::path::Path, content: &str, edit: &Edit)
     std::fs::write(abs_path, new_content).map_err(|e| e.to_string())
 }
 
+/// `cmd` with every `{touched}` replaced by `paths`, each single-quoted for
+/// the shell and space-separated, so a path with a space stays one argument
+/// (ADR-2610160756 §2).
+pub fn substitute_touched(cmd: &str, paths: &[String]) -> String {
+    let quoted: Vec<String> = paths.iter().map(|p| format!("'{}'", p.replace('\'', "'\\''"))).collect();
+    cmd.replace("{touched}", &quoted.join(" "))
+}
+
+#[cfg(test)]
+mod substitute_touched_tests {
+    use super::substitute_touched;
+
+    #[test]
+    fn each_path_is_one_quoted_argument() {
+        let paths = vec!["src/my file.txt".to_string(), "it's.rs".to_string()];
+        assert_eq!(
+            substitute_touched("test {touched} && echo {touched}", &paths),
+            "test 'src/my file.txt' 'it'\\''s.rs' && echo 'src/my file.txt' 'it'\\''s.rs'"
+        );
+        assert_eq!(substitute_touched("check", &paths), "check");
+    }
+}
+
 pub async fn run_evidence(cmd: &str, repo_root: &std::path::Path) -> (bool, String) {
     // CRITICAL: run under bash with `pipefail` so the exit code reflects the FIRST
     // failing command in a pipe, not the last. Without this, an evidence command

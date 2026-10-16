@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use std::sync::Arc;
 
-use crate::ports::Frontier;
+use crate::ports::{Frontier, GitHistory};
 
 /// One adversarial lens — a focused failure class a reviewer hunts.
 struct Lens {
@@ -83,6 +83,38 @@ pub struct ReviewReport {
     /// How many replied with the envelope that was asked for. Zero means
     /// nothing was reviewed, whatever the counts say.
     pub answered: usize,
+    /// Every full-gate run when a fast gate was used, the final gate
+    /// included (ADR-2610160756 §8). Zero without one.
+    pub full_gates: usize,
+    /// Each batch closed by a full gate, in order (ADR-2610160756 §3).
+    pub batches: Vec<Batch>,
+    /// Fixes the batch bisection dropped, each with the evidence that blamed
+    /// it (ADR-2610160756 §4).
+    pub dropped: Vec<Dropped>,
+    /// Full gates that did not reproduce, naming both prefixes and both
+    /// outputs (ADR-2610160756 §5).
+    pub flakes: Vec<String>,
+}
+
+/// One batch of fast-gated fixes and what its full gate said
+/// (ADR-2610160756 §3).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Batch {
+    pub fixes: Vec<String>,
+    /// Whether the batch became the green base. A flaky batch never does (§5).
+    pub green: bool,
+}
+
+/// A fix the bisection blamed, or that no longer applied once the culprit
+/// was gone (ADR-2610160756 §4).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Dropped {
+    pub title: String,
+    /// The fix's commit: two lenses may name two fixes alike, and only this
+    /// tells them apart.
+    pub sha: String,
+    /// The red full-gate output that blamed it, or why it did not apply.
+    pub evidence: String,
 }
 
 impl Default for ReviewReport {
@@ -100,6 +132,10 @@ impl Default for ReviewReport {
             calibration: Calibration::NotNeeded,
             lenses: 0,
             answered: 0,
+            full_gates: 0,
+            batches: Vec::new(),
+            dropped: Vec::new(),
+            flakes: Vec::new(),
         }
     }
 }
@@ -154,6 +190,33 @@ impl ReviewReport {
             by,
             cut
         ) + &cal
+            + &self.batching_line()
+    }
+
+    /// How the fixes were proven when a fast gate was used: the full gates,
+    /// the batches, the fixes bisection dropped, the flakes (ADR-2610160756
+    /// §8). Empty without a fast gate, which runs no counted full gate.
+    fn batching_line(&self) -> String {
+        if self.full_gates == 0 {
+            return String::new();
+        }
+        let mut line = format!(" · {}", plural(self.full_gates, "full gate"));
+        if !self.batches.is_empty() {
+            let batches: Vec<String> = self
+                .batches
+                .iter()
+                .map(|b| format!("{} {}", plural(b.fixes.len(), "fix"), if b.green { "green" } else { "not green" }))
+                .collect();
+            line += &format!(" · batches: {}", batches.join(", "));
+        }
+        if !self.dropped.is_empty() {
+            let titles: Vec<&str> = self.dropped.iter().map(|d| d.title.as_str()).collect();
+            line += &format!(" · dropped by bisection: {}", titles.join(", "));
+        }
+        if !self.flakes.is_empty() {
+            line += &format!(" · {}", plural(self.flakes.len(), "flake"));
+        }
+        line
     }
 
     /// Record who answered, once each, in the order they first did.
@@ -197,7 +260,9 @@ fn first_line(text: &str) -> String {
 /// Read one agent's reply as the envelope it was asked for.
 fn read_answer<T: serde::de::DeserializeOwned>(result: Result<Result<String, String>, String>) -> Answer<T> {
     match result {
-        Ok(Ok(out)) => match extract_json(&out).and_then(|js| serde_json::from_str::<T>(js).ok()) {
+        // Every bracket is a candidate: prose like "1 issue [see below]:"
+        // may precede the envelope, and the first balanced span is not it.
+        Ok(Ok(out)) => match json_candidates(&out).find_map(|js| serde_json::from_str::<T>(js).ok()) {
             Some(v) => Answer::Answered(v),
             None => Answer::NotAnswered(first_line(&out)),
         },
@@ -208,9 +273,21 @@ fn read_answer<T: serde::de::DeserializeOwned>(result: Result<Result<String, Str
 
 /// Extract the first balanced JSON value (object or array) from agent prose. Pure and
 /// testable — `claude -p` often wraps JSON in markdown fences or commentary.
+#[cfg(test)]
 fn extract_json(text: &str) -> Option<&str> {
+    json_candidates(text).next()
+}
+
+/// Every balanced JSON-looking span in `text`, one per opening bracket, in
+/// order. The caller keeps the first that parses as what it asked for.
+fn json_candidates(text: &str) -> impl Iterator<Item = &str> {
     let bytes = text.as_bytes();
-    let start = bytes.iter().position(|&b| b == b'{' || b == b'[')?;
+    (0..bytes.len()).filter(move |&i| bytes[i] == b'{' || bytes[i] == b'[').filter_map(move |start| balanced_from(text, start))
+}
+
+/// The balanced span opening at byte `start` (a `{` or `[`), if it closes.
+fn balanced_from(text: &str, start: usize) -> Option<&str> {
+    let bytes = text.as_bytes();
     let (open, close) = if bytes[start] == b'{' { (b'{', b'}') } else { (b'[', b']') };
     let mut depth = 0i32;
     let mut in_str = false;
@@ -399,7 +476,11 @@ fn read_target(target: &str, repo_root: &Path) -> (String, bool) {
         let name = f.strip_prefix(repo_root).unwrap_or(&f).display().to_string();
         let header = format!("\n// ── {name} ──\n");
         if out.len() + header.len() + text.len() > LOCAL_CONTEXT_CAP {
-            let room = LOCAL_CONTEXT_CAP.saturating_sub(out.len() + header.len());
+            let mut room = LOCAL_CONTEXT_CAP.saturating_sub(out.len() + header.len()).min(text.len());
+            // The cap is in bytes; the cut must still land on a char boundary.
+            while !text.is_char_boundary(room) {
+                room -= 1;
+            }
             if room > 0 {
                 out.push_str(&header);
                 out.push_str(&text[..room.min(text.len())]);
@@ -579,17 +660,21 @@ fn probe_found_it(findings: &[Finding]) -> bool {
 }
 
 /// Ask the local reviewer to find the planted defect in [`PROBE_CODE`].
-async fn calibrate(frontier: &dyn Frontier, repo_root: &Path) -> Calibration {
+///
+/// `local` is the local reviewer itself, called with the probe prompt; the
+/// harness passes [`local_run`]. Never [`ask`]: the empty result being judged
+/// is the local model's, and a frontier that recovered from a transient
+/// failure would answer the probe and calibrate a model it never tested.
+async fn calibrate<F, Fut>(local: F) -> Calibration
+where
+    F: FnOnce(String) -> Fut,
+    Fut: std::future::Future<Output = Result<String, String>>,
+{
     let prompt = "You are an adversarial code reviewer. Hunt this code for concurrency defects: races, \
          lost updates, work done outside a lock. Report exclusively REAL bugs you can point to. \
          Output ONLY a JSON object: \
          {\"findings\":[{\"title\":\"...\",\"location\":\"file:line or fn\",\"description\":\"the concrete failure\",\"lens\":\"concurrency\"}]}".to_string();
-    let (answer, who) = ask::<FindingsEnvelope>(frontier, &prompt, PROBE_CODE, false, repo_root, 600, 1).await;
-    // `who` is deliberately not recorded on the report: the probe reviewed a
-    // snippet, not the target, and `reviewed_by` names who reviewed the code
-    // the findings are about.
-    let _ = who;
-    match answer {
+    match read_answer::<FindingsEnvelope>(Ok(local(prompt).await)) {
         Answer::Answered(env) if probe_found_it(&env.findings) => Calibration::Calibrated,
         Answer::Answered(_) => Calibration::Missed,
         Answer::NotAnswered(why) => Calibration::Unrun(why),
@@ -635,29 +720,15 @@ fn retry_prompt(prompt: &str, attempt: u32, attempts: u32, last_err: &str) -> St
     }
 }
 
-/// Paths git reports as changed, from `git status --porcelain`.
-///
-/// Used to tell the operator's edits from the pass's own. A rename line
-/// (`R  old -> new`) contributes the new path.
-async fn dirty_paths(repo_root: &Path) -> std::collections::HashSet<String> {
-    let out = tokio::process::Command::new("git")
-        .args(["status", "--porcelain"])
-        .current_dir(repo_root)
-        .output()
-        .await;
-    let Ok(out) = out else {
-        return Default::default();
-    };
-    String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .filter_map(|l| l.get(3..))
-        .map(|p| p.rsplit(" -> ").next().unwrap_or(p).trim().to_string())
-        .filter(|p| !p.is_empty())
-        .collect()
-}
+/// hexa's own loop state, which the progress reporter and the loop recorder
+/// rewrite while a fix runs. It is never part of a fix: never committed by
+/// one, never restored by a revert, never named as an operator-dirty file
+/// (ADR-2610141733 §6). Observed 2026-10-16: 10 gate-passed fixes were held
+/// back because the heartbeat rewrote it mid-fix.
+const LOOP_STATE: &str = ".hexa/loop.json";
 
 /// Every path git reports as changed, from `git status --porcelain=v1 -z -uall`,
-/// with its current bytes (`None` = deleted).
+/// with its current bytes (`None` = deleted) — all but [`LOOP_STATE`].
 ///
 /// `-uall` lists each file inside an untracked directory, and the bytes tell a
 /// second edit to an already-dirty file from no edit at all (ADR-2610141733 §6).
@@ -681,7 +752,7 @@ async fn changed_files(repo_root: &Path) -> std::collections::BTreeMap<String, O
             // The source path of a rename or copy follows as its own entry.
             entries.next();
         }
-        if path.is_empty() {
+        if path.is_empty() || path == LOOP_STATE {
             continue;
         }
         files.insert(path.to_string(), std::fs::read(repo_root.join(path)).ok());
@@ -756,12 +827,16 @@ async fn revert_paths(
 /// target alone shipped eleven fixes and left the five tests proving them
 /// uncommitted (ADR-2609122048).
 ///
+/// `trailers` go in the trailer block beside `Co-Authored-By`, e.g.
+/// `Hexa-Gate: fast` (ADR-2610160756 §2).
+///
 /// Returns true iff `git commit` succeeded.
 async fn commit_result(
     repo_root: &Path,
     paths: &[String],
     subject: &str,
     trailer: &str,
+    trailers: &[&str],
     notes: &mut Vec<String>,
 ) -> bool {
     if paths.is_empty() {
@@ -790,7 +865,9 @@ async fn commit_result(
         }
     }
     let subject: String = subject.lines().next().unwrap_or(subject).chars().take(72).collect();
-    let msg = format!("{subject}\n\nCo-Authored-By: {trailer} <noreply@hexa.local>");
+    let mut block: String = trailers.iter().map(|t| format!("{t}\n")).collect();
+    block += &format!("Co-Authored-By: {trailer} <noreply@hexa.local>");
+    let msg = format!("{subject}\n\n{block}");
     let mut commit_args: Vec<&str> = vec![
         "-c", "user.name=hexa-factory",
         "-c", "user.email=factory@hexa.local",
@@ -838,6 +915,59 @@ pub async fn run_review_with(
     repo_root: &Path,
     reporter: Reporter,
 ) -> ReviewReport {
+    let gates = HardenGates { gate: gate.to_string(), fast_gate: None, batch: None };
+    review(frontier, None, target, &gates, repo_root, reporter).await
+}
+
+/// The gates a harden pass answers to (ADR-2610160756 §1).
+#[derive(Debug, Clone, PartialEq)]
+pub struct HardenGates {
+    /// The full gate: what ships must pass it.
+    pub gate: String,
+    /// Gates each fix when set; `{touched}` is replaced by the fix's changed
+    /// paths (§2). Unset, every fix gets the full gate (ADR-2610141733 §6).
+    pub fast_gate: Option<String>,
+    /// Close a batch with a full gate after this many fixes; `None` = one
+    /// batch for the whole pass (§3).
+    pub batch: Option<usize>,
+}
+
+/// [`run_review`] under `gates`: with a fast gate, each fix is gated fast,
+/// each batch in full, and a breaking fix is found by bisecting the batch
+/// on `history` (ADR-2610160756).
+pub async fn run_review_gated(
+    frontier: Arc<dyn Frontier>,
+    history: Arc<dyn GitHistory>,
+    target: &str,
+    gates: &HardenGates,
+    repo_root: &Path,
+) -> ReviewReport {
+    run_review_gated_with(frontier, history, target, gates, repo_root, silent()).await
+}
+
+/// [`run_review_gated`], reporting each phase as it happens.
+pub async fn run_review_gated_with(
+    frontier: Arc<dyn Frontier>,
+    history: Arc<dyn GitHistory>,
+    target: &str,
+    gates: &HardenGates,
+    repo_root: &Path,
+    reporter: Reporter,
+) -> ReviewReport {
+    review(frontier, Some(history), target, gates, repo_root, reporter).await
+}
+
+/// The pipeline both entry points share. `history` is needed only with a
+/// fast gate: without one, nothing is reset or cherry-picked.
+async fn review(
+    frontier: Arc<dyn Frontier>,
+    history: Option<Arc<dyn GitHistory>>,
+    target: &str,
+    gates: &HardenGates,
+    repo_root: &Path,
+    reporter: Reporter,
+) -> ReviewReport {
+    let gate = gates.gate.as_str();
     let mut report = ReviewReport::default();
     // What the operator had already changed. A fix that touches any of these
     // is left in the tree for review, never committed over the operator's work.
@@ -904,7 +1034,7 @@ pub async fn run_review_with(
     let local_only = report.reviewed_by.iter().any(|r| r != "frontier");
     if candidates.is_empty() && local_only {
         let probe = Phase::start(&reporter, "calibrate", "one planted defect, to see if an empty review means anything", HEARTBEAT);
-        report.calibration = calibrate(&*frontier, repo_root).await;
+        report.calibration = calibrate(|prompt| async move { local_run(&prompt, PROBE_CODE, false).await }).await;
         probe.finish(report.calibration.note().unwrap_or_else(|| "not needed".into()));
     }
     if !report.reviewed() {
@@ -966,8 +1096,27 @@ pub async fn run_review_with(
     verify.finish(format!("{} confirmed real", report.confirmed.len()));
 
     // ── Phase 3: fix-loop (sequential, each fix gated) ───────────────────────
-    let fix = Phase::start(&reporter, "fix", format!("{} to fix, one at a time, each under the gate", plural(report.confirmed.len(), "bug")), HEARTBEAT);
-    for f in &report.confirmed {
+    // With a fast gate, each fix is gated fast and each batch in full
+    // (ADR-2610160756 §2–§3); the base of the first batch is HEAD now.
+    let mut batching = match (&gates.fast_gate, &history) {
+        (Some(fast), Some(history)) => Some(Batching {
+            history: history.as_ref(),
+            gate,
+            fast_gate: fast.as_str(),
+            batch: gates.batch.filter(|n| *n > 0),
+            repo_root,
+            base: head(repo_root).await,
+            pending: Vec::new(),
+            retry: Vec::new(),
+            last_green: None,
+            green_changes: Default::default(),
+        }),
+        _ => None,
+    };
+    let under = if batching.is_some() { "the fast gate, each batch under the full gate" } else { "the gate" };
+    let fix = Phase::start(&reporter, "fix", format!("{} to fix, one at a time, each under {under}", plural(report.confirmed.len(), "bug")), HEARTBEAT);
+    let confirmed = report.confirmed.clone();
+    for f in &confirmed {
         fix.note(format!("fixing: {}", f.title));
         let prompt = format!(
             "Fix this CONFIRMED bug in the code under `{target}`, then add a regression test that \
@@ -1007,6 +1156,13 @@ pub async fn run_review_with(
                     report.notes.push(format!("no fix applied for '{}': the tree did not change — {}", f.title, first_line(&reply)));
                     continue;
                 }
+                if let Some(b) = batching.as_mut() {
+                    b.gate_fix(f, &touched, &before, before_head.as_deref(), &dirty_before, &fix, &mut report).await;
+                    if b.batch.is_some_and(|n| b.pending.len() >= n) {
+                        b.close(&reporter, &mut report).await;
+                    }
+                    continue;
+                }
                 fix.note(format!("gate after fix: {gate}"));
                 let (passed, _) = crate::direct_exec::run_evidence(gate, repo_root).await;
                 if passed {
@@ -1031,6 +1187,7 @@ pub async fn run_review_with(
                         &touched,
                         &format!("fix(harden): {}", f.title),
                         "hexa-harden",
+                        &[],
                         &mut scratch,
                     )
                     .await
@@ -1052,13 +1209,327 @@ pub async fn run_review_with(
     }
     fix.finish(format!("{} fixed", report.fixed.len()));
 
+    if let Some(b) = batching.as_mut() {
+        b.close(&reporter, &mut report).await;
+        b.last_chance(&reporter, &mut report).await;
+    }
+
     // ── Final gate ───────────────────────────────────────────────────────────
+    // The last full gate is the final gate when it ran on this very tree
+    // (ADR-2610160756 §7): the same HEAD, and the same uncommitted changes —
+    // a fix left in the tree after it was seen only by the fast gate.
+    if let Some(b) = &batching {
+        if b.last_green.is_some()
+            && head(repo_root).await == b.last_green
+            && changed_files(repo_root).await == b.green_changes
+        {
+            let final_gate = Phase::start(&reporter, "gate", "the last full gate ran on this tree", HEARTBEAT);
+            report.gate_passed = true;
+            report.gate_run = true;
+            final_gate.finish("passed (not run again)");
+            return report;
+        }
+    }
     let final_gate = Phase::start(&reporter, "gate", format!("running: {gate}"), HEARTBEAT);
     let (passed, _) = crate::direct_exec::run_evidence(gate, repo_root).await;
+    if batching.is_some() {
+        report.full_gates += 1;
+    }
     report.gate_passed = passed;
     report.gate_run = true;
     final_gate.finish(if passed { "passed" } else { "FAILED" });
     report
+}
+
+/// A fix hexa committed under the fast gate, or committed and set aside
+/// after the fast gate rejected it, kept by its commit so it can be
+/// cherry-picked again (ADR-2610160756 §4, §6).
+#[derive(Debug, Clone)]
+struct Landed {
+    title: String,
+    sha: String,
+    touched: Vec<String>,
+}
+
+fn titles_of(fixes: &[Landed]) -> Vec<String> {
+    fixes.iter().map(|l| l.title.clone()).collect()
+}
+
+/// A pass's batched gating (ADR-2610160756 §2–§7): the green base, the
+/// fixes committed since it, and the fixes owed a last chance.
+struct Batching<'a> {
+    history: &'a dyn GitHistory,
+    gate: &'a str,
+    fast_gate: &'a str,
+    batch: Option<usize>,
+    repo_root: &'a Path,
+    /// HEAD at the last full gate that passed; at first, HEAD when phase 3
+    /// began. `None` only in a repository with no commit.
+    base: Option<String>,
+    /// Fixes committed since `base`, oldest first.
+    pending: Vec<Landed>,
+    /// Fixes dropped by bisection or rejected by the fast gate (§6).
+    retry: Vec<Landed>,
+    /// HEAD when a full gate last passed (§7).
+    last_green: Option<String>,
+    /// The uncommitted changes in the tree that gate passed on (§7).
+    green_changes: std::collections::BTreeMap<String, Option<Vec<u8>>>,
+}
+
+impl Batching<'_> {
+    /// One full-gate run, counted; a pass records the tree it passed on.
+    async fn full_gate(&mut self, report: &mut ReviewReport) -> (bool, String) {
+        let (passed, out) = crate::direct_exec::run_evidence(self.gate, self.repo_root).await;
+        report.full_gates += 1;
+        if passed {
+            self.last_green = head(self.repo_root).await;
+            self.green_changes = changed_files(self.repo_root).await;
+        }
+        (passed, out)
+    }
+
+    /// The fast gate over `touched`. A pass that ran no tests is a fail, and
+    /// the second value says so (§2).
+    async fn fast_gate(&self, touched: &[String]) -> (bool, bool) {
+        let cmd = crate::direct_exec::substitute_touched(self.fast_gate, touched);
+        let (passed, out) = crate::direct_exec::run_evidence(&cmd, self.repo_root).await;
+        let vacuous = passed && crate::direct_exec::evidence_is_vacuous(&out);
+        (passed && !vacuous, vacuous)
+    }
+
+    /// The branch at `base` plus `fixes`, cherry-picked in order (§4).
+    fn build(&self, base: &str, fixes: &[Landed]) -> Result<(), String> {
+        self.history.reset_to(self.repo_root, base)?;
+        for l in fixes {
+            self.history.cherry_pick(self.repo_root, &l.sha).map_err(|e| format!("'{}' did not apply: {e}", l.title))?;
+        }
+        Ok(())
+    }
+
+    /// Build `base` + `fixes` and run the full gate on it. A prefix that
+    /// cannot be built is red, with the reason as its output.
+    async fn probe(&mut self, base: &str, fixes: &[Landed], report: &mut ReviewReport) -> (bool, String) {
+        match self.build(base, fixes) {
+            Ok(()) => self.full_gate(report).await,
+            Err(e) => (false, e),
+        }
+    }
+
+    /// The per-fix step (§2): the fast gate; a pass commits alone with a
+    /// `Hexa-Gate: fast` trailer, a fail is committed aside for its last
+    /// chance and then restored as ADR-2610141733 §6 restores it.
+    #[allow(clippy::too_many_arguments)]
+    async fn gate_fix(
+        &mut self,
+        f: &Finding,
+        touched: &[String],
+        before: &std::collections::BTreeMap<String, Option<Vec<u8>>>,
+        before_head: Option<&str>,
+        dirty_before: &std::collections::BTreeSet<String>,
+        fix: &Phase,
+        report: &mut ReviewReport,
+    ) {
+        fix.note(format!("fast gate after fix: {}", crate::direct_exec::substitute_touched(self.fast_gate, touched)));
+        let (passed, vacuous) = self.fast_gate(touched).await;
+        let subject = format!("fix(harden): {}", f.title);
+        if passed {
+            fix.note(format!("fast gate passed: {}", f.title));
+            let held: Vec<&str> = touched.iter().filter(|p| dirty_before.contains(*p)).map(String::as_str).collect();
+            if !held.is_empty() {
+                report.uncommitted.push(f.title.clone());
+                report.notes.push(format!(
+                    "fix for '{}': fast gate passed, but it touched files that had uncommitted changes before the pass: {}; left in the tree for review",
+                    f.title,
+                    held.join(", ")
+                ));
+                return;
+            }
+            let mut scratch = Vec::new();
+            if commit_result(self.repo_root, touched, &subject, "hexa-harden", &["Hexa-Gate: fast"], &mut scratch).await {
+                fix.note(format!("committed: {}", f.title));
+                report.fixed.push(f.title.clone());
+                if let Some(sha) = head(self.repo_root).await {
+                    self.pending.push(Landed { title: f.title.clone(), sha, touched: touched.to_vec() });
+                }
+            } else {
+                report.uncommitted.push(f.title.clone());
+                report.notes.extend(scratch);
+            }
+            return;
+        }
+        let why = if vacuous { "was rejected: its fast gate ran no tests (vacuous)" } else { "did not pass the fast gate" };
+        fix.note(format!("fast gate FAILED after: {}", f.title));
+        // Kept retryable as a commit, then reset away. Only when every path
+        // was clean before the fix: a reset must never meet a file someone
+        // else had already changed (ADR-2610141733 §6).
+        if let Some(bh) = before_head.filter(|_| touched.iter().all(|p| !before.contains_key(p))) {
+            let mut scratch = Vec::new();
+            if commit_result(self.repo_root, touched, &subject, "hexa-harden", &["Hexa-Gate: fast"], &mut scratch).await {
+                if let Some(sha) = head(self.repo_root).await {
+                    self.retry.push(Landed { title: f.title.clone(), sha, touched: touched.to_vec() });
+                }
+                if self.history.reset_to(self.repo_root, bh).is_err() {
+                    let _ = git_ok(self.repo_root, &["reset", "-q", "--soft", bh]).await;
+                }
+            }
+        }
+        revert_paths(self.repo_root, touched, before).await;
+        report.notes.push(format!("fix for '{}' {why} — reverted", f.title));
+    }
+
+    /// Close the batch with one full gate (§3); bisect it if red (§4),
+    /// confirming the culprit before blaming it (§5).
+    async fn close(&mut self, reporter: &Reporter, report: &mut ReviewReport) {
+        if self.pending.is_empty() {
+            return;
+        }
+        let mut batch = self.pending.clone();
+        let phase = Phase::start(reporter, "batch", format!("{}, one full gate: {}", plural(batch.len(), "fix"), self.gate), HEARTBEAT);
+        let (green, _) = self.full_gate(report).await;
+        if green {
+            self.green(batch, report).await;
+            phase.finish("green");
+            return;
+        }
+        let Some(base) = self.base.clone() else {
+            // No commit to bisect from: the batch stands, unproven.
+            report.batches.push(Batch { fixes: titles_of(&batch), green: false });
+            report.notes.push("the batch's full gate failed and there is no base commit to bisect from".to_string());
+            phase.finish("red, not bisected");
+            return;
+        };
+        loop {
+            let batch_head = head(self.repo_root).await;
+            // Prefix 0 (the base) is green and prefix n is red: find the
+            // smallest red prefix k.
+            let (mut lo, mut hi) = (0, batch.len());
+            while hi - lo > 1 {
+                let mid = (lo + hi) / 2;
+                phase.note(format!("bisecting: prefix {mid} of {}", batch.len()));
+                let (g, _) = self.probe(&base, &batch[..mid], report).await;
+                if g {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            let k = hi;
+            let culprit = batch[k - 1].clone();
+            phase.note(format!("confirming '{}': prefix {} then prefix {k}", culprit.title, k - 1));
+            let (before_green, before_out) = self.probe(&base, &batch[..k - 1], report).await;
+            let (at_green, at_out) = self.probe(&base, &batch[..k], report).await;
+            if !before_green || at_green {
+                // It did not reproduce: the gate is flaky, and no innocent fix
+                // is dropped for it (§5).
+                let restored = match &batch_head {
+                    Some(sha) => self.history.reset_to(self.repo_root, sha),
+                    None => self.build(&base, &batch),
+                };
+                if let Err(e) = restored {
+                    report.notes.push(format!("could not restore the flaky batch: {e}"));
+                }
+                let verdict = |g: bool| if g { "passed" } else { "failed" };
+                report.flakes.push(format!(
+                    "the full gate did not reproduce on '{}': prefix {} {} ({}); prefix {k} {} ({})",
+                    culprit.title,
+                    k - 1,
+                    verdict(before_green),
+                    first_line(&before_out),
+                    verdict(at_green),
+                    first_line(&at_out)
+                ));
+                report.batches.push(Batch { fixes: titles_of(&batch), green: false });
+                self.pending = batch;
+                phase.finish("FLAKY — bisection stopped, nothing dropped, the base is unchanged");
+                return;
+            }
+            self.drop_fix(&culprit, at_out, report);
+            phase.note(format!("dropped: {}", culprit.title));
+            // Rebuild: prefix k−1, then fixes k+1..n on top.
+            let mut rebuilt = batch[..k - 1].to_vec();
+            if let Err(e) = self.build(&base, &rebuilt) {
+                report.notes.push(format!("could not rebuild the batch: {e}"));
+            }
+            for l in &batch[k..] {
+                match self.history.cherry_pick(self.repo_root, &l.sha) {
+                    Ok(()) => rebuilt.push(l.clone()),
+                    Err(e) => {
+                        phase.note(format!("dropped, no longer applies: {}", l.title));
+                        self.drop_fix(l, format!("no longer applies once '{}' is dropped: {e}", culprit.title), report);
+                    }
+                }
+            }
+            batch = rebuilt;
+            if batch.is_empty() {
+                self.pending.clear();
+                phase.finish("every fix dropped; the base stands");
+                return;
+            }
+            phase.note(format!("rebuilt batch of {}: full gate", plural(batch.len(), "fix")));
+            if self.full_gate(report).await.0 {
+                self.green(batch, report).await;
+                phase.finish(format!("green after bisection, {} dropped", report.dropped.len()));
+                return;
+            }
+        }
+    }
+
+    /// The batch passed its full gate: it stands, and its head is the new base.
+    async fn green(&mut self, batch: Vec<Landed>, report: &mut ReviewReport) {
+        report.batches.push(Batch { fixes: titles_of(&batch), green: true });
+        self.base = head(self.repo_root).await;
+        self.pending.clear();
+    }
+
+    /// Take `l` out of what the pass claims, keep why, and owe it a last
+    /// chance (§4, §6).
+    fn drop_fix(&mut self, l: &Landed, evidence: String, report: &mut ReviewReport) {
+        // One entry per commit: a same-titled fix that passed stays claimed.
+        if let Some(i) = report.fixed.iter().position(|t| *t == l.title) {
+            report.fixed.remove(i);
+        }
+        report.notes.push(format!("fix for '{}' dropped from its batch: {}", l.title, first_line(&evidence)));
+        report.dropped.push(Dropped { title: l.title.clone(), sha: l.sha.clone(), evidence });
+        self.retry.push(l.clone());
+    }
+
+    /// Each fix dropped or rejected gets one more try on the final tree,
+    /// under the fast gate and a full gate together (§6).
+    async fn last_chance(&mut self, reporter: &Reporter, report: &mut ReviewReport) {
+        let retry = std::mem::take(&mut self.retry);
+        if retry.is_empty() {
+            return;
+        }
+        let phase = Phase::start(reporter, "retry", format!("{} once more, last", plural(retry.len(), "fix")), HEARTBEAT);
+        let mut landed = 0;
+        for l in retry {
+            let Some(prev) = head(self.repo_root).await else {
+                continue;
+            };
+            if let Err(e) = self.history.cherry_pick(self.repo_root, &l.sha) {
+                phase.note(format!("does not apply: {}", l.title));
+                report.notes.push(format!("last chance for '{}': it does not apply — {e}", l.title));
+                continue;
+            }
+            let (fast, _) = self.fast_gate(&l.touched).await;
+            let full = fast && self.full_gate(report).await.0;
+            if full {
+                phase.note(format!("landed: {}", l.title));
+                report.fixed.push(l.title.clone());
+                report.dropped.retain(|d| d.sha != l.sha);
+                report.notes.push(format!("fix for '{}' landed on its last chance", l.title));
+                landed += 1;
+            } else {
+                phase.note(format!("still fails: {}", l.title));
+                let which = if fast { "the full gate" } else { "the fast gate" };
+                if let Err(e) = self.history.reset_to(self.repo_root, &prev) {
+                    report.notes.push(format!("could not reset away '{}': {e}", l.title));
+                }
+                report.notes.push(format!("last chance for '{}': it still fails {which} — not committed", l.title));
+            }
+        }
+        phase.finish(format!("{landed} landed"));
+    }
 }
 
 /// Outcome of a cooperative build run.
@@ -1109,7 +1580,9 @@ pub async fn run_build_with(
     reporter: Reporter,
 ) -> BuildReport {
     let mut report = BuildReport::default();
-    let dirty_before = dirty_paths(repo_root).await;
+    // Per file (`-uall`): a directory-level entry would hide an operator's
+    // file inside the build's target directory.
+    let dirty_before: std::collections::BTreeSet<String> = changed_files(repo_root).await.into_keys().collect();
     let n = n_designs.clamp(2, DESIGN_PRIORITIES.len());
 
     // ── Phase 1: diverge — N designs from competing priorities ───────────────
@@ -1217,20 +1690,20 @@ pub async fn run_build_with(
     report.build_ok = ok;
     build.finish(if ok { "gate passed" } else { "gate FAILED" });
     if ok {
-        let mut paths: Vec<String> = dirty_paths(repo_root)
+        // Only the files the build changed. The target is not added back: it
+        // is a pathspec, and would commit the operator's own edits to it or
+        // to any file under it.
+        let paths: Vec<String> = changed_files(repo_root)
             .await
-            .into_iter()
+            .into_keys()
             .filter(|p| !dirty_before.contains(p))
             .collect();
-        if !paths.iter().any(|p| p == target) {
-            paths.push(target.to_string());
-        }
-        paths.sort();
         commit_result(
             repo_root,
             &paths,
             &format!("feat: {challenge}"),
             "hexa-build",
+            &[],
             &mut report.notes,
         )
         .await;
@@ -1265,6 +1738,22 @@ mod answered_tests {
         // Markdown fences still parse: that is why extract_json exists.
         let a: Answer<FindingsEnvelope> =
             read_answer(ok("Here you go:\n```json\n{\"findings\":[{\"title\":\"t\",\"location\":\"l\",\"description\":\"d\",\"lens\":\"x\"}]}\n```"));
+        assert!(matches!(a, Answer::Answered(ref e) if e.findings.len() == 1), "{a:?}");
+    }
+
+    /// A bracket in the prose before the envelope is not the answer: the
+    /// envelope after it still is.
+    #[test]
+    fn an_envelope_after_a_bracket_in_prose_is_answered() {
+        let a: Answer<FindingsEnvelope> = read_answer(ok(
+            "Found 1 issue [see below]:\n{\"findings\":[{\"title\":\"t\",\"location\":\"l\",\"description\":\"d\",\"lens\":\"x\"}]}",
+        ));
+        assert!(matches!(a, Answer::Answered(ref e) if e.findings.len() == 1), "{a:?}");
+
+        // `[42]` is valid JSON but not the envelope; `{ok}` is not JSON at all.
+        let a: Answer<FindingsEnvelope> = read_answer(ok(
+            "see line [42]; it returns {ok} early.\n{\"findings\":[{\"title\":\"t\",\"location\":\"l\",\"description\":\"d\",\"lens\":\"x\"}]}",
+        ));
         assert!(matches!(a, Answer::Answered(ref e) if e.findings.len() == 1), "{a:?}");
     }
 
@@ -1363,6 +1852,24 @@ mod answered_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// The cap is a byte count, but a source file is UTF-8: a cut that lands
+    /// inside a multi-byte character must back off to its start, not panic.
+    #[test]
+    fn truncating_at_the_cap_never_splits_a_utf8_character() {
+        let dir = std::env::temp_dir().join(format!("hexa-target-utf8-{}-{:?}", std::process::id(), std::thread::current().id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        // Every offset in a run of 3-byte `—` is hit, whatever the header
+        // length: one of these three files puts the cut mid-character.
+        for pad in 0..3 {
+            std::fs::write(dir.join("src/wide.rs"), format!("{}{}", "x".repeat(pad), "—".repeat(LOCAL_CONTEXT_CAP / 3 + 10))).unwrap();
+            let (code, truncated) = read_target("src/wide.rs", &dir);
+            assert!(truncated, "over the cap");
+            assert!(code.len() <= LOCAL_CONTEXT_CAP && code.len() + 3 > LOCAL_CONTEXT_CAP, "shown {} bytes, cap {}", code.len(), LOCAL_CONTEXT_CAP);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Both paths shut means both reasons: the frontier's names the budget,
     /// the local one names what the model said (ADR-2609131948).
     #[test]
@@ -1411,6 +1918,34 @@ mod answered_tests {
         let unrun = Calibration::Unrun("spend limit".into()).note().unwrap();
         assert!(unrun.starts_with("calibration did not run: spend limit"), "{unrun}");
         assert!(!unrun.contains("not evidence"), "an unrun probe accuses nobody: {unrun}");
+    }
+
+    /// §2: the probe judges the local reviewer whose empty result it
+    /// qualifies. A local model that misses the planted defect is Missed —
+    /// it is the one asked, not a frontier that recovered and would find it.
+    #[test]
+    fn calibration_judges_the_local_reviewer_it_asks() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let asked = std::sync::atomic::AtomicUsize::new(0);
+            let blind = calibrate(|prompt| {
+                asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                assert!(prompt.contains("concurrency"), "{prompt}");
+                async { Ok::<_, String>(r#"{"findings":[]}"#.to_string()) }
+            })
+            .await;
+            assert_eq!(blind, Calibration::Missed, "the local model saw nothing, so its empty result is not evidence");
+            assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 1, "the local reviewer is the one asked");
+
+            let sharp = calibrate(|_| async {
+                Ok::<_, String>(r#"{"findings":[{"title":"Lock dropped before the write","location":"bump","description":"the guard is released, then the map is written, so callers race","lens":"concurrency"}]}"#.to_string())
+            })
+            .await;
+            assert_eq!(sharp, Calibration::Calibrated);
+
+            let down = calibrate(|_| async { Err::<String, _>("gateway refused".to_string()) }).await;
+            assert_eq!(down, Calibration::Unrun("gateway refused".into()));
+        });
     }
 
     /// The verdict line carries the qualification where the count is read.
