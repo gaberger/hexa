@@ -1,13 +1,13 @@
 ---
 id: ADR-2610161730
-status: proposed
+status: accepted
 date: 2026-10-16
 ---
 # ADR-2610161730: The delegate runs on an allowlist scoped to its run, not with permissions skipped
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-10-16
-**Drivers:** weave and hexa were scored against Anthropic's *The AI-native SDLC playbook* (https://claude.com/resources/articles/the-ai-native-sdlc-playbook). One of the five largest gaps it found was that hexa's frontier delegate runs `claude -p --dangerously-skip-permissions` in the operator's repository on every call. Its "edit only this file" is prompt text, and the commit sweeps in files that were already dirty in the target's package. weave's decision 0253 (Proposed) wants a managed-settings floor with bypass mode disabled on every fleet host, and that floor would stop every hexa run until hexa stops depending on bypass. The operator said "yes" to filing these gaps.
+**Drivers:** weave and hexa were scored against Anthropic's *The AI-native SDLC playbook* (https://claude.com/resources/articles/the-ai-native-sdlc-playbook). One of the five largest gaps it found was that hexa's frontier delegate runs `claude -p --dangerously-skip-permissions` in the operator's repository on every call. Its "edit only this file" is prompt text, and the commit sweeps in files that were already dirty in the target's package. weave's decision 0253 (Accepted 2026-10-16) puts a managed-settings floor with bypass mode disabled on every fleet host, and that floor would stop every hexa run until hexa stops depending on bypass. The operator said "yes" to filing these gaps, then "do it": accepted 2026-10-16 with the recommended answers.
 
 ## Context
 
@@ -37,7 +37,7 @@ What hexa does today, on `main` at 3da3bc9:
   ran with that edit in the tree, so a green gate can depend on an uncommitted change, for example a loosened test.
 - **The delegate is marked but not scoped.** `run_claude` sets `HEXA_INTERNAL=1` (`frontier.rs:63`) so the
   project's hooks know it is hexa. It sets no run id and no target, so a hook cannot hold the delegate to its file.
-  weave's decision 0251 (Proposed) needs both.
+  weave's decision 0251 (Accepted) needs both.
 - **What weave says about it.** Every hexa grant in weave carries the warning "runs hexa's frontier agent (claude -p
   --dangerously-skip-permissions) in the repository, on the operator's Claude login and budget", and weave parks the
   call for approval because it "cannot bound what that agent does".
@@ -155,14 +155,30 @@ Plus `cargo test -p hexa-infer claude_code`.
   fix may touch.
 - ADR-2610160756: harden's batched gate. Unchanged; the scope applies per fix.
 - ADR-2609121400: the executable gate replaces the written spec.
-- weave decision 0251 (Proposed): reads §2's ticket. weave decision 0253 (Proposed): disables bypass, and needs this first.
+- weave decision 0251 (Accepted): reads §2's ticket. weave decision 0253 (Accepted): disables bypass, and needs this first.
 - Anthropic, *The AI-native SDLC playbook*, Stage 5 (CI/CD sandboxing; managed settings).
 
-## Open questions
+## Findings recorded at acceptance
 
-1. **`dontAsk` or `--restricted`.** Claude Code's `--restricted` also confines the file tools to the working
-   directory and refuses bypass. But it ignores the project's settings files, so weave's decision 0251 hooks would not run
-   in the delegate. This ADR chooses `dontAsk`. Should hexa use `--restricted` with the project's hooks passed through
-   `--settings` instead?
-2. **Reverting §4's commit-gap fix.** Refuse with a message (recommended), or keep including pre-run dirty files
-   behind an explicit `--include-dirty` flag?
+- **Claude Code's `--restricted` skips the project's hooks.** It ignores user, project and local settings files
+  (`claude --help`, 2.1.302). A delegate started with it would run none of weave's decision 0251 hooks. This ADR
+  therefore uses `--permission-mode dontAsk` with `--tools` and `--allowedTools`.
+- **hexa's `main` has no branch protection.** `GET /repos/gary/hexa/branch_protections` returns an empty list, and the
+  `CODEOWNERS` entry for `founding-goals.md` is not enforced. weave's plan (`docs/plans/2026-10-16-sdlc-playbook-gaps.md`
+  §A step 4) asks the operator to protect it:
+  - PRs only;
+  - this repository's two CI jobs as required checks;
+  - `gary` as the approvals whitelist;
+  - blocking on official review requests, so `CODEOWNERS` takes effect;
+  - the rule applied to admins.
+- **Pushes and PRs by agents use the forge user `weave-agent`** (weave decision 0250), so an approval by `gary` on a
+  hexa PR comes from a second party too.
+
+## Resolved questions
+
+Accepted 2026-10-16 by the operator ("do it": the recommended answers).
+
+1. **`dontAsk`, not `--restricted`.** `--restricted` ignores the project's settings files and would silence the
+   repository's hooks. `dontAsk` with explicit `--tools` and `--allowedTools` keeps them.
+2. **Reverting §4's commit-gap fix: refuse with a message.** There is no `--include-dirty` flag. An uncommitted file
+   the evidence depends on is named, and the operator commits it.
