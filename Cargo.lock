@@ -709,6 +709,7 @@ version = "26.10.0"
 dependencies = [
  "git2",
  "serde",
+ "tempfile",
  "tracing",
 ]
 
