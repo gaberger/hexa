@@ -1,9 +1,12 @@
 //! hexa-git — pure git plumbing (status, log, diff, blame, worktree, commit
-//! correlation) over libgit2 + the git CLI. No daemon/runtime dependencies, so
+//! correlation, and history: reset the current branch to a commit, cherry-pick
+//! a commit onto it — ADR-2610160756) over libgit2 + the git CLI. No
+//! daemon/runtime dependencies, so
 //! it is reusable outside hexa-nexus (ADR-2606071340 P1). Daemon-coupled adapters
 //! (the git poller that pushes to SharedState/websocket, and the swarm-task
 //! timeline join) stay in hexa-nexus and consume this crate.
 
+pub mod history;
 pub mod worktree;
 
 use std::path::{Path, PathBuf};
