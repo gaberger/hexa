@@ -720,8 +720,15 @@ fn retry_prompt(prompt: &str, attempt: u32, attempts: u32, last_err: &str) -> St
     }
 }
 
+/// hexa's own loop state, which the progress reporter and the loop recorder
+/// rewrite while a fix runs. It is never part of a fix: never committed by
+/// one, never restored by a revert, never named as an operator-dirty file
+/// (ADR-2610141733 §6). Observed 2026-10-16: 10 gate-passed fixes were held
+/// back because the heartbeat rewrote it mid-fix.
+const LOOP_STATE: &str = ".hexa/loop.json";
+
 /// Every path git reports as changed, from `git status --porcelain=v1 -z -uall`,
-/// with its current bytes (`None` = deleted).
+/// with its current bytes (`None` = deleted) — all but [`LOOP_STATE`].
 ///
 /// `-uall` lists each file inside an untracked directory, and the bytes tell a
 /// second edit to an already-dirty file from no edit at all (ADR-2610141733 §6).
@@ -745,7 +752,7 @@ async fn changed_files(repo_root: &Path) -> std::collections::BTreeMap<String, O
             // The source path of a rename or copy follows as its own entry.
             entries.next();
         }
-        if path.is_empty() {
+        if path.is_empty() || path == LOOP_STATE {
             continue;
         }
         files.insert(path.to_string(), std::fs::read(repo_root.join(path)).ok());
