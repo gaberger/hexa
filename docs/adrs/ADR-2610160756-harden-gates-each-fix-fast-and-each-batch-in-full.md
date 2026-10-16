@@ -1,11 +1,11 @@
 ---
 id: ADR-2610160756
-status: proposed
+status: accepted
 date: 2026-10-16
 ---
 # ADR-2610160756: Harden gates each fix fast and each batch in full, and finds a breaking fix by bisection
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-10-16
 **Drivers:** weave ran `hexa harden` with its full gate (`bun run typecheck && node --import tsx src/cli.ts doctor && bun run test`, about 5,300 tests). That gate takes 1m27s–1m39s on an idle host (runs on 2026-10-15). ADR-2610141733 §6 runs it after every fix. A pass over weave's sandbox runners kept 38 fixes, so it spent about an hour on gates alone. Two passes running at once on one host on 2026-10-16 slowed each other further. The operator asked whether hexa could work in batches without losing confidence.
 
