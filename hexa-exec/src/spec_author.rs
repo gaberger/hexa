@@ -373,6 +373,45 @@ async fn git(root: &Path, args: &[&str]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
+/// Every test in `refs` run alone in a checkout of `head` plus `file` holding
+/// `body`: the tree the `red` commit holds, which `git commit -- <file>`
+/// builds without the working tree's other edits. Returns why each rejected
+/// test is not red there.
+async fn red_at(
+    root: &Path,
+    path_env: &str,
+    head: &str,
+    file: &str,
+    body: &str,
+    refs: &BTreeMap<String, String>,
+) -> Result<Vec<String>, String> {
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let wt = std::env::temp_dir().join(format!("hexa-spec-red-{}-{nanos}", std::process::id()));
+    let wt_s = wt.to_string_lossy().to_string();
+    git(root, &["worktree", "add", "-q", "--detach", &wt_s, head]).await?;
+    let target = std::env::var_os("CARGO_TARGET_DIR").map(PathBuf::from).unwrap_or_else(|| root.join("target"));
+    let written = std::fs::create_dir_all(wt.join(file).parent().unwrap_or(&wt)).and_then(|_| std::fs::write(wt.join(file), body));
+    if let Err(e) = written {
+        let _ = git(root, &["worktree", "remove", "--force", &wt_s]).await;
+        return Err(format!("{file} could not be checked at {head}: {e}"));
+    }
+    let mut rejected = Vec::new();
+    for (sid, r) in refs {
+        match run_test_alone(&wt, path_env, r, Some(&target)).await {
+            TestRun::Failed(_) => {}
+            TestRun::Broken { tail, .. } => rejected.push(format!("{sid} never ran:\n{tail}")),
+            TestRun::Passed | TestRun::Ambiguous(_) => {
+                rejected.push(format!("{sid} passes before the code exists, so it tests nothing"))
+            }
+            TestRun::NotFound(why) => rejected.push(format!("{sid}: {why}")),
+            TestRun::Vacuous => rejected.push(format!("{sid} ran 0 tests")),
+            TestRun::NotProvenHere(why) => rejected.push(format!("{sid} is not proven here: {why}")),
+        }
+    }
+    let _ = git(root, &["worktree", "remove", "--force", &wt_s]).await;
+    Ok(rejected)
+}
+
 /// `hexa spec tests` (§5): one test per scenario of an accepted spec, from
 /// the scenarios and the ports alone. Kept only if every test fails now.
 pub async fn generate_tests(
@@ -420,27 +459,22 @@ pub async fn generate_tests(
     if let Some(parent) = abs.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    std::fs::write(&abs, body + "\n").map_err(|e| e.to_string())?;
+    let body = body + "\n";
+    std::fs::write(&abs, &body).map_err(|e| e.to_string())?;
 
     let refs: BTreeMap<String, String> = names.iter().map(|(sid, f)| (sid.clone(), format!("{file}::{f}"))).collect();
-    let mut rejected = Vec::new();
-    for (sid, r) in &refs {
-        match run_test_alone(root, path_env, r, None).await {
-            TestRun::Failed(_) => {}
-            TestRun::Broken { tail, .. } => rejected.push(format!("{sid} never ran:\n{tail}")),
-            TestRun::Passed | TestRun::Ambiguous(_) => {
-                rejected.push(format!("{sid} passes before the code exists, so it tests nothing"))
-            }
-            TestRun::NotFound(why) => rejected.push(format!("{sid}: {why}")),
-            TestRun::Vacuous => rejected.push(format!("{sid} ran 0 tests")),
-            TestRun::NotProvenHere(why) => rejected.push(format!("{sid} is not proven here: {why}")),
-        }
+    let head = git(root, &["rev-parse", "HEAD"]).await?;
+    let mut rejected = red_at(root, path_env, &head, &file, &body, &refs).await.unwrap_or_else(|e| vec![e]);
+    if rejected.is_empty() && git(root, &["rev-parse", "HEAD"]).await? != head {
+        rejected.push("HEAD moved while the tests ran, so their red is not the commit's".into());
     }
     if !rejected.is_empty() {
         let _ = std::fs::remove_file(&abs);
         return Err(format!("generation rejected, nothing kept:\n  {}", rejected.join("\n  ")));
     }
 
+    // What was checked red, whatever touched the file while the tests ran.
+    std::fs::write(&abs, &body).map_err(|e| e.to_string())?;
     git(root, &["add", "--", &file]).await?;
     let msg = format!(
         "test(spec): {} scenarios, generated from the accepted spec (failing)\n\n\
@@ -466,6 +500,38 @@ mod tests {
         assert!(!is_contract("src/usecase.rs"));
         assert!(!is_contract("src/adapters/primary/cli.rs"));
         assert!(!is_contract("src/report.rs"), "a substring is not a component");
+    }
+
+    #[tokio::test]
+    async fn red_is_checked_at_the_commit_not_the_working_tree() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let sh = |args: &[&str]| assert!(std::process::Command::new("git").args(args).current_dir(root).status().unwrap().success());
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"redcheck\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[workspace]\n").unwrap();
+        std::fs::write(root.join("src/lib.rs"), "pub fn f() -> u32 { 1 }\n").unwrap();
+        sh(&["init", "-q"]);
+        sh(&["add", "."]);
+        sh(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init"]);
+        // Uncommitted: `git commit -- <test file>` leaves this edit out of red.
+        std::fs::write(root.join("src/lib.rs"), "pub fn f() -> u32 { 2 }\n").unwrap();
+        let head = git(root, &["rev-parse", "HEAD"]).await.unwrap();
+        let path = std::env::var("PATH").unwrap_or_default();
+        let refs = |f: &str| BTreeMap::from([("S1".to_string(), format!("tests/t.rs::{f}"))]);
+
+        let body = "#[test]\nfn one() { assert_eq!(redcheck::f(), 1); }\n";
+        let rejected = red_at(root, &path, &head, "tests/t.rs", body, &refs("one")).await.unwrap();
+        assert_eq!(rejected.len(), 1, "fails only in the dirty tree, passes at the commit: {rejected:?}");
+        assert!(rejected[0].contains("passes before the code exists"), "{rejected:?}");
+
+        let body = "#[test]\nfn two() { assert_eq!(redcheck::f(), 2); }\n";
+        let rejected = red_at(root, &path, &head, "tests/t.rs", body, &refs("two")).await.unwrap();
+        assert!(rejected.is_empty(), "fails at the commit, so it is red there: {rejected:?}");
+
+        assert_eq!(std::fs::read_to_string(root.join("src/lib.rs")).unwrap(), "pub fn f() -> u32 { 2 }\n");
+        assert!(!root.join("tests/t.rs").exists(), "the check writes nothing into the working tree");
+        let list = git(root, &["worktree", "list"]).await.unwrap();
+        assert_eq!(list.lines().count(), 1, "the checkout is removed: {list}");
     }
 
     #[test]
