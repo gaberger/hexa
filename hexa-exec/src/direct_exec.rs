@@ -608,9 +608,27 @@ pub(crate) async fn execute_direct_inner(deps: &ExecDeps, task: DirectTask) -> D
     }
     let repo_root = workspace.workdir().to_path_buf();
     let factory = workspace.is_isolated();
-    let result = exec_attempts(deps, &task, &repo_root, factory).await;
-    workspace.finish(result.ok);
+    let mut result = exec_attempts(deps, &task, &repo_root, factory).await;
+    settle_workspace(workspace, &mut result);
     result
+}
+
+/// Close the run's workspace. A run whose evidence passed keeps its isolated
+/// worktree even when the commit then failed: that tree holds the only copy
+/// of the verified edit, so it is kept and the error names where it is.
+pub(crate) fn settle_workspace(workspace: crate::direct_workspace::RunWorkspace, result: &mut DirectResult) {
+    let stranded = !result.ok && result.evidence_passed;
+    if stranded && workspace.is_isolated() {
+        let place = format!("the isolated worktree {}", workspace.workdir().display());
+        if let Some(e) = result.error.as_mut() {
+            if e.contains("your working tree") {
+                *e = e.replace("your working tree", &place);
+            } else {
+                e.push_str(&format!("\n  The change is kept in {place}."));
+            }
+        }
+    }
+    workspace.finish(result.ok || stranded);
 }
 
 async fn exec_attempts(deps: &ExecDeps, task: &DirectTask, repo_root: &std::path::Path, factory: bool) -> DirectResult {
@@ -1498,6 +1516,42 @@ mod commit_snapshot_tests {
         assert!(String::from_utf8_lossy(&st.stdout).trim().is_empty(),
             "Cargo.toml and tests/foo.rs belong to the root package and must be committed, left: {}",
             String::from_utf8_lossy(&st.stdout));
+    }
+
+    struct RecordingWorktrees(std::sync::Mutex<Vec<std::path::PathBuf>>);
+    impl crate::ports::Worktrees for RecordingWorktrees {
+        fn create(&self, _: &std::path::Path, _: &str, _: &std::path::Path) -> Result<(), String> {
+            Ok(())
+        }
+        fn remove(&self, _: &std::path::Path, path: &std::path::Path) -> Result<(), String> {
+            self.0.lock().unwrap().push(path.to_path_buf());
+            Ok(())
+        }
+    }
+
+    // An isolated run whose evidence passed but whose commit failed used to
+    // remove its worktree, the only copy of the verified edit, while the error
+    // told the operator the change was "in your working tree".
+    #[test]
+    fn a_failed_commit_after_passing_evidence_keeps_the_isolated_worktree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let wts = std::sync::Arc::new(RecordingWorktrees(Default::default()));
+        let settle = |evidence_passed: bool| {
+            let ws = crate::direct_workspace::RunWorkspace::acquire(
+                "settle-test", true, wts.clone(), tmp.path().join("repo")).unwrap();
+            let workdir = ws.workdir().to_path_buf();
+            let mut r = super::DirectResult::err(super::commit_failure_hint("pre-commit hook failed"));
+            r.evidence_passed = evidence_passed;
+            super::settle_workspace(ws, &mut r);
+            (workdir, r.error.unwrap())
+        };
+
+        let (workdir, err) = settle(true);
+        assert!(wts.0.lock().unwrap().is_empty(), "the worktree holding the passing edit was removed");
+        assert!(err.contains(&workdir.display().to_string()) && !err.contains("your working tree"), "{err}");
+
+        settle(false);
+        assert_eq!(wts.0.lock().unwrap().len(), 1, "a run whose evidence never passed is still cleaned up");
     }
 }
 
