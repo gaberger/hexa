@@ -76,6 +76,11 @@ fn react_model_from_config() -> Option<String> {
 /// Run the ReAct loop end-to-end. Returns the result, the number of steps
 /// (tool calls) taken, and the model used, for the run feed.
 async fn react_execute(deps: &ExecDeps, task: DirectTask) -> (DirectResult, u32, String) {
+    // Serialize against every other run on this repository, in any process.
+    let _tree_lock = match direct_exec::lock_tree(&direct_exec::repo_root()).await {
+        Ok(l) => l,
+        Err(e) => return (DirectResult::err(e), 0, resolve_react_model(&task).unwrap_or_default()),
+    };
     // ADR-2606071323: confine the run to its own worktree unless the operator
     // opted out (`isolate:false`). Never silently fall back to the operator tree.
     let isolate = direct_exec::want_isolation(&task);
@@ -800,6 +805,11 @@ pub(crate) fn is_claude_model(m: &str) -> bool {
 /// (no per-step tool protocol). Uses the operator's logged-in `claude` CLI — no
 /// API key, no VRAM ceiling. Mirrors `react_execute`'s workspace lifecycle.
 async fn claude_execute(deps: &ExecDeps, task: DirectTask) -> (DirectResult, u32, String) {
+    // Serialize against every other run on this repository, in any process.
+    let _tree_lock = match direct_exec::lock_tree(&direct_exec::repo_root()).await {
+        Ok(l) => l,
+        Err(e) => return (DirectResult::err(e), 0, task.model.clone().unwrap_or_else(|| "claude-code".into())),
+    };
     let isolate = direct_exec::want_isolation(&task);
     let slug = crate::direct_workspace::next_run_slug();
     let workspace = match crate::direct_workspace::RunWorkspace::acquire(&slug, isolate, deps.worktrees.clone(), direct_exec::repo_root()) {

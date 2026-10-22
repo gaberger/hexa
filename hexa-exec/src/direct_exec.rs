@@ -22,7 +22,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::LazyLock;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct DirectTask {
@@ -153,11 +152,61 @@ fn store_run(runs: &dyn crate::ports::RunLog, run: DirectRun) {
 
 static RUN_ID: AtomicU64 = AtomicU64::new(1);
 
-// Serialize the read→edit→evidence→commit critical section. Two concurrent runs
-// touching the working tree / git index race and can false-positive (one reports
-// ok=true + a commit while another's edit interleaves) — found by the 2026-06-04
-// review swarm. Global (not per-file) because git add/commit is process-global.
-static EXEC_LOCK: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
+/// Serialize the acquire→read→edit→evidence→commit→finish section across every
+/// run on the same repository — in this process and in any other.
+///
+/// Two concurrent runs touching the working tree / git index race and can
+/// false-positive: one reports ok=true + a commit that passed only because of
+/// another's uncommitted edit (found by the 2026-06-04 review swarm). The index
+/// and working tree belong to the repository, not to a process, and `hexa do` is
+/// a short-lived process running one task, so an in-process mutex never sees the
+/// other run. The lock is therefore an OS file lock in the git common dir, which
+/// a linked worktree shares with its main checkout and which `git status` never
+/// lists. Every run path — `--fast`, ReAct, frontier — must hold it.
+pub(crate) struct TreeLock {
+    _file: std::fs::File,
+}
+
+/// Where the tree lock lives for the repository at `main_root`.
+pub(crate) fn tree_lock_path(main_root: &std::path::Path) -> std::path::PathBuf {
+    let common = std::process::Command::new("git")
+        .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
+        .current_dir(main_root)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty());
+    match common {
+        Some(dir) => std::path::PathBuf::from(dir).join("hexa-exec.lock"),
+        // Not a git repository: key a lock in the temp dir on the canonical path,
+        // so it is still never written into the tree it guards.
+        None => {
+            use std::hash::{Hash, Hasher};
+            let canon = std::fs::canonicalize(main_root).unwrap_or_else(|_| main_root.to_path_buf());
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            canon.hash(&mut h);
+            std::env::temp_dir().join(format!("hexa-exec-{:016x}.lock", h.finish()))
+        }
+    }
+}
+
+/// Block until this run holds the repository's tree lock. Released on drop.
+pub(crate) async fn lock_tree(main_root: &std::path::Path) -> Result<TreeLock, String> {
+    let path = tree_lock_path(main_root);
+    tokio::task::spawn_blocking(move || {
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .map_err(|e| format!("open tree lock {}: {e}", path.display()))?;
+        file.lock().map_err(|e| format!("tree lock {}: {e}", path.display()))?;
+        Ok(TreeLock { _file: file })
+    })
+    .await
+    .map_err(|e| format!("tree lock: {e}"))?
+}
 
 /// Did the evidence command actually exercise anything?
 ///
@@ -540,7 +589,10 @@ impl DirectResult {
 
 pub(crate) async fn execute_direct_inner(deps: &ExecDeps, task: DirectTask) -> DirectResult {
     // Serialize the whole acquire→read→edit→evidence→commit→finish section.
-    let _exec_guard = EXEC_LOCK.lock().await;
+    let _tree_lock = match lock_tree(&repo_root()).await {
+        Ok(l) => l,
+        Err(e) => return DirectResult::err(e),
+    };
 
     // ADR-2606071323: confine the run to its own worktree unless the operator
     // explicitly opted out. Never silently fall back to the operator's tree.
@@ -1493,5 +1545,48 @@ mod runs_feed_tests {
         let runs = super::runs_snapshot(&log);
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].steps, 7, "steps must survive the persist/read round trip");
+    }
+}
+
+#[cfg(test)]
+mod tree_lock_tests {
+    use super::{dirty_paths, lock_tree, tree_lock_path};
+    use std::process::Command as Git;
+
+    fn git(dir: &std::path::Path, args: &[&str]) {
+        let out = Git::new("git").args(args).current_dir(dir).output().unwrap();
+        assert!(out.status.success(), "git {:?}: {}", args, String::from_utf8_lossy(&out.stderr));
+    }
+
+    /// A second `hexa do` is another process: it opens the lock file itself. An
+    /// independently opened handle is what `flock` arbitrates between processes,
+    /// so while one run holds the tree, that handle must not get the lock — and a
+    /// run in a linked worktree must contend on the very same file.
+    #[tokio::test]
+    async fn the_tree_lock_excludes_another_process_on_the_same_repository() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("repo");
+        std::fs::create_dir(&root).unwrap();
+        git(&root, &["init", "-q", "-b", "main"]);
+        git(&root, &["config", "user.email", "t@t"]);
+        git(&root, &["config", "user.name", "t"]);
+        std::fs::write(root.join("a.rs"), "a").unwrap();
+        git(&root, &["add", "."]);
+        git(&root, &["commit", "-q", "-m", "init"]);
+        let wt = tmp.path().join("wt");
+        git(&root, &["worktree", "add", "-q", "-b", "side", wt.to_str().unwrap()]);
+
+        assert_eq!(tree_lock_path(&root), tree_lock_path(&wt), "a worktree must share its repository's lock");
+
+        let held = lock_tree(&root).await.unwrap();
+        let other = std::fs::OpenOptions::new().write(true).open(tree_lock_path(&root)).unwrap();
+        assert!(
+            matches!(other.try_lock(), Err(std::fs::TryLockError::WouldBlock)),
+            "another process could enter the critical section while a run holds the tree"
+        );
+        assert!(dirty_paths(&root).await.is_empty(), "the lock file must never be committable");
+
+        drop(held);
+        assert!(other.try_lock().is_ok(), "the lock must be released when the run ends");
     }
 }
