@@ -182,10 +182,37 @@ pub fn accept(adr: &str, by: Option<&str>) -> anyhow::Result<()> {
         },
         || std::env::var("USER").ok(),
     )?;
+    if record_acceptance(&mut spec, by.clone()) {
+        println!(
+            "  {} {} the accepted behaviour changed: its tests, red commit and seal are dropped. Run `hexa spec tests {}`",
+            "!".yellow(),
+            a.id,
+            a.id
+        );
+    }
     let sha256 = content_hash(&spec);
     println!("  {} {} accepted by {} at {}", "\u{2713}".green(), a.id, by, &sha256[..12]);
-    spec.accepted = Some(Acceptance { by, sha256 });
     save(&root, &spec)
+}
+
+/// Record `by`'s acceptance of `spec` as it stands. Tests, red commits and
+/// seals bind the behaviour accepted before them: when this acceptance
+/// replaces one of different behaviour, they are dropped, so the new
+/// acceptance needs new tests and a new seal. True when any were dropped.
+fn record_acceptance(spec: &mut Spec, by: String) -> bool {
+    let sha256 = content_hash(spec);
+    let changed = spec.accepted.as_ref().is_some_and(|a| a.sha256 != sha256);
+    let bound = spec.red.is_some() || !spec.sealed.is_empty() || spec.specs.iter().any(|s| s.test.is_some() || s.red.is_some());
+    if changed {
+        for s in spec.specs.iter_mut() {
+            s.test = None;
+            s.red = None;
+        }
+        spec.red = None;
+        spec.sealed.clear();
+    }
+    spec.accepted = Some(Acceptance { by, sha256 });
+    changed && bound
 }
 
 /// Who accepts: `--by` if given (a blank one is refused, not replaced), else
@@ -574,6 +601,30 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let err = seal_files(dir.path(), "ADR-1", &spec).expect_err("an empty seal must not succeed");
         assert!(err.to_string().contains("nothing to seal"), "{err}");
+    }
+
+    #[test]
+    fn re_accepting_changed_behaviour_drops_the_old_tests_and_seal() {
+        let mut spec: Spec = serde_json::from_value(serde_json::json!({
+            "adr": "ADR-1", "feature": "f", "red": "old0000",
+            "sealed": { "tests/old.rs": "h" },
+            "specs": [{ "id": "s1", "decision": ["1"], "kind": "example", "description": "d",
+                        "then": "the old outcome", "test": "tests/old.rs::t", "red": "f4268d3" }]
+        }))
+        .unwrap();
+        // A first acceptance keeps tests bound before it; re-accepting the
+        // same behaviour keeps what was generated for it.
+        assert!(!record_acceptance(&mut spec, "p".into()));
+        assert!(!record_acceptance(&mut spec, "p".into()));
+        assert_eq!(spec.specs[0].test.as_deref(), Some("tests/old.rs::t"));
+        assert!(!spec.sealed.is_empty());
+        // The behaviour is hand-edited after sealing, then accepted again.
+        spec.specs[0].then = "a new outcome".into();
+        assert!(record_acceptance(&mut spec, "p".into()));
+        assert!(acceptance_holds(&spec).is_ok());
+        assert_eq!(spec.specs[0].test, None, "an old test must not hold over new behaviour");
+        assert_eq!(spec.specs[0].red_commit(&spec), None);
+        assert!(spec.sealed.is_empty(), "a new acceptance needs a new seal");
     }
 
     #[test]
