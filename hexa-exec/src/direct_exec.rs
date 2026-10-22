@@ -350,6 +350,7 @@ fn persist_run_async(runs: &dyn crate::ports::RunLog, run: DirectRun) {
         "model": run.model,
         "ok": run.ok,
         "attempts": run.attempts,
+        "steps": run.steps,
         "evidence_passed": run.evidence_passed,
         "committed": run.committed,
         "duration_ms": run.duration_ms,
@@ -1335,5 +1336,30 @@ mod runs_feed_tests {
         let rows = vec![do_run(true), hook_event("stop"), do_run(false)];
         let ids: Vec<u64> = runs_from_rows(rows).iter().map(|r| r.id).collect();
         assert_eq!(ids, vec![2, 1]);
+    }
+
+    /// A run log that keeps rows in memory, newest first.
+    #[derive(Default)]
+    struct MemRuns(std::sync::Mutex<Vec<serde_json::Value>>);
+    impl crate::ports::RunLog for MemRuns {
+        fn record(&self, run: &serde_json::Value) {
+            self.0.lock().unwrap().insert(0, run.clone());
+        }
+        fn recent(&self, limit: usize) -> Vec<serde_json::Value> {
+            self.0.lock().unwrap().iter().take(limit).cloned().collect()
+        }
+    }
+
+    #[test]
+    fn persisted_run_keeps_its_steps() {
+        let log = MemRuns::default();
+        let task: super::DirectTask = serde_json::from_value(json!({
+            "instruction": "add f()", "file": "src/lib.rs", "evidence": "true",
+        })).unwrap();
+        super::record_react_run(&log, "2026-10-22T00:00:00+00:00".into(), &task, "m",
+            true, true, Some("abc123".into()), 7, 10, None);
+        let runs = super::runs_snapshot(&log);
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].steps, 7, "steps must survive the persist/read round trip");
     }
 }
