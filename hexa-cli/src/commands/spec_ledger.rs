@@ -408,9 +408,10 @@ async fn prove_red(root: &Path, path_env: &str, a: &Adr, spec: &Spec) -> anyhow:
     }
     let target = root.join("target/hexa-prove");
     for (sha, scenarios) in by_commit {
-        // Under the ignored target/, beside the shared build. A worktree left
-        // by an interrupted run is removed first.
-        let wt = target.join(format!("wt-{sha}"));
+        // Under the ignored target/, beside the shared build. The path is this
+        // run's own, so a concurrent `--prove` never removes it mid-test; a
+        // stale one at this path (a reused pid) is removed first.
+        let wt = prove_worktree(&target, &sha);
         let _ = std::process::Command::new("git")
             .args(["worktree", "remove", "--force"])
             .arg(&wt)
@@ -464,6 +465,14 @@ async fn prove_red(root: &Path, path_env: &str, a: &Adr, spec: &Spec) -> anyhow:
     Ok(unproven)
 }
 
+/// A worktree path no other live run uses: the red sha alone is shared by
+/// every process proving that commit at once.
+fn prove_worktree(target: &Path, sha: &str) -> PathBuf {
+    static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    target.join(format!("wt-{sha}-{}-{n}", std::process::id()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -486,5 +495,16 @@ mod tests {
         record_generated(&mut spec, &refs, "new1111", "tests/new.rs");
         assert_eq!(spec.specs[0].test.as_deref(), Some("tests/new.rs::t"));
         assert_eq!(spec.specs[0].red_commit(&spec), Some("new1111"));
+    }
+
+    #[test]
+    fn two_runs_proving_one_red_commit_never_share_a_worktree() {
+        let target = Path::new("/r/target/hexa-prove");
+        let a = prove_worktree(target, "f4268d3");
+        let b = prove_worktree(target, "f4268d3");
+        assert_ne!(a, b, "a concurrent run would force-remove the other's live worktree");
+        assert_ne!(a, target.join("wt-f4268d3"));
+        assert!(a.starts_with(target) && b.starts_with(target));
+        assert!(a.file_name().unwrap().to_string_lossy().contains(std::process::id().to_string().as_str()));
     }
 }
