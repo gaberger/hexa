@@ -77,6 +77,7 @@
       "hexa-exec/src/provenance.rs": "adapters/secondary",
       "hexa-exec/src/resource_governor.rs": "usecases",
       "hexa-exec/src/simple_agent.rs": "usecases",
+      "hexa-exec/src/spec_author.rs": "usecases",
       "hexa-exec/src/telegram_notifier.rs": "adapters/secondary",
       "hexa-exec/src/tool_registry.rs": "usecases",
       "hexa-exec/src/tools": "adapters/secondary",

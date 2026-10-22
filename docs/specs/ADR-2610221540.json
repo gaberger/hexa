@@ -1,7 +1,7 @@
 {
   "adr": "ADR-2610221540",
   "feature": "an ADR is compiled to a spec, the spec to sealed tests",
-  "description": "ADR-2610221540 stated as behaviour. Scenarios without a test are phases 3 and 4: drafting from the ADR and ports alone, red-first generation, sealing inside build and do, and --prove.",
+  "description": "ADR-2610221540 stated as behaviour: drafting from the ADR and ports alone, coverage, acceptance, red-first generation, the seal, verification and --prove, and the ledger fixes.",
   "specs": [
     {
       "id": "S01",
@@ -53,7 +53,9 @@
       "description": "The spec author is given the ADR and the port signatures it names",
       "given": "an ADR naming a port, and an implementation of that port in the tree",
       "when": "`hexa spec draft <ADR>` builds the author's prompt",
-      "then": "the prompt holds the ADR text and the port signatures"
+      "then": "the prompt holds the ADR text and the port it names, and the draft records exactly which files it was given",
+      "test": "hexa-exec/tests/a_spec_is_drafted_and_its_tests_generated_red.rs::a_draft_sees_the_adr_and_its_ports_never_the_implementation",
+      "red": "8c3d0cf"
     },
     {
       "id": "S05",
@@ -64,7 +66,36 @@
       "description": "The spec author never sees the implementation",
       "given": "an implementation file containing a unique marker string",
       "when": "`hexa spec draft <ADR>` builds the author's prompt",
-      "then": "the marker is absent from everything sent to the model"
+      "then": "the marker is absent from everything sent to the model: a use case the ADR names is not a port or domain file",
+      "test": "hexa-exec/tests/a_spec_is_drafted_and_its_tests_generated_red.rs::a_draft_sees_the_adr_and_its_ports_never_the_implementation",
+      "red": "8c3d0cf"
+    },
+    {
+      "id": "S05b",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "A model that is an agent cannot author a spec",
+      "given": "a model served through an agent CLI that can read the repository",
+      "when": "`hexa spec draft` is asked to use it",
+      "then": "it refuses before sending anything",
+      "test": "hexa-exec/tests/a_spec_is_drafted_and_its_tests_generated_red.rs::a_draft_by_a_model_that_is_an_agent_is_refused",
+      "red": "8c3d0cf"
+    },
+    {
+      "id": "S05c",
+      "decision": [
+        "§2",
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "A model's draft is checked for coverage like anyone's",
+      "given": "a draft with no negative scenario for §2",
+      "when": "it is drafted",
+      "then": "the coverage finding names §2 and the missing negative",
+      "test": "hexa-exec/tests/a_spec_is_drafted_and_its_tests_generated_red.rs::a_drafted_spec_is_checked_for_coverage",
+      "red": "8c3d0cf"
     },
     {
       "id": "S06",
@@ -183,7 +214,9 @@
       "description": "Generated tests are red before the implementation and the red commit is recorded",
       "given": "an accepted spec and an unimplemented port",
       "when": "`hexa spec tests <ADR>` generates and runs the tests",
-      "then": "every test compiles and fails, and the commit is written as `red`"
+      "then": "every test compiles and fails, and the commit is written as `red`",
+      "test": "hexa-exec/tests/a_spec_is_drafted_and_its_tests_generated_red.rs::tests_that_fail_first_are_committed_and_their_commit_is_red",
+      "red": "8c3d0cf"
     },
     {
       "id": "S15",
@@ -194,7 +227,36 @@
       "description": "A generated test that passes before any implementation is rejected",
       "given": "a generated test that asserts nothing about the port",
       "when": "`hexa spec tests` runs it against the unimplemented port",
-      "then": "the test is rejected as testing nothing"
+      "then": "the test is rejected as testing nothing",
+      "test": "hexa-exec/tests/a_spec_is_drafted_and_its_tests_generated_red.rs::a_generation_with_a_test_green_before_the_code_is_rejected",
+      "red": "8c3d0cf"
+    },
+    {
+      "id": "S15b",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "A generation that leaves a scenario without a test is rejected",
+      "given": "generated tests with no test for S4",
+      "when": "`hexa spec tests` runs",
+      "then": "it is rejected, naming S4",
+      "test": "hexa-exec/tests/a_spec_is_drafted_and_its_tests_generated_red.rs::a_generation_that_skips_a_scenario_is_rejected",
+      "red": "8c3d0cf"
+    },
+    {
+      "id": "S15c",
+      "decision": [
+        "§4",
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "Tests are generated only from an accepted spec",
+      "given": "a spec nobody accepted",
+      "when": "`hexa spec tests` runs",
+      "then": "it refuses before any model call, saying the spec is not accepted",
+      "test": "hexa-exec/tests/a_spec_is_drafted_and_its_tests_generated_red.rs::generation_refuses_a_spec_nobody_accepted",
+      "red": "8c3d0cf"
     },
     {
       "id": "S16",

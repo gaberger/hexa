@@ -8,10 +8,11 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use colored::Colorize;
-use hexa_core::ports::spec::{coverage, numbered_decisions, test_ref, Acceptance, Spec};
-use sha2::{Digest, Sha256};
+use hexa_core::ports::spec::{coverage, numbered_decisions, Acceptance, Spec};
 
-use super::adr::{failure_tail, gate_path, NOT_PROVEN_HERE};
+use hexa_exec::spec_author::{acceptance_holds, content_hash, run_test_alone, sha256_hex, TestRun};
+
+use super::adr::gate_path;
 
 /// ADRs accepted before this one carry no spec and are legacy (§9). From it
 /// on, an accepted ADR without a spec fails `check`.
@@ -101,15 +102,6 @@ fn save(root: &Path, spec: &Spec) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn sha256(bytes: &[u8]) -> String {
-    Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
-}
-
-/// What a person accepted: the hash of the behaviour, not of what follows it.
-fn content_hash(spec: &Spec) -> anyhow::Result<String> {
-    Ok(sha256(serde_json::to_string(&spec.accepted_content())?.as_bytes()))
-}
-
 /// Coverage findings for one ADR and its spec, printed. True when covered.
 fn print_coverage(adr: &Adr, spec: &Spec) -> bool {
     let text = std::fs::read_to_string(&adr.path).unwrap_or_default();
@@ -171,21 +163,76 @@ pub fn accept(adr: &str, by: Option<&str>) -> anyhow::Result<()> {
         .filter(|s| !s.trim().is_empty())
         .or_else(|| std::env::var("USER").ok())
         .ok_or_else(|| anyhow::anyhow!("who is accepting? pass --by"))?;
-    let sha256 = content_hash(&spec)?;
+    let sha256 = content_hash(&spec);
     println!("  {} {} accepted by {} at {}", "\u{2713}".green(), a.id, by, &sha256[..12]);
     spec.accepted = Some(Acceptance { by, sha256 });
     save(&root, &spec)
 }
 
-/// Is `spec` accepted as it stands? `Err` names why not.
-fn acceptance_holds(spec: &Spec) -> anyhow::Result<Result<(), String>> {
-    Ok(match &spec.accepted {
-        None => Err("not accepted: no person has accepted this spec (`hexa spec accept`)".into()),
-        Some(a) if a.sha256 != content_hash(spec)? => {
-            Err(format!("changed since it was accepted by {}: accept it again", a.by))
+/// The model for a role: the one named, else the tier's. No model id is
+/// written here (founding goal G1).
+fn model_for(named: Option<&str>, tier: &str) -> anyhow::Result<String> {
+    named
+        .map(str::to_string)
+        .or_else(|| hexa_infer::tier_model(tier))
+        .ok_or_else(|| anyhow::anyhow!("no model: pass --model, or set inference.tier_models.{tier} in .hexa/project.json"))
+}
+
+/// `hexa spec draft <ADR>` (§2).
+pub async fn draft(adr: &str, model: Option<&str>, force: bool) -> anyhow::Result<()> {
+    let root = std::env::current_dir()?;
+    let a = find(&root, adr)?;
+    if let Some(existing) = load(&root, &a.id)? {
+        if existing.accepted.is_some() {
+            anyhow::bail!("{} has an accepted spec; a requirement changes through the ADR, then a new draft", a.id);
         }
-        Some(_) => Ok(()),
-    })
+        if !force {
+            anyhow::bail!("{} already has a draft; --force replaces it", a.id);
+        }
+    }
+    let model = model_for(model, "t2.5")?;
+    println!("{} {} from the ADR and its ports, on {}", "\u{2b21} spec draft".cyan().bold(), a.id, model);
+    let d = hexa_exec::draft_spec(&model, &root, &a.id).await.map_err(|e| anyhow::anyhow!(e))?;
+    for g in &d.given {
+        println!("  {} given {}", "\u{25b8}".cyan(), g);
+    }
+    if d.given.is_empty() {
+        println!("  {} the ADR names no port or domain file in backquotes; the author saw the ADR alone", "!".yellow());
+    }
+    std::fs::create_dir_all(root.join(SPECS))?;
+    save(&root, &d.spec)?;
+    println!("  {} {} scenarios → {}/{}.json", "\u{2713}".green(), d.spec.specs.len(), SPECS, a.id);
+    for f in &d.findings {
+        println!("  {} {}", "\u{2717}".red(), f.message());
+    }
+    println!("\n  Read every scenario. It is what \"correct\" will mean. Then `hexa spec accept {}`.", a.id);
+    Ok(())
+}
+
+/// `hexa spec tests <ADR>` (§5): generate, require red, commit, record, seal.
+pub async fn tests(adr: &str, krate: &str, model: Option<&str>) -> anyhow::Result<()> {
+    let root = std::env::current_dir()?;
+    let a = find(&root, adr)?;
+    let mut spec = load(&root, &a.id)?.ok_or_else(|| anyhow::anyhow!("{} has no spec", a.id))?;
+    let model = model_for(model, "t2")?;
+    let path_env = gate_path(
+        std::env::var_os("HOME").map(PathBuf::from).as_deref(),
+        &std::env::var("PATH").unwrap_or_default(),
+        &|p| p.is_dir(),
+    );
+    println!("{} {} on {}", "\u{2b21} spec tests".cyan().bold(), a.id, model);
+    let g = hexa_exec::generate_spec_tests(&model, &root, &spec, Path::new(krate), &path_env)
+        .await
+        .map_err(|e| anyhow::anyhow!(e))?;
+    for s in spec.specs.iter_mut() {
+        s.test = g.refs.get(&s.id).cloned();
+    }
+    spec.red = Some(g.red.clone());
+    save(&root, &spec)?;
+    println!("  {} {} tests in {}, every one red at {}", "\u{2713}".green(), g.refs.len(), g.file, g.red);
+    seal(&a.id)?;
+    println!("\n  Commit {}/{}.json. The tests are sealed: build the decision until they pass.", SPECS, a.id);
+    Ok(())
 }
 
 /// `hexa spec seal <ADR>` — hash every test file the scenarios name (§6).
@@ -193,7 +240,7 @@ pub fn seal(adr: &str) -> anyhow::Result<()> {
     let root = std::env::current_dir()?;
     let a = find(&root, adr)?;
     let mut spec = load(&root, &a.id)?.ok_or_else(|| anyhow::anyhow!("{} has no spec to seal", a.id))?;
-    if let Err(why) = acceptance_holds(&spec)? {
+    if let Err(why) = acceptance_holds(&spec) {
         anyhow::bail!("{}: {why}. Tests are sealed against an accepted spec, never a draft", a.id);
     }
     // A seal freezes a file. Over a source file it would freeze the code the
@@ -211,92 +258,10 @@ pub fn seal(adr: &str) -> anyhow::Result<()> {
     for f in spec.test_files() {
         let bytes = std::fs::read(root.join(&f)).map_err(|e| anyhow::anyhow!("{f}: {e}"))?;
         println!("  {} sealed {}", "\u{2713}".green(), f);
-        sealed.insert(f, sha256(&bytes));
+        sealed.insert(f, sha256_hex(&bytes));
     }
     spec.sealed = sealed;
     save(&root, &spec)
-}
-
-/// One scenario's test, run alone.
-enum Run {
-    Passed,
-    Failed(String),
-    NotFound(String),
-    Vacuous,
-    Ambiguous(u64),
-    NotProvenHere(String),
-}
-
-/// The nearest directory at or above `file`, inside `root`, with a Cargo.toml.
-fn crate_of(root: &Path, file: &Path) -> Option<PathBuf> {
-    let mut dir = file.parent()?;
-    loop {
-        if dir.join("Cargo.toml").exists() {
-            return Some(dir.to_path_buf());
-        }
-        if dir == root {
-            return None;
-        }
-        dir = dir.parent()?;
-    }
-}
-
-/// The cargo arguments that run `f` in `file` and nothing else: an
-/// integration test by its target, a library test by its module path.
-fn cargo_args(krate: &Path, file: &Path, f: &str) -> Option<Vec<String>> {
-    let rel = file.strip_prefix(krate).ok()?;
-    let manifest = krate.join("Cargo.toml").display().to_string();
-    let mut parts: Vec<String> = rel.with_extension("").iter().map(|s| s.to_string_lossy().to_string()).collect();
-    let (target, name) = match parts.first().map(String::as_str) {
-        Some("tests") if parts.len() == 2 => (vec!["--test".to_string(), parts[1].clone()], f.to_string()),
-        Some("src") => {
-            parts.remove(0);
-            if matches!(parts.last().map(String::as_str), Some("lib" | "mod" | "main")) {
-                parts.pop();
-            }
-            parts.push(f.to_string());
-            (vec!["--lib".to_string()], parts.join("::"))
-        }
-        _ => return None,
-    };
-    let mut args = vec!["test".to_string(), "--manifest-path".to_string(), manifest];
-    args.extend(target);
-    args.extend(["--".to_string(), name, "--exact".to_string()]);
-    Some(args)
-}
-
-async fn run_one(root: &Path, path_env: &str, r: &str, target_dir: Option<&Path>) -> Run {
-    let Some((file, f)) = test_ref(r) else { return Run::NotFound(format!("{r} is not `<path>.rs::<test_fn>`")) };
-    let abs = root.join(file);
-    let leaf = f.rsplit("::").next().unwrap_or(f);
-    let text = std::fs::read_to_string(&abs).unwrap_or_default();
-    if !text.contains(&format!("fn {leaf}(")) {
-        return Run::NotFound(format!("{leaf} not found in {file}"));
-    }
-    let Some(args) = crate_of(root, &abs).and_then(|k| cargo_args(&k, &abs, f)) else {
-        return Run::NotFound(format!("{file} is in no crate's tests/ or src/"));
-    };
-    let quoted: Vec<String> = args.iter().map(|a| format!("{a:?}")).collect();
-    let target = target_dir.map(|t| format!(" CARGO_TARGET_DIR={:?}", t.display().to_string())).unwrap_or_default();
-    let shell = format!("export PATH={path_env:?} HEXA_NO_SKIP=1{target}; cargo {}", quoted.join(" "));
-    let (ok, out) = hexa_exec::direct_exec::run_evidence(&shell, root).await;
-    if let Some(line) = out.lines().find(|l| l.contains(NOT_PROVEN_HERE)) {
-        let reason = line.split(NOT_PROVEN_HERE).nth(1).unwrap_or("").trim();
-        return Run::NotProvenHere(reason.trim_matches(|c| c == '"' || c == '\'').to_string());
-    }
-    if !ok {
-        return Run::Failed(failure_tail(&out, 10));
-    }
-    let passed: u64 = out
-        .lines()
-        .filter_map(|l| l.strip_prefix("test result: ok. "))
-        .filter_map(|l| l.split(" passed").next()?.trim().parse::<u64>().ok())
-        .sum();
-    match passed {
-        0 => Run::Vacuous,
-        1 => Run::Passed,
-        n => Run::Ambiguous(n),
-    }
 }
 
 /// `hexa spec verify [ADR] [--ci]` — drift is a failure (§6, §7, §8).
@@ -323,12 +288,12 @@ pub async fn verify(adr: Option<&str>, ci: bool, prove: bool) -> anyhow::Result<
         if !print_coverage(a, &spec) {
             fatal += 1;
         }
-        if let Err(why) = acceptance_holds(&spec)? {
+        if let Err(why) = acceptance_holds(&spec) {
             println!("  {} {} {}", "\u{2717}".red(), a.id, why);
             fatal += 1;
         }
         for f in spec.test_files() {
-            let now = std::fs::read(root.join(&f)).map(|b| sha256(&b)).ok();
+            let now = std::fs::read(root.join(&f)).map(|b| sha256_hex(&b)).ok();
             match (spec.sealed.get(&f), now) {
                 (None, _) => {
                     println!("  {} {} {} is not sealed (`hexa spec seal`)", "\u{2717}".red(), a.id, f);
@@ -358,31 +323,31 @@ pub async fn verify(adr: Option<&str>, ci: bool, prove: bool) -> anyhow::Result<
                 println!("  {} {} {} pending: no test yet", mark, a.id, s.id);
                 continue;
             };
-            match run_one(&root, &path_env, r, None).await {
-                Run::Passed => {
+            match run_test_alone(&root, &path_env, r, None).await {
+                TestRun::Passed => {
                     passed += 1;
                     println!("  {} {} {} — {}", "\u{2713}".green(), a.id, s.id, r.dimmed());
                 }
-                Run::Failed(tail) => {
+                TestRun::Failed(tail) | TestRun::Broken { tail, .. } => {
                     failed += 1;
                     println!("  {} {} {} failed — {}", "\u{2717}".red(), a.id, s.id, r);
                     for line in tail.lines() {
                         println!("      {}", line.dimmed());
                     }
                 }
-                Run::NotFound(why) => {
+                TestRun::NotFound(why) => {
                     failed += 1;
                     println!("  {} {} {} {}", "\u{2717}".red(), a.id, s.id, why);
                 }
-                Run::Vacuous => {
+                TestRun::Vacuous => {
                     failed += 1;
                     println!("  {} {} {} ran 0 tests (vacuous): {}", "\u{2717}".red(), a.id, s.id, r);
                 }
-                Run::Ambiguous(n) => {
+                TestRun::Ambiguous(n) => {
                     failed += 1;
                     println!("  {} {} {} matched {n} tests; a scenario names one: {}", "\u{2717}".red(), a.id, s.id, r);
                 }
-                Run::NotProvenHere(why) => {
+                TestRun::NotProvenHere(why) => {
                     unproven += 1;
                     let mark = if ci { "\u{2717}".red() } else { "?".yellow() };
                     println!("  {} {} {} not proven here: {}", mark, a.id, s.id, why);
@@ -448,15 +413,20 @@ async fn prove_red(root: &Path, path_env: &str, a: &Adr, spec: &Spec) -> anyhow:
             continue;
         }
         for (sid, r) in scenarios {
-            let outcome = run_one(&wt, path_env, r, Some(&target)).await;
+            let outcome = run_test_alone(&wt, path_env, r, Some(&target)).await;
             let (ok, what) = match outcome {
-                Run::Failed(_) => (true, format!("red at {sha}")),
-                Run::Passed | Run::Ambiguous(_) => {
+                TestRun::Failed(_) => (true, format!("red at {sha}")),
+                // Written before the code it calls existed: red, and labelled.
+                TestRun::Broken { compile: true, .. } => (true, format!("red at {sha} (did not build: written first)")),
+                TestRun::Broken { compile: false, tail } => {
+                    (false, format!("red not shown at {sha}: the test never ran: {}", tail.lines().last().unwrap_or("")))
+                }
+                TestRun::Passed | TestRun::Ambiguous(_) => {
                     (false, format!("mirror: passes at its red commit {sha}, so it was not written first"))
                 }
-                Run::NotFound(why) => (false, format!("not at {sha}: {why}")),
-                Run::Vacuous => (false, format!("not at {sha}: it ran 0 tests there")),
-                Run::NotProvenHere(why) => (false, format!("red not proven here at {sha}: {why}")),
+                TestRun::NotFound(why) => (false, format!("not at {sha}: {why}")),
+                TestRun::Vacuous => (false, format!("not at {sha}: it ran 0 tests there")),
+                TestRun::NotProvenHere(why) => (false, format!("red not proven here at {sha}: {why}")),
             };
             if ok {
                 println!("  {} {} {} {}", "\u{2713}".green(), a.id, sid, what);
@@ -477,16 +447,6 @@ async fn prove_red(root: &Path, path_env: &str, a: &Adr, spec: &Spec) -> anyhow:
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_library_test_runs_by_its_module_path() {
-        let k = Path::new("/w/hexa-cli");
-        let a = cargo_args(k, &k.join("src/commands/adr/mod.rs"), "adr_gates::f").unwrap();
-        assert!(a.ends_with(&["--lib".into(), "--".into(), "commands::adr::adr_gates::f".into(), "--exact".into()]), "{a:?}");
-        let a = cargo_args(k, &k.join("tests/x.rs"), "f").unwrap();
-        assert!(a.ends_with(&["--test".into(), "x".into(), "--".into(), "f".into(), "--exact".into()]), "{a:?}");
-        assert!(cargo_args(k, &k.join("benches/b.rs"), "f").is_none());
-    }
 
     #[test]
     fn an_id_is_the_timestamp_or_the_stem() {

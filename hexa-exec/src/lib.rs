@@ -26,6 +26,7 @@ pub mod ports;
 pub mod direct_workspace;
 pub mod resource_governor;
 pub mod simple_agent;
+pub mod spec_author;
 pub mod telegram_notifier;
 pub mod tool_registry;
 pub mod tools;
@@ -94,6 +95,24 @@ pub fn default_git_history() -> std::sync::Arc<dyn ports::GitHistory> {
 /// See [`do_task::execute_direct_with`].
 pub async fn execute_direct(task: direct_exec::DirectTask) -> direct_exec::DirectResult {
     do_task::execute_direct_with(&default_deps(), task).await
+}
+
+/// Draft a spec from an ADR and its ports, on the registry-backed backends.
+/// See [`spec_author::draft`] (ADR-2610221540 §2).
+pub async fn draft_spec(model: &str, root: &std::path::Path, adr_id: &str) -> Result<spec_author::Drafted, String> {
+    spec_author::draft(&hexa_infer::wiring::RegistryBackends, model, root, adr_id).await
+}
+
+/// Generate an accepted spec's tests, red, on the registry-backed backends.
+/// See [`spec_author::generate_tests`] (ADR-2610221540 §5).
+pub async fn generate_spec_tests(
+    model: &str,
+    root: &std::path::Path,
+    spec: &hexa_core::ports::spec::Spec,
+    krate: &std::path::Path,
+    path_env: &str,
+) -> Result<spec_author::Generated, String> {
+    spec_author::generate_tests(&hexa_infer::wiring::RegistryBackends, model, root, spec, krate, path_env).await
 }
 
 /// The memory store, wired: `memory.jsonl` files under the project or `~/.hexa`.

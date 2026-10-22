@@ -164,7 +164,7 @@ fn accepted(r: &Path) -> Spec {
     let text = drafted(true);
     let json = text.trim_start_matches("```json\n").trim_end_matches("\n```");
     let spec: Spec = serde_json::from_str(json).unwrap();
-    hexa_exec::spec_author::accept(spec, "a reviewer", r)
+    { let _ = r; hexa_exec::spec_author::accept(spec, "a reviewer") }
 }
 
 const TESTS_RED: &str = "```rust\n\

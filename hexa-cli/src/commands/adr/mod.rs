@@ -2052,7 +2052,7 @@ pub(crate) enum GateOutcome {
 }
 
 /// What a skip site prints when `HEXA_NO_SKIP` forbids the skip.
-pub(crate) const NOT_PROVEN_HERE: &str = "not proven here:";
+use hexa_exec::spec_author::NOT_PROVEN_HERE;
 
 /// The last `n` lines of `out`, joined with `\n` and ending in a single
 /// `\n`. Input with fewer than `n` lines is returned unchanged.

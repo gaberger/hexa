@@ -158,3 +158,18 @@ S17b has no red commit: its case was shown failing against a stash, never in a c
 check says so. 4 scenarios pending phase 3. Refused overall only because the spec is not yet
 accepted or sealed.
 ```
+
+## Gate (phase 3: draft and generate)
+
+`cargo test -p hexa-cli --test the_ledger_reads_every_gate_and_no_skip_passes --test a_decision_is_covered_by_a_sealed_spec --test a_test_was_red_before_the_code && cargo test -p hexa-exec --test a_sealed_test_is_never_committed --test a_spec_is_drafted_and_its_tests_generated_red && cargo test -p hexa-exec --lib commit_refuses_while_a_seal_is_broken`
+
+Phase 3's test is red at `8c3d0cf`. It uses a double inference backend that records every prompt.
+
+**How §2 is enforced.**
+- The author and the test writer are tool-less completions (`complete_text_with`), so each sees only its prompt.
+- The prompt holds the ADR and the files the ADR names in backquotes that are port or domain files: a `ports` or `domain` path component or file stem. Any other file it names, such as a use case, is never read.
+- A model served through an agent CLI is refused before anything is sent, because an agent can read the repository for itself.
+
+**What phase 3 does not do yet.**
+- Generated tests are Rust only. A crate without a Cargo.toml is refused, with the reason given.
+- TypeScript and Go generation need their own gate.

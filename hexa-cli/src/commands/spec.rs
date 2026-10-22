@@ -24,6 +24,28 @@ pub enum SpecAction {
         /// Feature name (partial match supported)
         feature: String,
     },
+    /// Draft an ADR's spec from the ADR and the port/domain files it names,
+    /// never the implementation (ADR-2610221540 §2)
+    Draft {
+        adr: String,
+        /// Model id; defaults to the t2.5 tier
+        #[arg(long)]
+        model: Option<String>,
+        /// Replace an unaccepted draft that already exists
+        #[arg(long)]
+        force: bool,
+    },
+    /// Generate one test per scenario of an accepted spec; every test must fail
+    /// before the code exists, and the commit holding them is `red` (§5)
+    Tests {
+        adr: String,
+        /// The crate the tests go in (its tests/ directory)
+        #[arg(long = "crate", default_value = ".")]
+        krate: String,
+        /// Model id; defaults to the t2 tier
+        #[arg(long)]
+        model: Option<String>,
+    },
     /// Every numbered decision has an example and a negative scenario; no
     /// model involved (ADR-2610221540 §3). All ADRs when none is named
     Check {
@@ -58,6 +80,8 @@ pub async fn run(action: SpecAction) -> anyhow::Result<()> {
         SpecAction::List => list().await,
         SpecAction::Show { feature, check } => show(&feature, check).await,
         SpecAction::Workplan { feature } => workplan(&feature).await,
+        SpecAction::Draft { adr, model, force } => super::spec_ledger::draft(&adr, model.as_deref(), force).await,
+        SpecAction::Tests { adr, krate, model } => super::spec_ledger::tests(&adr, &krate, model.as_deref()).await,
         SpecAction::Check { adr } => super::spec_ledger::check(adr.as_deref()),
         SpecAction::Accept { adr, by } => super::spec_ledger::accept(&adr, by.as_deref()),
         SpecAction::Seal { adr } => super::spec_ledger::seal(&adr),
