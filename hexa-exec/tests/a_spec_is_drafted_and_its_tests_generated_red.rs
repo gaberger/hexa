@@ -233,3 +233,22 @@ async fn generation_refuses_a_spec_nobody_accepted() {
     assert!(err.contains("not accepted"), "{err}");
     assert!(seen.lock().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn generation_refuses_an_accepted_spec_with_no_scenarios() {
+    let (_t, r) = repo();
+    let mut spec = accepted(&r);
+    spec.specs.clear();
+    spec.accepted = None;
+    let spec = hexa_exec::spec_author::accept(spec, "a reviewer");
+    let (double, seen) = Double::new(&["```rust\n// nothing\n```".to_string()]);
+    let path_env = std::env::var("PATH").unwrap_or_default();
+    let head = git(&r, &["rev-parse", "HEAD"]);
+    let err = hexa_exec::spec_author::generate_tests(&double, "a-local-model", &r, &spec, Path::new("."), &path_env)
+        .await
+        .unwrap_err();
+    assert!(err.contains("no scenarios"), "zero scenarios is a vacuous red: {err}");
+    assert!(seen.lock().unwrap().is_empty(), "nothing is asked of the model");
+    assert!(!r.join("tests/adr_2701010000_spec.rs").exists(), "nothing is left in the tree");
+    assert_eq!(git(&r, &["rev-parse", "HEAD"]), head, "nothing is committed");
+}

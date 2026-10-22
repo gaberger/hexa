@@ -423,6 +423,10 @@ pub async fn generate_tests(
     path_env: &str,
 ) -> Result<Generated, String> {
     acceptance_holds(spec).map_err(|why| format!("{}: {why}. Tests are generated from an accepted spec", spec.adr))?;
+    if spec.specs.is_empty() {
+        // No scenario, no test to fail: a `red` commit would prove nothing.
+        return Err(format!("{}: the spec has no scenarios, so there is no test to fail before the code", spec.adr));
+    }
     refuse_an_agent(model)?;
     let manifest = std::fs::read_to_string(root.join(krate).join("Cargo.toml")).map_err(|_| {
         format!(
