@@ -216,14 +216,16 @@ pub fn tests_observed(output: &str) -> Option<u64> {
             continue;
         }
         // go: "ok  \tpkg\t0.01s" means the package's tests ran and passed;
-        // "?   \tpkg\t[no test files]" means it had none.
+        // "?   \tpkg\t[no test files]" means it had none, and
+        // "ok  \tpkg\t0.002s [no tests to run]" means a `-run` filter matched
+        // none. Both markers are checked first: the second line starts `ok`.
+        if t.contains("[no test files]") || t.contains("[no tests to run]") {
+            recognised = true;
+            continue;
+        }
         if t.starts_with("ok  \t") || t.starts_with("ok\t") {
             recognised = true;
             total = total.saturating_add(1);
-            continue;
-        }
-        if t.contains("[no test files]") {
-            recognised = true;
             continue;
         }
         if t.starts_with("--- PASS") || t.starts_with("=== RUN") {
@@ -273,6 +275,19 @@ test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out";
         assert!(evidence_is_vacuous("?   \tdemo/internal/ports\t[no test files]"));
         assert!(!evidence_is_vacuous(
             "?   \tdemo/internal/ports\t[no test files]\nok  \tdemo\t0.004s"
+        ));
+    }
+
+    /// `go test -run NoSuchTest ./pkg` exits 0 and prints an `ok` line. It is
+    /// the go form of cargo's "running 0 tests" and must not pass the gate.
+    #[test]
+    fn a_go_run_filter_that_matches_nothing_is_vacuous() {
+        let out = "ok  \tdemo/pkg\t0.002s [no tests to run]";
+        assert_eq!(tests_observed(out), Some(0));
+        assert!(evidence_is_vacuous(out));
+        assert!(evidence_is_vacuous("ok  \tdemo/pkg\t(cached) [no tests to run]"));
+        assert!(!evidence_is_vacuous(
+            "ok  \tdemo/pkg\t0.002s [no tests to run]\nok  \tdemo\t0.004s"
         ));
     }
 
