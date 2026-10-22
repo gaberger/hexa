@@ -118,3 +118,10 @@ This ADR adds no external dependency. A property-test crate for generated Rust t
 This is phase 1's gate, red at `bea3be4`. Each later phase appends its gate here as a new `## Gate`
 section, which `hexa adr gates` reads as current, with every earlier phase's test carried into
 the command.
+
+## Gate (phase 2)
+
+`cargo test -p hexa-cli --test the_ledger_reads_every_gate_and_no_skip_passes --test a_decision_is_covered_by_a_sealed_spec`
+
+Phase 2's test is red at `f4268d3`. It covers the spec format, `hexa spec check | accept | seal | verify`, and the
+spec ratchet. Phase 1's test is carried in.

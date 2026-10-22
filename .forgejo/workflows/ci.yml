@@ -99,6 +99,17 @@ jobs:
           HEXA_TEST_NPM: 1
           HEXA_TEST_CARGO_NET: 1
 
+      # Every numbered decision is covered by a spec, and every scenario's sealed test runs alone
+      # and passes; a spec changed since a person accepted it, or a test edited since sealing,
+      # fails (ADR-2610221540 §8).
+      - name: every decision's spec
+        run: |
+          cargo run -q -p hexa-cli -- spec check
+          PATH="/usr/local/go/bin:$PATH" cargo run -q -p hexa-cli -- spec verify --ci
+        env:
+          HEXA_TEST_NPM: 1
+          HEXA_TEST_CARGO_NET: 1
+
   boundary-check:
     name: hexa analyze — the architecture gate
     runs-on: ubuntu-latest

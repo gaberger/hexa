@@ -1,0 +1,370 @@
+{
+  "adr": "ADR-2610221540",
+  "feature": "an ADR is compiled to a spec, the spec to sealed tests",
+  "description": "ADR-2610221540 stated as behaviour. Scenarios without a test are phases 3 and 4: drafting from the ADR and ports alone, red-first generation, sealing inside build and do, and --prove.",
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1",
+        "§3"
+      ],
+      "kind": "example",
+      "description": "A spec that gives every decision an example and a negative is covered",
+      "given": "an ADR with §1 and §2, and a spec with an example and a negative citing each",
+      "when": "`hexa spec check <ADR>` runs",
+      "then": "it exits 0",
+      "test": "hexa-cli/tests/a_decision_is_covered_by_a_sealed_spec.rs::a_covered_spec_passes_check"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A scenario may not cite a decision the ADR does not make",
+      "given": "an ADR with one decision and a scenario citing §7",
+      "when": "`hexa spec check` runs",
+      "then": "it fails and names §7",
+      "test": "hexa-cli/tests/a_decision_is_covered_by_a_sealed_spec.rs::a_scenario_citing_a_decision_the_adr_does_not_make_fails"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1",
+        "§9"
+      ],
+      "kind": "negative",
+      "description": "A binding ADR made under this decision must have a spec",
+      "given": "an Accepted ADR dated after ADR-2610221540 with no docs/specs file",
+      "when": "`hexa spec check` runs over the ledger",
+      "then": "it fails, naming the ADR and 'no spec'",
+      "test": "hexa-cli/tests/a_decision_is_covered_by_a_sealed_spec.rs::an_adr_after_this_decision_without_a_spec_fails"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "The spec author is given the ADR and the port signatures it names",
+      "given": "an ADR naming a port, and an implementation of that port in the tree",
+      "when": "`hexa spec draft <ADR>` builds the author's prompt",
+      "then": "the prompt holds the ADR text and the port signatures"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "The spec author never sees the implementation",
+      "given": "an implementation file containing a unique marker string",
+      "when": "`hexa spec draft <ADR>` builds the author's prompt",
+      "then": "the marker is absent from everything sent to the model"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "A decision no scenario cites is named as uncovered",
+      "given": "a spec citing only §1 of a two-decision ADR",
+      "when": "`hexa spec check` runs",
+      "then": "it fails and names §2 as uncovered",
+      "test": "hexa-cli/tests/a_decision_is_covered_by_a_sealed_spec.rs::an_uncovered_decision_is_named"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "A decision with an example and no negative is half a rule",
+      "given": "a spec with only an example for §1",
+      "when": "`hexa spec check` runs",
+      "then": "it fails, naming §1 and 'negative'",
+      "test": "hexa-cli/tests/a_decision_is_covered_by_a_sealed_spec.rs::a_decision_with_no_negative_is_named"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "A universal decision needs a property scenario",
+      "given": "a spec declaring §1 universal, with an example and a negative",
+      "when": "`hexa spec check` runs",
+      "then": "it fails, asking for a property",
+      "test": "hexa-cli/tests/a_decision_is_covered_by_a_sealed_spec.rs::a_universal_decision_needs_a_property"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "An exemption with a reason covers its decision and is printed every run",
+      "given": "§2 exempted because it names a file layout",
+      "when": "`hexa spec check` runs",
+      "then": "it exits 0 and prints the exemption and its reason",
+      "test": "hexa-cli/tests/a_decision_is_covered_by_a_sealed_spec.rs::an_exemption_covers_its_decision_and_is_printed"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "An exemption without a reason is refused",
+      "given": "§2 exempted with a blank reason",
+      "when": "`hexa spec check` runs",
+      "then": "it fails, naming §2 and the missing reason",
+      "test": "hexa-cli/tests/a_decision_is_covered_by_a_sealed_spec.rs::an_exemption_without_a_reason_is_refused"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§4",
+        "§6",
+        "§8"
+      ],
+      "kind": "example",
+      "description": "An accepted, sealed spec whose tests pass verifies",
+      "given": "a covered spec, accepted by a person and sealed",
+      "when": "`hexa spec verify --ci` runs",
+      "then": "every scenario passes alone and it exits 0",
+      "test": "hexa-cli/tests/a_decision_is_covered_by_a_sealed_spec.rs::an_accepted_sealed_spec_whose_tests_pass_verifies"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§4",
+        "§6"
+      ],
+      "kind": "negative",
+      "description": "Tests are never sealed against a spec nobody accepted",
+      "given": "a covered spec with no acceptance",
+      "when": "`hexa spec seal` runs",
+      "then": "it refuses and says the spec is not accepted",
+      "test": "hexa-cli/tests/a_decision_is_covered_by_a_sealed_spec.rs::seal_refuses_a_spec_nobody_accepted"
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§4",
+        "§7"
+      ],
+      "kind": "negative",
+      "description": "A spec changed after acceptance no longer verifies",
+      "given": "an accepted, sealed spec whose `then` is then edited",
+      "when": "`hexa spec verify` runs",
+      "then": "it fails, saying the spec changed since it was accepted",
+      "test": "hexa-cli/tests/a_decision_is_covered_by_a_sealed_spec.rs::a_spec_changed_after_acceptance_fails_verify"
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§5"
+      ],
+      "kind": "example",
+      "description": "Generated tests are red before the implementation and the red commit is recorded",
+      "given": "an accepted spec and an unimplemented port",
+      "when": "`hexa spec tests <ADR>` generates and runs the tests",
+      "then": "every test compiles and fails, and the commit is written as `red`"
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "A generated test that passes before any implementation is rejected",
+      "given": "a generated test that asserts nothing about the port",
+      "when": "`hexa spec tests` runs it against the unimplemented port",
+      "then": "the test is rejected as testing nothing"
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§6",
+        "§7"
+      ],
+      "kind": "negative",
+      "description": "A sealed test edited by hand fails verification",
+      "given": "an accepted, sealed spec whose test file is then edited",
+      "when": "`hexa spec verify` runs",
+      "then": "it fails, naming the file and the broken seal",
+      "test": "hexa-cli/tests/a_decision_is_covered_by_a_sealed_spec.rs::an_edited_sealed_test_fails_verify"
+    },
+    {
+      "id": "S17",
+      "decision": [
+        "§6"
+      ],
+      "kind": "negative",
+      "description": "The code agent cannot write a sealed test",
+      "given": "`hexa do run --spec <ADR>` whose agent edits a sealed test file",
+      "when": "the run reaches its gate",
+      "then": "the run fails and commits nothing"
+    },
+    {
+      "id": "S18",
+      "decision": [
+        "§7"
+      ],
+      "kind": "example",
+      "description": "A requirement changes through the ADR, then the spec, then a new acceptance and seal",
+      "given": "an accepted, sealed spec whose behaviour is revised and accepted again, and its tests resealed",
+      "when": "`hexa spec verify` runs",
+      "then": "it passes",
+      "test": "hexa-cli/tests/a_decision_is_covered_by_a_sealed_spec.rs::an_accepted_sealed_spec_whose_tests_pass_verifies"
+    },
+    {
+      "id": "S19",
+      "decision": [
+        "§8"
+      ],
+      "kind": "negative",
+      "description": "A failing test fails verification",
+      "given": "a scenario whose test panics",
+      "when": "`hexa spec verify` runs",
+      "then": "it fails, naming the scenario as failed",
+      "test": "hexa-cli/tests/a_decision_is_covered_by_a_sealed_spec.rs::a_failing_test_fails_verify"
+    },
+    {
+      "id": "S20",
+      "decision": [
+        "§8"
+      ],
+      "kind": "negative",
+      "description": "A test ref to a function that is not there fails",
+      "given": "a scenario naming a missing function",
+      "when": "`hexa spec verify` runs",
+      "then": "it fails, naming the function as not found",
+      "test": "hexa-cli/tests/a_decision_is_covered_by_a_sealed_spec.rs::a_ref_to_a_missing_test_fails_verify"
+    },
+    {
+      "id": "S21",
+      "decision": [
+        "§8"
+      ],
+      "kind": "negative",
+      "description": "A test that runs zero cases is vacuous",
+      "given": "a scenario naming a function compiled out of the test binary",
+      "when": "`hexa spec verify` runs it with --exact",
+      "then": "it fails as vacuous",
+      "test": "hexa-cli/tests/a_decision_is_covered_by_a_sealed_spec.rs::a_test_that_runs_nothing_is_vacuous"
+    },
+    {
+      "id": "S22",
+      "decision": [
+        "§8",
+        "§9"
+      ],
+      "kind": "negative",
+      "description": "A skip is not a pass",
+      "given": "a scenario whose test refuses to skip under HEXA_NO_SKIP",
+      "when": "`hexa spec verify` runs, then `--ci`",
+      "then": "it is reported not proven here, and fails under --ci",
+      "test": "hexa-cli/tests/a_decision_is_covered_by_a_sealed_spec.rs::a_skip_is_not_proven_here_and_fails_under_ci"
+    },
+    {
+      "id": "S23",
+      "decision": [
+        "§8"
+      ],
+      "kind": "example",
+      "description": "A scenario with no test yet is pending, and a Completed ADR may not have one",
+      "given": "an Accepted ADR's spec with one untested scenario, then the ADR marked Completed",
+      "when": "`hexa spec verify --ci` runs",
+      "then": "pending passes while Accepted and fails once Completed",
+      "test": "hexa-cli/tests/a_decision_is_covered_by_a_sealed_spec.rs::a_scenario_with_no_test_is_pending_and_a_completed_adr_may_not_have_one"
+    },
+    {
+      "id": "S24",
+      "decision": [
+        "§8"
+      ],
+      "kind": "negative",
+      "description": "A test green at its red commit is a mirror",
+      "given": "a scenario whose `red` commit already has the test passing",
+      "when": "`hexa spec verify --prove` runs",
+      "then": "it fails, reporting the test as a mirror"
+    },
+    {
+      "id": "S25",
+      "decision": [
+        "§9"
+      ],
+      "kind": "example",
+      "description": "A `**Gate:**` line is a recorded gate",
+      "given": "an ADR whose gate is written `**Gate:** `true``",
+      "when": "`hexa adr gates` runs",
+      "then": "the gate is found and passes",
+      "test": "hexa-cli/tests/the_ledger_reads_every_gate_and_no_skip_passes.rs::a_bold_gate_line_is_a_gate"
+    },
+    {
+      "id": "S26",
+      "decision": [
+        "§9"
+      ],
+      "kind": "negative",
+      "description": "A listed gate runs every command, not only the first",
+      "given": "a `**Gates**` list of `true` and `false`",
+      "when": "`hexa adr gates` runs",
+      "then": "it fails",
+      "test": "hexa-cli/tests/the_ledger_reads_every_gate_and_no_skip_passes.rs::every_listed_gate_runs_not_only_the_first"
+    },
+    {
+      "id": "S27",
+      "decision": [
+        "§9"
+      ],
+      "kind": "negative",
+      "description": "A commit id beside a gate is not the gate",
+      "given": "a gate line citing `19b3487` before its listed commands",
+      "when": "`hexa adr gates` runs",
+      "then": "the commands run, not the commit id",
+      "test": "hexa-cli/tests/the_ledger_reads_every_gate_and_no_skip_passes.rs::a_commit_id_before_the_command_is_not_the_command"
+    },
+    {
+      "id": "S28",
+      "decision": [
+        "§9"
+      ],
+      "kind": "example",
+      "description": "A stale gate is re-recorded below the old one",
+      "given": "an ADR with `## Gate` `false` and an appended `## Gate (re-recorded …)` `true`",
+      "when": "`hexa adr gates` runs",
+      "then": "the appended gate is the current one",
+      "test": "hexa-cli/tests/the_ledger_reads_every_gate_and_no_skip_passes.rs::an_appended_gate_section_replaces_the_one_before_it"
+    },
+    {
+      "id": "S29",
+      "decision": [
+        "§9"
+      ],
+      "kind": "negative",
+      "description": "The legacy ledger only shrinks",
+      "given": "this repository's ledger",
+      "when": "`hexa spec check` and `hexa adr gates --dry-run` run",
+      "then": "the counts of ADRs without a spec, and without a gate, do not exceed their ceilings",
+      "test": "hexa-cli/tests/a_decision_is_covered_by_a_sealed_spec.rs::this_ledger_checks_and_its_legacy_only_shrinks"
+    },
+    {
+      "id": "S30",
+      "decision": [
+        "§8",
+        "§9"
+      ],
+      "kind": "negative",
+      "description": "Every test that can skip refuses to under HEXA_NO_SKIP",
+      "given": "every tests/ file in the workspace",
+      "when": "its skip sites are read",
+      "then": "each routes through one helper that panics 'not proven here' under HEXA_NO_SKIP",
+      "test": "hexa-cli/tests/the_ledger_reads_every_gate_and_no_skip_passes.rs::every_skip_site_refuses_under_no_skip"
+    }
+  ]
+}

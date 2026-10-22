@@ -260,7 +260,11 @@ fn a_spec_changed_after_acceptance_fails_verify() {
     covered(d.path());
     accept_and_seal(d.path());
     let p = d.path().join("docs/specs").join(format!("{}.json", id()));
-    let text = std::fs::read_to_string(&p).unwrap().replacen("\"then\":\"t\"", "\"then\":\"something else\"", 1);
+    // `"t"` is only ever the `then` value in these fixtures, however the
+    // file is formatted after acceptance rewrote it.
+    let before = std::fs::read_to_string(&p).unwrap();
+    let text = before.replacen("\"t\"", "\"something else\"", 1);
+    assert_ne!(before, text, "the edit must change the spec, or this test proves nothing");
     std::fs::write(&p, text).unwrap();
     let (code, out) = run(d.path(), &["spec", "verify", &id()]);
     assert_ne!(code, 0, "what a person accepted is not what is here:\n{out}");

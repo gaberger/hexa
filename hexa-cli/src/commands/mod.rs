@@ -5,6 +5,7 @@ pub mod bootstrap;
 pub mod ci;
 pub mod doctor;
 pub mod spec;
+pub mod spec_ledger;
 pub mod go;
 pub mod graph;
 pub mod analyze;

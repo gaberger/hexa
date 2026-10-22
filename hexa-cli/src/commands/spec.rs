@@ -24,6 +24,29 @@ pub enum SpecAction {
         /// Feature name (partial match supported)
         feature: String,
     },
+    /// Every numbered decision has an example and a negative scenario; no
+    /// model involved (ADR-2610221540 §3). All ADRs when none is named
+    Check {
+        /// ADR id (ADR-2610221540 or 2610221540)
+        adr: Option<String>,
+    },
+    /// A person accepts the spec's behaviour (ADR-2610221540 §4)
+    Accept {
+        adr: String,
+        /// Who is accepting; defaults to `git config user.name`
+        #[arg(long)]
+        by: Option<String>,
+    },
+    /// Seal the test files an accepted spec names (ADR-2610221540 §6)
+    Seal { adr: String },
+    /// Run each scenario's sealed test alone; drift fails (ADR-2610221540 §8)
+    Verify {
+        adr: Option<String>,
+        /// A case this machine could not run fails, as does a pending
+        /// scenario on a Completed ADR
+        #[arg(long)]
+        ci: bool,
+    },
 }
 
 pub async fn run(action: SpecAction) -> anyhow::Result<()> {
@@ -31,6 +54,10 @@ pub async fn run(action: SpecAction) -> anyhow::Result<()> {
         SpecAction::List => list().await,
         SpecAction::Show { feature, check } => show(&feature, check).await,
         SpecAction::Workplan { feature } => workplan(&feature).await,
+        SpecAction::Check { adr } => super::spec_ledger::check(adr.as_deref()),
+        SpecAction::Accept { adr, by } => super::spec_ledger::accept(&adr, by.as_deref()),
+        SpecAction::Seal { adr } => super::spec_ledger::seal(&adr),
+        SpecAction::Verify { adr, ci } => super::spec_ledger::verify(adr.as_deref(), ci).await,
     }
 }
 
