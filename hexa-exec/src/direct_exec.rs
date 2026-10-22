@@ -1246,19 +1246,21 @@ pub(crate) async fn dirty_paths(repo_root: &std::path::Path) -> Vec<String> {
 /// The target file's package directory (relative, trailing `/`): the nearest ancestor
 /// containing a `Cargo.toml`/`package.json`, else the file's own directory. Used to
 /// scope the start-snapshot so a feature commit only sweeps in supporting files from the
-/// *same package* — never unrelated dirty files elsewhere in the repo.
-fn package_prefix(repo_root: &std::path::Path, file: &str) -> String {
+/// *same package* — never unrelated dirty files elsewhere in the repo. `None` for a
+/// file at the repo root with no root manifest: its scope is the root directory's own
+/// files, not the prefix "", which every path in the repo starts with.
+fn package_prefix(repo_root: &std::path::Path, file: &str) -> Option<String> {
     let mut dir = std::path::Path::new(file).parent();
     while let Some(d) = dir {
         // The empty path is the repo root: a single-crate repo's package is "".
         if repo_root.join(d).join("Cargo.toml").exists() || repo_root.join(d).join("package.json").exists() {
-            return if d.as_os_str().is_empty() { String::new() } else { format!("{}/", d.to_string_lossy()) };
+            return Some(if d.as_os_str().is_empty() { String::new() } else { format!("{}/", d.to_string_lossy()) });
         }
         dir = d.parent();
     }
     match std::path::Path::new(file).parent() {
-        Some(p) if !p.as_os_str().is_empty() => format!("{}/", p.to_string_lossy()),
-        _ => String::new(),
+        Some(p) if !p.as_os_str().is_empty() => Some(format!("{}/", p.to_string_lossy())),
+        _ => None,
     }
 }
 
@@ -1362,7 +1364,7 @@ pub(crate) async fn commit(
     for p in start_dirty {
         if p != file
             && !paths.contains(p)
-            && p.starts_with(&pkg)
+            && pkg.as_deref().map_or(!p.contains('/'), |pkg| p.starts_with(pkg))
             && repo_root.join(p).exists()
         {
             paths.push(p.clone());
@@ -1711,7 +1713,7 @@ mod commit_snapshot_tests {
         std::fs::write(dir.join("Cargo.toml"), "[package]\nname=\"m\"\nversion=\"0.0.0\"").unwrap();
         git(dir, &["add", "."]);
         git(dir, &["commit", "-qm", "pkg"]);
-        assert_eq!(super::package_prefix(dir, "src/lib.rs"), "");
+        assert_eq!(super::package_prefix(dir, "src/lib.rs").as_deref(), Some(""));
         std::fs::write(dir.join("Cargo.toml"), "[package]\nname=\"m\"\nversion=\"0.0.1\"").unwrap();
         std::fs::write(dir.join("tests/foo.rs"), "// in-package support").unwrap();
         let start_dirty = dirty_paths(dir).await;
@@ -1721,6 +1723,33 @@ mod commit_snapshot_tests {
         assert!(String::from_utf8_lossy(&st.stdout).trim().is_empty(),
             "Cargo.toml and tests/foo.rs belong to the root package and must be committed, left: {}",
             String::from_utf8_lossy(&st.stdout));
+    }
+
+    // The bug: a root-level target with no root manifest fell back to the
+    // prefix "", which every path starts with, so every pre-run dirty file in
+    // the repo, in every subdirectory and package, was swept into the commit.
+    #[tokio::test]
+    async fn a_root_level_target_without_a_root_manifest_sweeps_nothing_else() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        init_repo(dir);
+        std::fs::create_dir_all(dir.join("other")).unwrap();
+        std::fs::create_dir_all(dir.join("web")).unwrap();
+        std::fs::write(dir.join("other/wip.go"), "package other").unwrap();
+        std::fs::write(dir.join("web/package.json"), "{}").unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-qm", "base"]);
+        std::fs::write(dir.join("other/wip.go"), "package other // wip").unwrap();
+        std::fs::write(dir.join("web/package.json"), "{\"wip\":1}").unwrap();
+        let start_dirty = dirty_paths(dir).await;
+        std::fs::write(dir.join("main.go"), "package main").unwrap();
+        commit(dir, "main.go", "add", false, &start_dirty).await.unwrap();
+        let files = Git::new("git").args(["show", "--name-only", "--format=", "HEAD"]).current_dir(dir).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&files.stdout).trim(), "main.go", "only the target may be committed");
+        let st = Git::new("git").args(["status", "--porcelain"]).current_dir(dir).output().unwrap();
+        let st = String::from_utf8_lossy(&st.stdout);
+        assert!(st.contains("other/wip.go") && st.contains("web/package.json"),
+            "unrelated WIP must remain uncommitted, got: {st}");
     }
 
     struct RecordingWorktrees(std::sync::Mutex<Vec<std::path::PathBuf>>);
