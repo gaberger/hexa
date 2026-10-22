@@ -88,12 +88,32 @@ fn spec_path(root: &Path, id: &str) -> PathBuf {
 }
 
 fn load(root: &Path, id: &str) -> anyhow::Result<Option<Spec>> {
+    Ok(load_text(root, id)?.map(|(_, spec)| spec))
+}
+
+/// The spec and the exact text it was read from.
+fn load_text(root: &Path, id: &str) -> anyhow::Result<Option<(String, Spec)>> {
     let p = spec_path(root, id);
     if !p.exists() {
         return Ok(None);
     }
     let text = std::fs::read_to_string(&p)?;
-    serde_json::from_str(&text).map(Some).map_err(|e| anyhow::anyhow!("{}: not a spec: {e}", p.display()))
+    let spec = serde_json::from_str(&text).map_err(|e| anyhow::anyhow!("{}: not a spec: {e}", p.display()))?;
+    Ok(Some((text, spec)))
+}
+
+/// Save `spec` only if the file still holds `read`, the text it was loaded
+/// from. A write after a long wait would otherwise put back an old
+/// acceptance over a person's edit.
+fn save_unchanged(root: &Path, spec: &Spec, read: &str) -> anyhow::Result<()> {
+    let p = spec_path(root, &spec.adr);
+    if std::fs::read_to_string(&p).ok().as_deref() != Some(read) {
+        anyhow::bail!(
+            "{} changed while the tests were generated; it was not overwritten. Re-run against the current spec",
+            p.display()
+        );
+    }
+    save(root, spec)
 }
 
 fn save(root: &Path, spec: &Spec) -> anyhow::Result<()> {
@@ -213,7 +233,7 @@ pub async fn draft(adr: &str, model: Option<&str>, force: bool) -> anyhow::Resul
 pub async fn tests(adr: &str, krate: &str, model: Option<&str>) -> anyhow::Result<()> {
     let root = std::env::current_dir()?;
     let a = find(&root, adr)?;
-    let mut spec = load(&root, &a.id)?.ok_or_else(|| anyhow::anyhow!("{} has no spec", a.id))?;
+    let (read, mut spec) = load_text(&root, &a.id)?.ok_or_else(|| anyhow::anyhow!("{} has no spec", a.id))?;
     let model = model_for(model, "t2")?;
     let path_env = gate_path(
         std::env::var_os("HOME").map(PathBuf::from).as_deref(),
@@ -225,7 +245,7 @@ pub async fn tests(adr: &str, krate: &str, model: Option<&str>) -> anyhow::Resul
         .await
         .map_err(|e| anyhow::anyhow!(e))?;
     record_generated(&mut spec, &g.refs, &g.red, &g.file);
-    save(&root, &spec)?;
+    save_unchanged(&root, &spec, &read)?;
     println!("  {} {} tests in {}, every one red at {}", "\u{2713}".green(), g.refs.len(), g.file, g.red);
     seal(&a.id)?;
     println!("\n  Commit {}/{}.json. The tests are sealed: build the decision until they pass.", SPECS, a.id);
@@ -495,6 +515,26 @@ mod tests {
         record_generated(&mut spec, &refs, "new1111", "tests/new.rs");
         assert_eq!(spec.specs[0].test.as_deref(), Some("tests/new.rs::t"));
         assert_eq!(spec.specs[0].red_commit(&spec), Some("new1111"));
+    }
+
+    #[test]
+    fn a_spec_edited_during_generation_is_not_overwritten() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(SPECS)).unwrap();
+        let p = spec_path(dir.path(), "ADR-1");
+        let accepted = r#"{"adr":"ADR-1","feature":"f","specs":[],"accepted":{"by":"p","sha256":"x"}}"#;
+        std::fs::write(&p, accepted).unwrap();
+        let (read, mut spec) = load_text(dir.path(), "ADR-1").unwrap().unwrap();
+        // A person edits the spec while the model works; acceptance is gone.
+        let edited = r#"{"adr":"ADR-1","feature":"edited","specs":[]}"#;
+        std::fs::write(&p, edited).unwrap();
+        record_generated(&mut spec, &BTreeMap::new(), "red0000", "tests/t.rs");
+        assert!(save_unchanged(dir.path(), &spec, &read).is_err());
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), edited, "the edit and its lost acceptance must survive");
+        // Unchanged, it saves.
+        std::fs::write(&p, accepted).unwrap();
+        save_unchanged(dir.path(), &spec, &read).unwrap();
+        assert_eq!(load(dir.path(), "ADR-1").unwrap().unwrap().red.as_deref(), Some("red0000"));
     }
 
     #[test]
