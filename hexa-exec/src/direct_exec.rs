@@ -959,7 +959,7 @@ fn parse_edit(s: &str) -> Result<Edit, String> {
         (None, None) => "",
     };
 
-    let blocks = extract_fenced_blocks(s);
+    let blocks = extract_fenced_blocks(s)?;
     if blocks.is_empty() {
         return Err("no fenced code block in reply".into());
     }
@@ -992,7 +992,11 @@ fn parse_edit(s: &str) -> Result<Edit, String> {
 
 /// Extract the contents of ```...``` fences, dropping an optional language tag
 /// on the opening fence (```rust). Returns blocks in order.
-fn extract_fenced_blocks(s: &str) -> Vec<String> {
+///
+/// A fence left open at the end is an error, not a dropped block: it is what a reply cut off
+/// at max_tokens looks like, and counting only the closed blocks would read (old, new-cut-off)
+/// as a one-block append of the old snippet.
+fn extract_fenced_blocks(s: &str) -> Result<Vec<String>, String> {
     let mut blocks = Vec::new();
     let mut in_block = false;
     let mut cur = String::new();
@@ -1010,7 +1014,10 @@ fn extract_fenced_blocks(s: &str) -> Vec<String> {
             cur.push('\n');
         }
     }
-    blocks
+    if in_block {
+        return Err("unterminated fenced code block in reply (truncated?)".into());
+    }
+    Ok(blocks)
 }
 
 /// The reply with every fenced block (fences included) removed — the same fence rule as
@@ -1049,6 +1056,12 @@ mod parse_edit_tests {
         assert_eq!(edit.mode, "replace");
         assert_eq!(edit.old_string, "old();");
         assert_eq!(edit.new_string, "new();");
+    }
+
+    #[test]
+    fn a_reply_cut_off_inside_its_second_block_is_rejected_not_read_as_an_append() {
+        let reply = "```\nold();\n```\n```\nnew(";
+        assert!(parse_edit(reply).is_err());
     }
 }
 
