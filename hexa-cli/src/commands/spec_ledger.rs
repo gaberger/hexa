@@ -332,7 +332,7 @@ fn seal_files(root: &Path, id: &str, spec: &Spec) -> anyhow::Result<BTreeMap<Str
     // A seal freezes a file. Over a source file it would freeze the code the
     // test is meant to drive, so a sealed test lives in a `tests/` directory.
     let outside: Vec<String> =
-        files.iter().cloned().filter(|f| !Path::new(f).iter().any(|c| c == "tests")).collect();
+        files.iter().filter(|&f| !Path::new(f).iter().any(|c| c == "tests")).cloned().collect();
     if !outside.is_empty() {
         anyhow::bail!(
             "{}: {} not under a tests/ directory; sealing them would freeze the implementation",

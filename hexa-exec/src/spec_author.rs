@@ -351,7 +351,7 @@ fn tests_by_scenario(body: &str, ids: &[&str]) -> BTreeMap<String, String> {
         }
         let words: Vec<&str> = t.split_whitespace().collect();
         let qualifier = |w: &&str| matches!(*w, "pub" | "async" | "unsafe" | "const" | "extern") || w.starts_with("pub(");
-        if let Some(at) = words.iter().position(|w| *w == "fn").filter(|&at| words[..at].iter().all(|w| qualifier(w))) {
+        if let Some(at) = words.iter().position(|w| *w == "fn").filter(|&at| words[..at].iter().all(qualifier)) {
             let rest = words.get(at + 1).copied().unwrap_or("");
             let name: String = rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
             if *is_test && !name.is_empty() {
