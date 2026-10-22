@@ -228,6 +228,9 @@ pub async fn tests(adr: &str, krate: &str, model: Option<&str>) -> anyhow::Resul
         s.test = g.refs.get(&s.id).cloned();
     }
     spec.red = Some(g.red.clone());
+    // The generated file is new and red at its own commit: a new seal. Every
+    // other sealed file must still match.
+    spec.sealed.remove(&g.file);
     save(&root, &spec)?;
     println!("  {} {} tests in {}, every one red at {}", "\u{2713}".green(), g.refs.len(), g.file, g.red);
     seal(&a.id)?;
@@ -257,8 +260,17 @@ pub fn seal(adr: &str) -> anyhow::Result<()> {
     let mut sealed = BTreeMap::new();
     for f in spec.test_files() {
         let bytes = std::fs::read(root.join(&f)).map_err(|e| anyhow::anyhow!("{f}: {e}"))?;
+        let hash = sha256_hex(&bytes);
+        // Re-sealing an edited test would launder the edit: a sealed test
+        // changes through the spec, never by hand.
+        if spec.sealed.get(&f).is_some_and(|s| *s != hash) {
+            anyhow::bail!(
+                "{}: seal broken: {f} changed since sealing. A sealed test changes through the spec, not by re-sealing",
+                a.id
+            );
+        }
         println!("  {} sealed {}", "\u{2713}".green(), f);
-        sealed.insert(f, sha256_hex(&bytes));
+        sealed.insert(f, hash);
     }
     spec.sealed = sealed;
     save(&root, &spec)

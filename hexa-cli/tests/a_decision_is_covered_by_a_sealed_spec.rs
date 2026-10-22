@@ -303,6 +303,21 @@ fn an_edited_sealed_test_fails_verify() {
     assert!(out.contains("seal") && out.contains("tests/inv.rs"), "{out}");
 }
 
+#[test]
+fn seal_refuses_to_reseal_an_edited_sealed_test() {
+    let d = project("Accepted", 2);
+    covered(d.path());
+    accept_and_seal(d.path());
+    let p = d.path().join("tests/inv.rs");
+    let text = std::fs::read_to_string(&p).unwrap() + "\n// loosened\n";
+    std::fs::write(&p, text).unwrap();
+    let (code, out) = run(d.path(), &["spec", "seal", &id()]);
+    assert_ne!(code, 0, "re-sealing would launder the edit:\n{out}");
+    assert!(out.contains("seal broken") && out.contains("tests/inv.rs"), "{out}");
+    let (code, out) = run(d.path(), &["spec", "verify", "--ci", &id()]);
+    assert_ne!(code, 0, "the edit is still a broken seal after the refused re-seal:\n{out}");
+}
+
 // ── §8: each test runs alone and must prove something ─────────────────────
 
 fn verify_one(test: &str) -> (i32, String, i32, String) {
