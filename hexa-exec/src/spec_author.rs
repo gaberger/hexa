@@ -198,12 +198,15 @@ fn is_contract(path: &str) -> bool {
 
 /// The files the author is given: each backquoted path in the ADR that
 /// exists and is a port or domain file, in order of first mention. Nothing
-/// else is ever read for the prompt.
+/// else is ever read for the prompt. Every piece between two backticks is a
+/// candidate, not only the odd ones: one stray backtick, or a four-backtick
+/// fence, flips the parity. Prose between spans is never a path: it holds
+/// whitespace, which no span counted here may.
 fn given_files(root: &Path, adr_text: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
-    for span in adr_text.split('`').skip(1).step_by(2) {
-        let span = span.trim();
-        let pathlike = span.contains('/') && Path::new(span).extension().is_some() && !span.contains(' ');
+    let pieces: Vec<&str> = adr_text.split('`').collect();
+    for &span in pieces.iter().take(pieces.len().saturating_sub(1)).skip(1) {
+        let pathlike = span.contains('/') && Path::new(span).extension().is_some() && !span.contains(char::is_whitespace);
         if pathlike && is_contract(span) && root.join(span).is_file() && !out.iter().any(|g| g == span) {
             out.push(span.to_string());
         }
@@ -533,6 +536,24 @@ mod tests {
         assert!(!is_contract("src/usecase.rs"));
         assert!(!is_contract("src/adapters/primary/cli.rs"));
         assert!(!is_contract("src/report.rs"), "a substring is not a component");
+    }
+
+    #[test]
+    fn an_unpaired_backtick_does_not_drop_later_contract_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("src/ports")).unwrap();
+        std::fs::create_dir_all(root.join("src/domain")).unwrap();
+        std::fs::write(root.join("src/ports/a.rs"), "").unwrap();
+        std::fs::write(root.join("src/domain/b.rs"), "").unwrap();
+        std::fs::write(root.join("src/ports.rs"), "").unwrap();
+        let adr = "1. A stray ` in prose.\n2. Change `src/ports/a.rs` and `src/domain/b.rs`.\n";
+        assert_eq!(given_files(root, adr), ["src/ports/a.rs", "src/domain/b.rs"]);
+        let adr = "````md\nx\n````\n\nSee `src/ports.rs` then `src/ports/a.rs`.\n";
+        assert_eq!(given_files(root, adr), ["src/ports.rs", "src/ports/a.rs"]);
+        // Prose between spans, and text outside any backticks, is not a path.
+        let adr = "src/ports.rs `x` src/ports/a.rs `y` src/domain/b.rs";
+        assert!(given_files(root, adr).is_empty());
     }
 
     #[tokio::test]
