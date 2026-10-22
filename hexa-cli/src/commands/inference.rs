@@ -2161,3 +2161,44 @@ mod config_model {
         assert_eq!(cfg, json!({}));
     }
 }
+
+/// A registered endpoint names the variable that holds its key; the key
+/// itself is never written to the registry ("API keys are environment
+/// variables, read at dispatch. Never committed, never written to any file
+/// hexa produces.").
+#[cfg(test)]
+mod key_ref_tests {
+    use super::key_ref;
+
+    #[test]
+    fn a_key_found_in_the_environment_is_stored_by_its_name() {
+        let r = key_ref(None, Some("OPENROUTER_API_KEY"), |v| v == "OPENROUTER_API_KEY");
+        assert_eq!(r, Ok(Some("OPENROUTER_API_KEY".to_string())));
+    }
+
+    #[test]
+    fn a_variable_named_with_key_is_stored_by_its_name() {
+        let r = key_ref(Some("MY_OR_KEY"), Some("OPENROUTER_API_KEY"), |v| v == "MY_OR_KEY");
+        assert_eq!(r, Ok(Some("MY_OR_KEY".to_string())));
+    }
+
+    #[test]
+    fn a_literal_key_is_refused_never_stored() {
+        let r = key_ref(Some("sk-or-v1-abc123"), Some("OPENROUTER_API_KEY"), |_| true);
+        let err = r.expect_err("a literal key must not reach the registry");
+        assert!(err.contains("export"), "the refusal says how to pass it: {err}");
+        assert!(!err.contains("sk-or-v1-abc123"), "the refusal does not echo the key: {err}");
+    }
+
+    #[test]
+    fn a_named_variable_that_is_unset_is_refused() {
+        let r = key_ref(Some("NOT_SET_HERE"), None, |_| false);
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn no_key_anywhere_is_none_for_a_keyless_provider() {
+        assert_eq!(key_ref(None, None, |_| false), Ok(None));
+        assert_eq!(key_ref(None, Some("OPENROUTER_API_KEY"), |_| false), Ok(None));
+    }
+}
