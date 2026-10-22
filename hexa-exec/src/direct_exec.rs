@@ -1081,11 +1081,9 @@ pub(crate) async fn dirty_paths(repo_root: &std::path::Path) -> Vec<String> {
 fn package_prefix(repo_root: &std::path::Path, file: &str) -> String {
     let mut dir = std::path::Path::new(file).parent();
     while let Some(d) = dir {
-        if !d.as_os_str().is_empty()
-            && (repo_root.join(d).join("Cargo.toml").exists()
-                || repo_root.join(d).join("package.json").exists())
-        {
-            return format!("{}/", d.to_string_lossy());
+        // The empty path is the repo root: a single-crate repo's package is "".
+        if repo_root.join(d).join("Cargo.toml").exists() || repo_root.join(d).join("package.json").exists() {
+            return if d.as_os_str().is_empty() { String::new() } else { format!("{}/", d.to_string_lossy()) };
         }
         dir = d.parent();
     }
@@ -1396,6 +1394,31 @@ mod commit_snapshot_tests {
         let st = Git::new("git").args(["status", "--porcelain"]).current_dir(dir).output().unwrap();
         assert!(String::from_utf8_lossy(&st.stdout).contains("unrelated.rs"),
             "unrelated WIP must remain uncommitted");
+    }
+
+    // The bug: the ancestor walk skipped the empty path, so a crate at the repo
+    // root was never found and `src/lib.rs` was scoped to `src/`, leaving the
+    // package's other pre-run supporting files (`tests/`, `Cargo.toml`) out.
+    #[tokio::test]
+    async fn a_root_crate_scopes_the_snapshot_to_the_whole_repo() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        init_repo(dir);
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::create_dir_all(dir.join("tests")).unwrap();
+        std::fs::write(dir.join("Cargo.toml"), "[package]\nname=\"m\"\nversion=\"0.0.0\"").unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-qm", "pkg"]);
+        assert_eq!(super::package_prefix(dir, "src/lib.rs"), "");
+        std::fs::write(dir.join("Cargo.toml"), "[package]\nname=\"m\"\nversion=\"0.0.1\"").unwrap();
+        std::fs::write(dir.join("tests/foo.rs"), "// in-package support").unwrap();
+        let start_dirty = dirty_paths(dir).await;
+        std::fs::write(dir.join("src/lib.rs"), "fn t() {}").unwrap();
+        commit(dir, "src/lib.rs", "add", false, &start_dirty).await.unwrap();
+        let st = Git::new("git").args(["status", "--porcelain"]).current_dir(dir).output().unwrap();
+        assert!(String::from_utf8_lossy(&st.stdout).trim().is_empty(),
+            "Cargo.toml and tests/foo.rs belong to the root package and must be committed, left: {}",
+            String::from_utf8_lossy(&st.stdout));
     }
 }
 
