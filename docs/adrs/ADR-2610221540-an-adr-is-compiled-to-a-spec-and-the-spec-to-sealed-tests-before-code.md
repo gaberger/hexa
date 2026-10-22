@@ -140,3 +140,21 @@ library (ADR-2610141733), so a write-set rule would not have bound it. The guard
 needs no `--spec` flag: no fix, from any agent, under any verb, can commit an edit to any sealed
 test. A seal covers only files under a `tests/` directory. Sealing a source file would freeze the
 implementation the test is meant to drive.
+
+## Gate (phase 4: --prove)
+
+`cargo test -p hexa-cli --test the_ledger_reads_every_gate_and_no_skip_passes --test a_decision_is_covered_by_a_sealed_spec --test a_test_was_red_before_the_code && cargo test -p hexa-exec --test a_sealed_test_is_never_committed && cargo test -p hexa-exec --lib commit_refuses_while_a_seal_is_broken`
+
+The `--prove` test is red at `613b997`. A scenario may carry its own `red`, because this ADR's tests went red at
+three different commits. A spec-level `red` is the default.
+
+## Evidence (--prove on this ADR)
+
+`hexa spec verify --prove ADR-2610221540` on 2026-10-22, before acceptance:
+
+```text
+29 scenarios red at their commits (bea3be4, f4268d3, ba7a835, 613b997); 0 mirrors.
+S17b has no red commit: its case was shown failing against a stash, never in a commit, and the
+check says so. 4 scenarios pending phase 3. Refused overall only because the spec is not yet
+accepted or sealed.
+```

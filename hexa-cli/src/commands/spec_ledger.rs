@@ -265,7 +265,7 @@ fn cargo_args(krate: &Path, file: &Path, f: &str) -> Option<Vec<String>> {
     Some(args)
 }
 
-async fn run_one(root: &Path, path_env: &str, r: &str) -> Run {
+async fn run_one(root: &Path, path_env: &str, r: &str, target_dir: Option<&Path>) -> Run {
     let Some((file, f)) = test_ref(r) else { return Run::NotFound(format!("{r} is not `<path>.rs::<test_fn>`")) };
     let abs = root.join(file);
     let leaf = f.rsplit("::").next().unwrap_or(f);
@@ -277,7 +277,8 @@ async fn run_one(root: &Path, path_env: &str, r: &str) -> Run {
         return Run::NotFound(format!("{file} is in no crate's tests/ or src/"));
     };
     let quoted: Vec<String> = args.iter().map(|a| format!("{a:?}")).collect();
-    let shell = format!("export PATH={path_env:?} HEXA_NO_SKIP=1; cargo {}", quoted.join(" "));
+    let target = target_dir.map(|t| format!(" CARGO_TARGET_DIR={:?}", t.display().to_string())).unwrap_or_default();
+    let shell = format!("export PATH={path_env:?} HEXA_NO_SKIP=1{target}; cargo {}", quoted.join(" "));
     let (ok, out) = hexa_exec::direct_exec::run_evidence(&shell, root).await;
     if let Some(line) = out.lines().find(|l| l.contains(NOT_PROVEN_HERE)) {
         let reason = line.split(NOT_PROVEN_HERE).nth(1).unwrap_or("").trim();
@@ -299,7 +300,7 @@ async fn run_one(root: &Path, path_env: &str, r: &str) -> Run {
 }
 
 /// `hexa spec verify [ADR] [--ci]` — drift is a failure (§6, §7, §8).
-pub async fn verify(adr: Option<&str>, ci: bool) -> anyhow::Result<()> {
+pub async fn verify(adr: Option<&str>, ci: bool, prove: bool) -> anyhow::Result<()> {
     let root = std::env::current_dir()?;
     println!("{} each scenario's sealed test, run alone", "\u{2b21} spec verify".cyan().bold());
     let adrs = match adr {
@@ -357,7 +358,7 @@ pub async fn verify(adr: Option<&str>, ci: bool) -> anyhow::Result<()> {
                 println!("  {} {} {} pending: no test yet", mark, a.id, s.id);
                 continue;
             };
-            match run_one(&root, &path_env, r).await {
+            match run_one(&root, &path_env, r, None).await {
                 Run::Passed => {
                     passed += 1;
                     println!("  {} {} {} — {}", "\u{2713}".green(), a.id, s.id, r.dimmed());
@@ -391,6 +392,9 @@ pub async fn verify(adr: Option<&str>, ci: bool) -> anyhow::Result<()> {
         if completed && ci && spec.specs.iter().any(|s| s.test.is_none()) {
             fatal += 1;
         }
+        if prove {
+            fatal += prove_red(&root, &path_env, a, &spec).await?;
+        }
     }
     println!("\n  {passed} passed · {failed} failed · {unproven} not proven here · {pending} pending");
     let unproven_fails = if ci { unproven } else { 0 };
@@ -398,6 +402,76 @@ pub async fn verify(adr: Option<&str>, ci: bool) -> anyhow::Result<()> {
         anyhow::bail!("spec verification failed");
     }
     Ok(())
+}
+
+/// `--prove` (§5, §8): each tested scenario's test must exist and fail at its
+/// red commit. Returns how many did not. One worktree per commit;
+/// builds share a target directory under `target/`, so a second commit
+/// rebuilds what changed, not the world.
+async fn prove_red(root: &Path, path_env: &str, a: &Adr, spec: &Spec) -> anyhow::Result<usize> {
+    let mut by_commit: BTreeMap<String, Vec<(&str, &str)>> = BTreeMap::new();
+    let mut unproven = 0;
+    for s in &spec.specs {
+        let Some(r) = s.test.as_deref() else { continue };
+        match s.red_commit(spec) {
+            Some(sha) => by_commit.entry(sha.to_string()).or_default().push((&s.id, r)),
+            None => {
+                unproven += 1;
+                println!("  {} {} {} has no red commit: nothing shows it was written first", "\u{2717}".red(), a.id, s.id);
+            }
+        }
+    }
+    let target = root.join("target/hexa-prove");
+    for (sha, scenarios) in by_commit {
+        // Under the ignored target/, beside the shared build. A worktree left
+        // by an interrupted run is removed first.
+        let wt = target.join(format!("wt-{sha}"));
+        let _ = std::process::Command::new("git")
+            .args(["worktree", "remove", "--force"])
+            .arg(&wt)
+            .current_dir(root)
+            .output();
+        let add = std::process::Command::new("git")
+            .args(["worktree", "add", "-q", "--detach"])
+            .arg(&wt)
+            .arg(&sha)
+            .current_dir(root)
+            .output()?;
+        if !add.status.success() {
+            unproven += scenarios.len();
+            println!(
+                "  {} {} red commit {sha} cannot be checked out: {}",
+                "\u{2717}".red(),
+                a.id,
+                String::from_utf8_lossy(&add.stderr).trim()
+            );
+            continue;
+        }
+        for (sid, r) in scenarios {
+            let outcome = run_one(&wt, path_env, r, Some(&target)).await;
+            let (ok, what) = match outcome {
+                Run::Failed(_) => (true, format!("red at {sha}")),
+                Run::Passed | Run::Ambiguous(_) => {
+                    (false, format!("mirror: passes at its red commit {sha}, so it was not written first"))
+                }
+                Run::NotFound(why) => (false, format!("not at {sha}: {why}")),
+                Run::Vacuous => (false, format!("not at {sha}: it ran 0 tests there")),
+                Run::NotProvenHere(why) => (false, format!("red not proven here at {sha}: {why}")),
+            };
+            if ok {
+                println!("  {} {} {} {}", "\u{2713}".green(), a.id, sid, what);
+            } else {
+                unproven += 1;
+                println!("  {} {} {} {}", "\u{2717}".red(), a.id, sid, what);
+            }
+        }
+        let _ = std::process::Command::new("git")
+            .args(["worktree", "remove", "--force"])
+            .arg(&wt)
+            .current_dir(root)
+            .output();
+    }
+    Ok(unproven)
 }
 
 #[cfg(test)]

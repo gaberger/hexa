@@ -46,6 +46,10 @@ pub enum SpecAction {
         /// scenario on a Completed ADR
         #[arg(long)]
         ci: bool,
+        /// Check out each scenario's red commit and require its test to
+        /// exist and fail there; a test green there is a mirror (§5)
+        #[arg(long)]
+        prove: bool,
     },
 }
 
@@ -57,7 +61,7 @@ pub async fn run(action: SpecAction) -> anyhow::Result<()> {
         SpecAction::Check { adr } => super::spec_ledger::check(adr.as_deref()),
         SpecAction::Accept { adr, by } => super::spec_ledger::accept(&adr, by.as_deref()),
         SpecAction::Seal { adr } => super::spec_ledger::seal(&adr),
-        SpecAction::Verify { adr, ci } => super::spec_ledger::verify(adr.as_deref(), ci).await,
+        SpecAction::Verify { adr, ci, prove } => super::spec_ledger::verify(adr.as_deref(), ci, prove).await,
     }
 }
 

@@ -49,6 +49,17 @@ pub struct Scenario {
     /// `<path>::<test_fn>`, once the test exists.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub test: Option<String>,
+    /// The commit at which this scenario's test existed and failed, when it
+    /// differs from the spec's `red` (§5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub red: Option<String>,
+}
+
+impl Scenario {
+    /// This scenario's red commit, else the spec's. Empty is none.
+    pub fn red_commit<'a>(&'a self, spec: &'a Spec) -> Option<&'a str> {
+        self.red.as_deref().or(spec.red.as_deref()).filter(|r| !r.trim().is_empty())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -76,7 +87,7 @@ impl Spec {
     /// record of acceptance, the seal, the red commit or the test refs, which
     /// are all written after acceptance and must not void it.
     pub fn accepted_content(&self) -> Spec {
-        let specs = self.specs.iter().map(|s| Scenario { test: None, ..s.clone() }).collect();
+        let specs = self.specs.iter().map(|s| Scenario { test: None, red: None, ..s.clone() }).collect();
         Spec { accepted: None, sealed: BTreeMap::new(), red: None, specs, ..self.clone() }
     }
 
@@ -203,6 +214,7 @@ mod tests {
             when: String::new(),
             then: String::new(),
             test: None,
+            red: None,
         }
     }
 
@@ -246,6 +258,7 @@ mod tests {
         a.sealed.insert("t.rs".into(), "h".into());
         a.red = Some("abc1234".into());
         a.specs[0].test = Some("tests/a.rs::f".into());
+        a.specs[0].red = Some("def5678".into());
         assert_eq!(a.accepted_content(), b.accepted_content());
         a.specs[0].then = "something else".into();
         assert_ne!(a.accepted_content(), b.accepted_content(), "behaviour is what was accepted");
