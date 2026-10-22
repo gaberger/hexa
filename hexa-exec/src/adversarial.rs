@@ -1156,6 +1156,19 @@ async fn review(
                     report.notes.push(format!("no fix applied for '{}': the tree did not change — {}", f.title, first_line(&reply)));
                     continue;
                 }
+                // A fix may make a sealed test pass, never change it
+                // (ADR-2610221540 §6): refused before any gate, batched or not.
+                let broken = crate::direct_exec::broken_seals(repo_root);
+                if !broken.is_empty() {
+                    revert_paths(repo_root, &touched, &before).await;
+                    fix.note(format!("REFUSED — {} edited sealed test(s): {}", f.title, broken.join(", ")));
+                    report.notes.push(format!(
+                        "fix for '{}' edited sealed test(s) {}: reverted, not committed (ADR-2610221540 §6)",
+                        f.title,
+                        broken.join(", ")
+                    ));
+                    continue;
+                }
                 if let Some(b) = batching.as_mut() {
                     b.gate_fix(f, &touched, &before, before_head.as_deref(), &dirty_before, &fix, &mut report).await;
                     if b.batch.is_some_and(|n| b.pending.len() >= n) {

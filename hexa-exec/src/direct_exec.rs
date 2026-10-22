@@ -1033,6 +1033,32 @@ fn package_prefix(repo_root: &std::path::Path, file: &str) -> String {
     }
 }
 
+/// Every sealed test in the tree whose bytes no longer match its seal, or
+/// that is gone (ADR-2610221540 §6). Seals are read from each
+/// `docs/specs/*.json`; only the `sealed` map is read, so a spec this cannot
+/// otherwise parse still guards its tests.
+pub fn broken_seals(repo_root: &std::path::Path) -> Vec<String> {
+    use sha2::Digest;
+    let Ok(entries) = std::fs::read_dir(repo_root.join("docs/specs")) else { return Vec::new() };
+    let mut broken: Vec<String> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "json"))
+        .filter_map(|p| serde_json::from_str::<Value>(&std::fs::read_to_string(p).ok()?).ok())
+        .filter_map(|v| v.get("sealed").and_then(Value::as_object).cloned())
+        .flat_map(|sealed| sealed.into_iter())
+        .filter(|(path, sum)| {
+            let now = std::fs::read(repo_root.join(path))
+                .map(|b| sha2::Sha256::digest(&b).iter().map(|x| format!("{x:02x}")).collect::<String>());
+            now.ok().as_deref() != sum.as_str()
+        })
+        .map(|(path, _)| path)
+        .collect();
+    broken.sort();
+    broken.dedup();
+    broken
+}
+
 pub(crate) async fn commit(
     repo_root: &std::path::Path,
     file: &str,
@@ -1040,6 +1066,24 @@ pub(crate) async fn commit(
     factory: bool,
     start_dirty: &[String],
 ) -> Result<String, String> {
+    // The code side may only make a sealed test pass, never change it
+    // (ADR-2610221540 §6). Judged over the whole tree, not this commit's
+    // paths: a test loosened and left uncommitted still made the gate pass.
+    let broken = broken_seals(repo_root);
+    if !broken.is_empty() {
+        for p in &broken {
+            let _ = tokio::process::Command::new("git")
+                .args(["checkout", "-q", "HEAD", "--", p])
+                .current_dir(repo_root)
+                .output()
+                .await;
+        }
+        return Err(format!(
+            "refused: the change edited sealed test(s) {}. A sealed test changes through its spec, never in a fix \
+             (ADR-2610221540 §6); restored from HEAD, nothing committed",
+            broken.join(", ")
+        ));
+    }
     // Commit the target PLUS the pre-run supporting files (spec / module-registration
     // the evidence needed) so the commit reproduces the green state — not just the
     // target (which left supporting files uncommitted, a broken committed state). Scope

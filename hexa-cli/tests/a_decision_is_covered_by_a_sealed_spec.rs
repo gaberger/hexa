@@ -255,6 +255,25 @@ fn seal_refuses_a_spec_nobody_accepted() {
 }
 
 #[test]
+fn seal_refuses_a_test_outside_a_tests_directory() {
+    let d = project("Accepted", 1);
+    std::fs::write(d.path().join("src/lib.rs"), "#[cfg(test)]\nmod t {\n    #[test]\n    fn inline() {}\n}\n").unwrap();
+    write_spec(
+        d.path(),
+        &[
+            sc("S1", &["§1"], "example", Some("tests/inv.rs::passes")),
+            sc("S2", &["§1"], "negative", Some("src/lib.rs::t::inline")),
+        ],
+        "",
+    );
+    let (code, out) = run(d.path(), &["spec", "accept", &id(), "--by", "a reviewer"]);
+    assert_eq!(code, 0, "{out}");
+    let (code, out) = run(d.path(), &["spec", "seal", &id()]);
+    assert_ne!(code, 0, "sealing src/lib.rs would freeze the code the test drives:\n{out}");
+    assert!(out.contains("src/lib.rs") && out.contains("tests/"), "{out}");
+}
+
+#[test]
 fn a_spec_changed_after_acceptance_fails_verify() {
     let d = project("Accepted", 2);
     covered(d.path());

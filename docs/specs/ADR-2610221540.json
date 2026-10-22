@@ -204,10 +204,23 @@
         "§6"
       ],
       "kind": "negative",
-      "description": "The code agent cannot write a sealed test",
-      "given": "`hexa do run --spec <ADR>` whose agent edits a sealed test file",
-      "when": "the run reaches its gate",
-      "then": "the run fails and commits nothing"
+      "description": "No agent commit, from `hexa do` or `hexa harden`, carries an edit to a sealed test",
+      "given": "a sealed test, and a harden fix that loosens it while fixing its bug, beside a fix that does not",
+      "when": "the fixes reach their gates",
+      "then": "the loosening fix is reverted and not committed, the sealed test is restored, and the other fix commits",
+      "test": "hexa-exec/tests/a_sealed_test_is_never_committed.rs::harden_reverts_a_fix_that_edits_a_sealed_test_and_commits_the_rest"
+    },
+    {
+      "id": "S17b",
+      "decision": [
+        "§6"
+      ],
+      "kind": "negative",
+      "description": "Only a file under tests/ can be sealed",
+      "given": "an accepted spec naming a test inside src/lib.rs",
+      "when": "`hexa spec seal` runs",
+      "then": "it refuses, naming the file: sealing it would freeze the implementation",
+      "test": "hexa-cli/tests/a_decision_is_covered_by_a_sealed_spec.rs::seal_refuses_a_test_outside_a_tests_directory"
     },
     {
       "id": "S18",

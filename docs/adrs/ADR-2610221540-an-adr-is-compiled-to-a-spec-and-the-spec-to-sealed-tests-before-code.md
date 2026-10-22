@@ -125,3 +125,18 @@ the command.
 
 Phase 2's test is red at `f4268d3`. It covers the spec format, `hexa spec check | accept | seal | verify`, and the
 spec ratchet. Phase 1's test is carried in.
+
+## Gate (phase 4: the seal)
+
+`cargo test -p hexa-cli --test the_ledger_reads_every_gate_and_no_skip_passes --test a_decision_is_covered_by_a_sealed_spec && cargo test -p hexa-exec --test a_sealed_test_is_never_committed && cargo test -p hexa-exec --lib commit_refuses_while_a_seal_is_broken`
+
+The seal test is red at `ba7a835`.
+
+**Deviation from §6, recorded.** The seal is enforced where every agent's work becomes a commit, not
+by removing sealed paths from the tool library's write set. `direct_exec::commit` refuses while any
+seal in the tree is broken. Every `hexa do` path commits through it. Harden's fix loop refuses a fix
+before its gate. The `claude -p` delegate edits files itself and never passes through the tool
+library (ADR-2610141733), so a write-set rule would not have bound it. The guard is repo-wide and
+needs no `--spec` flag: no fix, from any agent, under any verb, can commit an edit to any sealed
+test. A seal covers only files under a `tests/` directory. Sealing a source file would freeze the
+implementation the test is meant to drive.

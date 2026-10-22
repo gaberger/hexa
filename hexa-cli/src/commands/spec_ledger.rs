@@ -196,6 +196,17 @@ pub fn seal(adr: &str) -> anyhow::Result<()> {
     if let Err(why) = acceptance_holds(&spec)? {
         anyhow::bail!("{}: {why}. Tests are sealed against an accepted spec, never a draft", a.id);
     }
+    // A seal freezes a file. Over a source file it would freeze the code the
+    // test is meant to drive, so a sealed test lives in a `tests/` directory.
+    let outside: Vec<String> =
+        spec.test_files().into_iter().filter(|f| !Path::new(f).iter().any(|c| c == "tests")).collect();
+    if !outside.is_empty() {
+        anyhow::bail!(
+            "{}: {} not under a tests/ directory; sealing them would freeze the implementation",
+            a.id,
+            outside.join(", ")
+        );
+    }
     let mut sealed = BTreeMap::new();
     for f in spec.test_files() {
         let bytes = std::fs::read(root.join(&f)).map_err(|e| anyhow::anyhow!("{f}: {e}"))?;
