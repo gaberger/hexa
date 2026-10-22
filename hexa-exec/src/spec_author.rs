@@ -77,20 +77,49 @@ fn crate_of(root: &Path, file: &Path) -> Option<PathBuf> {
 }
 
 /// The cargo arguments that run `f` in `file` and nothing else: an
-/// integration test by its target, a library test by its module path.
+/// integration test by its target, a library or binary test by its module
+/// path in the target that compiles it. A module below `src/` may be compiled
+/// by the library or by `main.rs`, so it is run in each one the crate has.
 fn cargo_args(krate: &Path, file: &Path, f: &str) -> Option<Vec<String>> {
     let rel = file.strip_prefix(krate).ok()?;
     let manifest = krate.join("Cargo.toml").display().to_string();
     let mut parts: Vec<String> = rel.with_extension("").iter().map(|s| s.to_string_lossy().to_string()).collect();
     let (target, name) = match parts.first().map(String::as_str) {
         Some("tests") if parts.len() == 2 => (vec!["--test".to_string(), parts[1].clone()], f.to_string()),
+        Some("src") if parts.get(1).map(String::as_str) == Some("bin") && parts.len() > 2 => {
+            // src/bin/x.rs, or src/bin/x/main.rs and the modules beside it.
+            let bin = parts[2].clone();
+            let mut path: Vec<String> = parts.split_off(3);
+            if matches!(path.last().map(String::as_str), Some("main" | "mod")) {
+                path.pop();
+            }
+            path.push(f.to_string());
+            (vec!["--bin".to_string(), bin], path.join("::"))
+        }
         Some("src") => {
             parts.remove(0);
+            let root = parts.len() == 1;
+            let target = match parts.last().map(String::as_str) {
+                Some("main") if root => vec!["--bins".to_string()],
+                Some("lib") if root => vec!["--lib".to_string()],
+                _ => {
+                    let src = krate.join("src");
+                    let has_bin = src.join("main.rs").is_file() || src.join("bin").is_dir();
+                    let mut t = Vec::new();
+                    if src.join("lib.rs").is_file() || !has_bin {
+                        t.push("--lib".to_string());
+                    }
+                    if has_bin {
+                        t.push("--bins".to_string());
+                    }
+                    t
+                }
+            };
             if matches!(parts.last().map(String::as_str), Some("lib" | "mod" | "main")) {
                 parts.pop();
             }
             parts.push(f.to_string());
-            (vec!["--lib".to_string()], parts.join("::"))
+            (target, parts.join("::"))
         }
         _ => return None,
     };
@@ -436,6 +465,29 @@ mod tests {
         let a = cargo_args(k, &k.join("tests/x.rs"), "f").unwrap();
         assert!(a.ends_with(&["--test".into(), "x".into(), "--".into(), "f".into(), "--exact".into()]), "{a:?}");
         assert!(cargo_args(k, &k.join("benches/b.rs"), "f").is_none());
+    }
+
+    #[test]
+    fn a_binary_test_runs_in_its_binary_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let k = dir.path();
+        std::fs::create_dir_all(k.join("src/bin")).unwrap();
+        std::fs::write(k.join("src/lib.rs"), "").unwrap();
+        std::fs::write(k.join("src/main.rs"), "").unwrap();
+        let tail = |a: Vec<String>, n: usize| a[a.len() - n..].to_vec();
+        let a = cargo_args(k, &k.join("src/main.rs"), "f").unwrap();
+        assert_eq!(tail(a, 4), ["--bins", "--", "f", "--exact"], "src/main.rs is the binary, not the library");
+        let a = cargo_args(k, &k.join("src/bin/x.rs"), "f").unwrap();
+        assert_eq!(tail(a, 5), ["--bin", "x", "--", "f", "--exact"], "not the bogus path bin::x::f");
+        let a = cargo_args(k, &k.join("src/bin/x/util.rs"), "f").unwrap();
+        assert_eq!(tail(a, 5), ["--bin", "x", "--", "util::f", "--exact"]);
+        let a = cargo_args(k, &k.join("src/lib.rs"), "f").unwrap();
+        assert_eq!(tail(a, 4), ["--lib", "--", "f", "--exact"]);
+        let a = cargo_args(k, &k.join("src/cli/mod.rs"), "f").unwrap();
+        assert_eq!(tail(a, 5), ["--lib", "--bins", "--", "cli::f", "--exact"], "a module main.rs may own");
+        std::fs::remove_file(k.join("src/lib.rs")).unwrap();
+        let a = cargo_args(k, &k.join("src/cli/mod.rs"), "f").unwrap();
+        assert_eq!(tail(a, 4), ["--bins", "--", "cli::f", "--exact"], "no library target to ask for");
     }
 
     #[test]
