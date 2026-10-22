@@ -174,19 +174,36 @@ pub fn accept(adr: &str, by: Option<&str>) -> anyhow::Result<()> {
     if !print_coverage(&a, &spec) {
         anyhow::bail!("{}: the spec does not cover the decision; accept a complete one", a.id);
     }
-    let by = by
-        .map(str::to_string)
-        .or_else(|| {
+    let by = acceptor(
+        by,
+        || {
             let out = std::process::Command::new("git").args(["config", "user.name"]).output().ok()?;
             Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
-        })
-        .filter(|s| !s.trim().is_empty())
-        .or_else(|| std::env::var("USER").ok())
-        .ok_or_else(|| anyhow::anyhow!("who is accepting? pass --by"))?;
+        },
+        || std::env::var("USER").ok(),
+    )?;
     let sha256 = content_hash(&spec);
     println!("  {} {} accepted by {} at {}", "\u{2713}".green(), a.id, by, &sha256[..12]);
     spec.accepted = Some(Acceptance { by, sha256 });
     save(&root, &spec)
+}
+
+/// Who accepts: `--by` if given (a blank one is refused, not replaced), else
+/// git `user.name`, else `$USER` — each fallback only when it is not blank.
+fn acceptor(
+    by: Option<&str>,
+    git_name: impl FnOnce() -> Option<String>,
+    user: impl FnOnce() -> Option<String>,
+) -> anyhow::Result<String> {
+    let named = |s: &String| !s.trim().is_empty();
+    match by {
+        Some(b) if b.trim().is_empty() => anyhow::bail!("--by is blank: name who is accepting"),
+        Some(b) => Ok(b.to_string()),
+        None => git_name()
+            .filter(named)
+            .or_else(|| user().filter(named))
+            .ok_or_else(|| anyhow::anyhow!("who is accepting? pass --by")),
+    }
 }
 
 /// The model for a role: the one named, else the tier's. No model id is
@@ -557,6 +574,20 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let err = seal_files(dir.path(), "ADR-1", &spec).expect_err("an empty seal must not succeed");
         assert!(err.to_string().contains("nothing to seal"), "{err}");
+    }
+
+    #[test]
+    fn a_blank_acceptor_is_refused_never_recorded() {
+        let none = || None;
+        let blank = || Some(String::new());
+        let err = acceptor(None, blank, blank).expect_err("an empty $USER must not accept");
+        assert!(err.to_string().contains("pass --by"), "{err}");
+        assert!(acceptor(None, none, || Some("  ".into())).is_err());
+        // A blank --by is refused, not silently replaced by $USER.
+        assert!(acceptor(Some("  "), || Some("git".into()), || Some("user".into())).is_err());
+        assert_eq!(acceptor(Some("p"), none, none).unwrap(), "p");
+        assert_eq!(acceptor(None, || Some("git".into()), || Some("user".into())).unwrap(), "git");
+        assert_eq!(acceptor(None, blank, || Some("user".into())).unwrap(), "user");
     }
 
     #[test]
