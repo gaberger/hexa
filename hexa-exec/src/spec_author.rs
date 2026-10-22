@@ -461,6 +461,7 @@ pub async fn generate_tests(
     }
     let body = body + "\n";
     std::fs::write(&abs, &body).map_err(|e| e.to_string())?;
+    let unsealed = Unsealed { root: root.to_path_buf(), file: file.clone() };
 
     let refs: BTreeMap<String, String> = names.iter().map(|(sid, f)| (sid.clone(), format!("{file}::{f}"))).collect();
     let head = git(root, &["rev-parse", "HEAD"]).await?;
@@ -469,23 +470,51 @@ pub async fn generate_tests(
         rejected.push("HEAD moved while the tests ran, so their red is not the commit's".into());
     }
     if !rejected.is_empty() {
-        let _ = std::fs::remove_file(&abs);
         return Err(format!("generation rejected, nothing kept:\n  {}", rejected.join("\n  ")));
     }
 
-    // What was checked red, whatever touched the file while the tests ran.
-    std::fs::write(&abs, &body).map_err(|e| e.to_string())?;
-    git(root, &["add", "--", &file]).await?;
-    let msg = format!(
-        "test(spec): {} scenarios, generated from the accepted spec (failing)\n\n\
-         Written by hexa's test writer from the scenarios and the ports alone (ADR-2610221540 §5).\n\
-         Every test fails here, before the decision is built.",
-        spec.adr
-    );
-    git(root, &["-c", "user.name=hexa-spec", "-c", "user.email=spec@hexa.local", "commit", "-q", "-m", &msg, "--", &file])
-        .await?;
-    let red = git(root, &["rev-parse", "--short", "HEAD"]).await?;
+    let red = seal(unsealed, &body, &spec.adr).await?;
     Ok(Generated { file, refs, red })
+}
+
+/// A generated test file written but not yet in its `red` commit. Dropped
+/// on any error, or with the future, it takes the file back out of the index
+/// and the working tree: an unsealed file left behind would block every
+/// later generation for its ADR.
+struct Unsealed {
+    root: PathBuf,
+    file: String,
+}
+
+impl Drop for Unsealed {
+    fn drop(&mut self) {
+        let _ = std::process::Command::new("git")
+            .args(["rm", "--cached", "-q", "--ignore-unmatch", "--", &self.file])
+            .current_dir(&self.root)
+            .output();
+        let _ = std::fs::remove_file(self.root.join(&self.file));
+    }
+}
+
+/// Commit `body` as the `red` commit of `adr`'s tests, and return its sha.
+/// Until the commit is made, a failure leaves nothing behind.
+async fn seal(unsealed: Unsealed, body: &str, adr: &str) -> Result<String, String> {
+    let (root, file) = (unsealed.root.clone(), unsealed.file.clone());
+    // What was checked red, whatever touched the file while the tests ran.
+    std::fs::write(root.join(&file), body).map_err(|e| e.to_string())?;
+    git(&root, &["add", "--", &file]).await?;
+    let msg = format!(
+        "test(spec): {adr} scenarios, generated from the accepted spec (failing)\n\n\
+         Written by hexa's test writer from the scenarios and the ports alone (ADR-2610221540 §5).\n\
+         Every test fails here, before the decision is built."
+    );
+    git(&root, &["-c", "user.name=hexa-spec", "-c", "user.email=spec@hexa.local", "commit", "-q", "-m", &msg, "--", &file])
+        .await?;
+    // Committed: the file is sealed now, and stays whatever follows.
+    std::mem::forget(unsealed);
+    git(&root, &["rev-parse", "--short", "HEAD"])
+        .await
+        .map_err(|e| format!("{file} is committed as red, but the commit's sha could not be read: {e}"))
 }
 
 #[cfg(test)]
@@ -532,6 +561,47 @@ mod tests {
         assert!(!root.join("tests/t.rs").exists(), "the check writes nothing into the working tree");
         let list = git(root, &["worktree", "list"]).await.unwrap();
         assert_eq!(list.lines().count(), 1, "the checkout is removed: {list}");
+    }
+
+    #[tokio::test]
+    async fn a_failed_seal_leaves_no_test_file_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let sh = |args: &[&str]| assert!(std::process::Command::new("git").args(args).current_dir(root).status().unwrap().success());
+        sh(&["init", "-q"]);
+        std::fs::write(root.join("README"), "x\n").unwrap();
+        sh(&["add", "."]);
+        sh(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init"]);
+        let hook = root.join(".git/hooks/pre-commit");
+        std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let file = "tests/adr_x_spec.rs";
+        std::fs::create_dir_all(root.join("tests")).unwrap();
+        std::fs::write(root.join(file), "// first\n").unwrap();
+
+        let unsealed = Unsealed { root: root.to_path_buf(), file: file.to_string() };
+        let err = seal(unsealed, "#[test]\nfn t() {}\n", "ADR-X").await.unwrap_err();
+        assert!(err.contains("commit"), "{err}");
+        assert!(!root.join(file).exists(), "an unsealed test file blocks every later run");
+        let staged = git(root, &["diff", "--cached", "--name-only"]).await.unwrap();
+        assert!(staged.is_empty(), "nothing stays staged: {staged}");
+
+        // A dropped future drops its guard, and the file with it.
+        std::fs::write(root.join(file), "// second\n").unwrap();
+        drop(Unsealed { root: root.to_path_buf(), file: file.to_string() });
+        assert!(!root.join(file).exists());
+
+        // The commit made, the file is sealed and stays.
+        std::fs::remove_file(&hook).unwrap();
+        std::fs::write(root.join(file), "// third\n").unwrap();
+        let unsealed = Unsealed { root: root.to_path_buf(), file: file.to_string() };
+        let red = seal(unsealed, "#[test]\nfn t() {}\n", "ADR-X").await.unwrap();
+        assert_eq!(red, git(root, &["rev-parse", "--short", "HEAD"]).await.unwrap());
+        assert_eq!(std::fs::read_to_string(root.join(file)).unwrap(), "#[test]\nfn t() {}\n");
     }
 
     #[test]
