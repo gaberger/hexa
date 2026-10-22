@@ -224,18 +224,26 @@ pub async fn tests(adr: &str, krate: &str, model: Option<&str>) -> anyhow::Resul
     let g = hexa_exec::generate_spec_tests(&model, &root, &spec, Path::new(krate), &path_env)
         .await
         .map_err(|e| anyhow::anyhow!(e))?;
-    for s in spec.specs.iter_mut() {
-        s.test = g.refs.get(&s.id).cloned();
-    }
-    spec.red = Some(g.red.clone());
-    // The generated file is new and red at its own commit: a new seal. Every
-    // other sealed file must still match.
-    spec.sealed.remove(&g.file);
+    record_generated(&mut spec, &g.refs, &g.red, &g.file);
     save(&root, &spec)?;
     println!("  {} {} tests in {}, every one red at {}", "\u{2713}".green(), g.refs.len(), g.file, g.red);
     seal(&a.id)?;
     println!("\n  Commit {}/{}.json. The tests are sealed: build the decision until they pass.", SPECS, a.id);
     Ok(())
+}
+
+/// Point every scenario at its new test, red at the new commit. A scenario's
+/// own `red` overrides the spec's, so an old one is cleared: it names a commit
+/// at which the new test does not exist.
+fn record_generated(spec: &mut Spec, refs: &BTreeMap<String, String>, red: &str, file: &str) {
+    for s in spec.specs.iter_mut() {
+        s.test = refs.get(&s.id).cloned();
+        s.red = None;
+    }
+    spec.red = Some(red.to_string());
+    // The generated file is new and red at its own commit: a new seal. Every
+    // other sealed file must still match.
+    spec.sealed.remove(file);
 }
 
 /// `hexa spec seal <ADR>` — hash every test file the scenarios name (§6).
@@ -464,5 +472,19 @@ mod tests {
     fn an_id_is_the_timestamp_or_the_stem() {
         assert_eq!(adr_id_of("ADR-2610221540-a-slug"), "ADR-2610221540");
         assert_eq!(adr_id_of("ADR-001"), "ADR-001");
+    }
+
+    #[test]
+    fn regenerated_tests_are_red_at_the_new_commit_not_a_scenarios_old_one() {
+        let mut spec: Spec = serde_json::from_value(serde_json::json!({
+            "adr": "ADR-1", "feature": "f", "red": "old0000",
+            "specs": [{ "id": "s1", "decision": ["1"], "kind": "example", "description": "d",
+                        "test": "tests/old.rs::t", "red": "f4268d3" }]
+        }))
+        .unwrap();
+        let refs = BTreeMap::from([("s1".to_string(), "tests/new.rs::t".to_string())]);
+        record_generated(&mut spec, &refs, "new1111", "tests/new.rs");
+        assert_eq!(spec.specs[0].test.as_deref(), Some("tests/new.rs::t"));
+        assert_eq!(spec.specs[0].red_commit(&spec), Some("new1111"));
     }
 }
