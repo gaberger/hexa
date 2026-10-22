@@ -320,26 +320,42 @@ fn lib_name(manifest: &str) -> Option<String> {
     name("lib").or_else(|| name("package")).map(|v| v.replace('-', "_"))
 }
 
-/// Scenario id → test fn, from `/// <id>` doc lines directly above `fn`.
+/// Scenario id → test fn, from `/// <id>` doc lines directly above a test
+/// `fn`. Only doc lines, attributes and blank lines may stand between them,
+/// and one attribute must mark the fn a test; anything else unbinds the id.
 fn tests_by_scenario(body: &str, ids: &[&str]) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
-    let mut pending: Option<String> = None;
+    // The id waiting for its fn, and whether a test attribute has been seen.
+    let mut pending: Option<(String, bool)> = None;
     for line in body.lines() {
         let t = line.trim();
         if let Some(doc) = t.strip_prefix("///") {
             let first = doc.split_whitespace().next().unwrap_or("").trim_end_matches(':');
             if ids.contains(&first) {
-                pending = Some(first.to_string());
+                pending = Some((first.to_string(), false));
             }
-        } else if let Some(sid) = pending.as_ref() {
-            if let Some(rest) = t.split("fn ").nth(1).filter(|_| t.starts_with("fn ") || t.contains(" fn ")) {
-                let name: String = rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
-                if !name.is_empty() {
-                    out.insert(sid.clone(), name);
-                }
-                pending = None;
+            continue;
+        }
+        let Some((sid, is_test)) = pending.as_mut() else { continue };
+        if t.is_empty() {
+            continue;
+        }
+        if let Some(attr) = t.strip_prefix("#[") {
+            let path: String = attr.chars().take_while(|c| !matches!(c, '(' | ']')).collect();
+            let path = path.trim();
+            *is_test |= path == "test" || path.ends_with("::test");
+            continue;
+        }
+        let words: Vec<&str> = t.split_whitespace().collect();
+        let qualifier = |w: &&str| matches!(*w, "pub" | "async" | "unsafe" | "const" | "extern") || w.starts_with("pub(");
+        if let Some(at) = words.iter().position(|w| *w == "fn").filter(|&at| words[..at].iter().all(|w| qualifier(w))) {
+            let rest = words.get(at + 1).copied().unwrap_or("");
+            let name: String = rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+            if *is_test && !name.is_empty() {
+                out.insert(sid.clone(), name);
             }
         }
+        pending = None;
     }
     out
 }
@@ -459,6 +475,19 @@ mod tests {
         assert_eq!(m.get("S1").map(String::as_str), Some("one"));
         assert_eq!(m.get("S2").map(String::as_str), Some("three"));
         assert_eq!(m.len(), 2);
+    }
+
+    #[test]
+    fn a_doc_line_binds_only_the_test_directly_below_it() {
+        // An id above a struct, then a helper fn: neither is the test.
+        let body = "/// S1: a\nstruct Fixture;\nfn helper() {}\n#[test]\nfn real() {}\n";
+        assert!(tests_by_scenario(body, &["S1"]).is_empty());
+        // An id above a non-test fn binds nothing, and nothing in its body.
+        let body = "/// S1: a\nfn helper() {\n    // see fn other\n    let s = \" fn fake\";\n}\n";
+        assert!(tests_by_scenario(body, &["S1"]).is_empty());
+        // Doc lines, blank lines and attributes may stand between id and test.
+        let body = "/// S1: a\n/// more\n#[test]\n#[ignore]\n\npub async fn kept() {}\n";
+        assert_eq!(tests_by_scenario(body, &["S1"]).get("S1").map(String::as_str), Some("kept"));
     }
 
     #[test]
