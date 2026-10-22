@@ -109,10 +109,20 @@ fn have(program: &str) -> bool {
     Command::new(program).arg("version").output().is_ok()
 }
 
+
+/// Skip this case, or under `HEXA_NO_SKIP` refuse to: a case nobody ran is
+/// not proven here, and CI and `hexa adr gates` must see it (ADR-2610221540 §8).
+fn skip(reason: &str) {
+    if std::env::var_os("HEXA_NO_SKIP").is_some() {
+        panic!("not proven here: {reason}");
+    }
+    eprintln!("skipping: {reason}");
+}
+
 #[test]
 fn the_rust_scaffold_passes_cargo_test_immediately() {
     if !have("cargo") {
-        eprintln!("skipping: no cargo on PATH");
+        skip("no cargo on PATH");
         return;
     }
     let dir = scaffold("rust");
@@ -125,7 +135,7 @@ fn the_rust_scaffold_passes_cargo_test_immediately() {
 #[test]
 fn the_go_scaffold_passes_go_test_immediately() {
     if !have("go") {
-        eprintln!("skipping: no go on PATH");
+        skip("no go on PATH");
         return;
     }
     let dir = scaffold("go");
@@ -137,7 +147,7 @@ fn the_go_scaffold_passes_go_test_immediately() {
 #[test]
 fn the_typescript_scaffold_passes_npm_test_after_install() {
     if std::env::var("HEXA_TEST_NPM").is_err() {
-        eprintln!("skipping: set HEXA_TEST_NPM=1 to allow the npm install this gate needs");
+        skip("set HEXA_TEST_NPM=1 to allow the npm install this gate needs");
         return;
     }
     let dir = scaffold("ts");
@@ -477,7 +487,7 @@ fn copy_tree(from: &std::path::Path, to: &std::path::Path) {
 #[test]
 fn a_typescript_scaffold_with_no_tests_left_fails_its_gate() {
     if std::env::var("HEXA_TEST_NPM").is_err() {
-        eprintln!("skipping: set HEXA_TEST_NPM=1 to allow the npm install this gate needs");
+        skip("set HEXA_TEST_NPM=1 to allow the npm install this gate needs");
         return;
     }
     let dir = scaffold("ts");

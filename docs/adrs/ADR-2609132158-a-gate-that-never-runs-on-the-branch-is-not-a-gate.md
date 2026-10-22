@@ -82,3 +82,15 @@ The gate section was rewritten as one runnable command and the suite is green lo
 ```text
 test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 279 filtered out
 ```
+
+## Gate (re-recorded 2026-10-22)
+
+`grep -q "branches: \[main, 'adr/\*\*'\]" .github/workflows/ci.yml && grep -qE '^  pull_request:' .forgejo/workflows/ci.yml`
+
+Appended under ADR-2610221540 §9; the body above is unchanged. The original gate asked GitHub for an
+`adr/` branch among the newest 20 runs. That proved the trigger once, and the run is the Evidence
+above. As a regression gate it failed once the window moved on: work now merges through the forge,
+on `docs/` and `feat/` branches. This gate checks the triggers are still configured. On GitHub, an
+`adr/**` push runs CI. On the forge, every pull request runs CI, whatever its branch. Reading the
+YAML cannot prove that the forge honours it. The Evidence did that, once, and this guards against
+the configuration being removed.

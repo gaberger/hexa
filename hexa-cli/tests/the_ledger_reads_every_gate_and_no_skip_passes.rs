@@ -124,7 +124,7 @@ fn a_dry_run_lists_without_running() {
 /// ADRs here that record no gate the runner can read. It may fall as they
 /// are backfilled; it may never rise. Every one accepted from ADR-2610221540
 /// on must record a gate.
-const WITHOUT_A_GATE_CEILING: usize = 8;
+const WITHOUT_A_GATE_CEILING: usize = 6;
 
 #[test]
 fn the_ledger_without_gates_only_shrinks() {
@@ -156,16 +156,15 @@ fn every_skip_site_refuses_under_no_skip() {
                 continue;
             }
             let text = std::fs::read_to_string(&p).unwrap_or_default();
-            for (i, line) in text.lines().enumerate() {
-                if line.contains("eprintln!(\"skipping:") {
-                    panic!(
-                        "{}:{} skips with a bare eprintln; route it through a skip that refuses under HEXA_NO_SKIP",
-                        p.display(),
-                        i + 1
-                    );
-                }
-            }
-            if text.contains("HEXA_NO_SKIP") {
+            // One skip print per file, inside the one helper that refuses
+            // under HEXA_NO_SKIP; a second is a bare skip beside it.
+            let prints = text.matches("\"skipping:").count();
+            assert!(
+                prints == 0 || (prints == 1 && text.contains("HEXA_NO_SKIP") && text.contains("not proven here:")),
+                "{} skips without refusing under HEXA_NO_SKIP: route every skip through one helper",
+                p.display()
+            );
+            if prints == 1 {
                 sites += 1;
             }
         }

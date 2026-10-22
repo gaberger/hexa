@@ -110,3 +110,11 @@ This ADR adds no external dependency. A property-test crate for generated Rust t
 - ADR-2609151930: an accepted decision is append-only and remembered. Hence §7.
 - ADR-2609211245: the TypeScript gate runs where the network is. Its skip shape is §8.
 - ADR-2610100005: the HTTP adapter is generated from the contract. Its gate skips on the forge. It is also the precedent for generating code from a fixed, checked artifact.
+
+## Gate
+
+`cargo test -p hexa-cli --test the_ledger_reads_every_gate_and_no_skip_passes`
+
+This is phase 1's gate, red at `bea3be4`. Each later phase appends its gate here as a new `## Gate`
+section, which `hexa adr gates` reads as current, with every earlier phase's test carried into
+the command.
