@@ -89,6 +89,10 @@ The gate was the operator's to choose. Harden gave them no project default to fa
 - `hexa-cli/src/commands/build.rs` (where `harden` is defined): several targets, `--jobs`, and the `harden.gate` default.
 - `.hexa/project.json`: this repository's `harden.gate`.
 
+## Gate
+
+`hexa spec verify ADR-2610221834`: the spec's sealed tests, each red before the code (ADR-2610221540 §5). Until the spec is drafted, accepted and sealed, this fails, which is the truth: nothing is built.
+
 ## References
 
 - ADR-2610141733: harden commits each fix that passes the gate. Kept, with the pair as the unit.
