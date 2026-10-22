@@ -1070,7 +1070,84 @@ pub(crate) fn apply_edit(abs_path: &std::path::Path, content: &str, edit: &Edit)
         }
         other => return Err(format!("unsupported mode '{}'", other)),
     };
-    std::fs::write(abs_path, new_content).map_err(|e| e.to_string())
+    write_atomic(abs_path, new_content.as_bytes()).map_err(|e| e.to_string())
+}
+
+static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Replace `path` with `bytes` atomically: write a sibling temp file, fsync
+/// it, then rename it over the target. A crash or a failed write (ENOSPC,
+/// EIO) leaves the original whole, never truncated or torn — with
+/// `isolate: false` it may hold the operator's only copy of uncommitted work.
+/// A symlink is followed, so the link survives and its target is replaced.
+fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let target = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let dir = target.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(std::path::Path::new("."));
+    let name = target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let tmp = dir.join(format!(
+        ".{}.hexa-tmp-{}-{}",
+        name,
+        std::process::id(),
+        TMP_SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+    let result = (|| {
+        let mut f = std::fs::OpenOptions::new().write(true).create_new(true).open(&tmp)?;
+        f.write_all(bytes)?;
+        if let Ok(meta) = std::fs::metadata(&target) {
+            f.set_permissions(meta.permissions())?;
+        }
+        f.sync_all()?;
+        drop(f);
+        std::fs::rename(&tmp, &target)?;
+        if let Ok(d) = std::fs::File::open(dir) {
+            let _ = d.sync_all();
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
+}
+
+#[cfg(test)]
+mod apply_edit_tests {
+    use super::{apply_edit, Edit};
+    use std::io::Read;
+
+    #[test]
+    fn the_original_file_is_never_truncated_in_place() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("work.rs");
+        std::fs::write(&path, "fn a() {}\n").unwrap();
+        // A handle on the original sees what an in-place O_TRUNC write does to
+        // it; an atomic replace leaves the original's bytes untouched.
+        let mut original = std::fs::File::open(&path).unwrap();
+        let edit = Edit { mode: "replace".into(), old_string: "fn a() {}".into(), new_string: "fn b() {}".into() };
+        apply_edit(&path, "fn a() {}\n", &edit).unwrap();
+
+        let mut seen = String::new();
+        original.read_to_string(&mut seen).unwrap();
+        assert_eq!(seen, "fn a() {}\n", "the original file was overwritten in place");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "fn b() {}\n");
+        let leftovers: Vec<_> = std::fs::read_dir(tmp.path()).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(leftovers, vec![std::ffi::OsString::from("work.rs")], "a temp file was left behind");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_replacement_keeps_the_file_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("run.sh");
+        std::fs::write(&path, "echo a\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let edit = Edit { mode: "append".into(), old_string: String::new(), new_string: "echo b".into() };
+        apply_edit(&path, "echo a\n", &edit).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "echo a\necho b\n");
+        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o755);
+    }
 }
 
 /// `cmd` with every `{touched}` replaced by `paths`, each single-quoted for
