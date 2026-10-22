@@ -1252,29 +1252,33 @@ pub(crate) async fn commit(
         .current_dir(repo_root)
         .output()
         .await;
-    let failed = match c {
-        Ok(c) if c.status.success() => None,
-        Ok(c) => Some(format!("git commit: {}", String::from_utf8_lossy(&c.stderr))),
-        Err(e) => Some(e.to_string()),
+    let e = match c {
+        Ok(c) if c.status.success() => {
+            return committed_hash(&String::from_utf8_lossy(&c.stdout))
+                .ok_or_else(|| format!("git commit: no hash in its summary: {}", String::from_utf8_lossy(&c.stdout)));
+        }
+        Ok(c) => format!("git commit: {}", String::from_utf8_lossy(&c.stderr)),
+        Err(e) => e.to_string(),
     };
-    if let Some(e) = failed {
-        // Unstage everything `git add` staged above, not just the target, so the
-        // change is left in the working tree unstaged, as the hint says.
-        let _ = tokio::process::Command::new("git")
-            .args(["reset", "-q", "--"])
-            .args(&paths)
-            .current_dir(repo_root)
-            .output()
-            .await;
-        return Err(e);
-    }
-    let rev = tokio::process::Command::new("git")
-        .args(["rev-parse", "--short", "HEAD"])
+    // Unstage everything `git add` staged above, not just the target, so the
+    // change is left in the working tree unstaged, as the hint says.
+    let _ = tokio::process::Command::new("git")
+        .args(["reset", "-q", "--"])
+        .args(&paths)
         .current_dir(repo_root)
         .output()
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(String::from_utf8_lossy(&rev.stdout).trim().to_string())
+        .await;
+    Err(e)
+}
+
+/// The hash `git commit` names in its summary line (`[<branch> <hash>] <subject>`).
+/// Taken from the commit itself, never by re-reading HEAD afterwards: on a shared tree
+/// another process can move HEAD between the two, and the run would claim its commit.
+/// A ref name cannot contain a space, so the first `] ` closes the bracket.
+fn committed_hash(stdout: &str) -> Option<String> {
+    let line = stdout.lines().find(|l| l.starts_with('['))?;
+    let hash = line[1..line.find("] ")?].rsplit(' ').next()?;
+    (hash.len() >= 4 && hash.chars().all(|c| c.is_ascii_hexdigit())).then(|| hash.to_string())
 }
 
 pub(crate) fn repo_root() -> std::path::PathBuf {
@@ -1403,6 +1407,29 @@ mod commit_snapshot_tests {
         );
         assert!(h.contains("evidence PASSED") && h.contains("sealed"), "{h}");
         assert!(!h.contains("unstaged"), "a refusal has nothing to unstage: {h}");
+    }
+
+    // The reported hash must be this run's commit, not whatever HEAD names a moment
+    // later. A post-commit hook commits again before `commit` returns, standing in
+    // for a second process moving HEAD between the commit and a re-read of HEAD.
+    #[tokio::test]
+    async fn commit_reports_its_own_hash_when_head_moves_after() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        init_repo(dir);
+        let hook = dir.join(".git/hooks/post-commit");
+        std::fs::write(&hook, "#!/bin/sh\nunset GIT_INDEX_FILE\n[ -f .git/intruded ] && exit 0\n\
+            touch .git/intruded\ngit commit -q --allow-empty -m intruder\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let start_dirty = dirty_paths(dir).await;
+        std::fs::write(dir.join("target.rs"), "fn t() {}").unwrap();
+        let hash = commit(dir, "target.rs", "add target", false, &start_dirty).await.unwrap();
+        let head = Git::new("git").args(["log", "-1", "--format=%s", "HEAD"]).current_dir(dir).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&head.stdout).trim(), "intruder", "the hook must have moved HEAD");
+        let subj = Git::new("git").args(["log", "-1", "--format=%s", &hash]).current_dir(dir).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&subj.stdout).trim(), "feat(direct): add target",
+            "reported hash {hash} must name this run's commit");
     }
 
     // The review-swarm fix preserved: a change that appears AFTER the run starts must
