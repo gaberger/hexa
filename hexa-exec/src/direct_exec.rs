@@ -1902,6 +1902,20 @@ mod tree_lock_tests {
         assert!(dirty_paths(&root).await.is_empty(), "the lock file must never be committable");
 
         drop(held);
-        assert!(other.try_lock().is_ok(), "the lock must be released when the run ends");
+        // Another test may fork a child (to spawn git) while `held` is open. Until
+        // that child execs and O_CLOEXEC closes its copy, it shares the flock'd
+        // file description, so the lock can stay held briefly after the drop.
+        // Poll instead of checking once.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let released = loop {
+            if other.try_lock().is_ok() {
+                break true;
+            }
+            if std::time::Instant::now() >= deadline {
+                break false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        };
+        assert!(released, "the lock must be released when the run ends");
     }
 }
