@@ -236,7 +236,12 @@ fn block(reply: &str) -> String {
     let t = reply.trim();
     let Some(start) = t.find("```") else { return t.to_string() };
     let body = &t[start + 3..];
-    let body = body.split_once('\n').map(|(_, rest)| rest).unwrap_or(body);
+    let fenced = body.split("```").next().unwrap_or(body);
+    let body = match fenced.split_once('\n') {
+        Some(_) => body.split_once('\n').map(|(_, rest)| rest).unwrap_or(body),
+        // One line, like ```json {...}```: the language tag is the word before the body.
+        None => fenced.trim_start_matches(|c: char| c.is_ascii_alphanumeric() || "_+-".contains(c)),
+    };
     body.split("```").next().unwrap_or(body).trim().to_string()
 }
 
@@ -502,5 +507,13 @@ mod tests {
         let m = "[package]\nversion = \"0.1.0\"\n\n[dependencies]\nname = \"x\"\n";
         assert_eq!(lib_name(m).as_deref(), None, "a key from a later section is not the package name");
         assert_eq!(lib_name("[package]\nname = \"x\" # c\n").as_deref(), Some("x"));
+    }
+
+    #[test]
+    fn a_single_line_fence_keeps_its_body_without_the_language_tag() {
+        assert_eq!(block("```json {\"a\": 1}```"), "{\"a\": 1}");
+        assert_eq!(block("```{\"a\": 1}```"), "{\"a\": 1}");
+        assert_eq!(block("Here:\n```json\n{\"a\": 1}\n```\n"), "{\"a\": 1}");
+        assert_eq!(block("{\"a\": 1}"), "{\"a\": 1}");
     }
 }
