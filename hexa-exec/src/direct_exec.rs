@@ -346,6 +346,11 @@ pub(crate) fn record_run(
 /// (got 'user@host.(none)')". Correct, and it tells you nothing about what to
 /// do, while appearing under a passing test summary.
 pub(crate) fn commit_failure_hint(err: &str) -> String {
+    // A sealed-test refusal is not a git failure: nothing was staged, and the
+    // refusal already says what was restored.
+    if err.starts_with("refused:") {
+        return format!("evidence PASSED but the commit was {err}");
+    }
     let base = format!("evidence PASSED but the commit failed: {err}");
     if err.contains("auto-detect email") || err.contains("tell me who you are") {
         format!(
@@ -635,13 +640,9 @@ async fn exec_attempts(deps: &ExecDeps, task: &DirectTask, repo_root: &std::path
                     return result;
                 }
                 Err(e) => {
-                    // The edit is good and the gate passed; only git failed. Keep
-                    // the change, unstage it, and name the half that broke.
-                    let _ = std::process::Command::new("git")
-                        .args(["reset", "-q", "--"])
-                        .arg(&task.file)
-                        .current_dir(repo_root)
-                        .output();
+                    // The edit is good and the gate passed; only the commit
+                    // failed. `commit` has already unstaged what it staged; keep
+                    // the change and name the half that broke.
                     result.error = Some(commit_failure_hint(&e));
                     return result;
                 }
@@ -1200,10 +1201,22 @@ pub(crate) async fn commit(
         .args(&paths)
         .current_dir(repo_root)
         .output()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !c.status.success() {
-        return Err(format!("git commit: {}", String::from_utf8_lossy(&c.stderr)));
+        .await;
+    let failed = match c {
+        Ok(c) if c.status.success() => None,
+        Ok(c) => Some(format!("git commit: {}", String::from_utf8_lossy(&c.stderr))),
+        Err(e) => Some(e.to_string()),
+    };
+    if let Some(e) = failed {
+        // Unstage everything `git add` staged above, not just the target, so the
+        // change is left in the working tree unstaged, as the hint says.
+        let _ = tokio::process::Command::new("git")
+            .args(["reset", "-q", "--"])
+            .args(&paths)
+            .current_dir(repo_root)
+            .output()
+            .await;
+        return Err(e);
     }
     let rev = tokio::process::Command::new("git")
         .args(["rev-parse", "--short", "HEAD"])
@@ -1304,6 +1317,42 @@ mod commit_snapshot_tests {
 
         // With the seal intact, the same commit goes through (control).
         commit(dir, "target.rs", "add target", false, &start_dirty).await.unwrap();
+    }
+
+    // The bug: when `git commit` failed, only the target was unstaged; the
+    // supporting files `git add` had staged stayed in the index, although the
+    // hint tells the operator the change is "in your working tree, unstaged".
+    #[tokio::test]
+    async fn a_failed_commit_unstages_the_supporting_files_too() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        init_repo(dir);
+        let hook = dir.join(".git/hooks/pre-commit");
+        std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        std::fs::write(dir.join("support.rs"), "// spec the evidence needs").unwrap();
+        let start_dirty = dirty_paths(dir).await;
+        std::fs::write(dir.join("target.rs"), "fn t() {}").unwrap();
+        commit(dir, "target.rs", "add target", false, &start_dirty).await.unwrap_err();
+        let staged = Git::new("git").args(["diff", "--cached", "--name-only"]).current_dir(dir).output().unwrap();
+        assert!(String::from_utf8_lossy(&staged.stdout).trim().is_empty(),
+            "nothing may stay staged after a failed commit, got: {}", String::from_utf8_lossy(&staged.stdout));
+        assert!(dir.join("support.rs").exists() && dir.join("target.rs").exists(), "the change is kept");
+    }
+
+    // A sealed-test refusal is not a git failure; the hint must not say there is
+    // anything unstaged to commit by hand.
+    #[test]
+    fn a_seal_refusal_is_not_reported_as_a_git_failure() {
+        let h = super::commit_failure_hint(
+            "refused: the change edited sealed test(s) tests/a.rs. restored from HEAD, nothing committed",
+        );
+        assert!(h.contains("evidence PASSED") && h.contains("sealed"), "{h}");
+        assert!(!h.contains("unstaged"), "a refusal has nothing to unstage: {h}");
     }
 
     // The review-swarm fix preserved: a change that appears AFTER the run starts must
