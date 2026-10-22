@@ -200,9 +200,11 @@ pub fn tests_observed(output: &str) -> Option<u64> {
             }
             continue;
         }
-        // cargo: "running 12 tests"
+        // cargo: "running 12 tests". Only a count is cargo's; a script's
+        // "running integration tests" is not a runner we recognise.
         if let Some(rest) = t.strip_prefix("running ") {
-            if rest.ends_with(" tests") || rest.ends_with(" test") {
+            let count = rest.strip_suffix(" tests").or_else(|| rest.strip_suffix(" test"));
+            if count.is_some_and(|n| n.parse::<u64>().is_ok()) {
                 recognised = true;
             }
             continue;
@@ -297,6 +299,16 @@ test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out";
     fn an_unrecognised_runner_is_not_called_vacuous() {
         assert_eq!(tests_observed("Build succeeded.\nAll checks passed."), None);
         assert!(!evidence_is_vacuous("Build succeeded.\nAll checks passed."));
+    }
+
+    /// A make or shell gate that announces "running integration tests" is not
+    /// cargo. Only cargo's "running <n> tests" form is recognised.
+    #[test]
+    fn a_script_that_prints_running_tests_is_not_called_vacuous() {
+        let out = "running integration tests\nall 12 checks passed";
+        assert_eq!(tests_observed(out), None);
+        assert!(!evidence_is_vacuous(out));
+        assert!(!evidence_is_vacuous("running unit test\nok"));
     }
 }
 
