@@ -307,13 +307,12 @@ pub struct Generated {
     pub red: String,
 }
 
-/// The crate's library name, from its manifest.
+/// The crate's library name, from its manifest: `[lib] name`, else the
+/// package name.
 fn lib_name(manifest: &str) -> Option<String> {
-    manifest
-        .lines()
-        .skip_while(|l| l.trim() != "[package]")
-        .find_map(|l| l.trim().strip_prefix("name")?.trim().strip_prefix('=').map(str::trim))
-        .map(|v| v.trim_matches('"').replace('-', "_"))
+    let toml: toml::Value = toml::from_str(manifest).ok()?;
+    let name = |table: &str| toml.get(table)?.get("name")?.as_str().map(str::to_string);
+    name("lib").or_else(|| name("package")).map(|v| v.replace('-', "_"))
 }
 
 /// Scenario id → test fn, from `/// <id>` doc lines directly above `fn`.
@@ -494,5 +493,14 @@ mod tests {
     fn the_library_name_is_the_package_name_with_underscores() {
         assert_eq!(lib_name("[package]\nname = \"my-crate\"\n").as_deref(), Some("my_crate"));
         assert_eq!(lib_name("[workspace]\n").as_deref(), None);
+    }
+
+    #[test]
+    fn the_library_name_prefers_a_lib_override_and_reads_only_its_own_section() {
+        let m = "[package]\nname = \"my-crate\" # c\n\n[lib]\nname = \"foo\"\n";
+        assert_eq!(lib_name(m).as_deref(), Some("foo"), "[lib] name is the path tests use");
+        let m = "[package]\nversion = \"0.1.0\"\n\n[dependencies]\nname = \"x\"\n";
+        assert_eq!(lib_name(m).as_deref(), None, "a key from a later section is not the package name");
+        assert_eq!(lib_name("[package]\nname = \"x\" # c\n").as_deref(), Some("x"));
     }
 }
