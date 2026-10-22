@@ -274,19 +274,30 @@ pub fn seal(adr: &str) -> anyhow::Result<()> {
     if let Err(why) = acceptance_holds(&spec) {
         anyhow::bail!("{}: {why}. Tests are sealed against an accepted spec, never a draft", a.id);
     }
+    spec.sealed = seal_files(&root, &a.id, &spec)?;
+    save(&root, &spec)
+}
+
+/// Hash every test file `spec`'s scenarios name. A spec naming none would
+/// seal nothing and still report success, so it is refused.
+fn seal_files(root: &Path, id: &str, spec: &Spec) -> anyhow::Result<BTreeMap<String, String>> {
+    let files = spec.test_files();
+    if files.is_empty() {
+        anyhow::bail!("{id}: no scenario names a test, so there is nothing to seal. Run `hexa spec tests {id} --crate <dir>` first");
+    }
     // A seal freezes a file. Over a source file it would freeze the code the
     // test is meant to drive, so a sealed test lives in a `tests/` directory.
     let outside: Vec<String> =
-        spec.test_files().into_iter().filter(|f| !Path::new(f).iter().any(|c| c == "tests")).collect();
+        files.iter().cloned().filter(|f| !Path::new(f).iter().any(|c| c == "tests")).collect();
     if !outside.is_empty() {
         anyhow::bail!(
             "{}: {} not under a tests/ directory; sealing them would freeze the implementation",
-            a.id,
+            id,
             outside.join(", ")
         );
     }
     let mut sealed = BTreeMap::new();
-    for f in spec.test_files() {
+    for f in files {
         let bytes = std::fs::read(root.join(&f)).map_err(|e| anyhow::anyhow!("{f}: {e}"))?;
         let hash = sha256_hex(&bytes);
         // Re-sealing an edited test would launder the edit: a sealed test
@@ -294,14 +305,13 @@ pub fn seal(adr: &str) -> anyhow::Result<()> {
         if spec.sealed.get(&f).is_some_and(|s| *s != hash) {
             anyhow::bail!(
                 "{}: seal broken: {f} changed since sealing. A sealed test changes through the spec, not by re-sealing",
-                a.id
+                id
             );
         }
         println!("  {} sealed {}", "\u{2713}".green(), f);
         sealed.insert(f, hash);
     }
-    spec.sealed = sealed;
-    save(&root, &spec)
+    Ok(sealed)
 }
 
 /// `hexa spec verify [ADR] [--ci]` — drift is a failure (§6, §7, §8).
@@ -535,6 +545,18 @@ mod tests {
         std::fs::write(&p, accepted).unwrap();
         save_unchanged(dir.path(), &spec, &read).unwrap();
         assert_eq!(load(dir.path(), "ADR-1").unwrap().unwrap().red.as_deref(), Some("red0000"));
+    }
+
+    #[test]
+    fn a_spec_with_no_tested_scenario_seals_nothing_and_fails() {
+        let spec: Spec = serde_json::from_value(serde_json::json!({
+            "adr": "ADR-1", "feature": "f",
+            "specs": [{ "id": "s1", "decision": ["1"], "kind": "example", "description": "d" }]
+        }))
+        .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let err = seal_files(dir.path(), "ADR-1", &spec).expect_err("an empty seal must not succeed");
+        assert!(err.to_string().contains("nothing to seal"), "{err}");
     }
 
     #[test]
