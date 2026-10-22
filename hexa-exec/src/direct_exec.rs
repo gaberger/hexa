@@ -949,14 +949,14 @@ async fn request_edit(
 fn parse_edit(s: &str) -> Result<Edit, String> {
     // The MODE line is read only from text outside the fences: a snippet that happens to
     // contain `MODE: append` (this file's own system prompt, say) must not decide the mode.
+    // The first declaration wins, so prose after it that names the other mode is ignored.
     let outside = outside_fences(s).to_lowercase();
-    let mode = if outside.contains("mode: append") {
-        "append"
-    } else if outside.contains("mode: replace") {
-        "replace"
-    } else {
+    let mode = match (outside.find("mode: append"), outside.find("mode: replace")) {
+        (Some(a), Some(r)) => if a < r { "append" } else { "replace" },
+        (Some(_), None) => "append",
+        (None, Some(_)) => "replace",
         // no explicit MODE — infer: two blocks ⇒ replace, one ⇒ append
-        ""
+        (None, None) => "",
     };
 
     let blocks = extract_fenced_blocks(s);
@@ -1040,6 +1040,15 @@ mod parse_edit_tests {
         assert_eq!(edit.mode, "replace");
         assert_eq!(edit.old_string, "let a = \"MODE: append\";");
         assert_eq!(edit.new_string, "let a = \"x\";");
+    }
+
+    #[test]
+    fn prose_naming_the_other_mode_after_the_declared_mode_does_not_override_it() {
+        let reply = "MODE: replace\nNot MODE: append, the snippet already exists.\n```\nold();\n```\n```\nnew();\n```\n";
+        let edit = parse_edit(reply).unwrap();
+        assert_eq!(edit.mode, "replace");
+        assert_eq!(edit.old_string, "old();");
+        assert_eq!(edit.new_string, "new();");
     }
 }
 
