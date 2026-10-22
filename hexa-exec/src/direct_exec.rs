@@ -1166,6 +1166,41 @@ mod commit_snapshot_tests {
             "commit must contain both target and support, got: {names}");
     }
 
+    // ADR-2610221540 §6: every `hexa do` path commits through here, so here is
+    // where a sealed test the agent loosened is refused, and restored, whether
+    // or not the run's own commit would have included it.
+    #[tokio::test]
+    async fn commit_refuses_while_a_seal_is_broken() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        init_repo(dir);
+        std::fs::create_dir_all(dir.join("docs/specs")).unwrap();
+        std::fs::create_dir_all(dir.join("tests")).unwrap();
+        let body = "#[test]\nfn holds() { assert!(true) }\n";
+        std::fs::write(dir.join("tests/sealed.rs"), body).unwrap();
+        use sha2::Digest;
+        let sum: String = sha2::Sha256::digest(body.as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
+        std::fs::write(
+            dir.join("docs/specs/spec.json"),
+            format!(r#"{{"adr":"x","feature":"f","sealed":{{"tests/sealed.rs":"{sum}"}},"specs":[]}}"#),
+        )
+        .unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-qm", "seal"]);
+
+        let start_dirty = dirty_paths(dir).await;
+        std::fs::write(dir.join("tests/sealed.rs"), "#[test]\nfn holds() {}\n").unwrap();
+        std::fs::write(dir.join("target.rs"), "fn t() {}").unwrap();
+        let err = commit(dir, "target.rs", "add target", false, &start_dirty).await.unwrap_err();
+        assert!(err.contains("tests/sealed.rs") && err.contains("sealed"), "{err}");
+        assert_eq!(std::fs::read_to_string(dir.join("tests/sealed.rs")).unwrap(), body, "the sealed test is restored");
+        let log = Git::new("git").args(["log", "--format=%s"]).current_dir(dir).output().unwrap();
+        assert!(!String::from_utf8_lossy(&log.stdout).contains("add target"), "nothing is committed");
+
+        // With the seal intact, the same commit goes through (control).
+        commit(dir, "target.rs", "add target", false, &start_dirty).await.unwrap();
+    }
+
     // The review-swarm fix preserved: a change that appears AFTER the run starts must
     // NOT be swept into the commit.
     #[tokio::test]
