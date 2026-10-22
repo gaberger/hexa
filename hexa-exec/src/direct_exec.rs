@@ -1168,18 +1168,10 @@ fn package_prefix(repo_root: &std::path::Path, file: &str) -> String {
 /// `docs/specs/*.json`; only the `sealed` map is read, so a spec this cannot
 /// otherwise parse still guards its tests.
 pub fn broken_seals(repo_root: &std::path::Path) -> Vec<String> {
-    use sha2::Digest;
-    let Ok(entries) = std::fs::read_dir(repo_root.join("docs/specs")) else { return Vec::new() };
-    let mut broken: Vec<String> = entries
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|x| x == "json"))
-        .filter_map(|p| serde_json::from_str::<Value>(&std::fs::read_to_string(p).ok()?).ok())
-        .filter_map(|v| v.get("sealed").and_then(Value::as_object).cloned())
-        .flat_map(|sealed| sealed.into_iter())
+    let mut broken: Vec<String> = seals(repo_root)
+        .into_iter()
         .filter(|(path, sum)| {
-            let now = std::fs::read(repo_root.join(path))
-                .map(|b| sha2::Sha256::digest(&b).iter().map(|x| format!("{x:02x}")).collect::<String>());
+            let now = std::fs::read(repo_root.join(path)).map(|b| sha256_hex(&b));
             now.ok().as_deref() != sum.as_str()
         })
         .map(|(path, _)| path)
@@ -1187,6 +1179,48 @@ pub fn broken_seals(repo_root: &std::path::Path) -> Vec<String> {
     broken.sort();
     broken.dedup();
     broken
+}
+
+/// Every `(path, seal)` entry of every `docs/specs/*.json` `sealed` map.
+fn seals(repo_root: &std::path::Path) -> Vec<(String, Value)> {
+    let Ok(entries) = std::fs::read_dir(repo_root.join("docs/specs")) else { return Vec::new() };
+    entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "json"))
+        .filter_map(|p| serde_json::from_str::<Value>(&std::fs::read_to_string(p).ok()?).ok())
+        .filter_map(|v| v.get("sealed").and_then(Value::as_object).cloned())
+        .flat_map(|sealed| sealed.into_iter())
+        .collect()
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest(bytes).iter().map(|x| format!("{x:02x}")).collect()
+}
+
+/// Put a broken sealed test back, but only when that loses nothing but this run's
+/// edit: the path was clean when the run started, and HEAD's copy is the sealed copy.
+/// Anything else (an operator's pre-run edit, an uncommitted re-seal, a malformed
+/// seal) is left exactly as it is. Returns whether it restored.
+async fn restore_seal(repo_root: &std::path::Path, path: &str, start_dirty: &[String]) -> bool {
+    if start_dirty.iter().any(|p| p == path) {
+        return false;
+    }
+    let Ok(head) = tokio::process::Command::new("git")
+        .args(["cat-file", "blob", &format!("HEAD:{path}")])
+        .current_dir(repo_root)
+        .output()
+        .await
+    else {
+        return false;
+    };
+    let sum = sha256_hex(&head.stdout);
+    if !head.status.success() || !seals(repo_root).iter().any(|(p, s)| p == path && s.as_str() == Some(sum.as_str())) {
+        return false;
+    }
+    let abs = repo_root.join(path);
+    abs.parent().is_none_or(|d| std::fs::create_dir_all(d).is_ok()) && std::fs::write(&abs, &head.stdout).is_ok()
 }
 
 pub(crate) async fn commit(
@@ -1201,16 +1235,20 @@ pub(crate) async fn commit(
     // paths: a test loosened and left uncommitted still made the gate pass.
     let broken = broken_seals(repo_root);
     if !broken.is_empty() {
+        let mut kept = Vec::new();
         for p in &broken {
-            let _ = tokio::process::Command::new("git")
-                .args(["checkout", "-q", "HEAD", "--", p])
-                .current_dir(repo_root)
-                .output()
-                .await;
+            if !restore_seal(repo_root, p, start_dirty).await {
+                kept.push(p.as_str());
+            }
         }
+        let fate = if kept.is_empty() {
+            "restored from HEAD".to_string()
+        } else {
+            format!("not restored, left as they are: {}", kept.join(", "))
+        };
         return Err(format!(
             "refused: the change edited sealed test(s) {}. A sealed test changes through its spec, never in a fix \
-             (ADR-2610221540 §6); restored from HEAD, nothing committed",
+             (ADR-2610221540 §6); {fate}, nothing committed",
             broken.join(", ")
         ));
     }
@@ -1389,6 +1427,74 @@ mod commit_snapshot_tests {
 
         // With the seal intact, the same commit goes through (control).
         commit(dir, "target.rs", "add target", false, &start_dirty).await.unwrap();
+    }
+
+    /// A repo with `tests/sealed.rs` sealed by `docs/specs/spec.json`, committed.
+    fn sealed_repo(dir: &std::path::Path, body: &str) -> String {
+        init_repo(dir);
+        std::fs::create_dir_all(dir.join("docs/specs")).unwrap();
+        std::fs::create_dir_all(dir.join("tests")).unwrap();
+        std::fs::write(dir.join("tests/sealed.rs"), body).unwrap();
+        let sum = super::sha256_hex(body.as_bytes());
+        std::fs::write(
+            dir.join("docs/specs/spec.json"),
+            format!(r#"{{"adr":"x","feature":"f","sealed":{{"tests/sealed.rs":"{sum}"}},"specs":[]}}"#),
+        )
+        .unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-qm", "seal"]);
+        sum
+    }
+
+    // The bug: the guard ran `git checkout HEAD --` on every broken seal, so an
+    // edit the operator made to a sealed test before the run (it is in the start
+    // snapshot) was overwritten with no copy kept. The refusal stands; the edit stays.
+    #[tokio::test]
+    async fn a_pre_run_edit_to_a_sealed_test_is_refused_but_never_discarded() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        sealed_repo(dir, "#[test]\nfn holds() { assert!(true) }\n");
+        let mine = "#[test]\nfn holds() { /* operator's work in progress */ }\n";
+        std::fs::write(dir.join("tests/sealed.rs"), mine).unwrap();
+        let start_dirty = dirty_paths(dir).await;
+        std::fs::write(dir.join("target.rs"), "fn t() {}").unwrap();
+        let err = commit(dir, "target.rs", "add target", false, &start_dirty).await.unwrap_err();
+        assert!(err.starts_with("refused:") && err.contains("not restored"), "{err}");
+        assert_eq!(std::fs::read_to_string(dir.join("tests/sealed.rs")).unwrap(), mine, "the operator's edit is kept");
+    }
+
+    // An uncommitted re-seal: HEAD's copy is not the sealed copy, so restoring
+    // "from HEAD" would replace the correct bytes with stale ones. A malformed
+    // (non-string) seal can never match, so it must not revert on every attempt.
+    #[tokio::test]
+    async fn a_seal_head_does_not_hold_or_a_malformed_seal_is_never_restored_from_head() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        sealed_repo(dir, "#[test]\nfn old() {}\n");
+        let resealed = "#[test]\nfn new() { assert!(true) }\n";
+        std::fs::write(dir.join("tests/sealed.rs"), resealed).unwrap();
+        let sum = super::sha256_hex(resealed.as_bytes());
+        std::fs::write(
+            dir.join("docs/specs/spec.json"),
+            format!(r#"{{"adr":"x","feature":"f","sealed":{{"tests/sealed.rs":"{sum}"}},"specs":[]}}"#),
+        )
+        .unwrap();
+        // The run loosens the re-sealed test; HEAD holds the old one, not the seal.
+        std::fs::write(dir.join("tests/sealed.rs"), "// loosened\n").unwrap();
+        std::fs::write(dir.join("target.rs"), "fn t() {}").unwrap();
+        commit(dir, "target.rs", "add target", false, &[]).await.unwrap_err();
+        assert_eq!(std::fs::read_to_string(dir.join("tests/sealed.rs")).unwrap(), "// loosened\n",
+            "HEAD's stale copy must not replace the tree's");
+
+        std::fs::write(
+            dir.join("docs/specs/spec.json"),
+            r#"{"adr":"x","feature":"f","sealed":{"tests/sealed.rs":42},"specs":[]}"#,
+        )
+        .unwrap();
+        std::fs::write(dir.join("tests/sealed.rs"), resealed).unwrap();
+        commit(dir, "target.rs", "add target", false, &[]).await.unwrap_err();
+        assert_eq!(std::fs::read_to_string(dir.join("tests/sealed.rs")).unwrap(), resealed,
+            "a malformed seal refuses, but reverts nothing");
     }
 
     // The bug: when `git commit` failed, only the target was unstaged; the
