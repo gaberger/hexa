@@ -876,9 +876,12 @@ async fn request_edit(
 
 /// Parse the MODE + fenced-block reply. Robust for code (no JSON escaping).
 fn parse_edit(s: &str) -> Result<Edit, String> {
-    let mode = if s.to_lowercase().contains("mode: append") {
+    // The MODE line is read only from text outside the fences: a snippet that happens to
+    // contain `MODE: append` (this file's own system prompt, say) must not decide the mode.
+    let outside = outside_fences(s).to_lowercase();
+    let mode = if outside.contains("mode: append") {
         "append"
-    } else if s.to_lowercase().contains("mode: replace") {
+    } else if outside.contains("mode: replace") {
         "replace"
     } else {
         // no explicit MODE — infer: two blocks ⇒ replace, one ⇒ append
@@ -937,6 +940,36 @@ fn extract_fenced_blocks(s: &str) -> Vec<String> {
         }
     }
     blocks
+}
+
+/// The reply with every fenced block (fences included) removed — the same fence rule as
+/// `extract_fenced_blocks`.
+fn outside_fences(s: &str) -> String {
+    let mut out = String::new();
+    let mut in_block = false;
+    for line in s.lines() {
+        if line.trim_start().starts_with("```") {
+            in_block = !in_block;
+        } else if !in_block {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod parse_edit_tests {
+    use super::parse_edit;
+
+    #[test]
+    fn a_mode_string_inside_a_code_block_does_not_override_the_declared_mode() {
+        let reply = "MODE: replace\n```\nlet a = \"MODE: append\";\n```\n```\nlet a = \"x\";\n```\n";
+        let edit = parse_edit(reply).unwrap();
+        assert_eq!(edit.mode, "replace");
+        assert_eq!(edit.old_string, "let a = \"MODE: append\";");
+        assert_eq!(edit.new_string, "let a = \"x\";");
+    }
 }
 
 // ─── apply / verify / commit ──────────────────────────────────────────────────
