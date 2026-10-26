@@ -112,6 +112,53 @@ async fn an_also_file_the_run_did_not_create_is_skipped_not_an_error() {
     assert_eq!(committed_files(dir), s(&["src/domain/mod.rs"]));
 }
 
+// The deletion bug: an --also path was staged only if it still existed after
+// the run, so a run that DELETED a tracked --also file committed everything
+// else and left ` D <file>` in the working tree — HEAD still held the file the
+// green state had removed.
+#[tokio::test]
+async fn a_tracked_also_file_the_run_deleted_is_deleted_in_the_runs_commit() {
+    let tmp = repo();
+    let dir = tmp.path();
+    std::fs::write(dir.join("src/domain/mod.rs"), "// existing is gone\n").unwrap();
+    std::fs::remove_file(dir.join("src/domain/existing.rs")).unwrap();
+
+    commit_with_also(dir, "src/domain/mod.rs", "drop existing", false, &[], &s(&["src/domain/existing.rs"]))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        committed_files(dir),
+        s(&["src/domain/existing.rs", "src/domain/mod.rs"]),
+        "the deletion lands in the run's commit"
+    );
+    let tree = git(dir, &["ls-tree", "-r", "--name-only", "HEAD"]);
+    assert!(!tree.contains("src/domain/existing.rs"), "HEAD no longer holds the deleted file: {tree}");
+    assert!(git(dir, &["status", "--porcelain", "-uall"]).trim().is_empty(), "no ` D` left behind");
+}
+
+#[tokio::test]
+async fn a_deleted_also_file_and_a_never_made_one_commit_together_without_error() {
+    let tmp = repo();
+    let dir = tmp.path();
+    std::fs::write(dir.join("src/domain/mod.rs"), "// edited\n").unwrap();
+    std::fs::remove_file(dir.join("src/domain/existing.rs")).unwrap();
+
+    commit_with_also(
+        dir,
+        "src/domain/mod.rs",
+        "drop existing",
+        false,
+        &[],
+        &s(&["src/domain/existing.rs", "src/domain/never_made.rs"]),
+    )
+    .await
+    .expect("a path that never existed is still skipped, even beside a deletion");
+
+    assert_eq!(committed_files(dir), s(&["src/domain/existing.rs", "src/domain/mod.rs"]));
+    assert!(git(dir, &["status", "--porcelain", "-uall"]).trim().is_empty());
+}
+
 #[test]
 fn also_paths_must_stay_inside_the_repository() {
     for bad in ["../outside.rs", "src/../../outside.rs", "src/a/../b.rs", "/etc/passwd", "", "./"] {

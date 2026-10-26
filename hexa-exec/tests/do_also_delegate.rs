@@ -15,17 +15,22 @@ use hexa_exec::direct_exec::DirectTask;
 use hexa_exec::direct_react::claude_attempts;
 use hexa_exec::ports::{Frontier, FrontierError};
 
-/// Writes `writes` into the working tree, records the prompt, then answers
-/// (or times out).
+/// Writes `writes` into the working tree, deletes `deletes`, records the
+/// prompt, then answers (or times out).
 struct FakeDelegate {
     writes: Vec<(&'static str, &'static str)>,
+    deletes: Vec<&'static str>,
     time_out: bool,
     prompt: Mutex<Option<String>>,
 }
 
 impl FakeDelegate {
     fn new(writes: Vec<(&'static str, &'static str)>, time_out: bool) -> Arc<Self> {
-        Arc::new(Self { writes, time_out, prompt: Mutex::new(None) })
+        Arc::new(Self { writes, deletes: vec![], time_out, prompt: Mutex::new(None) })
+    }
+
+    fn deleting(writes: Vec<(&'static str, &'static str)>, deletes: Vec<&'static str>) -> Arc<Self> {
+        Arc::new(Self { writes, deletes, time_out: false, prompt: Mutex::new(None) })
     }
 }
 
@@ -37,6 +42,9 @@ impl Frontier for FakeDelegate {
             let p = cwd.join(rel);
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
             std::fs::write(p, body).unwrap();
+        }
+        for rel in &self.deletes {
+            std::fs::remove_file(cwd.join(rel)).unwrap();
         }
         if self.time_out {
             return Err(FrontierError::Timeout(timeout));
@@ -138,6 +146,28 @@ async fn a_passing_delegate_commits_target_and_also_files_together_and_nothing_e
         "one commit reproduces the green state"
     );
     assert!(git(dir, &["status", "--porcelain", "-uall"]).contains("?? src/domain/stray.rs"), "unlisted file not swept in");
+}
+
+#[tokio::test]
+async fn a_passing_delegate_commits_an_also_deletion_with_its_target() {
+    let tmp = repo();
+    let dir = tmp.path();
+    let fake = FakeDelegate::deleting(
+        vec![("src/domain/mod.rs", "// existing is gone\n")],
+        vec!["src/domain/existing.rs"],
+    );
+    let t = task("test ! -e src/domain/existing.rs", &["src/domain/existing.rs"]);
+    let (r, _, _) = claude_attempts(&deps(fake), &t, dir, false).await;
+
+    assert!(r.ok, "{:?}", r.error);
+    assert_eq!(
+        committed_files(dir),
+        vec!["src/domain/existing.rs", "src/domain/mod.rs"],
+        "the deletion and the target land in one commit"
+    );
+    let tree = git(dir, &["ls-tree", "-r", "--name-only", "HEAD"]);
+    assert!(!tree.contains("src/domain/existing.rs"), "HEAD reproduces the green state: {tree}");
+    assert!(git(dir, &["status", "--porcelain", "-uall"]).trim().is_empty(), "no ` D` left behind");
 }
 
 #[tokio::test]
