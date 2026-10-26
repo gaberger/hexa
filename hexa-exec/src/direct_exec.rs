@@ -1126,16 +1126,6 @@ fn package_prefix(repo_root: &std::path::Path, file: &str) -> String {
     }
 }
 
-pub(crate) async fn commit(
-    repo_root: &std::path::Path,
-    file: &str,
-    instruction: &str,
-    factory: bool,
-    start_dirty: &[String],
-) -> Result<String, String> {
-    commit_with_also(repo_root, file, instruction, factory, start_dirty, &[]).await
-}
-
 /// `commit`, plus every `--also` path that exists after the run — and nothing
 /// else new: an unlisted untracked file stays out (the concurrency guard).
 pub async fn commit_with_also(
@@ -1169,7 +1159,7 @@ pub async fn commit_with_also(
             paths.push(p);
         }
     }
-    let add =tokio::process::Command::new("git")
+    let add = tokio::process::Command::new("git")
         .arg("add")
         .arg("--")
         .args(&paths)
@@ -1239,7 +1229,7 @@ pub(crate) fn repo_root() -> std::path::PathBuf {
 
 #[cfg(test)]
 mod commit_snapshot_tests {
-    use super::{commit, dirty_paths};
+    use super::{commit_with_also, dirty_paths};
     use std::process::Command as Git;
 
     fn git(dir: &std::path::Path, args: &[&str]) {
@@ -1268,7 +1258,7 @@ mod commit_snapshot_tests {
         assert!(start_dirty.iter().any(|p| p == "support.rs"),
             "start snapshot must see the supporting file, got {start_dirty:?}");
         std::fs::write(dir.join("target.rs"), "fn t() {}").unwrap();
-        commit(dir, "target.rs", "add target", false, &start_dirty).await.unwrap();
+        commit_with_also(dir, "target.rs", "add target", false, &start_dirty, &[]).await.unwrap();
         let st = Git::new("git").args(["status", "--porcelain"]).current_dir(dir).output().unwrap();
         assert!(String::from_utf8_lossy(&st.stdout).trim().is_empty(),
             "tree must be clean — support.rs should have been committed with the target");
@@ -1288,7 +1278,7 @@ mod commit_snapshot_tests {
         let start_dirty = dirty_paths(dir).await; // empty: clean tree at start
         std::fs::write(dir.join("concurrent.rs"), "// not ours").unwrap();
         std::fs::write(dir.join("target.rs"), "fn t() {}").unwrap();
-        commit(dir, "target.rs", "add target", false, &start_dirty).await.unwrap();
+        commit_with_also(dir, "target.rs", "add target", false, &start_dirty, &[]).await.unwrap();
         let st = Git::new("git").args(["status", "--porcelain"]).current_dir(dir).output().unwrap();
         assert!(String::from_utf8_lossy(&st.stdout).contains("concurrent.rs"),
             "a change appearing after run-start must NOT be swept into the commit");
@@ -1310,7 +1300,7 @@ mod commit_snapshot_tests {
         std::fs::write(dir.join("unrelated.rs"), "// different package WIP").unwrap();
         let start_dirty = dirty_paths(dir).await;
         std::fs::write(dir.join("mypkg/src/target.rs"), "fn t() {}").unwrap();
-        commit(dir, "mypkg/src/target.rs", "add", false, &start_dirty).await.unwrap();
+        commit_with_also(dir, "mypkg/src/target.rs", "add", false, &start_dirty, &[]).await.unwrap();
         let files = Git::new("git").args(["show", "--name-only", "--format=", "HEAD"]).current_dir(dir).output().unwrap();
         let names = String::from_utf8_lossy(&files.stdout);
         assert!(names.contains("mypkg/src/target.rs"), "target committed");
