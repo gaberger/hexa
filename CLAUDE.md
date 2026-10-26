@@ -102,7 +102,7 @@ Checked by `hexa analyze .`:
 1. `domain/` imports only `domain/`.
 2. `ports/` imports `domain/` only (value types).
 3. `usecases/` imports `domain/` + `ports/` only.
-4. `adapters/primary/` and `adapters/secondary/` import `ports/` only.
+4. `adapters/primary/` imports `ports/` and `usecases/`; `adapters/secondary/` imports `ports/` only.
 5. Adapters NEVER import other adapters.
 6. Only a composition root (a crate's `lib.rs`, or a file declared one) imports from adapters.
 7. All relative imports in scaffolded TypeScript MUST use `.js` extensions (NodeNext).
