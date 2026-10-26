@@ -10,6 +10,7 @@ use serde_json::json;
 #[derive(Subcommand)]
 pub enum DoAction {
     /// Run one evidence-gated task: edit a file until the evidence command exits 0, then commit.
+    #[command(after_help = "Environment: CLAUDE_TIMEOUT_SECS — seconds a claude-* delegate may run before it is stopped and its files restored (default 300).")]
     Run {
         /// What to do, in plain language.
         instruction: String,
@@ -32,6 +33,12 @@ pub enum DoAction {
         /// Max ReAct loop steps before giving up (default 12). Ignored with --fast.
         #[arg(long)]
         max_steps: Option<u32>,
+        /// An additional repo-relative file the run may create or edit besides --file
+        /// (repeatable; may not exist yet). Each that exists after a passing run is
+        /// committed in the same commit as --file; on a failed run they are restored
+        /// (created ones deleted). No other new file is ever committed.
+        #[arg(long = "also", value_name = "ALSO")]
+        also: Vec<String>,
     },
     /// List recent direct runs (task, evidence verdict, commit).
     Runs,
@@ -44,7 +51,10 @@ pub async fn run(action: DoAction) -> anyhow::Result<()> {
     // the same binary.
 
     match action {
-        DoAction::Run { instruction, file, evidence, model, attempts, fast, max_steps } => {
+        DoAction::Run { instruction, file, evidence, model, attempts, fast, max_steps, also } => {
+            if let Err(e) = hexa_exec::direct_exec::validate_also_paths(&also) {
+                anyhow::bail!("{e}");
+            }
             // Interactive operator run: commit on the operator's own branch
             // (ADR-2606071323 scopes `hexa do` out of worktree isolation — the
             // human owns their tree). Unset/autonomous callers isolate by default.
@@ -52,7 +62,7 @@ pub async fn run(action: DoAction) -> anyhow::Result<()> {
             if let Ok(cwd) = std::env::current_dir() {
                 let _ = crate::commands::loop_cmd::update_loop(&cwd, json!({ "gate": evidence, "stage": "build" }));
             }
-            let mut body = json!({ "instruction": instruction, "file": file, "evidence": evidence, "fast": fast, "isolate": false });
+            let mut body = json!({ "instruction": instruction, "file": file, "evidence": evidence, "fast": fast, "isolate": false, "also": also });
             if let Some(m) = model {
                 body["model"] = json!(m);
             }
@@ -65,6 +75,9 @@ pub async fn run(action: DoAction) -> anyhow::Result<()> {
             let mode = if fast { "single-shot" } else { "react loop" };
             println!("{} {} {}", "⬡ direct:".cyan().bold(), instruction, format!("[{}]", mode).dimmed());
             println!("  {} {}  {} {}", "file".dimmed(), file, "evidence".dimmed(), evidence);
+            if !also.is_empty() {
+                println!("  {} {}", "also".dimmed(), also.join(", "));
+            }
 
             let task: hexa_exec::direct_exec::DirectTask = serde_json::from_value(body)?;
             let r = serde_json::to_value(hexa_exec::execute_direct(task).await)?;
