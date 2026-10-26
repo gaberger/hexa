@@ -53,6 +53,91 @@ pub struct DirectTask {
     /// to commit on its own branch. Absent ⇒ isolated.
     #[serde(default)]
     pub isolate: Option<bool>,
+    /// Repo-relative paths the run may create or edit besides `file`. Each one
+    /// that exists after a passing run is committed with the target; on a failed
+    /// run they are restored (deleted if they did not exist before).
+    #[serde(default)]
+    pub also: Vec<String>,
+}
+
+/// Refuse any `--also` path that could leave the repository or reach into
+/// `.git`: empty, absolute, `..`, bare `.`, or a `.git` component.
+pub fn validate_also_paths(paths: &[String]) -> Result<(), String> {
+    use std::path::Component;
+    for p in paths {
+        if p.trim().is_empty() {
+            return Err("--also: an empty path is not a file".to_string());
+        }
+        let mut normal = 0usize;
+        for c in std::path::Path::new(p).components() {
+            match c {
+                Component::CurDir => {}
+                Component::Normal(n) if n == ".git" => {
+                    return Err(format!("--also `{p}`: a path into .git is never a run's to write"));
+                }
+                Component::Normal(_) => normal += 1,
+                Component::ParentDir => {
+                    return Err(format!("--also `{p}`: `..` may leave the repository"));
+                }
+                Component::RootDir | Component::Prefix(_) => {
+                    return Err(format!("--also `{p}`: must be repo-relative, not absolute"));
+                }
+            }
+        }
+        if normal == 0 {
+            return Err(format!("--also `{p}`: names no file"));
+        }
+    }
+    Ok(())
+}
+
+/// `./a/b` → `a/b`, so a listed path matches git's own spelling.
+fn normalize_also(p: &str) -> String {
+    let mut s = p;
+    while let Some(rest) = s.strip_prefix("./") {
+        s = rest;
+    }
+    s.to_string()
+}
+
+/// The pre-run state of every `--also` path: its bytes, or its absence.
+#[derive(Debug, Clone)]
+pub struct AlsoSnapshot {
+    entries: Vec<(std::path::PathBuf, Option<Vec<u8>>)>,
+}
+
+impl AlsoSnapshot {
+    pub fn capture(repo_root: &std::path::Path, also: &[String]) -> Result<AlsoSnapshot, String> {
+        validate_also_paths(also)?;
+        let entries = also
+            .iter()
+            .map(|p| {
+                let abs = repo_root.join(normalize_also(p));
+                let bytes = if abs.is_file() { std::fs::read(&abs).ok() } else { None };
+                (abs, bytes)
+            })
+            .collect();
+        Ok(AlsoSnapshot { entries })
+    }
+
+    /// Put every `--also` path back as it was. Best-effort: never panics.
+    pub fn restore(&self) {
+        for (abs, bytes) in &self.entries {
+            match bytes {
+                Some(b) => {
+                    if let Some(parent) = abs.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    let _ = std::fs::write(abs, b);
+                }
+                None => {
+                    if abs.is_file() {
+                        let _ = std::fs::remove_file(abs);
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -599,7 +684,9 @@ async fn exec_attempts(deps: &ExecDeps, task: &DirectTask, repo_root: &std::path
         if passed && !vacuous {
             result.evidence_passed = true;
             // 5. Commit the target + the pre-run supporting files (start-snapshot).
-            match commit(repo_root, &task.file, &task.instruction, factory, &start_dirty).await {
+            match commit_with_also(repo_root, &task.file, &task.instruction, factory, &start_dirty, &task.also)
+                .await
+            {
                 Ok(hash) => {
                     result.committed = Some(hash);
                     result.ok = true;
@@ -612,6 +699,12 @@ async fn exec_attempts(deps: &ExecDeps, task: &DirectTask, repo_root: &std::path
                     let _ = std::process::Command::new("git")
                         .args(["reset", "-q", "--"])
                         .arg(&task.file)
+                        .args(
+                            task.also
+                                .iter()
+                                .map(|p| normalize_also(p))
+                                .filter(|p| repo_root.join(p).exists()),
+                        )
                         .current_dir(repo_root)
                         .output();
                     result.error = Some(commit_failure_hint(&e));
@@ -1040,6 +1133,20 @@ pub(crate) async fn commit(
     factory: bool,
     start_dirty: &[String],
 ) -> Result<String, String> {
+    commit_with_also(repo_root, file, instruction, factory, start_dirty, &[]).await
+}
+
+/// `commit`, plus every `--also` path that exists after the run — and nothing
+/// else new: an unlisted untracked file stays out (the concurrency guard).
+pub async fn commit_with_also(
+    repo_root: &std::path::Path,
+    file: &str,
+    instruction: &str,
+    factory: bool,
+    start_dirty: &[String],
+    also: &[String],
+) -> Result<String, String> {
+    validate_also_paths(also)?;
     // Commit the target PLUS the pre-run supporting files (spec / module-registration
     // the evidence needed) so the commit reproduces the green state — not just the
     // target (which left supporting files uncommitted, a broken committed state). Scope
@@ -1057,7 +1164,12 @@ pub(crate) async fn commit(
             paths.push(p.clone());
         }
     }
-    let add = tokio::process::Command::new("git")
+    for p in also.iter().map(|p| normalize_also(p)) {
+        if !paths.contains(&p) && repo_root.join(&p).exists() {
+            paths.push(p);
+        }
+    }
+    let add =tokio::process::Command::new("git")
         .arg("add")
         .arg("--")
         .args(&paths)
