@@ -118,6 +118,7 @@ Otherwise the edit is reverted. A model that wanders commits nothing.
 ```bash
 hexa analyze .                       # architecture grade + rule violations
 hexa analyze . --grade A             # fail when the grade is below A
+hexa analyze . --grade A --exit-code # …and on any violation: the CI gate
 hexa graph consumers <path>          # who depends on this, before you delete it
 ```
 
@@ -191,7 +192,9 @@ any model call, because a skeleton that will not build on your machine makes
 everything measured after it meaningless.
 
 **The second gate checks the shape.** `hexa analyze` grades the boundaries, and
-`hexa scaffold --grade A` fails the build when the grade is not earned.
+`hexa scaffold --grade A` fails the build when the grade is not earned or any
+import crosses a boundary. On `hexa analyze`, `--grade` is a letter floor — one
+violation still grades A — so the CI gate adds `--exit-code`.
 
 **Rules travel with the project.** Every scaffold ships a `.hexa/ADR-rules.toml`
 that `hexa analyze` runs from then on. The scaffold is not a starting point you
