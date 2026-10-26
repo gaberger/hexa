@@ -191,10 +191,10 @@ pub async fn run(args: ScaffoldArgs) -> Result<()> {
     }
 
     // ── 5. the architecture gate ─────────────────────────────────────────
-    let (letter, score) = match super::analyze::deep_analysis(&target).await {
+    let (letter, score, violations) = match super::analyze::deep_analysis(&target).await {
         Ok(r) => {
             let s = u64::from(r.health_score);
-            (super::analyze::grade_letter(s).to_string(), s)
+            (super::analyze::grade_letter(s).to_string(), s, r.violations.len())
         }
         Err(e) => {
             // Not a pass. An analyzer that could not run has said nothing.
@@ -203,11 +203,12 @@ pub async fn run(args: ScaffoldArgs) -> Result<()> {
     };
     let got = super::analyze::grade_rank(&letter);
     println!(
-        "  {} architecture grade: {} — score {}/100 (floor {})",
-        if got >= want { "✓".green() } else { "✗".red() },
+        "  {} architecture grade: {} — score {}/100 (floor {}), {} boundary violation(s)",
+        if gates_met(true, got, want, violations) { "✓".green() } else { "✗".red() },
         letter.bold(),
         score,
-        args.grade
+        args.grade,
+        violations
     );
 
     if args.harden && gate_ok {
@@ -229,12 +230,13 @@ pub async fn run(args: ScaffoldArgs) -> Result<()> {
 
     // Both gates are blocking, and the exit code says so. A verb that prints a
     // red mark and exits 0 has told a script that everything is fine.
-    if !gate_ok || got < want {
+    if !gates_met(gate_ok, got, want, violations) {
         bail!(
-            "scaffold did not meet its gates — {} / grade {} (floor {})",
+            "scaffold did not meet its gates — {} / grade {} (floor {}) / {} boundary violation(s)",
             if gate_ok { "gate PASS" } else { "gate FAIL" },
             letter,
-            args.grade
+            args.grade,
+            violations
         );
     }
     println!("{} {} is built, gated and graded", "✓".green().bold(), args.target.yellow());
@@ -265,6 +267,13 @@ fn challenge_for(description: &str, lang: &str, gate: &str) -> String {
            importing an adapter is a failed build here.\n\
          - Keep every file short enough to read in one sitting."
     )
+}
+
+/// Both gates, as the prompt states them: the test gate passed, the grade is
+/// at or above the floor, and no import crosses a boundary. The floor alone
+/// let one violation through — it scores 90, an A (ADR-2610261420).
+fn gates_met(gate_ok: bool, got: u8, want: u8, boundary_violations: usize) -> bool {
+    gate_ok && got >= want && boundary_violations == 0
 }
 
 fn grade_floor(letter: &str) -> Result<u8> {
@@ -317,6 +326,20 @@ mod tests {
     fn an_unknown_language_is_refused_by_name() {
         assert!(scaffold_gate("cobol").is_none());
         assert!(scaffold_gate("rust").is_some());
+    }
+
+    /// Issue #20, ADR-2610261420. The prompt tells the model "a use case
+    /// importing an adapter is a failed build here", but the verb compared the
+    /// letter only: one violation scores 90, an A, and met the default floor.
+    #[test]
+    fn one_boundary_violation_fails_the_scaffold_even_above_the_floor() {
+        let a = grade_floor("A").unwrap();
+        let a_plus = grade_floor("A+").unwrap();
+        assert!(!gates_met(true, a, a, 1), "an A with a violation in it is not a met gate");
+        assert!(!gates_met(true, a_plus, a, 1));
+        assert!(gates_met(true, a, a, 0));
+        assert!(!gates_met(false, a_plus, a, 0), "the test gate still blocks");
+        assert!(!gates_met(true, grade_floor("B").unwrap(), a, 0), "the floor still blocks");
     }
 
     #[test]

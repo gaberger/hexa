@@ -12,7 +12,7 @@ avoid, so docs and CLI output stay consistent.
 | **vacuous gate** | A gate that exits 0 having exercised nothing, such as a test filter matching zero tests. Detected and rejected. | "empty test" |
 | **floor** | The deterministic skeleton: a manifest, the layer directories, passing tests, and a gate command, all from templates compiled into the binary. No inference involved. | "boilerplate", "template" alone. The floor is gated and reproducible |
 | **floor gate** | The skeleton's own gate, run *before* any model call. If it fails, nothing measured afterwards means anything. | "smoke test" |
-| **architecture grade** | 0–100 score from the boundary analyzer, rendered A+ through F. It is a gate, not a report. `--grade A` fails the build below it. | "score", "health" alone |
+| **architecture grade** | 0–100 score from the boundary analyzer, rendered A+ through F. It is a gate, not a report. `--grade A` fails the build below it; one violation still grades A, so `--exit-code` fails on any. | "score", "health" alone |
 | **rule** | A pattern check in `.hexa/ADR-rules.toml`, run by `hexa analyze`, citing the incident that produced it. Ships with every scaffolded project. | "lint rule". A rule here names a dependency or a defect class, not a style |
 | **harden** | An adversarial pass: hunt by failure-class lens, verify each finding skeptically (default-refute), fix the confirmed ones under the gate. | "review", "audit" alone |
 
