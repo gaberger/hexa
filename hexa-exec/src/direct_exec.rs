@@ -703,7 +703,7 @@ async fn exec_attempts(deps: &ExecDeps, task: &DirectTask, repo_root: &std::path
                             task.also
                                 .iter()
                                 .map(|p| normalize_also(p))
-                                .filter(|p| repo_root.join(p).exists()),
+                                .filter(|p| repo_root.join(p).exists() || tracked_in_head(repo_root, p)),
                         )
                         .current_dir(repo_root)
                         .output();
@@ -1126,8 +1126,21 @@ fn package_prefix(repo_root: &std::path::Path, file: &str) -> String {
     }
 }
 
-/// `commit`, plus every `--also` path that exists after the run — and nothing
-/// else new: an unlisted untracked file stays out (the concurrency guard).
+/// Whether `path` is tracked in `HEAD` (so its absence now is a deletion).
+fn tracked_in_head(repo_root: &std::path::Path, path: &str) -> bool {
+    std::process::Command::new("git")
+        .args(["cat-file", "-e"])
+        .arg(format!("HEAD:{path}"))
+        .current_dir(repo_root)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// `commit`, plus every `--also` path that exists after the run, or that is
+/// tracked in `HEAD` and missing after the run (a deletion the run made, recorded
+/// in the commit) — and nothing else new: an unlisted untracked file stays out
+/// (the concurrency guard). An `--also` path neither present nor tracked is skipped.
 pub async fn commit_with_also(
     repo_root: &std::path::Path,
     file: &str,
@@ -1155,13 +1168,12 @@ pub async fn commit_with_also(
         }
     }
     for p in also.iter().map(|p| normalize_also(p)) {
-        if !paths.contains(&p) && repo_root.join(&p).exists() {
+        if !paths.contains(&p) && (repo_root.join(&p).exists() || tracked_in_head(repo_root, &p)) {
             paths.push(p);
         }
     }
     let add = tokio::process::Command::new("git")
-        .arg("add")
-        .arg("--")
+        .args(["add", "-A", "--"])
         .args(&paths)
         .current_dir(repo_root)
         .output()
