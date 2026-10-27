@@ -15,7 +15,7 @@ pub enum AdrAction {
     List,
     /// Show ADR lifecycle summary
     Status {
-        /// Emit findings as JSON for the improver detector pipeline
+        /// Emit findings as JSON
         /// (`{findings: [{adr_id, status, kind, severity}]}`). Each
         /// finding flags a lifecycle issue: Proposed >30 days, Abandoned
         /// without replacement, or Superseded without backlink.

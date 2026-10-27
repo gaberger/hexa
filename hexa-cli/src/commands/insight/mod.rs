@@ -23,19 +23,15 @@ use chrono::{DateTime, Utc};
 use clap::Subcommand;
 use serde::{Deserialize, Serialize};
 
-/// `hexa insight` subcommands. The improver's `punch_list` detector calls
-/// `hexa insight punch-list --json` to harvest gap/todo items the agent
-/// has acknowledged in its own output. Empty findings array when no
-/// transcripts exist or no gaps were found — that's a healthy signal,
-/// not a failure.
+/// `hexa insight` subcommands. `punch-list --json` returns the gap and todo
+/// items an agent acknowledged in its own output and routed nowhere. An
+/// empty findings array, when no transcripts exist or none were found, is a
+/// healthy result, not a failure.
 #[derive(Subcommand)]
 pub enum InsightAction {
-    /// Scan recent assistant transcripts for self-acknowledged punch-list
-    /// items (numbered/bullet enumerations of gaps, todos, follow-ups).
-    /// Each item without a routing reference (`(out-of-scope)`, task-id,
-    /// draft path) becomes a finding for the improver.
+    /// List gaps, todos and follow-ups enumerated in recent transcripts that carry no routing reference (`(out-of-scope)`, a task id, a draft path)
     PunchList {
-        /// Emit findings as JSON for the improver detector pipeline
+        /// Emit findings as JSON
         /// (`{findings: [{line_no, raw, classification, severity}]}`).
         #[arg(long)]
         json: bool,

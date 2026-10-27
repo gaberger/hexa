@@ -59,8 +59,7 @@ pub enum PlanAction {
         #[arg(conflicts_with = "all")]
         file: Option<String>,
         /// Reconcile every docs/workplans/wp-*.json. Mutually exclusive with
-        /// a positional file. Used by the improver `reconcile_strict`
-        /// detector to scan the whole workplan corpus in one shot.
+        /// a positional file.
         #[arg(long, default_value_t = false)]
         all: bool,
         /// Write confirmed-done statuses back to the workplan JSON
@@ -86,7 +85,7 @@ pub enum PlanAction {
         /// Force-promote a task regardless of evidence (logs forced_by for audit)
         #[arg(long)]
         force: Option<String>,
-        /// Emit findings as JSON for the improver detector pipeline
+        /// Emit findings as JSON
         /// (`{findings: [{workplan_id, task_id, kind, severity}]}`). Pairs
         /// naturally with --all to scan every workplan's evidence drift.
         #[arg(long, default_value_t = false)]
@@ -127,50 +126,32 @@ pub enum PlanAction {
         #[arg(long, default_value_t = false)]
         all: bool,
     },
-    /// Workplan structural integrity check — detects destructive
-    /// mutations (missing required fields like title, phases[*].title,
-    /// task[*].id) that aggressive `reconcile --update` runs can cause.
-    /// Used by the improver `workplan_integrity` detector to catch
-    /// action quality issues that ReconcileStrict's reward attribution
-    /// can't see (a hypothesis can clear AND the file get corrupted).
+    /// Find workplans missing required fields (title, phase titles, task ids), as an aggressive `reconcile --update` can leave them
     Integrity {
-        /// Emit findings as JSON for the improver detector pipeline
+        /// Emit findings as JSON
         /// (`{findings: [{workplan_id, kind, severity, missing_fields}]}`).
         #[arg(long)]
         json: bool,
     },
-    /// Layer-coverage scan — detects canonical hexagonal-architecture
-    /// directories that are missing in the current project (use cases,
-    /// primary adapters, composition root). Surfaces structural gaps
-    /// in target apps so the improver can propose drafts that close them.
-    /// Language is auto-detected (TS/Rust) from project markers.
+    /// List the hexagonal layers this project has no directory for (use cases, primary adapters, composition root). TS or Rust, detected from the project
     Layers {
-        /// Emit findings as JSON for the improver detector pipeline
+        /// Emit findings as JSON
         /// (`{findings: [{layer, severity, kind: "missing_layer"}]}`).
         #[arg(long)]
         json: bool,
     },
-    /// Build-readiness probe — runs the project's typecheck (tsc/cargo
-    /// check) and tests, surfacing failures as findings. Closes the gap
-    /// between "structural layers exist" (hexa plan layers) and "the code
-    /// actually compiles + tests pass." Critical for the improver's
-    /// ability to credit code-generation actions: structural existence ≠
-    /// functional correctness.
+    /// Run the project's typecheck (tsc or cargo check) and tests, and list each failure
     Ready {
-        /// Emit findings as JSON for the improver detector pipeline.
+        /// Emit findings as JSON
         #[arg(long)]
         json: bool,
-        /// Skip running tests (typecheck only). Faster — useful when the
-        /// detector runs on every daemon tick.
+        /// Skip running tests (typecheck only)
         #[arg(long)]
         no_tests: bool,
     },
-    /// Test-coverage scan — for each non-test source file, check that a
-    /// sibling *.test.* file exists with at least one test case. Each
-    /// uncovered file becomes a finding so the improver can propose
-    /// test-generation workplans that a tester swarm consumes.
+    /// List each source file with no sibling *.test.* file, or one with no test in it
     Tests {
-        /// Emit findings as JSON for the improver detector pipeline
+        /// Emit findings as JSON
         /// (`{findings: [{source, kind: "no_test_file"|"empty_test_file"}]}`).
         #[arg(long)]
         json: bool,

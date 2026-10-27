@@ -196,7 +196,8 @@ harden` then found three real bugs its own passing tests missed.
 ## Skills & agents
 
 **Skills** (`hexa skill list`; embedded in the binary, `hexa skill sync` installs
-them): `/hexa-scaffold`, `/hexa-generate`, `/hexa-summarize`, `/hexa-analyze-deps`,
+them): `/hexa-workflow` (the gate-first loop, verb by verb), `/hexa-maintain`
+(keeping the install and the project current), `/hexa-scaffold`, `/hexa-generate`, `/hexa-summarize`, `/hexa-analyze-deps`,
 `/hexa-analyze-arch`, `/hexa-inference`, `/hexa-review-gate`, `/hexa-project-output`,
 and the ADR skills `/hexa-adr-create`, `/hexa-adr-review`, `/hexa-adr-search`,
 `/hexa-adr-status`.
