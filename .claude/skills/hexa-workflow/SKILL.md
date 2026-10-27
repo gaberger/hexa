@@ -74,6 +74,7 @@ hexa loop stage done                    # writes the evidence into the ADR
 | Where the work stands, this session's and every other's | `hexa loop` |
 | The steps this work is made of | `hexa loop task` |
 | The next right thing | `hexa go` |
+| A plain-English request, routed to the verb it names | `hexa hey "<request>"` — says so when no verb matches; asks before anything that changes the tree, even with `--yes` |
 | Project and git state at a glance | `hexa status` |
 | A lesson you will otherwise forget | `hexa memory store lesson:<topic> "<text>"` |
 | What was learned before | `hexa memory search <query>` |

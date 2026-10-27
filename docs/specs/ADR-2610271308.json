@@ -14,6 +14,10 @@
     "by": "gary",
     "sha256": "c379e37992bcb2dd1417851a5dd35c99d1b41b11410792a07beaa9cb4ea8eca0"
   },
+  "sealed": {
+    "hexa-cli/tests/adr_2610271308_spec.rs": "d5ae065b97f4aba5b6b4bbb0256d1cc662b768ff28a4f7ce30e678e923ca4734"
+  },
+  "red": "09ffe4f",
   "specs": [
     {
       "id": "S01",
@@ -24,7 +28,8 @@
       "description": "route answers a hexa request from text alone",
       "given": "the routing table in hexa-core/src/domain/intent.rs",
       "when": "route(\"grade the architecture\") is called",
-      "then": "it returns Routed::Hexa with command \"analyze .\" and a non-empty one-line description"
+      "then": "it returns Routed::Hexa with command \"analyze .\" and a non-empty one-line description",
+      "test": "hexa-cli/tests/adr_2610271308_spec.rs::s01_route_answers_hexa_request_from_text"
     },
     {
       "id": "S02",
@@ -35,7 +40,8 @@
       "description": "route answers a non-hexa request with a Shell route",
       "given": "the routing table",
       "when": "route(\"show me the git status\") is called",
-      "then": "it returns Routed::Shell with command \"git status\""
+      "then": "it returns Routed::Shell with command \"git status\"",
+      "test": "hexa-cli/tests/adr_2610271308_spec.rs::s02_route_answers_non_hexa_with_shell"
     },
     {
       "id": "S03",
@@ -46,7 +52,8 @@
       "description": "route does not consult the filesystem",
       "given": "no file or directory named nowhere/at-all exists",
       "when": "route(\"harden nowhere/at-all\") is called",
-      "then": "it returns Routed::Hexa with command \"harden nowhere/at-all\". It does not fail, check the path or return Routed::None because the path is missing"
+      "then": "it returns Routed::Hexa with command \"harden nowhere/at-all\". It does not fail, check the path or return Routed::None because the path is missing",
+      "test": "hexa-cli/tests/adr_2610271308_spec.rs::s03_route_does_not_consult_filesystem"
     },
     {
       "id": "S04",
@@ -57,7 +64,8 @@
       "description": "route is a pure function of its text",
       "given": "any string text",
       "when": "route(text) is called twice, in any working directory",
-      "then": "both results are equal, and calling route creates, changes or deletes no file"
+      "then": "both results are equal, and calling route creates, changes or deletes no file",
+      "test": "hexa-cli/tests/adr_2610271308_spec.rs::s04_route_is_pure"
     },
     {
       "id": "S05",
@@ -68,7 +76,8 @@
       "description": "the table lists the core verbs and each one exists",
       "given": "the built hexa binary",
       "when": "hexa_commands() is read and `hexa <verb and subcommands> --help` is run for each entry, with any argument placeholder left out",
-      "then": "the list includes the verbs for analyze, loop, go, adr gates, doctor, self-update, harden and memory search, and every --help run exits 0"
+      "then": "the list includes the verbs for analyze, loop, go, adr gates, doctor, self-update, harden and memory search, and every --help run exits 0",
+      "test": "hexa-cli/tests/adr_2610271308_spec.rs::s05_table_lists_core_verbs_and_each_exists"
     },
     {
       "id": "S06",
@@ -79,7 +88,8 @@
       "description": "a removed verb in the table fails the check",
       "given": "a table entry naming a verb the binary does not have, such as \"brain validate\"",
       "when": "the whole-table check runs against the binary",
-      "then": "`hexa brain validate --help` fails and the check reports that entry as failing"
+      "then": "`hexa brain validate --help` fails and the check reports that entry as failing",
+      "test": "hexa-cli/tests/adr_2610271308_spec.rs::s06_removed_verb_fails_check"
     },
     {
       "id": "S07",
@@ -90,7 +100,8 @@
       "description": "every hexa route the router produces is in the checked table",
       "given": "any request text",
       "when": "route(text) returns Routed::Hexa(r)",
-      "then": "the verb and subcommands of r.command, without its trailing arguments, match an entry of hexa_commands()"
+      "then": "the verb and subcommands of r.command, without its trailing arguments, match an entry of hexa_commands()",
+      "test": "hexa-cli/tests/adr_2610271308_spec.rs::s07_every_hexa_route_is_in_table"
     },
     {
       "id": "S08",
@@ -101,7 +112,8 @@
       "description": "git state requests route to shell git commands",
       "given": "the routing table",
       "when": "route is called with \"what's the git status\", \"show recent commits\" and \"what changed (diff)\"",
-      "then": "it returns Routed::Shell with \"git status\", \"git log --oneline -20\" and \"git diff --stat\" respectively, never Routed::Hexa"
+      "then": "it returns Routed::Shell with \"git status\", \"git log --oneline -20\" and \"git diff --stat\" respectively, never Routed::Hexa",
+      "test": "hexa-cli/tests/adr_2610271308_spec.rs::s08_git_requests_route_to_shell"
     },
     {
       "id": "S09",
@@ -112,7 +124,8 @@
       "description": "requests for removed systems get no hexa route",
       "given": "the routing table",
       "when": "route is called with \"validate the brain\", \"show my inbox\", \"give me the brief\", \"run the report audit\", \"secrets status\" and \"scheduler status\"",
-      "then": "none of the results is Routed::Hexa with a command starting with brain, inbox, brief, report, secrets or sched"
+      "then": "none of the results is Routed::Hexa with a command starting with brain, inbox, brief, report, secrets or sched",
+      "test": "hexa-cli/tests/adr_2610271308_spec.rs::s09_removed_systems_get_no_hexa_route"
     },
     {
       "id": "S10",
@@ -123,7 +136,8 @@
       "description": "no route, and no table entry, names a dead verb",
       "given": "any request text",
       "when": "route(text) is called and hexa_commands() is read",
-      "then": "no Routed::Hexa command, and no entry of hexa_commands(), has brain, sched, inbox, brief, report or secrets as its first word"
+      "then": "no Routed::Hexa command, and no entry of hexa_commands(), has brain, sched, inbox, brief, report or secrets as its first word",
+      "test": "hexa-cli/tests/adr_2610271308_spec.rs::s10_no_dead_verbs_anywhere"
     },
     {
       "id": "S11",
@@ -134,7 +148,8 @@
       "description": "the read-only core verbs are routed",
       "given": "the routing table",
       "when": "route is called with \"what's the architecture grade\", \"where does the work stand\", \"what should I do next\", \"check every decision's gate\", \"check my install\" and \"update hexa\"",
-      "then": "it returns Routed::Hexa with \"analyze .\", \"loop\", \"go\", \"adr gates\", \"doctor\" and \"self-update --check\" respectively"
+      "then": "it returns Routed::Hexa with \"analyze .\", \"loop\", \"go\", \"adr gates\", \"doctor\" and \"self-update --check\" respectively",
+      "test": "hexa-cli/tests/adr_2610271308_spec.rs::s11_read_only_core_verbs_routed"
     },
     {
       "id": "S12",
@@ -145,7 +160,8 @@
       "description": "verbs that take an argument carry it from the request",
       "given": "the routing table",
       "when": "route is called with \"harden src/parser\", \"bug-hunt src/parser\" and \"search memory for retry backoff\"",
-      "then": "it returns Routed::Hexa with \"harden src/parser\" for the first two and \"memory search retry backoff\" for the third"
+      "then": "it returns Routed::Hexa with \"harden src/parser\" for the first two and \"memory search retry backoff\" for the third",
+      "test": "hexa-cli/tests/adr_2610271308_spec.rs::s12_arguments_carried_from_request"
     },
     {
       "id": "S13",
@@ -156,7 +172,8 @@
       "description": "a required argument the request lacks is not invented",
       "given": "the routing table",
       "when": "route is called with \"harden it\" with no path, or \"search memory\" with no search words",
-      "then": "neither returns Routed::Hexa with a harden or memory search command. No path or search words are filled in"
+      "then": "neither returns Routed::Hexa with a harden or memory search command. No path or search words are filled in",
+      "test": "hexa-cli/tests/adr_2610271308_spec.rs::s13_missing_argument_not_invented"
     },
     {
       "id": "S14",
@@ -167,7 +184,8 @@
       "description": "route arguments always come from the request",
       "given": "any request text",
       "when": "route(text) returns Routed::Hexa(r) whose command is harden <path> or memory search <words>",
-      "then": "<path> or <words> is non-empty and appears in text"
+      "then": "<path> or <words> is non-empty and appears in text",
+      "test": "hexa-cli/tests/adr_2610271308_spec.rs::s14_route_arguments_come_from_request"
     },
     {
       "id": "S15",
@@ -178,7 +196,8 @@
       "description": "an unmatched request returns None",
       "given": "the routing table",
       "when": "route(\"make me a sandwich\") is called",
-      "then": "it returns Routed::None"
+      "then": "it returns Routed::None",
+      "test": "hexa-cli/tests/adr_2610271308_spec.rs::s15_unmatched_returns_none"
     },
     {
       "id": "S16",
@@ -189,7 +208,8 @@
       "description": "hey says when it found no verb",
       "given": "a request that route maps to Routed::None",
       "when": "`hexa hey \"make me a sandwich\"` is run",
-      "then": "it prints that it found no verb, points at `hexa --help` and runs no command"
+      "then": "it prints that it found no verb, points at `hexa --help` and runs no command",
+      "test": "hexa-cli/tests/adr_2610271308_spec.rs::s16_hey_reports_no_verb"
     },
     {
       "id": "S17",
@@ -200,7 +220,8 @@
       "description": "hey never runs a nearest guess, even with --yes",
       "given": "a request close to a verb name but matching no rule, such as \"doctr plz\"",
       "when": "`hexa hey --yes \"doctr plz\"` is run",
-      "then": "no hexa or shell command is run, and the no-verb message pointing at `hexa --help` is printed"
+      "then": "no hexa or shell command is run, and the no-verb message pointing at `hexa --help` is printed",
+      "test": "hexa-cli/tests/adr_2610271308_spec.rs::s17_hey_never_runs_nearest_guess"
     },
     {
       "id": "S18",
@@ -211,7 +232,8 @@
       "description": "text that matches no rule always gives None",
       "given": "any string with none of the table's trigger words, including the empty string and random letters",
       "when": "route(text) is called",
-      "then": "it returns Routed::None"
+      "then": "it returns Routed::None",
+      "test": "hexa-cli/tests/adr_2610271308_spec.rs::s18_untriggered_text_gives_none"
     },
     {
       "id": "S19",
@@ -222,7 +244,8 @@
       "description": "changing routes are marked destructive",
       "given": "the routing table",
       "when": "route is called with \"harden src/parser\" and \"clean up the dev worktrees\"",
-      "then": "it returns routes with commands \"harden src/parser\" and \"dev worktree cleanup\", each with destructive: true"
+      "then": "it returns routes with commands \"harden src/parser\" and \"dev worktree cleanup\", each with destructive: true",
+      "test": "hexa-cli/tests/adr_2610271308_spec.rs::s19_changing_routes_destructive"
     },
     {
       "id": "S20",
@@ -233,7 +256,8 @@
       "description": "--yes does not skip confirmation for a destructive route",
       "given": "a request that routes to \"harden src/parser\" (destructive: true)",
       "when": "`hexa hey --yes \"harden src/parser\"` is run and the confirmation prompt is refused",
-      "then": "it asks for confirmation, and when refused it does not run `hexa harden src/parser`"
+      "then": "it asks for confirmation, and when refused it does not run `hexa harden src/parser`",
+      "test": "hexa-cli/tests/adr_2610271308_spec.rs::s20_yes_does_not_skip_destructive_confirmation"
     },
     {
       "id": "S21",
@@ -244,7 +268,8 @@
       "description": "read-only routes are not marked destructive",
       "given": "the routing table",
       "when": "route is called with \"update hexa\", \"check my install\" and \"what's the git status\"",
-      "then": "the routes for \"self-update --check\", \"doctor\" and \"git status\" all have destructive: false"
+      "then": "the routes for \"self-update --check\", \"doctor\" and \"git status\" all have destructive: false",
+      "test": "hexa-cli/tests/adr_2610271308_spec.rs::s21_read_only_routes_not_destructive"
     },
     {
       "id": "S22",
@@ -255,7 +280,8 @@
       "description": "every tree-, git- or install-changing route is destructive",
       "given": "any request text",
       "when": "route(text) returns a Route whose command starts with harden, is self-update without --check, or is dev worktree cleanup",
-      "then": "that Route has destructive: true"
+      "then": "that Route has destructive: true",
+      "test": "hexa-cli/tests/adr_2610271308_spec.rs::s22_changing_routes_always_destructive"
     }
   ]
 }

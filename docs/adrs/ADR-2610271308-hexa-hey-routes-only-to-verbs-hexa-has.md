@@ -1,11 +1,11 @@
 ---
 id: ADR-2610271308
-status: proposed
+status: accepted
 date: 2026-10-27
 ---
 # ADR-2610271308: `hexa hey` routes only to verbs hexa has
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-10-27
 **Drivers:** On 2026-10-27 every command `hexa hey` can route to was run against `hexa --help`. 15 of the 24 name a verb that does not exist: `brain validate`, `brief`, `git status|log|diff`, `inbox list`, `report audit`, `secrets status`, and seven `sched …` commands. All of them belong to the daemon, scheduler and briefing systems removed on 2026-09-12 (`d82b1d8`). Meanwhile no rule routes to the verbs hexa is built around: `spec`, `loop`, `harden`, `memory`, `adr gates`, `doctor`. `CLAUDE.md` tells agents to prefer `hexa hey`, and no test checks a single route.
 
