@@ -109,10 +109,20 @@ fn generate(root: &Path) -> String {
     text(&out)
 }
 
+
+/// Skip this case, or under `HEXA_NO_SKIP` refuse to: a case nobody ran is
+/// not proven here, and CI and `hexa adr gates` must see it (ADR-2610221540 §8).
+fn skip(reason: &str) {
+    if std::env::var_os("HEXA_NO_SKIP").is_some() {
+        panic!("not proven here: {reason}");
+    }
+    eprintln!("skipping: {reason}");
+}
+
 #[test]
 fn the_go_adapter_serves_the_contract() {
     if !have("go") {
-        eprintln!("skipping: no go on PATH");
+        skip("no go on PATH");
         return;
     }
     let d = copy_of("go");
@@ -217,7 +227,7 @@ func main() {
 #[test]
 fn the_typescript_adapter_serves_the_contract() {
     if std::env::var("HEXA_TEST_NPM").is_err() {
-        eprintln!("skipping: set HEXA_TEST_NPM=1 to allow the npm install this gate needs");
+        skip("set HEXA_TEST_NPM=1 to allow the npm install this gate needs");
         return;
     }
     let d = copy_of("ts");
@@ -294,7 +304,7 @@ server.listen(0, '127.0.0.1', () => {
 #[test]
 fn the_rust_adapter_serves_the_contract() {
     if std::env::var("HEXA_TEST_CARGO_NET").is_err() {
-        eprintln!("skipping: set HEXA_TEST_CARGO_NET=1 to allow fetching axum from crates.io");
+        skip("set HEXA_TEST_CARGO_NET=1 to allow fetching axum from crates.io");
         return;
     }
     let d = copy_of("rust");

@@ -22,7 +22,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::LazyLock;
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct DirectTask {
@@ -244,11 +243,61 @@ fn store_run(runs: &dyn crate::ports::RunLog, run: DirectRun) {
 
 static RUN_ID: AtomicU64 = AtomicU64::new(1);
 
-// Serialize the read→edit→evidence→commit critical section. Two concurrent runs
-// touching the working tree / git index race and can false-positive (one reports
-// ok=true + a commit while another's edit interleaves) — found by the 2026-06-04
-// review swarm. Global (not per-file) because git add/commit is process-global.
-static EXEC_LOCK: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
+/// Serialize the acquire→read→edit→evidence→commit→finish section across every
+/// run on the same repository — in this process and in any other.
+///
+/// Two concurrent runs touching the working tree / git index race and can
+/// false-positive: one reports ok=true + a commit that passed only because of
+/// another's uncommitted edit (found by the 2026-06-04 review swarm). The index
+/// and working tree belong to the repository, not to a process, and `hexa do` is
+/// a short-lived process running one task, so an in-process mutex never sees the
+/// other run. The lock is therefore an OS file lock in the git common dir, which
+/// a linked worktree shares with its main checkout and which `git status` never
+/// lists. Every run path — `--fast`, ReAct, frontier — must hold it.
+pub(crate) struct TreeLock {
+    _file: std::fs::File,
+}
+
+/// Where the tree lock lives for the repository at `main_root`.
+pub(crate) fn tree_lock_path(main_root: &std::path::Path) -> std::path::PathBuf {
+    let common = std::process::Command::new("git")
+        .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
+        .current_dir(main_root)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty());
+    match common {
+        Some(dir) => std::path::PathBuf::from(dir).join("hexa-exec.lock"),
+        // Not a git repository: key a lock in the temp dir on the canonical path,
+        // so it is still never written into the tree it guards.
+        None => {
+            use std::hash::{Hash, Hasher};
+            let canon = std::fs::canonicalize(main_root).unwrap_or_else(|_| main_root.to_path_buf());
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            canon.hash(&mut h);
+            std::env::temp_dir().join(format!("hexa-exec-{:016x}.lock", h.finish()))
+        }
+    }
+}
+
+/// Block until this run holds the repository's tree lock. Released on drop.
+pub(crate) async fn lock_tree(main_root: &std::path::Path) -> Result<TreeLock, String> {
+    let path = tree_lock_path(main_root);
+    tokio::task::spawn_blocking(move || {
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .map_err(|e| format!("open tree lock {}: {e}", path.display()))?;
+        file.lock().map_err(|e| format!("tree lock {}: {e}", path.display()))?;
+        Ok(TreeLock { _file: file })
+    })
+    .await
+    .map_err(|e| format!("tree lock: {e}"))?
+}
 
 /// Did the evidence command actually exercise anything?
 ///
@@ -291,9 +340,11 @@ pub fn tests_observed(output: &str) -> Option<u64> {
             }
             continue;
         }
-        // cargo: "running 12 tests"
+        // cargo: "running 12 tests". Only a count is cargo's; a script's
+        // "running integration tests" is not a runner we recognise.
         if let Some(rest) = t.strip_prefix("running ") {
-            if rest.ends_with(" tests") || rest.ends_with(" test") {
+            let count = rest.strip_suffix(" tests").or_else(|| rest.strip_suffix(" test"));
+            if count.is_some_and(|n| n.parse::<u64>().is_ok()) {
                 recognised = true;
             }
             continue;
@@ -307,14 +358,16 @@ pub fn tests_observed(output: &str) -> Option<u64> {
             continue;
         }
         // go: "ok  \tpkg\t0.01s" means the package's tests ran and passed;
-        // "?   \tpkg\t[no test files]" means it had none.
+        // "?   \tpkg\t[no test files]" means it had none, and
+        // "ok  \tpkg\t0.002s [no tests to run]" means a `-run` filter matched
+        // none. Both markers are checked first: the second line starts `ok`.
+        if t.contains("[no test files]") || t.contains("[no tests to run]") {
+            recognised = true;
+            continue;
+        }
         if t.starts_with("ok  \t") || t.starts_with("ok\t") {
             recognised = true;
             total = total.saturating_add(1);
-            continue;
-        }
-        if t.contains("[no test files]") {
-            recognised = true;
             continue;
         }
         if t.starts_with("--- PASS") || t.starts_with("=== RUN") {
@@ -367,12 +420,35 @@ test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out";
         ));
     }
 
+    /// `go test -run NoSuchTest ./pkg` exits 0 and prints an `ok` line. It is
+    /// the go form of cargo's "running 0 tests" and must not pass the gate.
+    #[test]
+    fn a_go_run_filter_that_matches_nothing_is_vacuous() {
+        let out = "ok  \tdemo/pkg\t0.002s [no tests to run]";
+        assert_eq!(tests_observed(out), Some(0));
+        assert!(evidence_is_vacuous(out));
+        assert!(evidence_is_vacuous("ok  \tdemo/pkg\t(cached) [no tests to run]"));
+        assert!(!evidence_is_vacuous(
+            "ok  \tdemo/pkg\t0.002s [no tests to run]\nok  \tdemo\t0.004s"
+        ));
+    }
+
     /// An unrecognised runner is not judged. Rejecting every `make check`
     /// would break more gates than the guard protects.
     #[test]
     fn an_unrecognised_runner_is_not_called_vacuous() {
         assert_eq!(tests_observed("Build succeeded.\nAll checks passed."), None);
         assert!(!evidence_is_vacuous("Build succeeded.\nAll checks passed."));
+    }
+
+    /// A make or shell gate that announces "running integration tests" is not
+    /// cargo. Only cargo's "running <n> tests" form is recognised.
+    #[test]
+    fn a_script_that_prints_running_tests_is_not_called_vacuous() {
+        let out = "running integration tests\nall 12 checks passed";
+        assert_eq!(tests_observed(out), None);
+        assert!(!evidence_is_vacuous(out));
+        assert!(!evidence_is_vacuous("running unit test\nok"));
     }
 }
 
@@ -410,6 +486,11 @@ pub(crate) fn record_run(
 /// (got 'user@host.(none)')". Correct, and it tells you nothing about what to
 /// do, while appearing under a passing test summary.
 pub(crate) fn commit_failure_hint(err: &str) -> String {
+    // A sealed-test refusal is not a git failure: nothing was staged, and the
+    // refusal already says what was restored.
+    if err.starts_with("refused:") {
+        return format!("evidence PASSED but the commit was {err}");
+    }
     let base = format!("evidence PASSED but the commit failed: {err}");
     if err.contains("auto-detect email") || err.contains("tell me who you are") {
         format!(
@@ -441,6 +522,7 @@ fn persist_run_async(runs: &dyn crate::ports::RunLog, run: DirectRun) {
         "model": run.model,
         "ok": run.ok,
         "attempts": run.attempts,
+        "steps": run.steps,
         "evidence_passed": run.evidence_passed,
         "committed": run.committed,
         "duration_ms": run.duration_ms,
@@ -601,7 +683,10 @@ impl DirectResult {
 
 pub(crate) async fn execute_direct_inner(deps: &ExecDeps, task: DirectTask) -> DirectResult {
     // Serialize the whole acquire→read→edit→evidence→commit→finish section.
-    let _exec_guard = EXEC_LOCK.lock().await;
+    let _tree_lock = match lock_tree(&repo_root()).await {
+        Ok(l) => l,
+        Err(e) => return DirectResult::err(e),
+    };
 
     // ADR-2606071323: confine the run to its own worktree unless the operator
     // explicitly opted out. Never silently fall back to the operator's tree.
@@ -617,9 +702,27 @@ pub(crate) async fn execute_direct_inner(deps: &ExecDeps, task: DirectTask) -> D
     }
     let repo_root = workspace.workdir().to_path_buf();
     let factory = workspace.is_isolated();
-    let result = exec_attempts(deps, &task, &repo_root, factory).await;
-    workspace.finish(result.ok);
+    let mut result = exec_attempts(deps, &task, &repo_root, factory).await;
+    settle_workspace(workspace, &mut result);
     result
+}
+
+/// Close the run's workspace. A run whose evidence passed keeps its isolated
+/// worktree even when the commit then failed: that tree holds the only copy
+/// of the verified edit, so it is kept and the error names where it is.
+pub(crate) fn settle_workspace(workspace: crate::direct_workspace::RunWorkspace, result: &mut DirectResult) {
+    let stranded = !result.ok && result.evidence_passed;
+    if stranded && workspace.is_isolated() {
+        let place = format!("the isolated worktree {}", workspace.workdir().display());
+        if let Some(e) = result.error.as_mut() {
+            if e.contains("your working tree") {
+                *e = e.replace("your working tree", &place);
+            } else {
+                e.push_str(&format!("\n  The change is kept in {place}."));
+            }
+        }
+    }
+    workspace.finish(result.ok || stranded);
 }
 
 async fn exec_attempts(deps: &ExecDeps, task: &DirectTask, repo_root: &std::path::Path, factory: bool) -> DirectResult {
@@ -706,19 +809,9 @@ async fn exec_attempts(deps: &ExecDeps, task: &DirectTask, repo_root: &std::path
                     return result;
                 }
                 Err(e) => {
-                    // The edit is good and the gate passed; only git failed. Keep
-                    // the change, unstage it, and name the half that broke.
-                    let _ = std::process::Command::new("git")
-                        .args(["reset", "-q", "--"])
-                        .arg(&task.file)
-                        .args(
-                            task.also
-                                .iter()
-                                .map(|p| normalize_also(p))
-                                .filter(|p| repo_root.join(p).exists() || tracked_in_head(repo_root, p)),
-                        )
-                        .current_dir(repo_root)
-                        .output();
+                    // The edit is good and the gate passed; only the commit
+                    // failed. `commit` has already unstaged what it staged; keep
+                    // the change and name the half that broke.
                     result.error = Some(commit_failure_hint(&e));
                     return result;
                 }
@@ -953,16 +1046,19 @@ async fn request_edit(
 
 /// Parse the MODE + fenced-block reply. Robust for code (no JSON escaping).
 fn parse_edit(s: &str) -> Result<Edit, String> {
-    let mode = if s.to_lowercase().contains("mode: append") {
-        "append"
-    } else if s.to_lowercase().contains("mode: replace") {
-        "replace"
-    } else {
+    // The MODE line is read only from text outside the fences: a snippet that happens to
+    // contain `MODE: append` (this file's own system prompt, say) must not decide the mode.
+    // The first declaration wins, so prose after it that names the other mode is ignored.
+    let outside = outside_fences(s).to_lowercase();
+    let mode = match (outside.find("mode: append"), outside.find("mode: replace")) {
+        (Some(a), Some(r)) => if a < r { "append" } else { "replace" },
+        (Some(_), None) => "append",
+        (None, Some(_)) => "replace",
         // no explicit MODE — infer: two blocks ⇒ replace, one ⇒ append
-        ""
+        (None, None) => "",
     };
 
-    let blocks = extract_fenced_blocks(s);
+    let blocks = extract_fenced_blocks(s)?;
     if blocks.is_empty() {
         return Err("no fenced code block in reply".into());
     }
@@ -995,7 +1091,11 @@ fn parse_edit(s: &str) -> Result<Edit, String> {
 
 /// Extract the contents of ```...``` fences, dropping an optional language tag
 /// on the opening fence (```rust). Returns blocks in order.
-fn extract_fenced_blocks(s: &str) -> Vec<String> {
+///
+/// A fence left open at the end is an error, not a dropped block: it is what a reply cut off
+/// at max_tokens looks like, and counting only the closed blocks would read (old, new-cut-off)
+/// as a one-block append of the old snippet.
+fn extract_fenced_blocks(s: &str) -> Result<Vec<String>, String> {
     let mut blocks = Vec::new();
     let mut in_block = false;
     let mut cur = String::new();
@@ -1013,7 +1113,55 @@ fn extract_fenced_blocks(s: &str) -> Vec<String> {
             cur.push('\n');
         }
     }
-    blocks
+    if in_block {
+        return Err("unterminated fenced code block in reply (truncated?)".into());
+    }
+    Ok(blocks)
+}
+
+/// The reply with every fenced block (fences included) removed — the same fence rule as
+/// `extract_fenced_blocks`.
+fn outside_fences(s: &str) -> String {
+    let mut out = String::new();
+    let mut in_block = false;
+    for line in s.lines() {
+        if line.trim_start().starts_with("```") {
+            in_block = !in_block;
+        } else if !in_block {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod parse_edit_tests {
+    use super::parse_edit;
+
+    #[test]
+    fn a_mode_string_inside_a_code_block_does_not_override_the_declared_mode() {
+        let reply = "MODE: replace\n```\nlet a = \"MODE: append\";\n```\n```\nlet a = \"x\";\n```\n";
+        let edit = parse_edit(reply).unwrap();
+        assert_eq!(edit.mode, "replace");
+        assert_eq!(edit.old_string, "let a = \"MODE: append\";");
+        assert_eq!(edit.new_string, "let a = \"x\";");
+    }
+
+    #[test]
+    fn prose_naming_the_other_mode_after_the_declared_mode_does_not_override_it() {
+        let reply = "MODE: replace\nNot MODE: append, the snippet already exists.\n```\nold();\n```\n```\nnew();\n```\n";
+        let edit = parse_edit(reply).unwrap();
+        assert_eq!(edit.mode, "replace");
+        assert_eq!(edit.old_string, "old();");
+        assert_eq!(edit.new_string, "new();");
+    }
+
+    #[test]
+    fn a_reply_cut_off_inside_its_second_block_is_rejected_not_read_as_an_append() {
+        let reply = "```\nold();\n```\n```\nnew(";
+        assert!(parse_edit(reply).is_err());
+    }
 }
 
 // ─── apply / verify / commit ──────────────────────────────────────────────────
@@ -1043,7 +1191,84 @@ pub(crate) fn apply_edit(abs_path: &std::path::Path, content: &str, edit: &Edit)
         }
         other => return Err(format!("unsupported mode '{}'", other)),
     };
-    std::fs::write(abs_path, new_content).map_err(|e| e.to_string())
+    write_atomic(abs_path, new_content.as_bytes()).map_err(|e| e.to_string())
+}
+
+static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Replace `path` with `bytes` atomically: write a sibling temp file, fsync
+/// it, then rename it over the target. A crash or a failed write (ENOSPC,
+/// EIO) leaves the original whole, never truncated or torn — with
+/// `isolate: false` it may hold the operator's only copy of uncommitted work.
+/// A symlink is followed, so the link survives and its target is replaced.
+fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let target = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let dir = target.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(std::path::Path::new("."));
+    let name = target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let tmp = dir.join(format!(
+        ".{}.hexa-tmp-{}-{}",
+        name,
+        std::process::id(),
+        TMP_SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+    let result = (|| {
+        let mut f = std::fs::OpenOptions::new().write(true).create_new(true).open(&tmp)?;
+        f.write_all(bytes)?;
+        if let Ok(meta) = std::fs::metadata(&target) {
+            f.set_permissions(meta.permissions())?;
+        }
+        f.sync_all()?;
+        drop(f);
+        std::fs::rename(&tmp, &target)?;
+        if let Ok(d) = std::fs::File::open(dir) {
+            let _ = d.sync_all();
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
+}
+
+#[cfg(test)]
+mod apply_edit_tests {
+    use super::{apply_edit, Edit};
+    use std::io::Read;
+
+    #[test]
+    fn the_original_file_is_never_truncated_in_place() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("work.rs");
+        std::fs::write(&path, "fn a() {}\n").unwrap();
+        // A handle on the original sees what an in-place O_TRUNC write does to
+        // it; an atomic replace leaves the original's bytes untouched.
+        let mut original = std::fs::File::open(&path).unwrap();
+        let edit = Edit { mode: "replace".into(), old_string: "fn a() {}".into(), new_string: "fn b() {}".into() };
+        apply_edit(&path, "fn a() {}\n", &edit).unwrap();
+
+        let mut seen = String::new();
+        original.read_to_string(&mut seen).unwrap();
+        assert_eq!(seen, "fn a() {}\n", "the original file was overwritten in place");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "fn b() {}\n");
+        let leftovers: Vec<_> = std::fs::read_dir(tmp.path()).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(leftovers, vec![std::ffi::OsString::from("work.rs")], "a temp file was left behind");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_replacement_keeps_the_file_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("run.sh");
+        std::fs::write(&path, "echo a\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let edit = Edit { mode: "append".into(), old_string: String::new(), new_string: "echo b".into() };
+        apply_edit(&path, "echo a\n", &edit).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "echo a\necho b\n");
+        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o755);
+    }
 }
 
 /// `cmd` with every `{touched}` replaced by `paths`, each single-quoted for
@@ -1120,22 +1345,94 @@ pub async fn dirty_paths(repo_root: &std::path::Path) -> Vec<String> {
 /// The target file's package directory (relative, trailing `/`): the nearest ancestor
 /// containing a `Cargo.toml`/`package.json`, else the file's own directory. Used to
 /// scope the start-snapshot so a feature commit only sweeps in supporting files from the
-/// *same package* — never unrelated dirty files elsewhere in the repo.
-fn package_prefix(repo_root: &std::path::Path, file: &str) -> String {
+/// *same package* — never unrelated dirty files elsewhere in the repo. `None` for a
+/// file at the repo root with no root manifest: its scope is the root directory's own
+/// files, not the prefix "", which every path in the repo starts with.
+fn package_prefix(repo_root: &std::path::Path, file: &str) -> Option<String> {
     let mut dir = std::path::Path::new(file).parent();
     while let Some(d) = dir {
-        if !d.as_os_str().is_empty()
-            && (repo_root.join(d).join("Cargo.toml").exists()
-                || repo_root.join(d).join("package.json").exists())
-        {
-            return format!("{}/", d.to_string_lossy());
+        // The empty path is the repo root: a single-crate repo's package is "".
+        if repo_root.join(d).join("Cargo.toml").exists() || repo_root.join(d).join("package.json").exists() {
+            return Some(if d.as_os_str().is_empty() { String::new() } else { format!("{}/", d.to_string_lossy()) });
         }
         dir = d.parent();
     }
     match std::path::Path::new(file).parent() {
-        Some(p) if !p.as_os_str().is_empty() => format!("{}/", p.to_string_lossy()),
-        _ => String::new(),
+        Some(p) if !p.as_os_str().is_empty() => Some(format!("{}/", p.to_string_lossy())),
+        _ => None,
     }
+}
+
+/// Every sealed test in the tree whose bytes no longer match its seal, or
+/// that is gone (ADR-2610221540 §6). Seals are read from each
+/// `docs/specs/*.json`; only the `sealed` map is read, so a spec this cannot
+/// otherwise parse still guards its tests.
+pub fn broken_seals(repo_root: &std::path::Path) -> Vec<String> {
+    let mut broken: Vec<String> = seals(repo_root)
+        .into_iter()
+        .filter(|(path, sum)| {
+            let now = std::fs::read(repo_root.join(path)).map(|b| sha256_hex(&b));
+            now.ok().as_deref() != sum.as_str()
+        })
+        .map(|(path, _)| path)
+        .collect();
+    broken.sort();
+    broken.dedup();
+    broken
+}
+
+/// Every `(path, seal)` entry of every `docs/specs/*.json` `sealed` map.
+fn seals(repo_root: &std::path::Path) -> Vec<(String, Value)> {
+    let Ok(entries) = std::fs::read_dir(repo_root.join("docs/specs")) else { return Vec::new() };
+    entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "json"))
+        .filter_map(|p| serde_json::from_str::<Value>(&std::fs::read_to_string(p).ok()?).ok())
+        .filter_map(|v| v.get("sealed").and_then(Value::as_object).cloned())
+        .flat_map(|sealed| sealed.into_iter())
+        .collect()
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest(bytes).iter().map(|x| format!("{x:02x}")).collect()
+}
+
+/// Put a broken sealed test back, but only when that loses nothing but this run's
+/// edit: the path was clean when the run started, and HEAD's copy is the sealed copy.
+/// Anything else (an operator's pre-run edit, an uncommitted re-seal, a malformed
+/// seal) is left exactly as it is. Returns whether it restored.
+async fn restore_seal(repo_root: &std::path::Path, path: &str, start_dirty: &[String]) -> bool {
+    if start_dirty.iter().any(|p| p == path) {
+        return false;
+    }
+    let Ok(head) = tokio::process::Command::new("git")
+        .args(["cat-file", "blob", &format!("HEAD:{path}")])
+        .current_dir(repo_root)
+        .output()
+        .await
+    else {
+        return false;
+    };
+    let sum = sha256_hex(&head.stdout);
+    if !head.status.success() || !seals(repo_root).iter().any(|(p, s)| p == path && s.as_str() == Some(sum.as_str())) {
+        return false;
+    }
+    let abs = repo_root.join(path);
+    abs.parent().is_none_or(|d| std::fs::create_dir_all(d).is_ok()) && std::fs::write(&abs, &head.stdout).is_ok()
+}
+
+/// `commit_with_also` with no `--also` paths.
+#[cfg(test)]
+async fn commit(
+    repo_root: &std::path::Path,
+    file: &str,
+    instruction: &str,
+    factory: bool,
+    start_dirty: &[String],
+) -> Result<String, String> {
+    commit_with_also(repo_root, file, instruction, factory, start_dirty, &[]).await
 }
 
 /// Whether `path` is tracked in `HEAD` (so its absence now is a deletion).
@@ -1206,6 +1503,28 @@ pub async fn commit_with_also(
     start_dirty: &[String],
     also: &[String],
 ) -> Result<String, String> {
+    // The code side may only make a sealed test pass, never change it
+    // (ADR-2610221540 §6). Judged over the whole tree, not this commit's
+    // paths: a test loosened and left uncommitted still made the gate pass.
+    let broken = broken_seals(repo_root);
+    if !broken.is_empty() {
+        let mut kept = Vec::new();
+        for p in &broken {
+            if !restore_seal(repo_root, p, start_dirty).await {
+                kept.push(p.as_str());
+            }
+        }
+        let fate = if kept.is_empty() {
+            "restored from HEAD".to_string()
+        } else {
+            format!("not restored, left as they are: {}", kept.join(", "))
+        };
+        return Err(format!(
+            "refused: the change edited sealed test(s) {}. A sealed test changes through its spec, never in a fix \
+             (ADR-2610221540 §6); {fate}, nothing committed",
+            broken.join(", ")
+        ));
+    }
     validate_also_paths(also)?;
     // Commit the target PLUS the pre-run supporting files (spec / module-registration
     // the evidence needed) so the commit reproduces the green state — not just the
@@ -1218,7 +1537,7 @@ pub async fn commit_with_also(
     for p in start_dirty {
         if p != file
             && !paths.contains(p)
-            && p.starts_with(&pkg)
+            && pkg.as_deref().map_or(!p.contains('/'), |pkg| p.starts_with(pkg))
             && repo_root.join(p).exists()
         {
             paths.push(p.clone());
@@ -1266,18 +1585,34 @@ pub async fn commit_with_also(
         .args(&paths)
         .current_dir(repo_root)
         .output()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !c.status.success() {
-        return Err(format!("git commit: {}", String::from_utf8_lossy(&c.stderr)));
-    }
-    let rev = tokio::process::Command::new("git")
-        .args(["rev-parse", "--short", "HEAD"])
+        .await;
+    let e = match c {
+        Ok(c) if c.status.success() => {
+            return committed_hash(&String::from_utf8_lossy(&c.stdout))
+                .ok_or_else(|| format!("git commit: no hash in its summary: {}", String::from_utf8_lossy(&c.stdout)));
+        }
+        Ok(c) => format!("git commit: {}", String::from_utf8_lossy(&c.stderr)),
+        Err(e) => e.to_string(),
+    };
+    // Unstage everything `git add` staged above, not just the target, so the
+    // change is left in the working tree unstaged, as the hint says.
+    let _ = tokio::process::Command::new("git")
+        .args(["reset", "-q", "--"])
+        .args(&paths)
         .current_dir(repo_root)
         .output()
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(String::from_utf8_lossy(&rev.stdout).trim().to_string())
+        .await;
+    Err(e)
+}
+
+/// The hash `git commit` names in its summary line (`[<branch> <hash>] <subject>`).
+/// Taken from the commit itself, never by re-reading HEAD afterwards: on a shared tree
+/// another process can move HEAD between the two, and the run would claim its commit.
+/// A ref name cannot contain a space, so the first `] ` closes the bracket.
+fn committed_hash(stdout: &str) -> Option<String> {
+    let line = stdout.lines().find(|l| l.starts_with('['))?;
+    let hash = line[1..line.find("] ")?].rsplit(' ').next()?;
+    (hash.len() >= 4 && hash.chars().all(|c| c.is_ascii_hexdigit())).then(|| hash.to_string())
 }
 
 pub(crate) fn repo_root() -> std::path::PathBuf {
@@ -1298,7 +1633,7 @@ pub(crate) fn repo_root() -> std::path::PathBuf {
 
 #[cfg(test)]
 mod commit_snapshot_tests {
-    use super::{commit_with_also, dirty_paths};
+    use super::{commit, commit_with_also, dirty_paths};
     use std::process::Command as Git;
 
     fn git(dir: &std::path::Path, args: &[&str]) {
@@ -1335,6 +1670,168 @@ mod commit_snapshot_tests {
         let names = String::from_utf8_lossy(&files.stdout);
         assert!(names.contains("target.rs") && names.contains("support.rs"),
             "commit must contain both target and support, got: {names}");
+    }
+
+    // ADR-2610221540 §6: every `hexa do` path commits through here, so here is
+    // where a sealed test the agent loosened is refused, and restored, whether
+    // or not the run's own commit would have included it.
+    #[tokio::test]
+    async fn commit_refuses_while_a_seal_is_broken() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        init_repo(dir);
+        std::fs::create_dir_all(dir.join("docs/specs")).unwrap();
+        std::fs::create_dir_all(dir.join("tests")).unwrap();
+        let body = "#[test]\nfn holds() { assert!(true) }\n";
+        std::fs::write(dir.join("tests/sealed.rs"), body).unwrap();
+        use sha2::Digest;
+        let sum: String = sha2::Sha256::digest(body.as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
+        std::fs::write(
+            dir.join("docs/specs/spec.json"),
+            format!(r#"{{"adr":"x","feature":"f","sealed":{{"tests/sealed.rs":"{sum}"}},"specs":[]}}"#),
+        )
+        .unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-qm", "seal"]);
+
+        let start_dirty = dirty_paths(dir).await;
+        std::fs::write(dir.join("tests/sealed.rs"), "#[test]\nfn holds() {}\n").unwrap();
+        std::fs::write(dir.join("target.rs"), "fn t() {}").unwrap();
+        let err = commit(dir, "target.rs", "add target", false, &start_dirty).await.unwrap_err();
+        assert!(err.contains("tests/sealed.rs") && err.contains("sealed"), "{err}");
+        assert_eq!(std::fs::read_to_string(dir.join("tests/sealed.rs")).unwrap(), body, "the sealed test is restored");
+        let log = Git::new("git").args(["log", "--format=%s"]).current_dir(dir).output().unwrap();
+        assert!(!String::from_utf8_lossy(&log.stdout).contains("add target"), "nothing is committed");
+
+        // With the seal intact, the same commit goes through (control).
+        commit(dir, "target.rs", "add target", false, &start_dirty).await.unwrap();
+    }
+
+    /// A repo with `tests/sealed.rs` sealed by `docs/specs/spec.json`, committed.
+    fn sealed_repo(dir: &std::path::Path, body: &str) -> String {
+        init_repo(dir);
+        std::fs::create_dir_all(dir.join("docs/specs")).unwrap();
+        std::fs::create_dir_all(dir.join("tests")).unwrap();
+        std::fs::write(dir.join("tests/sealed.rs"), body).unwrap();
+        let sum = super::sha256_hex(body.as_bytes());
+        std::fs::write(
+            dir.join("docs/specs/spec.json"),
+            format!(r#"{{"adr":"x","feature":"f","sealed":{{"tests/sealed.rs":"{sum}"}},"specs":[]}}"#),
+        )
+        .unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-qm", "seal"]);
+        sum
+    }
+
+    // The bug: the guard ran `git checkout HEAD --` on every broken seal, so an
+    // edit the operator made to a sealed test before the run (it is in the start
+    // snapshot) was overwritten with no copy kept. The refusal stands; the edit stays.
+    #[tokio::test]
+    async fn a_pre_run_edit_to_a_sealed_test_is_refused_but_never_discarded() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        sealed_repo(dir, "#[test]\nfn holds() { assert!(true) }\n");
+        let mine = "#[test]\nfn holds() { /* operator's work in progress */ }\n";
+        std::fs::write(dir.join("tests/sealed.rs"), mine).unwrap();
+        let start_dirty = dirty_paths(dir).await;
+        std::fs::write(dir.join("target.rs"), "fn t() {}").unwrap();
+        let err = commit(dir, "target.rs", "add target", false, &start_dirty).await.unwrap_err();
+        assert!(err.starts_with("refused:") && err.contains("not restored"), "{err}");
+        assert_eq!(std::fs::read_to_string(dir.join("tests/sealed.rs")).unwrap(), mine, "the operator's edit is kept");
+    }
+
+    // An uncommitted re-seal: HEAD's copy is not the sealed copy, so restoring
+    // "from HEAD" would replace the correct bytes with stale ones. A malformed
+    // (non-string) seal can never match, so it must not revert on every attempt.
+    #[tokio::test]
+    async fn a_seal_head_does_not_hold_or_a_malformed_seal_is_never_restored_from_head() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        sealed_repo(dir, "#[test]\nfn old() {}\n");
+        let resealed = "#[test]\nfn new() { assert!(true) }\n";
+        std::fs::write(dir.join("tests/sealed.rs"), resealed).unwrap();
+        let sum = super::sha256_hex(resealed.as_bytes());
+        std::fs::write(
+            dir.join("docs/specs/spec.json"),
+            format!(r#"{{"adr":"x","feature":"f","sealed":{{"tests/sealed.rs":"{sum}"}},"specs":[]}}"#),
+        )
+        .unwrap();
+        // The run loosens the re-sealed test; HEAD holds the old one, not the seal.
+        std::fs::write(dir.join("tests/sealed.rs"), "// loosened\n").unwrap();
+        std::fs::write(dir.join("target.rs"), "fn t() {}").unwrap();
+        commit(dir, "target.rs", "add target", false, &[]).await.unwrap_err();
+        assert_eq!(std::fs::read_to_string(dir.join("tests/sealed.rs")).unwrap(), "// loosened\n",
+            "HEAD's stale copy must not replace the tree's");
+
+        std::fs::write(
+            dir.join("docs/specs/spec.json"),
+            r#"{"adr":"x","feature":"f","sealed":{"tests/sealed.rs":42},"specs":[]}"#,
+        )
+        .unwrap();
+        std::fs::write(dir.join("tests/sealed.rs"), resealed).unwrap();
+        commit(dir, "target.rs", "add target", false, &[]).await.unwrap_err();
+        assert_eq!(std::fs::read_to_string(dir.join("tests/sealed.rs")).unwrap(), resealed,
+            "a malformed seal refuses, but reverts nothing");
+    }
+
+    // The bug: when `git commit` failed, only the target was unstaged; the
+    // supporting files `git add` had staged stayed in the index, although the
+    // hint tells the operator the change is "in your working tree, unstaged".
+    #[tokio::test]
+    async fn a_failed_commit_unstages_the_supporting_files_too() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        init_repo(dir);
+        let hook = dir.join(".git/hooks/pre-commit");
+        std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        std::fs::write(dir.join("support.rs"), "// spec the evidence needs").unwrap();
+        let start_dirty = dirty_paths(dir).await;
+        std::fs::write(dir.join("target.rs"), "fn t() {}").unwrap();
+        commit(dir, "target.rs", "add target", false, &start_dirty).await.unwrap_err();
+        let staged = Git::new("git").args(["diff", "--cached", "--name-only"]).current_dir(dir).output().unwrap();
+        assert!(String::from_utf8_lossy(&staged.stdout).trim().is_empty(),
+            "nothing may stay staged after a failed commit, got: {}", String::from_utf8_lossy(&staged.stdout));
+        assert!(dir.join("support.rs").exists() && dir.join("target.rs").exists(), "the change is kept");
+    }
+
+    // A sealed-test refusal is not a git failure; the hint must not say there is
+    // anything unstaged to commit by hand.
+    #[test]
+    fn a_seal_refusal_is_not_reported_as_a_git_failure() {
+        let h = super::commit_failure_hint(
+            "refused: the change edited sealed test(s) tests/a.rs. restored from HEAD, nothing committed",
+        );
+        assert!(h.contains("evidence PASSED") && h.contains("sealed"), "{h}");
+        assert!(!h.contains("unstaged"), "a refusal has nothing to unstage: {h}");
+    }
+
+    // The reported hash must be this run's commit, not whatever HEAD names a moment
+    // later. A post-commit hook commits again before `commit` returns, standing in
+    // for a second process moving HEAD between the commit and a re-read of HEAD.
+    #[tokio::test]
+    async fn commit_reports_its_own_hash_when_head_moves_after() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        init_repo(dir);
+        let hook = dir.join(".git/hooks/post-commit");
+        std::fs::write(&hook, "#!/bin/sh\nunset GIT_INDEX_FILE\n[ -f .git/intruded ] && exit 0\n\
+            touch .git/intruded\ngit commit -q --allow-empty -m intruder\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let start_dirty = dirty_paths(dir).await;
+        std::fs::write(dir.join("target.rs"), "fn t() {}").unwrap();
+        let hash = commit(dir, "target.rs", "add target", false, &start_dirty).await.unwrap();
+        let head = Git::new("git").args(["log", "-1", "--format=%s", "HEAD"]).current_dir(dir).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&head.stdout).trim(), "intruder", "the hook must have moved HEAD");
+        let subj = Git::new("git").args(["log", "-1", "--format=%s", &hash]).current_dir(dir).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&subj.stdout).trim(), "feat(direct): add target",
+            "reported hash {hash} must name this run's commit");
     }
 
     // The review-swarm fix preserved: a change that appears AFTER the run starts must
@@ -1378,6 +1875,94 @@ mod commit_snapshot_tests {
         let st = Git::new("git").args(["status", "--porcelain"]).current_dir(dir).output().unwrap();
         assert!(String::from_utf8_lossy(&st.stdout).contains("unrelated.rs"),
             "unrelated WIP must remain uncommitted");
+    }
+
+    // The bug: the ancestor walk skipped the empty path, so a crate at the repo
+    // root was never found and `src/lib.rs` was scoped to `src/`, leaving the
+    // package's other pre-run supporting files (`tests/`, `Cargo.toml`) out.
+    #[tokio::test]
+    async fn a_root_crate_scopes_the_snapshot_to_the_whole_repo() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        init_repo(dir);
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::create_dir_all(dir.join("tests")).unwrap();
+        std::fs::write(dir.join("Cargo.toml"), "[package]\nname=\"m\"\nversion=\"0.0.0\"").unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-qm", "pkg"]);
+        assert_eq!(super::package_prefix(dir, "src/lib.rs").as_deref(), Some(""));
+        std::fs::write(dir.join("Cargo.toml"), "[package]\nname=\"m\"\nversion=\"0.0.1\"").unwrap();
+        std::fs::write(dir.join("tests/foo.rs"), "// in-package support").unwrap();
+        let start_dirty = dirty_paths(dir).await;
+        std::fs::write(dir.join("src/lib.rs"), "fn t() {}").unwrap();
+        commit(dir, "src/lib.rs", "add", false, &start_dirty).await.unwrap();
+        let st = Git::new("git").args(["status", "--porcelain"]).current_dir(dir).output().unwrap();
+        assert!(String::from_utf8_lossy(&st.stdout).trim().is_empty(),
+            "Cargo.toml and tests/foo.rs belong to the root package and must be committed, left: {}",
+            String::from_utf8_lossy(&st.stdout));
+    }
+
+    // The bug: a root-level target with no root manifest fell back to the
+    // prefix "", which every path starts with, so every pre-run dirty file in
+    // the repo, in every subdirectory and package, was swept into the commit.
+    #[tokio::test]
+    async fn a_root_level_target_without_a_root_manifest_sweeps_nothing_else() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        init_repo(dir);
+        std::fs::create_dir_all(dir.join("other")).unwrap();
+        std::fs::create_dir_all(dir.join("web")).unwrap();
+        std::fs::write(dir.join("other/wip.go"), "package other").unwrap();
+        std::fs::write(dir.join("web/package.json"), "{}").unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-qm", "base"]);
+        std::fs::write(dir.join("other/wip.go"), "package other // wip").unwrap();
+        std::fs::write(dir.join("web/package.json"), "{\"wip\":1}").unwrap();
+        let start_dirty = dirty_paths(dir).await;
+        std::fs::write(dir.join("main.go"), "package main").unwrap();
+        commit(dir, "main.go", "add", false, &start_dirty).await.unwrap();
+        let files = Git::new("git").args(["show", "--name-only", "--format=", "HEAD"]).current_dir(dir).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&files.stdout).trim(), "main.go", "only the target may be committed");
+        let st = Git::new("git").args(["status", "--porcelain"]).current_dir(dir).output().unwrap();
+        let st = String::from_utf8_lossy(&st.stdout);
+        assert!(st.contains("other/wip.go") && st.contains("web/package.json"),
+            "unrelated WIP must remain uncommitted, got: {st}");
+    }
+
+    struct RecordingWorktrees(std::sync::Mutex<Vec<std::path::PathBuf>>);
+    impl crate::ports::Worktrees for RecordingWorktrees {
+        fn create(&self, _: &std::path::Path, _: &str, _: &std::path::Path) -> Result<(), String> {
+            Ok(())
+        }
+        fn remove(&self, _: &std::path::Path, path: &std::path::Path) -> Result<(), String> {
+            self.0.lock().unwrap().push(path.to_path_buf());
+            Ok(())
+        }
+    }
+
+    // An isolated run whose evidence passed but whose commit failed used to
+    // remove its worktree, the only copy of the verified edit, while the error
+    // told the operator the change was "in your working tree".
+    #[test]
+    fn a_failed_commit_after_passing_evidence_keeps_the_isolated_worktree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let wts = std::sync::Arc::new(RecordingWorktrees(Default::default()));
+        let settle = |evidence_passed: bool| {
+            let ws = crate::direct_workspace::RunWorkspace::acquire(
+                "settle-test", true, wts.clone(), tmp.path().join("repo")).unwrap();
+            let workdir = ws.workdir().to_path_buf();
+            let mut r = super::DirectResult::err(super::commit_failure_hint("pre-commit hook failed"));
+            r.evidence_passed = evidence_passed;
+            super::settle_workspace(ws, &mut r);
+            (workdir, r.error.unwrap())
+        };
+
+        let (workdir, err) = settle(true);
+        assert!(wts.0.lock().unwrap().is_empty(), "the worktree holding the passing edit was removed");
+        assert!(err.contains(&workdir.display().to_string()) && !err.contains("your working tree"), "{err}");
+
+        settle(false);
+        assert_eq!(wts.0.lock().unwrap().len(), 1, "a run whose evidence never passed is still cleaned up");
     }
 }
 
@@ -1427,5 +2012,87 @@ mod runs_feed_tests {
         let rows = vec![do_run(true), hook_event("stop"), do_run(false)];
         let ids: Vec<u64> = runs_from_rows(rows).iter().map(|r| r.id).collect();
         assert_eq!(ids, vec![2, 1]);
+    }
+
+    /// A run log that keeps rows in memory, newest first.
+    #[derive(Default)]
+    struct MemRuns(std::sync::Mutex<Vec<serde_json::Value>>);
+    impl crate::ports::RunLog for MemRuns {
+        fn record(&self, run: &serde_json::Value) {
+            self.0.lock().unwrap().insert(0, run.clone());
+        }
+        fn recent(&self, limit: usize) -> Vec<serde_json::Value> {
+            self.0.lock().unwrap().iter().take(limit).cloned().collect()
+        }
+    }
+
+    #[test]
+    fn persisted_run_keeps_its_steps() {
+        let log = MemRuns::default();
+        let task: super::DirectTask = serde_json::from_value(json!({
+            "instruction": "add f()", "file": "src/lib.rs", "evidence": "true",
+        })).unwrap();
+        super::record_react_run(&log, "2026-10-22T00:00:00+00:00".into(), &task, "m",
+            true, true, Some("abc123".into()), 7, 10, None);
+        let runs = super::runs_snapshot(&log);
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].steps, 7, "steps must survive the persist/read round trip");
+    }
+}
+
+#[cfg(test)]
+mod tree_lock_tests {
+    use super::{dirty_paths, lock_tree, tree_lock_path};
+    use std::process::Command as Git;
+
+    fn git(dir: &std::path::Path, args: &[&str]) {
+        let out = Git::new("git").args(args).current_dir(dir).output().unwrap();
+        assert!(out.status.success(), "git {:?}: {}", args, String::from_utf8_lossy(&out.stderr));
+    }
+
+    /// A second `hexa do` is another process: it opens the lock file itself. An
+    /// independently opened handle is what `flock` arbitrates between processes,
+    /// so while one run holds the tree, that handle must not get the lock — and a
+    /// run in a linked worktree must contend on the very same file.
+    #[tokio::test]
+    async fn the_tree_lock_excludes_another_process_on_the_same_repository() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("repo");
+        std::fs::create_dir(&root).unwrap();
+        git(&root, &["init", "-q", "-b", "main"]);
+        git(&root, &["config", "user.email", "t@t"]);
+        git(&root, &["config", "user.name", "t"]);
+        std::fs::write(root.join("a.rs"), "a").unwrap();
+        git(&root, &["add", "."]);
+        git(&root, &["commit", "-q", "-m", "init"]);
+        let wt = tmp.path().join("wt");
+        git(&root, &["worktree", "add", "-q", "-b", "side", wt.to_str().unwrap()]);
+
+        assert_eq!(tree_lock_path(&root), tree_lock_path(&wt), "a worktree must share its repository's lock");
+
+        let held = lock_tree(&root).await.unwrap();
+        let other = std::fs::OpenOptions::new().write(true).open(tree_lock_path(&root)).unwrap();
+        assert!(
+            matches!(other.try_lock(), Err(std::fs::TryLockError::WouldBlock)),
+            "another process could enter the critical section while a run holds the tree"
+        );
+        assert!(dirty_paths(&root).await.is_empty(), "the lock file must never be committable");
+
+        drop(held);
+        // Another test may fork a child (to spawn git) while `held` is open. Until
+        // that child execs and O_CLOEXEC closes its copy, it shares the flock'd
+        // file description, so the lock can stay held briefly after the drop.
+        // Poll instead of checking once.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let released = loop {
+            if other.try_lock().is_ok() {
+                break true;
+            }
+            if std::time::Instant::now() >= deadline {
+                break false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        };
+        assert!(released, "the lock must be released when the run ends");
     }
 }

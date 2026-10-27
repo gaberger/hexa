@@ -67,6 +67,10 @@ pass that hides what it let through is the gate that degrades silently.
   exits 1; a clean tree passes silently), and
   `scaffold::tests::one_boundary_violation_fails_the_scaffold_even_above_the_floor`.
 
+## Gate
+
+`cargo test -p hexa-cli --test grade_floor_names_what_it_let_through && cargo test -p hexa-cli one_boundary_violation_fails_the_scaffold`: `--grade A` passes a one-violation tree and warns, naming `--exit-code`; `--grade A --exit-code` exits 1; a clean tree passes silently; the scaffold fails on one violation above its floor.
+
 ## References
 
 - Issue #20; related #19 / ADR-2610261356

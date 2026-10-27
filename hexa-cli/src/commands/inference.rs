@@ -82,7 +82,7 @@ pub enum InferenceAction {
         /// Model name (e.g., qwen3:32b)
         #[arg(long)]
         model: Option<String>,
-        /// API key (not needed for Ollama)
+        /// Name of the environment variable holding the API key, e.g. OPENROUTER_API_KEY; the key is read at dispatch and never written (not needed for Ollama)
         #[arg(long)]
         key: Option<String>,
         /// Provider ID (auto-generated if omitted)
@@ -448,6 +448,7 @@ async fn add_provider(
     // /api/inference/register, which wrote a SpacetimeDB row, which the daemon
     // then preloaded back out of this same file on its next startup. The file
     // was always the source of truth; the database was a copy.
+    let key_name = key_ref(key, None, env_is_set).map_err(|e| anyhow::anyhow!(e))?;
     let models: Vec<String> = serde_json::from_str(&models_json)
         .unwrap_or_else(|_| vec![model_name.to_string()]);
     let endpoint = hexa_infer::Endpoint {
@@ -457,8 +458,8 @@ async fn add_provider(
         model: model_name.to_string(),
         models,
         status: "unknown".to_string(),
-        requires_auth: key.is_some(),
-        secret_key: key.unwrap_or("").to_string(),
+        requires_auth: key_name.is_some(),
+        secret_key: key_name.clone().unwrap_or_default(),
         health_checked_at: String::new(),
         quality_score: 0.0,
         quantization_level: resolved_quantization.clone().unwrap_or_default(),
@@ -487,7 +488,7 @@ async fn add_provider(
 /// Register a provider from a built-in template (ADR-2026-04-05-2125).
 ///
 /// Reads the YAML template from embedded assets, resolves the API key from
-/// --key flag or environment variable, and registers all models with correct
+/// --key (a variable name) or the template's variable, storing the name, never the key, and registers all models with correct
 /// base URL, rate limits, and quantization tier.
 async fn add_from_template(
     template_name: &str,
@@ -513,27 +514,23 @@ async fn add_from_template(
         println!("  Daily quota: {} tokens", daily);
     }
 
-    // Resolve API key: --key flag > env var > abort
-    let api_key = if let Some(k) = key {
-        k.to_string()
-    } else if let Some(ref env_var) = template.api_key_env {
-        match std::env::var(env_var) {
-            Ok(k) if !k.is_empty() => {
-                println!("  {} API key loaded from {}", "✓".green(), env_var);
-                k
-            }
-            _ => {
-                if template.name == "ollama" {
-                    String::new() // Ollama doesn't need a key
-                } else {
-                    println!("  {} No API key provided. Set {} or use --key", "✗".red(),
-                        env_var);
-                    return Ok(());
-                }
-            }
+    // The registry names the variable that holds the key; the key itself is
+    // read at dispatch and never written.
+    let api_key = match key_ref(key, template.api_key_env.as_deref(), env_is_set) {
+        Ok(Some(name)) => {
+            println!("  {} API key read from {} at dispatch", "✓".green(), name);
+            name
         }
-    } else {
-        String::new()
+        Ok(None) if template.name == "ollama" => String::new(), // Ollama doesn't need a key
+        Ok(None) => {
+            let var = template.api_key_env.as_deref().unwrap_or("<VAR>");
+            println!("  {} No API key provided. Set {} or use --key <VAR>", "✗".red(), var);
+            return Ok(());
+        }
+        Err(e) => {
+            println!("  {} {}", "✗".red(), e);
+            return Ok(());
+        }
     };
 
     let provider_id = custom_id.unwrap_or(template_name);
@@ -2159,5 +2156,70 @@ mod config_model {
         assert!(set_model(&mut cfg, "t2", "").is_err());
         assert!(set_model(&mut cfg, "t2", "   ").is_err());
         assert_eq!(cfg, json!({}));
+    }
+}
+
+fn env_is_set(var: &str) -> bool {
+    std::env::var(var).is_ok_and(|v| !v.is_empty())
+}
+
+/// What the registry stores for an endpoint's key: the name of the variable
+/// that holds it, never the key. `flag` is `--key`, which takes a variable
+/// name; `template_env` is the provider's usual variable.
+fn key_ref(flag: Option<&str>, template_env: Option<&str>, is_set: impl Fn(&str) -> bool) -> Result<Option<String>, String> {
+    let is_name = |s: &str| {
+        !s.is_empty()
+            && !s.starts_with(|c: char| c.is_ascii_digit())
+            && s.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+    };
+    match flag {
+        Some(k) if !is_name(k) => Err(
+            "--key takes the name of an environment variable, not the key: export NAME=<your-key> and pass --key NAME"
+                .to_string(),
+        ),
+        Some(k) if is_set(k) => Ok(Some(k.to_string())),
+        Some(k) => Err(format!("{k} is not set: export {k}=<your-key>")),
+        None => Ok(template_env.filter(|v| is_set(v)).map(str::to_string)),
+    }
+}
+
+/// A registered endpoint names the variable that holds its key; the key
+/// itself is never written to the registry ("API keys are environment
+/// variables, read at dispatch. Never committed, never written to any file
+/// hexa produces.").
+#[cfg(test)]
+mod key_ref_tests {
+    use super::key_ref;
+
+    #[test]
+    fn a_key_found_in_the_environment_is_stored_by_its_name() {
+        let r = key_ref(None, Some("OPENROUTER_API_KEY"), |v| v == "OPENROUTER_API_KEY");
+        assert_eq!(r, Ok(Some("OPENROUTER_API_KEY".to_string())));
+    }
+
+    #[test]
+    fn a_variable_named_with_key_is_stored_by_its_name() {
+        let r = key_ref(Some("MY_OR_KEY"), Some("OPENROUTER_API_KEY"), |v| v == "MY_OR_KEY");
+        assert_eq!(r, Ok(Some("MY_OR_KEY".to_string())));
+    }
+
+    #[test]
+    fn a_literal_key_is_refused_never_stored() {
+        let r = key_ref(Some("sk-or-v1-abc123"), Some("OPENROUTER_API_KEY"), |_| true);
+        let err = r.expect_err("a literal key must not reach the registry");
+        assert!(err.contains("export"), "the refusal says how to pass it: {err}");
+        assert!(!err.contains("sk-or-v1-abc123"), "the refusal does not echo the key: {err}");
+    }
+
+    #[test]
+    fn a_named_variable_that_is_unset_is_refused() {
+        let r = key_ref(Some("NOT_SET_HERE"), None, |_| false);
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn no_key_anywhere_is_none_for_a_keyless_provider() {
+        assert_eq!(key_ref(None, None, |_| false), Ok(None));
+        assert_eq!(key_ref(None, Some("OPENROUTER_API_KEY"), |_| false), Ok(None));
     }
 }

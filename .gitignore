@@ -49,6 +49,9 @@ docs/*
 docs/benchmarks/*
 !docs/benchmarks/fixtures/
 !docs/guides/
+# Each accepted ADR's spec: its decisions as behaviour, with the acceptance
+# and the seal CI verifies (ADR-2610221540). Ignored, CI would see none.
+!docs/specs/
 !docs/reference/
 !docs/GETTING-STARTED.md
 !docs/INFERENCE.md

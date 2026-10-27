@@ -31,7 +31,14 @@ pub enum AdrAction {
     Abandoned,
     /// Run the gate every ADR records — the decision record as a
     /// regression suite (ADR-2609132122)
-    Gates,
+    Gates {
+        /// A case the gate skipped fails the command (ADR-2610221540 §8)
+        #[arg(long)]
+        ci: bool,
+        /// List each ADR's gate without running it
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Show the ADR schema, template, and next available number
     Schema,
     /// Show behavioral specs linked to an ADR via workplans
@@ -129,7 +136,7 @@ pub enum AdrAction {
 pub async fn run(action: AdrAction) -> anyhow::Result<()> {
     match action {
         AdrAction::List => list().await,
-        AdrAction::Gates => run_gates().await,
+        AdrAction::Gates { ci, dry_run } => run_gates(ci, dry_run).await,
         AdrAction::Accept { adr_id, rationale } => set_adr_status(&adr_id, "Accepted", None, &rationale).await,
         AdrAction::Complete { adr_id, rationale, force } => complete_adr(&adr_id, &rationale, force).await,
         AdrAction::Supersede { adr_id, by, rationale } => supersede_adr(&adr_id, &by, &rationale).await,
@@ -1921,19 +1928,62 @@ pub enum GateRun {
     None,
 }
 
-/// The first backquoted command under `## Gate`.
+/// The gate an ADR records, in either of the two shapes the ledger uses.
 ///
-/// Only the first: an ADR whose gate is two commands in prose has no single
-/// thing to run, and saying so is better than running half of it.
+/// - **A `## Gate` section:** its first backquoted command. When there are
+///   several, the last is current: an accepted body is append-only
+///   (ADR-2609151930), so a stale gate is re-recorded below the old one and
+///   never rewritten.
+/// - **A `**Gate:**` / `**Gate**` / `**Gates**` line,** the house format
+///   since 2026-09-21 (ADR-2610221540 §9): the first command on that
+///   paragraph. If the paragraph names only a commit (shown failing against
+///   `abc1234`), every command leading the list under it, joined with `&&`.
+///   Running only the first of a listed pair would narrow the gate quietly.
+///
+/// An ADR whose gate is commands in prose has no single thing to run, and
+/// saying so is better than running half of it.
 fn gate_command(markdown: &str) -> Option<String> {
-    let after = markdown.split("\n## Gate").nth(1)?;
-    // Stop at the next heading, so a later section's backquotes are not it.
-    let section = after.split("\n## ").next().unwrap_or(after);
-    let start = section.find('`')? + 1;
-    let rest = &section[start..];
-    let end = rest.find('`')?;
-    let cmd = rest[..end].trim();
-    (!cmd.is_empty()).then(|| cmd.to_string())
+    if markdown.contains("\n## Gate") {
+        let after = markdown.rsplit("\n## Gate").next().unwrap_or("");
+        // Stop at the next heading, so a later section's backquotes are not it.
+        let section = after.split("\n## ").next().unwrap_or(after);
+        if let Some(cmd) = spans(section).next() {
+            return Some(cmd.to_string());
+        }
+    }
+    bold_gate(markdown)
+}
+
+/// The non-empty backquoted spans in `text`, in order.
+fn spans(text: &str) -> impl Iterator<Item = &str> {
+    text.split('`').skip(1).step_by(2).map(str::trim).filter(|s| !s.is_empty())
+}
+
+/// A commit id is cited beside a gate, and is not one.
+fn is_commit_id(s: &str) -> bool {
+    (7..=40).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// The `**Gate…**` shape of [`gate_command`].
+fn bold_gate(markdown: &str) -> Option<String> {
+    let mut lines = markdown.lines().skip_while(|l| !l.starts_with("**Gate"));
+    let marker = lines.next()?;
+    let mut lead = vec![marker];
+    lead.extend(lines.by_ref().take_while(|l| !l.trim().is_empty()));
+    let lead = lead.join("\n");
+    // The text after the closing `**`, so the bold marker is not a span.
+    let after_marker = lead.splitn(3, "**").nth(2).unwrap_or("");
+    if let Some(cmd) = spans(after_marker).find(|s| !is_commit_id(s)) {
+        return Some(cmd.to_string());
+    }
+    let listed: Vec<&str> = lines
+        .skip_while(|l| l.trim().is_empty())
+        .take_while(|l| l.trim_start().starts_with("- "))
+        .filter_map(|l| l.trim_start().strip_prefix("- `"))
+        .filter_map(|l| l.split('`').next().map(str::trim))
+        .filter(|s| !s.is_empty() && !is_commit_id(s))
+        .collect();
+    (!listed.is_empty()).then(|| listed.join(" && "))
 }
 
 /// Can this be executed at all? The first word must resolve to something
@@ -1966,7 +2016,14 @@ fn looks_runnable(cmd: &str, root: &std::path::Path) -> bool {
 /// without trouble. An absolute first word is unaffected: `Path::join` on an
 /// absolute path discards the base and yields the path itself.
 fn program_exists(cmd: &str, root: &std::path::Path, on_path: &dyn Fn(&str) -> bool) -> bool {
-    let Some(first) = cmd.split_whitespace().next() else { return false };
+    // `HEXA_TEST_NPM=1 cargo test …` runs cargo: a leading `NAME=value` is
+    // the shell's environment prefix, not the program.
+    let is_assignment = |w: &&str| {
+        w.split_once('=').is_some_and(|(k, _)| {
+            !k.is_empty() && k.bytes().all(|b| b == b'_' || b.is_ascii_alphanumeric()) && !k.as_bytes()[0].is_ascii_digit()
+        })
+    };
+    let Some(first) = cmd.split_whitespace().find(|w| !is_assignment(w)) else { return false };
     if first.is_empty() {
         return false;
     }
@@ -1988,7 +2045,14 @@ pub(crate) enum GateOutcome {
     Passed,
     Failed(String),
     UnrunnableHere(String),
+    /// A case the gate refused to skip under `HEXA_NO_SKIP`: nothing was
+    /// proven about it on this machine (ADR-2610221540 §8). Carries the
+    /// reason the test gave.
+    NotProvenHere(String),
 }
+
+/// What a skip site prints when `HEXA_NO_SKIP` forbids the skip.
+use hexa_exec::spec_author::NOT_PROVEN_HERE;
 
 /// The last `n` lines of `out`, joined with `\n` and ending in a single
 /// `\n`. Input with fewer than `n` lines is returned unchanged.
@@ -2005,6 +2069,13 @@ pub(crate) fn failure_tail(out: &str, n: usize) -> String {
 /// Sort a non-zero exit into "the gate failed" or "this machine cannot run
 /// the gate", by what the output says.
 pub(crate) fn classify_gate(ok: bool, out: &str) -> GateOutcome {
+    // Before pass or fail: a case that refused to skip is neither. Its gate
+    // exits non-zero, and calling that a failed decision sends the reader to
+    // the code when the machine is what is missing.
+    if let Some(line) = out.lines().find(|l| l.contains(NOT_PROVEN_HERE)) {
+        let reason = line.split(NOT_PROVEN_HERE).nth(1).unwrap_or("").trim();
+        return GateOutcome::NotProvenHere(reason.trim_matches(|c| c == '"' || c == '\'').to_string());
+    }
     if ok {
         // A vacuous gate is a failed gate: exit 0 with zero tests observed
         // proves nothing.
@@ -2071,7 +2142,11 @@ pub(crate) fn gate_path(home: Option<&Path>, current: &str, exists: &dyn Fn(&Pat
 }
 
 /// `hexa adr gates` — run every recorded gate.
-async fn run_gates() -> anyhow::Result<()> {
+///
+/// Every gate runs with `HEXA_NO_SKIP=1`, so a test that would skip for want
+/// of a toolchain says so instead of passing (ADR-2610221540 §8). Such a gate
+/// is *not proven here*: reported always, and a failure under `ci`.
+async fn run_gates(ci: bool, dry_run: bool) -> anyhow::Result<()> {
     use colored::Colorize;
     let dir = std::path::Path::new("docs/adrs");
     let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
@@ -2091,7 +2166,25 @@ async fn run_gates() -> anyhow::Result<()> {
         &std::env::var("PATH").unwrap_or_default(),
         &|p| p.is_dir(),
     );
-    let (mut passed, mut failed, mut unrunnable, mut here, mut none) = (0, 0, 0, 0, 0);
+    if dry_run {
+        let (mut with, mut without) = (0, 0);
+        for f in &files {
+            let name = f.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+            match gate_command(&std::fs::read_to_string(f).unwrap_or_default()) {
+                Some(cmd) => {
+                    with += 1;
+                    println!("  {} {} — {}", "\u{25b8}".cyan(), name, cmd.dimmed());
+                }
+                None => {
+                    without += 1;
+                    println!("  {} {} — records no gate", "\u{25cb}".dimmed(), name);
+                }
+            }
+        }
+        println!("\n  {with} with a gate · {without} without a gate (not run)");
+        return Ok(());
+    }
+    let (mut passed, mut failed, mut unrunnable, mut here, mut none, mut unproven) = (0, 0, 0, 0, 0, 0);
     for f in &files {
         let name = f.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
         let text = std::fs::read_to_string(f).unwrap_or_default();
@@ -2099,7 +2192,7 @@ async fn run_gates() -> anyhow::Result<()> {
             None => GateRun::None,
             Some(cmd) if !looks_runnable(&cmd, &root) => GateRun::Unrunnable(cmd),
             Some(cmd) => {
-                let shell = format!("export PATH={:?}; {}", path, cmd);
+                let shell = format!("export PATH={:?} HEXA_NO_SKIP=1; {}", path, cmd);
                 let (ok, out) = hexa_exec::direct_exec::run_evidence(&shell, &root).await;
                 match classify_gate(ok, &out) {
                     GateOutcome::Passed => GateRun::Passed,
@@ -2114,6 +2207,12 @@ async fn run_gates() -> anyhow::Result<()> {
                     GateOutcome::UnrunnableHere(reason) => {
                         here += 1;
                         println!("  {} {} — cannot run here: {}", "\u{2717}".red(), name, reason);
+                        continue;
+                    }
+                    GateOutcome::NotProvenHere(reason) => {
+                        unproven += 1;
+                        let mark = if ci { "\u{2717}".red() } else { "?".yellow() };
+                        println!("  {} {} — not proven here: {}", mark, name, reason);
                         continue;
                     }
                 }
@@ -2139,10 +2238,14 @@ async fn run_gates() -> anyhow::Result<()> {
         }
     }
     println!(
-        "\n  {passed} passed · {failed} failed · {unrunnable} unrunnable · {here} cannot run here · {none} without a gate"
+        "\n  {passed} passed · {failed} failed · {unrunnable} unrunnable · {here} cannot run here · {unproven} not proven here · {none} without a gate"
     );
-    if failed + unrunnable + here > 0 {
+    let unproven_fails = if ci { unproven } else { 0 };
+    if failed + unrunnable + here + unproven_fails > 0 {
         let mut parts = Vec::new();
+        if unproven_fails > 0 {
+            parts.push(format!("{unproven_fails} not proven here (--ci)"));
+        }
         if failed > 0 {
             parts.push(format!("{failed} failed"));
         }
@@ -2186,6 +2289,10 @@ mod adr_gates {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
         assert!(program_exists("cargo test -p hexa-cli adr_gates", root, &path));
         assert!(program_exists("make check", root, &path));
+        // ADR-2609211245's shape: an environment prefix, then the program.
+        assert!(program_exists("HEXA_TEST_NPM=1 cargo test -p hexa-cli", root, &path));
+        assert!(!program_exists("HEXA_TEST_NPM=1", root, &path), "an assignment alone runs nothing");
+        assert!(!program_exists("X=1 run the suite", root, &path));
         // The case that broke the first cut: a sentence beginning with a
         // word that looks exactly like a program name.
         assert!(!program_exists("run the suite, then look at the report", root, &path), "a sentence is not a command");

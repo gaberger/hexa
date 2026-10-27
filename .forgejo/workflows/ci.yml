@@ -71,8 +71,44 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --workspace -- -D clippy::correctness -D clippy::suspicious
 
+      # The scaffold and generated-adapter gates build TypeScript and Go. Without these the cases
+      # printed `skipping:` and passed, so on this forge, which merges every PR, the cross-language
+      # half of ADR-2610100005's gate never ran (ADR-2610221540 §9). Tarballs, not apt: bookworm's
+      # nodejs is 18, and the scaffold declares `engines.node >= 22`; ServeMux patterns need Go 1.22+.
+      - name: Node 22 and Go 1.24 for the cross-language gates
+        run: |
+          curl -fsSL https://nodejs.org/dist/v22.11.0/node-v22.11.0-linux-x64.tar.xz | tar -xJ -C /usr/local --strip-components=1
+          curl -fsSL https://go.dev/dl/go1.24.0.linux-amd64.tar.gz | tar -xz -C /usr/local
+          node --version && /usr/local/go/bin/go version
+
+      # HEXA_NO_SKIP turns a skipped case into a failure that says "not proven here": a case this
+      # job did not run is not a pass. HEXA_TEST_NPM and HEXA_TEST_CARGO_NET let the TS and axum
+      # gates reach the network, which exists here.
       - name: cargo test
-        run: cargo test --workspace
+        run: PATH="/usr/local/go/bin:$PATH" cargo test --workspace
+        env:
+          HEXA_NO_SKIP: 1
+          HEXA_TEST_NPM: 1
+          HEXA_TEST_CARGO_NET: 1
+
+      # The decision record as a regression suite: every ADR's recorded gate, with a skip failing.
+      # The tests above are already built, so this mostly reruns, filtered by ADR.
+      - name: every ADR's gate
+        run: PATH="/usr/local/go/bin:$PATH" cargo run -q -p hexa-cli -- adr gates --ci
+        env:
+          HEXA_TEST_NPM: 1
+          HEXA_TEST_CARGO_NET: 1
+
+      # Every numbered decision is covered by a spec, and every scenario's sealed test runs alone
+      # and passes; a spec changed since a person accepted it, or a test edited since sealing,
+      # fails (ADR-2610221540 §8).
+      - name: every decision's spec
+        run: |
+          cargo run -q -p hexa-cli -- spec check
+          PATH="/usr/local/go/bin:$PATH" cargo run -q -p hexa-cli -- spec verify --ci
+        env:
+          HEXA_TEST_NPM: 1
+          HEXA_TEST_CARGO_NET: 1
 
   boundary-check:
     name: hexa analyze — the architecture gate

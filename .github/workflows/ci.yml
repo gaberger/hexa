@@ -56,6 +56,8 @@ jobs:
         env:
           HEXA_TEST_NPM: 1
           HEXA_TEST_CARGO_NET: 1
+          # A case that would skip fails as "not proven here" (ADR-2610221540 §8).
+          HEXA_NO_SKIP: 1
       # Structural gates before the style one. A failing step stops the job,
       # so with Lint first a clippy idiom warning skipped the architecture
       # grade and the asset check — and did, on v26.9.7 and v26.9.8, which
@@ -72,6 +74,18 @@ jobs:
       # this. A checker nothing runs is documentation.
       - name: Decision registry is consistent
         run: ./target/release/hexa adr doctor
+      # Every ADR's recorded gate, with a skipped case failing (ADR-2610221540 §9).
+      - name: Every ADR's gate
+        run: ./target/release/hexa adr gates --ci
+        env:
+          HEXA_TEST_NPM: 1
+          HEXA_TEST_CARGO_NET: 1
+      # Every decision's spec: coverage, acceptance, seals, each test alone (ADR-2610221540 §8).
+      - name: Every decision's spec
+        run: ./target/release/hexa spec check && ./target/release/hexa spec verify --ci
+        env:
+          HEXA_TEST_NPM: 1
+          HEXA_TEST_CARGO_NET: 1
       # `hexa dev test lint` denies warnings and had been red since this
       # repository began, because nothing here ran it (ADR-2609122048).
       - name: Lint

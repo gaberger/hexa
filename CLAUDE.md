@@ -61,6 +61,8 @@ the top-leaderboard local model scored last on the grid.
 
    | Don't bypass with… | Use… |
    |---|---|
+   | writing tests from the code you just wrote | `hexa spec draft` → a person runs `hexa spec accept` → `hexa spec tests` |
+   | "the ADR says it was written first" | `hexa spec verify --prove <ADR>` — red at its commit, or a mirror |
    | hand-editing then hoping | `hexa do run "<task>" --file <f> --evidence "<cmd>"` |
    | building a whole system by hand | `hexa build '<challenge>' --target <dir> --gate '<cmd>'` |
    | eyeballing a diff for bugs | `hexa harden <path> --gate '<cmd>'` |
@@ -147,17 +149,30 @@ hexa bench agentic
 
 ## Development pipeline (gate-first)
 
-ADR-2609121400. **The executable gate replaces the written spec.**
+ADR-2609121400, amended by ADR-2610221540. **The ADR is compiled to a spec,
+the spec to sealed tests that fail, and only then is code written.**
 
-1. **Decide** — an ADR in `docs/adrs/` if it adds a port, an adapter, or a
-   dependency. Unchanged.
-2. **Gate** — write the command that must exit 0, *before* the code, and not
-   derived from it.
-3. **Diverge** — `hexa build` proposes N designs and red-teams each. The spec is
-   synthesized here and is disposable.
-4. **Build to the gate.**
-5. **Harden** — `hexa harden`: adversarial hunt, default-refute, every fix gated.
-6. **Ship** — README, commit.
+1. **Decide** — an ADR in `docs/adrs/` with numbered decisions (`1.`, `2.` …
+   at the margin of `## Decision`). Name the port and domain files it decides
+   in backquotes; write new port signatures with the ADR.
+2. **Spec** — `hexa spec draft <ADR>` writes `docs/specs/<ADR>.json` from the
+   ADR and those port/domain files only, never the implementation. `hexa spec
+   check <ADR>` requires an example and a negative scenario per decision.
+3. **Accept** — a person reads the scenarios and runs `hexa spec accept <ADR>`.
+   This is where the business logic is checked. An agent never accepts a spec.
+4. **Gate** — `hexa spec tests <ADR> --crate <dir>` generates one test per
+   scenario. Every test must fail before the code exists. The commit holding
+   them is recorded as `red`, and the tests are sealed.
+5. **Build to the sealed tests.** No agent commit can carry an edit to a sealed
+   test. A requirement changes through the ADR, then the spec, then a new
+   acceptance and seal, never by editing a test.
+6. **Harden** — `hexa harden`: adversarial hunt, default-refute, every fix gated.
+7. **Ship** — `hexa spec verify --ci` (and `--prove` on the spec you changed),
+   README, commit.
+
+ADRs accepted before ADR-2610221540 are legacy, without a spec; their count is
+ratcheted and only falls. Every ADR from it on must have a spec, or
+`hexa spec check` fails.
 
 Three rules:
 
