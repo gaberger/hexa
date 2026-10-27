@@ -1,0 +1,210 @@
+{
+  "adr": "ADR-2610261420",
+  "feature": "grade-floor-names-what-it-let-through",
+  "description": "`hexa analyze --grade` is still only a letter floor, but when it passes with boundary violations it prints a warning that gives the count and names `--exit-code`; `hexa scaffold` fails on any boundary violation; the docs show the gate that is actually enforced.",
+  "universal": [
+    "§1",
+    "§2",
+    "§3"
+  ],
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A floor of A passes a tree whose only flaw is one boundary violation, because 100 − 10 = 90 grades A.",
+      "given": "A source tree with exactly one boundary violation and no other deductions, so it scores 90 and grades A",
+      "when": "`hexa analyze . --grade A` is run",
+      "then": "The process exits 0"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "`--grade` alone does not turn into a no-violations gate.",
+      "given": "A source tree with exactly one boundary violation that grades A",
+      "when": "`hexa analyze . --grade A` is run without `--exit-code`",
+      "then": "The process does not exit 1 because of the violation. Only a grade below the floor can make `--grade` fail."
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "The floor still fails a grade below it.",
+      "given": "A source tree whose grade is below A",
+      "when": "`hexa analyze . --grade A` is run",
+      "then": "The process exits non-zero because the floor is not met"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§1"
+      ],
+      "kind": "property",
+      "description": "`--grade` with any floor below A+ stays a real floor: the pass/fail result depends only on whether the letter meets the floor.",
+      "given": "Any tree and any floor letter F below A+",
+      "when": "`hexa analyze . --grade F` is run without `--exit-code`",
+      "then": "It exits 0 if and only if the tree's grade is at or above F, whatever the number of boundary violations"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "`--exit-code` is the strict gate and fails on any violation.",
+      "given": "A source tree with exactly one boundary violation that grades A",
+      "when": "`hexa analyze . --grade A --exit-code` is run",
+      "then": "The process exits 1"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "When a floor passes with a violation, it says so and names the missing flag.",
+      "given": "A source tree with exactly one boundary violation that grades A",
+      "when": "`hexa analyze . --grade A` is run",
+      "then": "The output includes the line `! grade A passes the floor A with 1 boundary violation — --grade is a letter floor; add --exit-code to fail on any`, and the process exits 0"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "A clean tree passes the floor with no warning.",
+      "given": "A source tree with zero boundary violations that grades A or above",
+      "when": "`hexa analyze . --grade A` is run",
+      "then": "The process exits 0 and the output has no 'passes the floor … with … boundary violation' warning and no mention of `--exit-code`"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "The warning counts the violations the score was computed from, not the doubled raw sum.",
+      "given": "A source tree with exactly one boundary violation, where both the import scan and the deep pass see the same edge",
+      "when": "`hexa analyze . --grade A` is run",
+      "then": "The warning says `1 boundary violation` and never `2`"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§2"
+      ],
+      "kind": "property",
+      "description": "No pass with violations is silent.",
+      "given": "Any tree with N ≥ 1 graded boundary violations whose grade meets floor F",
+      "when": "`hexa analyze . --grade F` is run without `--exit-code`",
+      "then": "It exits 0 and prints exactly one warning that names grade, floor, N, and `--exit-code`"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "When the floor is not met, the run fails rather than printing the 'passes the floor' warning.",
+      "given": "A tree with boundary violations whose grade is below floor F",
+      "when": "`hexa analyze . --grade F` is run",
+      "then": "The process exits non-zero and does not print a 'passes the floor' warning"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "Scaffold fails on one boundary violation even above the floor.",
+      "given": "A `hexa scaffold` run whose test gate passes and whose result grades A against the default floor A, but has exactly one boundary violation (e.g. a use case importing an adapter)",
+      "when": "The scaffold checks its gates",
+      "then": "The scaffold fails. It does not print 'is built, gated and graded', and its failure message gives the boundary violation count of 1"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "Scaffold succeeds only when every gate is met.",
+      "given": "A `hexa scaffold` run whose test gate passes, whose grade is at or above the floor, and which has zero boundary violations",
+      "when": "The scaffold checks its gates",
+      "then": "The scaffold reports success and the grade line shows 0 boundary violations"
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "A lower floor does not excuse a violation in scaffold.",
+      "given": "A `hexa scaffold` run with a floor below the earned grade (e.g. floor C, grade A), a passing test gate, and one boundary violation",
+      "when": "The scaffold checks its gates",
+      "then": "The scaffold fails because of the boundary violation"
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "Zero violations does not excuse a failed test gate or a missed floor.",
+      "given": "A `hexa scaffold` run with zero boundary violations where either the test gate fails or the grade is below the floor",
+      "when": "The scaffold checks its gates",
+      "then": "The scaffold fails"
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§3"
+      ],
+      "kind": "property",
+      "description": "The scaffold's pass condition is the conjunction of all three gates.",
+      "given": "Any scaffold result with test outcome T, grade G, floor F and boundary violation count V",
+      "when": "The scaffold checks its gates",
+      "then": "It succeeds if and only if T passed, G ≥ F and V = 0"
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "Every CI gate shown in the docs includes `--exit-code`.",
+      "given": "README.md, docs/GETTING-STARTED.md, docs/guides/development-workflow.md and docs/reference/glossary.md",
+      "when": "They show the CI gate for `hexa analyze`",
+      "then": "The command shown is `--grade A --exit-code` (or a floor plus `--exit-code`)"
+    },
+    {
+      "id": "S17",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "No doc presents `--grade A` alone as the CI gate.",
+      "given": "The four named docs",
+      "when": "They are searched for a `hexa analyze` gate invocation",
+      "then": "None of them presents `--grade A` without `--exit-code` as the gate that blocks violations"
+    },
+    {
+      "id": "S18",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "The docs describe the scaffold gate the way it is enforced.",
+      "given": "The docs that describe `hexa scaffold`",
+      "when": "They describe its gate",
+      "then": "They describe it as 'grade earned and no import crosses a boundary', not as reaching a grade letter only"
+    }
+  ]
+}

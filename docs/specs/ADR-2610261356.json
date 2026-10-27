@@ -1,0 +1,243 @@
+{
+  "adr": "ADR-2610261356",
+  "feature": "primary-adapter-may-drive-usecases",
+  "description": "The analyzer allows primary adapters to import ports and use cases and secondary adapters to import ports only, and a test keeps every shipped statement of rule 4 in line with that table.",
+  "universal": [
+    "§1",
+    "§3"
+  ],
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A primary adapter that imports a use case is not a boundary violation.",
+      "given": "A project with a file under adapters/primary/ that imports a module under usecases/",
+      "when": "The project is analyzed for boundary violations",
+      "then": "No boundary violation is reported for that import, and get_violation_rule reports adapters/primary → usecases as allowed"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A primary adapter that imports a port is allowed.",
+      "given": "A file under adapters/primary/ that imports a module under ports/",
+      "when": "The project is analyzed",
+      "then": "No boundary violation is reported for that import"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A secondary adapter that imports a port is allowed.",
+      "given": "A file under adapters/secondary/ that imports a module under ports/",
+      "when": "The project is analyzed",
+      "then": "No boundary violation is reported for that import"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A secondary adapter must not drive a use case.",
+      "given": "A file under adapters/secondary/ that imports a module under usecases/",
+      "when": "The project is analyzed",
+      "then": "A boundary violation is reported for that import, and get_violation_rule reports adapters/secondary → usecases as not allowed"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A primary adapter must not import domain directly.",
+      "given": "A file under adapters/primary/ that imports a module under domain/",
+      "when": "The project is analyzed",
+      "then": "A boundary violation is reported for that import"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A secondary adapter must not import domain directly.",
+      "given": "A file under adapters/secondary/ that imports a module under domain/",
+      "when": "The project is analyzed",
+      "then": "A boundary violation is reported for that import"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "Neither adapter kind may import the other adapter kind.",
+      "given": "A file under adapters/primary/ that imports from adapters/secondary/, and a file under adapters/secondary/ that imports from adapters/primary/",
+      "when": "The project is analyzed",
+      "then": "A boundary violation is reported for each import"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§1"
+      ],
+      "kind": "property",
+      "description": "The allowed targets for adapters are exactly these sets.",
+      "given": "Any import whose source layer is an adapter layer and whose target layer is any hex layer",
+      "when": "get_violation_rule is asked whether the import is allowed",
+      "then": "It is allowed only when the source is adapters/primary and the target is ports or usecases, or the source is adapters/secondary and the target is ports. Every other adapter-sourced import is refused."
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "hexa still grades itself at the top grade under the table.",
+      "given": "The hexa repository, whose CLI commands are primary adapters that call the analysis and execution use cases",
+      "when": "hexa grades itself",
+      "then": "No boundary violation is reported for CLI → usecases imports, and hexa_grades_itself_by_ratchet passes"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "A newly scaffolded project's CLAUDE.md states the rule the analyzer enforces.",
+      "given": "A fresh directory",
+      "when": "hexa dev init scaffolds a project",
+      "then": "The generated CLAUDE.md states rule 4 as: adapters/primary/ may import ports/ and usecases/, and adapters/secondary/ imports ports/ only"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "An existing project gets the corrected rule when refreshed.",
+      "given": "A project scaffolded before this change, whose CLAUDE.md says adapters/primary/ imports from ports/ only",
+      "when": "hexa refresh is run in it",
+      "then": "Its CLAUDE.md states that a primary adapter may import ports/ and usecases/"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "No shipped document still says primary adapters import ports only.",
+      "given": "The claude-md-hexa-section.md template, CLAUDE.md, README.md and ARCHITECTURE.md",
+      "when": "Each is searched for its statement of rule 4",
+      "then": "None of them says adapters/primary/, or adapters in general, import ports/ only"
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "The superseded ADR stays as it was written.",
+      "given": "ADR-2609121400, which states that adapters import ports/ only",
+      "when": "This ADR is applied",
+      "then": "ADR-2609121400's text is unchanged. ADR-2610261356 is the record that refines its rule 4."
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "The docs gate passes when every document matches the table.",
+      "given": "The table allows primary → usecases, and all four documents say a primary adapter may import ports/ and usecases/",
+      "when": "cargo test -p hexa-cli --test docs_state_the_enforced_layer_rule runs",
+      "then": "The test passes"
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "The gate fails when a document is stricter than the table.",
+      "given": "The table allows primary → usecases, and the template states \"4. **adapters/primary/** imports from **ports/** only.\"",
+      "when": "The docs gate test runs",
+      "then": "The test fails with a message that names the offending statement and says the analyzer allows a primary adapter importing usecases"
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "The gate fails when the table is stricter than the documents.",
+      "given": "allowed_targets is changed so that AdaptersPrimary allows only Ports, and the documents still say a primary adapter may import usecases",
+      "when": "The docs gate test runs",
+      "then": "The test fails because the documents state rule 4 differently from what get_violation_rule reports"
+    },
+    {
+      "id": "S17",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "A drift in just one of the four documents is enough to fail the gate.",
+      "given": "Three documents state rule 4 correctly, and README.md alone says adapters import ports/ only",
+      "when": "The docs gate test runs",
+      "then": "The test fails and names README.md"
+    },
+    {
+      "id": "S18",
+      "decision": [
+        "§3"
+      ],
+      "kind": "property",
+      "description": "The gate checks the docs against the analyzer's answer, not against a fixed string.",
+      "given": "Any setting of whether primary → usecases is allowed, and any wording of rule 4 in the four documents",
+      "when": "The docs gate test runs",
+      "then": "It passes exactly when every document's rule 4 agrees with what get_violation_rule reports for primary → usecases"
+    },
+    {
+      "id": "S19",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "A project can enforce the stricter rule with its own test.",
+      "given": "A project with a local test that reads src/adapters/primary/ and fails on any import of usecases/, and a primary adapter that imports a use case",
+      "when": "The project's own tests run and hexa grades it",
+      "then": "The local test fails, and hexa reports no boundary violation for that import"
+    },
+    {
+      "id": "S20",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "hexa has no per-project setting that makes the analyzer stricter.",
+      "given": "A project that wants primary adapters to import ports/ only, with no local test for it",
+      "when": "hexa analyzes a primary adapter that imports usecases/",
+      "then": "No boundary violation is reported. The stricter rule is not configurable per project; that is deferred to issue #21."
+    },
+    {
+      "id": "S21",
+      "decision": [
+        "§1",
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "Allowed is not required: generated adapters that import ports only are not flagged.",
+      "given": "A generated HTTP primary adapter that imports ports/ only (ADR-2610100005)",
+      "when": "The project is analyzed",
+      "then": "No violation and no warning is reported for leaving out usecases/ imports"
+    }
+  ]
+}

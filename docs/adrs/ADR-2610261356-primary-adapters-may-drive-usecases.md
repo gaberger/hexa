@@ -85,6 +85,10 @@ the table would grade hexa F and break `hexa_grades_itself_by_ratchet`.
   usecases".
 - Gate: `cargo test --workspace --release --locked` and the CI steps.
 
+## Gate
+
+`cargo test -p hexa-cli --test docs_state_the_enforced_layer_rule`: every shipped statement of rule 4 matches `allowed_targets`, so a change to the table fails until the docs change with it.
+
 ## References
 
 - Issue #19; related #20 (`--grade A` passes a violation), #21 (layer-scoped project rules)
