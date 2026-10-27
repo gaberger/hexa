@@ -2032,6 +2032,11 @@ fn program_exists(cmd: &str, root: &std::path::Path, on_path: &dyn Fn(&str) -> b
     if first.starts_with('.') || first.starts_with('/') {
         return root.join(first).exists();
     }
+    // `run_gates` puts its own binary first on the gates' PATH, so `hexa`
+    // there is always the hexa running them, on PATH or not.
+    if first == "hexa" {
+        return true;
+    }
     on_path(first)
 }
 
@@ -2166,6 +2171,12 @@ async fn run_gates(ci: bool, dry_run: bool) -> anyhow::Result<()> {
         &std::env::var("PATH").unwrap_or_default(),
         &|p| p.is_dir(),
     );
+    // A gate that names `hexa` runs this binary, not whichever is installed:
+    // under `cargo run` in CI none is, and an installed one may be stale.
+    let path = match std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf)) {
+        Some(own) => format!("{}:{path}", own.display()),
+        None => path,
+    };
     if dry_run {
         let (mut with, mut without) = (0, 0);
         for f in &files {
@@ -2335,6 +2346,12 @@ mod adr_gates {
         assert!(!program_exists("run the suite, then look at the report", root, &path), "a sentence is not a command");
         assert!(!program_exists("Every accepted ADR keeps its gate green", root, &path));
         assert!(!program_exists("", root, &path));
+        // ADR-2610221540's gates are `hexa spec verify <ADR>`. CI runs the
+        // gates with `cargo run`, where no `hexa` is on PATH; the binary
+        // running them is the `hexa` they name.
+        let nothing = |_: &str| false;
+        assert!(program_exists("hexa spec verify ADR-2610221834", root, &nothing), "hexa runs hexa's own gates");
+        assert!(!program_exists("hexagon build", root, &nothing), "only the program named exactly hexa");
 
         // And the real thing, against this machine.
         assert!(looks_runnable("cargo test -p hexa-cli adr_gates", root));
