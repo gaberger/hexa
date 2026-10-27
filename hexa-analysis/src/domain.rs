@@ -748,3 +748,43 @@ impl ConformanceReport {
         }
     }
 }
+
+// ── Adapter identity (ADR-2610271649) ────────────────────
+
+/// Which adapter each file belongs to, so an import between two adapters in
+/// the same layer can be told from an import inside one adapter.
+#[derive(Debug, Clone, Default)]
+pub struct AdapterMap {
+    /// `analyze.layers` keys, longest first.
+    layer_keys: Vec<String>,
+    /// `analyze.adapters`: group name → path prefixes.
+    groups: Vec<(String, Vec<String>)>,
+}
+
+impl AdapterMap {
+    /// From the declared `analyze.layers` keys and `analyze.adapters` groups.
+    /// `layer_of` is the project's layer classification, used to reject a
+    /// group whose paths are in different layers. A path in two groups is an
+    /// error naming it.
+    pub fn new(
+        layer_keys: Vec<String>,
+        groups: Vec<(String, Vec<String>)>,
+        layer_of: &dyn Fn(&str) -> HexLayer,
+    ) -> Result<Self, String> {
+        let _ = (&layer_keys, &groups, layer_of);
+        unimplemented!("ADR-2610271649: built to its sealed spec")
+    }
+
+    /// The adapter `path` belongs to, given its layer; `None` when `layer` is
+    /// not an adapter layer.
+    pub fn adapter_of(&self, path: &str, layer: HexLayer) -> Option<String> {
+        let _ = (&self.layer_keys, &self.groups, path, layer);
+        unimplemented!("ADR-2610271649: built to its sealed spec")
+    }
+}
+
+/// Does `edge` run from one adapter to a different adapter?
+pub fn crosses_adapters(edge: &ImportEdge, adapters: &AdapterMap) -> bool {
+    let _ = (edge, adapters);
+    unimplemented!("ADR-2610271649: built to its sealed spec")
+}
