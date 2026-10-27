@@ -324,6 +324,31 @@ fn lib_name(manifest: &str) -> Option<String> {
     name("lib").or_else(|| name("package")).map(|v| v.replace('-', "_"))
 }
 
+/// The crate's `[[bin]]` names, from its manifest.
+fn bin_names(manifest: &str) -> Vec<String> {
+    let Ok(toml) = toml::from_str::<toml::Value>(manifest) else { return Vec::new() };
+    toml.get("bin")
+        .and_then(|b| b.as_array())
+        .map(|bins| bins.iter().filter_map(|b| b.get("name")?.as_str().map(str::to_string)).collect())
+        .unwrap_or_default()
+}
+
+/// The Rust path a given file is reached by, e.g. `hexa_core::domain::spec`
+/// for `hexa-core/src/domain/spec.rs`: the library of the crate that holds
+/// it, then its module path under `src/`. A given file may live in another
+/// crate than the tests do, and the writer must not guess which.
+fn module_of(root: &Path, file: &str) -> Option<String> {
+    let abs = root.join(file);
+    let krate = crate_of(root, &abs)?;
+    let lib = lib_name(&std::fs::read_to_string(krate.join("Cargo.toml")).ok()?)?;
+    let rel = abs.strip_prefix(krate.join("src")).ok()?.with_extension("");
+    let mut parts: Vec<String> = rel.iter().map(|s| s.to_string_lossy().to_string()).collect();
+    if matches!(parts.last().map(String::as_str), Some("lib" | "mod" | "main")) {
+        parts.pop();
+    }
+    Some(std::iter::once(lib).chain(parts).collect::<Vec<_>>().join("::"))
+}
+
 /// Scenario id → test fn, from `/// <id>` doc lines directly above a test
 /// `fn`. Only doc lines, attributes and blank lines may stand between them,
 /// and one attribute must mark the fn a test; anything else unbinds the id.
@@ -442,8 +467,16 @@ pub async fn generate_tests(
     let text = adr_text(root, &spec.adr)?;
     let given = given_files(root, &text);
     let scenarios = serde_json::to_string_pretty(&spec.accepted_content().specs).map_err(|e| e.to_string())?;
+    let paths: String = given
+        .iter()
+        .filter_map(|g| module_of(root, g).map(|m| format!("`{g}` is reached as `{m}`.\n")))
+        .collect();
+    let bins: String = bin_names(&manifest)
+        .iter()
+        .map(|b| format!("The crate's `{b}` binary is `env!(\"CARGO_BIN_EXE_{b}\")`.\n"))
+        .collect();
     let user = format!(
-        "The crate is `{lib}`; tests reach it as `{lib}::…`.\n\nThe port and domain signatures:\n\n{}\n\
+        "The crate is `{lib}`; tests reach it as `{lib}::…`.\n{paths}{bins}\nThe port and domain signatures:\n\n{}\n\
          The accepted scenarios:\n\n{scenarios}\n",
         given_block(root, &given)
     );
@@ -698,6 +731,25 @@ mod tests {
         let m = "[package]\nversion = \"0.1.0\"\n\n[dependencies]\nname = \"x\"\n";
         assert_eq!(lib_name(m).as_deref(), None, "a key from a later section is not the package name");
         assert_eq!(lib_name("[package]\nname = \"x\" # c\n").as_deref(), Some("x"));
+    }
+
+    /// The writer was told only the tests' crate, so for a domain file in
+    /// another crate it wrote `hexa_cli::domain::…` and every test failed
+    /// to compile.
+    #[test]
+    fn a_given_file_is_named_by_its_own_crates_path() {
+        let t = tempfile::tempdir().unwrap();
+        let core = t.path().join("my-core/src/domain");
+        std::fs::create_dir_all(&core).unwrap();
+        std::fs::write(t.path().join("my-core/Cargo.toml"), "[package]\nname = \"my-core\"\n").unwrap();
+        std::fs::write(core.join("thing.rs"), "").unwrap();
+        std::fs::write(core.join("mod.rs"), "").unwrap();
+        assert_eq!(module_of(t.path(), "my-core/src/domain/thing.rs").as_deref(), Some("my_core::domain::thing"));
+        assert_eq!(module_of(t.path(), "my-core/src/domain/mod.rs").as_deref(), Some("my_core::domain"));
+        assert_eq!(module_of(t.path(), "elsewhere/thing.rs"), None, "no crate, no claim");
+        let m = "[package]\nname = \"c\"\n\n[[bin]]\nname = \"tool\"\npath = \"src/main.rs\"\n";
+        assert_eq!(bin_names(m), ["tool"]);
+        assert!(bin_names("[package]\nname = \"c\"\n").is_empty());
     }
 
     #[test]
