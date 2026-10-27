@@ -59,3 +59,10 @@ impl TelegramNotifier {
         }
     }
 }
+
+#[async_trait::async_trait]
+impl crate::ports::OperatorNotifier for TelegramNotifier {
+    async fn send(&self, message: &str) -> Result<(), String> {
+        TelegramNotifier::send(self, message).await
+    }
+}

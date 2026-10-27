@@ -34,6 +34,12 @@
       "hexa-cli/assets/scaffold",
       "bench/fixtures"
     ],
+    "adapters": {
+      "cli": ["hexa-cli/src/commands", "hexa-cli/src/fmt.rs", "hexa-cli/src/assets.rs"],
+      "treesitter": ["hexa-analysis/src/treesitter_adapter.rs", "hexa-analysis/src/treesitter_api.rs"],
+      "inference-http": ["hexa-infer/src/adapters/secondary"],
+      "git": ["hexa-git/src/history.rs", "hexa-git/src/worktree.rs", "hexa-exec/src/git_history.rs", "hexa-exec/src/git_worktrees.rs"]
+    },
     "layers": {
       ".opencode/plugins": "adapters/primary",
       "hexa-analysis/src/analyzer.rs": "usecases",

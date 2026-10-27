@@ -30,7 +30,7 @@ pub use adapters::secondary::{
 };
 pub use endpoint::Endpoint;
 pub use tiers::{project_root, react_models, react_models_in_config, tier_model};
-pub use local_provider::configured_tiers;
+pub use tiers::configured_tiers;
 pub use ports::{local_provider, LocalProvider};
 pub use discover::enumerate_models;
 pub use ports::{Coverage, Found};
@@ -60,18 +60,18 @@ pub fn spend_log_path() -> std::path::PathBuf {
 
 /// `inference.budget_usd_per_day`, if the project declares one.
 pub fn spend_budget() -> Option<f64> {
-    spend::budget_usd_per_day()
+    spend::budget_in(&tiers::project_root())
 }
 
 /// Whether the frontier path may spend today: the log and the budget, judged
 /// by [`spend_report::budget_verdict`].
 pub fn spend_budget_check() -> Result<(), String> {
-    spend_report::budget_verdict(&spend::entries(), spend::budget_usd_per_day())
+    spend_report::budget_verdict(&spend::entries(), spend::budget_in(&tiers::project_root()))
 }
 
 /// Discovery, wired: the environment, the registry and PATH.
 pub fn discovery() -> impl ports::Discovery {
-    discover::EnvDiscovery
+    discover::EnvDiscovery { endpoints: registry::load() }
 }
 
 /// The endpoint registry, wired: `~/.hexa/inference-servers.json`.

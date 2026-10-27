@@ -8,7 +8,15 @@ use std::time::Instant;
 use crate::ports::{Tool, ToolResult};
 
 
-pub struct EscalateToOperator;
+pub struct EscalateToOperator {
+    notifier: std::sync::Arc<dyn crate::ports::OperatorNotifier>,
+}
+
+impl EscalateToOperator {
+    pub fn new(notifier: std::sync::Arc<dyn crate::ports::OperatorNotifier>) -> Self {
+        Self { notifier }
+    }
+}
 
 #[async_trait]
 impl Tool for EscalateToOperator {
@@ -107,12 +115,11 @@ impl Tool for EscalateToOperator {
         let elapsed = start.elapsed().as_millis() as u64;
 
         // Fire-and-forget Telegram notification if configured
-        let notifier = crate::telegram_notifier::TelegramNotifier::from_env();
         let telegram_message = format!(
             "🚨 hexa escalation: {} | urgency={} priority={}",
             reason, urgency, priority
         );
-        if let Err(e) = notifier.send(&telegram_message).await {
+        if let Err(e) = self.notifier.send(&telegram_message).await {
             tracing::warn!(
                 error = %e,
                 "telegram_notifier send failed; escalation still recorded locally"

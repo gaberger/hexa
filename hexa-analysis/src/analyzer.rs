@@ -20,7 +20,7 @@ use super::domain::{
     Language,
 };
 use super::frontend_checker;
-use super::layer_classifier::LayerMap;
+use super::layer_classifier::{adapters_from_project, LayerMap};
 use super::path_normalizer::{normalize_path, normalize_path_in, resolve_import_path, WorkspacePackages};
 use super::ports::{AnalysisError, AstPort, ArchAnalysisPort};
 
@@ -144,7 +144,7 @@ pub fn apply_rule_errors(result: &mut ArchAnalysisResult, rule_errors: usize) {
         result.circular_deps.len(),
         result.dead_exports.len(),
         result.unused_ports.len() + result.api.unserved.len(),
-        rule_errors + result.api.errors.len(),
+        rule_errors + result.api.errors.len() + result.config_errors.len(),
     )
     .min(result.coverage.ceiling());
 }
@@ -177,7 +177,35 @@ pub async fn file_violations(
     let paths = ast.module_paths(Path::new(rel_path), &source, lang)?;
     let mut edges = edges_of(rel_path, &imports, &packages, &layers, go_mod.as_deref());
     edges.extend(edges_of(rel_path, &paths, &packages, &layers, go_mod.as_deref()));
-    Ok(boundary_checker::find_violations(&one_edge_per_target(edges)))
+    let (adapters, _) = adapters_from_project(root, &layers);
+    Ok(boundary_checker::find_violations_in(&one_edge_per_target(edges), &adapters))
+}
+
+/// Name the file each violation's import lands in. An edge's target is the
+/// path the import spells — `src/fmt/render` for `crate::fmt::render` — and a
+/// report that says which file to open is the one a reader can act on. A
+/// target no graded file matches is left as written.
+fn name_target_files(mut violations: Vec<DependencyViolation>, files: &[FileData]) -> Vec<DependencyViolation> {
+    let known: HashSet<&str> = files.iter().map(|f| f.path.as_str()).collect();
+    for v in &mut violations {
+        let target = v.edge.to_file.clone();
+        let mut prefix = target.as_str();
+        loop {
+            let found = std::iter::once(prefix.to_string())
+                .chain(["rs", "ts", "tsx", "go"].iter().map(|ext| format!("{prefix}.{ext}")))
+                .chain(["mod.rs", "index.ts", "index.tsx"].iter().map(|f| format!("{prefix}/{f}")))
+                .find(|c| known.contains(c.as_str()));
+            if let Some(file) = found {
+                v.edge.to_file = file;
+                break;
+            }
+            match prefix.rsplit_once('/') {
+                Some((head, _)) => prefix = head,
+                None => break,
+            }
+        }
+    }
+    violations
 }
 
 /// Which graded files have a layer. A build script is not architecture and
@@ -566,7 +594,13 @@ impl ArchAnalysisPort for ArchAnalyzer {
         let (edges, file_data) =
             self.collect_file_data(root_path, go_mod.as_deref()).await?;
 
-        let violations = boundary_checker::find_violations(&edges);
+        let layers = LayerMap::from_project(root_path).map_err(AnalysisError::Other)?;
+        let (adapters, adapters_error) = adapters_from_project(root_path, &layers);
+        let config_errors: Vec<String> = adapters_error.into_iter().collect();
+        let violations = name_target_files(
+            boundary_checker::find_violations_in(&edges, &adapters),
+            &file_data,
+        );
         let circular_deps = cycle_detector::detect_cycles(&edges);
 
         // Collect test files as additional import consumers for dead export analysis.
@@ -574,7 +608,6 @@ impl ArchAnalysisPort for ArchAnalyzer {
         let test_file_data = self
             .collect_test_file_data(root_path, go_mod.as_deref())
             .await?;
-        let layers = LayerMap::from_project(root_path).map_err(AnalysisError::Other)?;
         let dead_exports = dead_export_finder::find_dead_exports_with(&file_data, &test_file_data, &layers);
 
         // Orphan files: no incoming or outgoing edges
@@ -646,7 +679,7 @@ impl ArchAnalysisPort for ArchAnalyzer {
             circular_deps.len(),
             dead_exports.len(),
             unused_ports.len() + api.unserved.len(),
-            api.errors.len(),
+            api.errors.len() + config_errors.len(),
         )
         .min(coverage.ceiling());
 
@@ -665,6 +698,7 @@ impl ArchAnalysisPort for ArchAnalyzer {
             frontend,
             coverage,
             api,
+            config_errors,
         })
     }
 
@@ -673,8 +707,10 @@ impl ArchAnalysisPort for ArchAnalyzer {
         root_path: &Path,
     ) -> Result<Vec<DependencyViolation>, AnalysisError> {
         let go_mod = detect_go_module_prefix(root_path).await;
-        let (edges, _) = self.collect_file_data(root_path, go_mod.as_deref()).await?;
-        Ok(boundary_checker::find_violations(&edges))
+        let (edges, file_data) = self.collect_file_data(root_path, go_mod.as_deref()).await?;
+        let layers = LayerMap::from_project(root_path).map_err(AnalysisError::Other)?;
+        let (adapters, _) = adapters_from_project(root_path, &layers);
+        Ok(name_target_files(boundary_checker::find_violations_in(&edges, &adapters), &file_data))
     }
 
     async fn find_dead_exports(

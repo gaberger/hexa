@@ -120,9 +120,47 @@ pub fn project_root() -> PathBuf {
     }
 }
 
+/// The tiers this project configures, as `(label, tier key, model id)`.
+///
+/// Empty when `.hexa/project.json` declares none — which is a real answer, and
+/// a caller should say so rather than substitute a guess.
+pub fn configured_tiers() -> Vec<(&'static str, &'static str, String)> {
+    configured_tiers_in(&project_root())
+}
+
+/// [`configured_tiers`], rooted at an explicit directory (ADR-2609131749).
+fn configured_tiers_in(root: &std::path::Path) -> Vec<(&'static str, &'static str, String)> {
+    [("T1", "t1"), ("T2", "t2"), ("T2.5", "t2.5")]
+        .into_iter()
+        .filter_map(|(label, key)| tier_model_in(root, key).map(|m| (label, key, m)))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `configured_tiers` must return what the project declares and nothing
+    /// else. A hardcoded fallback here would put a model id back into the
+    /// code path this module exists to clear.
+    #[test]
+    fn no_config_means_no_tiers_rather_than_a_default() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert!(configured_tiers_in(dir.path()).is_empty(), "an unconfigured project produced tiers");
+
+        // And it returns exactly what is declared, no more.
+        std::fs::create_dir_all(dir.path().join(".hexa")).unwrap();
+        std::fs::write(
+            dir.path().join(".hexa/project.json"),
+            r#"{"inference":{"tier_models":{"t1":"a-model","t2.5":"c-model"}}}"#,
+        )
+        .unwrap();
+        let got = configured_tiers_in(dir.path());
+        assert_eq!(got.len(), 2, "{got:?}");
+        assert_eq!(got[0], ("T1", "t1", "a-model".to_string()));
+        assert_eq!(got[1], ("T2.5", "t2.5", "c-model".to_string()), "a dotted key is read as a key");
+    }
+
 
     fn project(json: &str) -> tempfile::TempDir {
         let dir = tempfile::tempdir().expect("tempdir");

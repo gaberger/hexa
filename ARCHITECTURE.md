@@ -39,10 +39,12 @@ assembled for one loop, not the number of loops.
   agent, run log and memory, each behind a port in `hexa-exec/src/ports.rs`;
   `hexa_exec::default_deps()` wires the real ones. The loop never names an adapter.
 - **Curated, guarded tools.** Each is an adapter behind the `Tool` port, in
-  `hexa-exec/src/tools/`, registered by `hexa_exec::default_tools()`. Read and verify tools only
-  (`repo_read`, `repo_grep`, `cargo_check`, `typescript_check`, `dep_audit`,
-  `secret_scan`) plus the terminal `propose_edit`. No arbitrary shell. Tools reject
-  path traversal, block critical paths, and cap output.
+  `hexa-exec/src/tools/`, registered by `hexa_exec::default_tools()`, which hands each the
+  ports it needs (`ToolLedger`, `MemoryStore`, `OperatorNotifier`). The do-loop may call only
+  the read and verify tools (`ALLOWED_TOOLS` in `direct_react.rs`: `repo_read`, `repo_grep`,
+  `cargo_check`, `typescript_check`, `dep_audit`, `secret_scan`) plus the terminal
+  `propose_edit`, which the loop handles itself. No arbitrary shell. Tools reject path
+  traversal, block critical paths, and cap output.
 - **Code-graph context.** `gather_context` reads `graph-out/graph.json` and calls
   `hexa_graph::context::context_for(file)` and `rank_lessons`.
 - **The gate is the sole authority on what commits.** A pass that exercised nothing
@@ -128,7 +130,7 @@ Seven crates, one binary. The dependency direction is the architecture:
 |---|---|
 | **hexa-core** | The contract surface: the inference port and its mock, message/tool/validation types, value types, `ports::edit` — the critical-path rule every editing adapter must obey — `ports::spec`, the coverage rule a spec is checked against, and `ports::provenance`, the judgement of whether a binary is behind its checkout or a release. **Zero runtime dependencies**. Nothing below can bleed a runtime concern upward. |
 | **hexa-infer** | Every inference adapter (`adapters/secondary/`), behind its ports: `Backends`, `Discovery`, `EndpointRegistry`, and `LocalProvider`, the local runtime's identity. `complete.rs` is the use case; `wiring.rs` picks the adapter that serves a model. **No file outside this crate names a provider or a model.** |
-| **hexa-exec** | The agent loop, per-run worktree isolation, the adversarial harness, transcript compression, the guarded tool library, the file-backed local store — the loop and harness as use cases, everything they touch behind `Tool`, `Worktrees`, `Frontier`, `RunLog`, `MemoryStore` and `Provenance`. `do_task.rs` picks the loop for a task. |
+| **hexa-exec** | The agent loop, per-run worktree isolation, the adversarial harness, transcript compression, the guarded tool library, the file-backed local store — the loop and harness as use cases, everything they touch behind `Tool`, `Worktrees`, `GitHistory`, `Frontier`, `RunLog`, `MemoryStore` and `Provenance`; the tools reach the store and the operator through `ToolLedger` and `OperatorNotifier`, and the frontier records spend through `SpendLog`. `do_task.rs` picks the loop for a task. |
 | **hexa-analysis** | Tree-sitter boundary checking (the parser behind `AstPort`), the one layer classifier and the project's layer map, cross-package import resolution, dead-export and cycle detection, the coverage ceiling, the layer inventory, rule conformance, the architecture fingerprint, six health detectors. Powers `hexa analyze`. |
 | **hexa-graph** | The code knowledge graph: `context_for`, `rank_lessons`, community detection. Builds and reads `graph-out/graph.json`. Its ports hold the extraction contract. |
 | **hexa-git** | Git plumbing over libgit2. |
@@ -211,7 +213,7 @@ performance: measured here, the top-leaderboard local model scored last on the g
 ## Hexagonal rules, enforced
 
 `hexa analyze` walks the AST and checks these. hexa obeys them itself: **A+ / 100 /
-0 boundary violations, 0 cycles, 165/165 files in a layer**, with every import
+0 boundary violations, 0 cycles, 169/169 files in a layer**, with every import
 between its crates checked. `hexa_grades_itself_by_ratchet` fails on any new
 violation.
 
@@ -221,7 +223,7 @@ violation.
 | 2 | `ports/` imports `domain/` only |
 | 3 | `usecases/` imports `domain/` + `ports/` only |
 | 4 | adapters import `ports/`, never the domain directly; a primary (driving) adapter may also call `usecases/`, a secondary one may not |
-| 5 | adapters never import other adapters |
+| 5 | adapters never import other adapters — in either layer: two secondary adapters are as separate as a primary and a secondary one (ADR-2610271649) |
 | 6 | only a composition root — a crate's `lib.rs`, or a file declared one — imports an adapter |
 | 7 | relative imports in scaffolded TypeScript use `.js` extensions (NodeNext) |
 
@@ -230,6 +232,13 @@ violation.
 named for its layer (`app-domain`, `app_ports`); the folder names above. A flat
 `adapters/` folder counts as primary (ADR-2609122048). One classifier serves the
 grade, `--file`, the inventory and every other report.
+
+**Where a file's adapter comes from**, for rule 5: the `.hexa/project.json →
+analyze.adapters` group that lists it (one adapter split across files, such as
+hexa's `cli`, `treesitter`, `inference-http` and `git`); else the longest
+`analyze.layers` key it is under; else the folder below `adapters/primary/` or
+`adapters/secondary/`; else the file itself. A path in two groups, or a group that
+spans layers, is a rule error, not ignored.
 
 **What is checked:** every import, including imports between the workspace's own
 packages (Cargo crates, Go modules, npm packages) and, in Rust, `super::`, inline

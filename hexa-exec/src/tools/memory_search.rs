@@ -36,7 +36,15 @@ use crate::ports::{Tool, ToolResult};
 const MAX_RESULTS_DEFAULT: usize = 12;
 const MAX_RESULTS_HARD_CAP: usize = 50;
 
-pub struct MemorySearch;
+pub struct MemorySearch {
+    memory: std::sync::Arc<dyn crate::ports::MemoryStore>,
+}
+
+impl MemorySearch {
+    pub fn new(memory: std::sync::Arc<dyn crate::ports::MemoryStore>) -> Self {
+        Self { memory }
+    }
+}
 
 #[async_trait]
 impl Tool for MemorySearch {
@@ -91,7 +99,7 @@ impl Tool for MemorySearch {
         // Local memory (ADR-2608241500). This was a GET to the daemon's
         // /api/hexflo/memory/search, which read a SpacetimeDB table — so
         // grounding the loop in past lessons needed a database to be up.
-        let all_results: Vec<Value> = crate::local_store::memory_search(query)
+        let all_results: Vec<Value> = self.memory.search(crate::ports::MemoryScope::Project, query)
             .into_iter()
             .map(|(key, value)| json!({ "key": key, "value": value }))
             .collect();
@@ -120,7 +128,7 @@ mod tests {
 
     #[test]
     fn tool_metadata_correct() {
-        let t = MemorySearch;
+        let t = MemorySearch::new(crate::tools::doubles::memory());
         assert_eq!(t.name(), "memory_search");
         assert!(t.description().contains("hexa persistent memory"));
         let schema = t.input_schema();

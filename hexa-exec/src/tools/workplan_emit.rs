@@ -20,7 +20,15 @@ use crate::ports::{Tool, ToolResult};
 
 const MAX_BODY: usize = 24_000;
 
-pub struct WorkplanEmit;
+pub struct WorkplanEmit {
+    ledger: std::sync::Arc<dyn crate::ports::ToolLedger>,
+}
+
+impl WorkplanEmit {
+    pub fn new(ledger: std::sync::Arc<dyn crate::ports::ToolLedger>) -> Self {
+        Self { ledger }
+    }
+}
 
 #[async_trait]
 impl Tool for WorkplanEmit {
@@ -199,7 +207,7 @@ impl Tool for WorkplanEmit {
                 // A local append, not a call into a database the daemon owned. Was
         // `proposed_action_open` on hexflo-coordination, so this tool could not draft
         // anything unless SpacetimeDB was up — for a queue that is one row per proposal.
-        if let Err(e) = crate::local_store::propose_action("file_write", &payload.to_string(), "tool:workplan_emit") {
+        if let Err(e) = self.ledger.propose_action("file_write", &payload.to_string(), "tool:workplan_emit") {
             return ToolResult::err(format!("propose: {}", e), start.elapsed().as_millis() as u64);
         }
         ToolResult::ok(
@@ -244,7 +252,7 @@ mod tests {
     }
     #[test]
     fn schema_requires_4_fields() {
-        let s = WorkplanEmit.input_schema();
+        let s = WorkplanEmit::new(crate::tools::doubles::ledger()).input_schema();
         let req: Vec<String> = s.get("required").unwrap().as_array().unwrap()
             .iter().map(|v| v.as_str().unwrap().to_string()).collect();
         for f in ["slug", "feature", "adr", "phases"] {

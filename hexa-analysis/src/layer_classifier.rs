@@ -164,6 +164,64 @@ fn layer_named_package(normalized: &str) -> Option<HexLayer> {
     })
 }
 
+// ── Project-declared adapters (ADR-2610271649) ───────────
+
+/// Which adapter each file belongs to, from `.hexa/project.json`:
+/// `analyze.layers` keys and the `analyze.adapters` groups,
+///
+/// ```json
+/// { "analyze": { "adapters": { "cli": ["hexa-cli/src/commands", "hexa-cli/src/fmt.rs"] } } }
+/// ```
+///
+/// An invalid declaration is an error naming the path. The caller counts it
+/// as a rule error and grades with the layer keys alone, so the mistake costs
+/// points instead of switching the check off.
+pub fn adapters_from_project(
+    root: &std::path::Path,
+    layers: &LayerMap,
+) -> (crate::domain::AdapterMap, Option<String>) {
+    use crate::domain::AdapterMap;
+    let keys = layers.keys();
+    let fallback = || AdapterMap::new(keys.clone(), Vec::new(), &|p| layers.classify(p)).unwrap_or_default();
+    let groups = match read_adapter_groups(root) {
+        Ok(g) => g,
+        Err(e) => return (fallback(), Some(e)),
+    };
+    match AdapterMap::new(keys.clone(), groups, &|p| layers.classify(p)) {
+        Ok(map) => (map, None),
+        Err(e) => (fallback(), Some(e)),
+    }
+}
+
+fn read_adapter_groups(root: &std::path::Path) -> Result<Vec<(String, Vec<String>)>, String> {
+    let Ok(text) = std::fs::read_to_string(root.join(".hexa").join("project.json")) else {
+        return Ok(Vec::new());
+    };
+    let v: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| format!(".hexa/project.json is not JSON: {e}"))?;
+    let Some(groups) = v.get("analyze").and_then(|a| a.get("adapters")) else {
+        return Ok(Vec::new());
+    };
+    let obj = groups
+        .as_object()
+        .ok_or("analyze.adapters must be an object of adapter name → path prefixes")?;
+    obj.iter()
+        .map(|(name, paths)| {
+            let list = paths
+                .as_array()
+                .ok_or_else(|| format!("analyze.adapters[\"{name}\"] must be a list of path prefixes"))?;
+            list.iter()
+                .map(|p| {
+                    p.as_str()
+                        .map(str::to_string)
+                        .ok_or_else(|| format!("analyze.adapters[\"{name}\"] holds a non-string path"))
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map(|ps| (name.clone(), ps))
+        })
+        .collect()
+}
+
 // ── Project-declared layers ──────────────────────────────
 
 /// Layers a project declares for paths the built-in patterns cannot read,
@@ -216,6 +274,12 @@ impl LayerMap {
         }
         entries.sort_by_key(|(p, _)| std::cmp::Reverse(p.len()));
         Ok(Self { entries })
+    }
+
+    /// The declared path prefixes, each one adapter when its layer is one
+    /// (ADR-2610271649 §1).
+    pub fn keys(&self) -> Vec<String> {
+        self.entries.iter().map(|(p, _)| p.clone()).collect()
     }
 
     /// The declared layer for `path`, else the built-in classification.

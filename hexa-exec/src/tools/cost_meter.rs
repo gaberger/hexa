@@ -13,7 +13,15 @@ use crate::ports::{Tool, ToolResult};
 const DEFAULT_WINDOW_SECS: u64 = 3600;
 const MAX_GROUPS: usize = 16;
 
-pub struct CostMeter;
+pub struct CostMeter {
+    ledger: std::sync::Arc<dyn crate::ports::ToolLedger>,
+}
+
+impl CostMeter {
+    pub fn new(ledger: std::sync::Arc<dyn crate::ports::ToolLedger>) -> Self {
+        Self { ledger }
+    }
+}
 
 #[async_trait]
 impl Tool for CostMeter {
@@ -64,7 +72,7 @@ impl Tool for CostMeter {
         // meant asking "what have I spent" required a database that the daemon owned — and after
         // Phase 1 there is no daemon logging inference in the first place. Rows come back in the
         // same [key, input, output, cost, created_at] shape, so the aggregation below is unchanged.
-        let rows_owned: Vec<Value> = crate::local_store::spend_rows(group_by, 5000);
+        let rows_owned: Vec<Value> = self.ledger.spend_rows(group_by, 5000);
         let rows = &rows_owned;
 
         // Aggregate in Rust: STDB SQL doesn't have SUM/GROUP BY. Each row is
@@ -163,7 +171,7 @@ mod tests {
     use super::*;
     #[test]
     fn schema_has_group_by_enum() {
-        let s = CostMeter.input_schema();
+        let s = CostMeter::new(crate::tools::doubles::ledger()).input_schema();
         let group_by = s.get("properties").and_then(|p| p.get("group_by")).unwrap();
         let enm = group_by.get("enum").and_then(|v| v.as_array()).unwrap();
         assert_eq!(enm.len(), 3);

@@ -17,7 +17,15 @@ use std::time::Instant;
 use crate::ports::{Tool, ToolResult};
 
 
-pub struct AdrStatusSet;
+pub struct AdrStatusSet {
+    ledger: std::sync::Arc<dyn crate::ports::ToolLedger>,
+}
+
+impl AdrStatusSet {
+    pub fn new(ledger: std::sync::Arc<dyn crate::ports::ToolLedger>) -> Self {
+        Self { ledger }
+    }
+}
 
 #[async_trait]
 impl Tool for AdrStatusSet {
@@ -146,7 +154,7 @@ impl Tool for AdrStatusSet {
                 // A local append, not a call into a database the daemon owned. Was
         // `proposed_action_open` on hexflo-coordination, so this tool could not draft
         // anything unless SpacetimeDB was up — for a queue that is one row per proposal.
-        if let Err(e) = crate::local_store::propose_action("file_write", &payload.to_string(), "tool:adr_status_set") {
+        if let Err(e) = self.ledger.propose_action("file_write", &payload.to_string(), "tool:adr_status_set") {
             return ToolResult::err(format!("propose: {}", e), start.elapsed().as_millis() as u64);
         }
         ToolResult::ok(

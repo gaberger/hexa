@@ -1,11 +1,11 @@
 ---
 id: ADR-2610271649
-status: proposed
+status: accepted
 date: 2026-10-27
 ---
 # ADR-2610271649: An adapter importing another adapter in its own layer is a violation
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-10-27
 **Drivers:** The 2026-10-27 drift report (`docs/analysis/2026-10-27_DRIFT_REPORT.md`) found eight tools in `hexa-exec/src/tools` calling `crate::local_store::…` and `crate::telegram_notifier::…`, two other secondary adapters, while `hexa analyze` reported 0 violations. `is_allowed_import` (`hexa-analysis/src/layer_classifier.rs`) returns true for any import whose two ends are in the same layer, so rule 5, "adapters never import other adapters", is checked only between primary and secondary. A probe of hexa with the rule applied within a layer found 48 import edges, about 20 adapter pairs. hexa has graded itself A+ through this.
 

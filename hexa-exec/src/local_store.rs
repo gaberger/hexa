@@ -389,6 +389,18 @@ impl crate::ports::RunLog for LocalRuns {
     }
 }
 
+/// [`ToolLedger`](crate::ports::ToolLedger) on the local proposals and spend files.
+pub struct LocalLedger;
+
+impl crate::ports::ToolLedger for LocalLedger {
+    fn propose_action(&self, kind: &str, payload: &str, source: &str) -> Result<u64, String> {
+        propose_action(kind, payload, source)
+    }
+    fn spend_rows(&self, group_by: &str, limit: usize) -> Vec<Value> {
+        spend_rows(group_by, limit)
+    }
+}
+
 /// [`MemoryStore`](crate::ports::MemoryStore) on `memory.jsonl` files.
 pub struct LocalMemory;
 
