@@ -66,14 +66,25 @@ pub fn served_by_frontier_cli_in(endpoints: &[Endpoint], model: &str) -> bool {
     if let Some(endpoint) = registry::serving(endpoints, model) {
         return matches!(endpoint.provider.to_ascii_lowercase().as_str(), "claude-code" | "claude_code");
     }
+    // A completion, not an agent (ADR-2610270901 §3).
+    if claude_text_model(model).is_some() {
+        return false;
+    }
     model.to_lowercase().starts_with("claude")
 }
 
 /// A `claude-text` id (ADR-2610270901 §4): `None` when `model` is not one,
 /// `Some(None)` for bare `claude-text`, `Some(Some(m))` for `claude-text:m`.
 pub fn claude_text_model(model: &str) -> Option<Option<String>> {
-    let _ = model;
-    unimplemented!("ADR-2610270901: built to its sealed tests")
+    const ID: &str = "claude-text";
+    let head = model.get(..ID.len())?;
+    if !head.eq_ignore_ascii_case(ID) {
+        return None;
+    }
+    match &model[ID.len()..] {
+        "" => Some(None),
+        rest => rest.strip_prefix(':').map(|m| (!m.is_empty()).then(|| m.to_string())),
+    }
 }
 
 /// The `--model` argument to pass the frontier CLI, if any.
@@ -111,7 +122,9 @@ fn adapter_for(model: &str) -> Box<dyn IInferencePort> {
     if let Some(endpoint) = registry::serving(&registry::load(), model) {
         return adapter_for_endpoint(&endpoint);
     }
-    if model.to_lowercase().starts_with("claude") {
+    if let Some(text_model) = claude_text_model(model) {
+        Box::new(ClaudeCodeInferenceAdapter::text(text_model))
+    } else if model.to_lowercase().starts_with("claude") {
         Box::new(ClaudeCodeInferenceAdapter::new(None))
     } else {
         Box::new(OllamaInferenceAdapter::new(None))
@@ -131,6 +144,9 @@ pub fn adapter_for_endpoint(endpoint: &Endpoint) -> Box<dyn IInferencePort> {
         "ollama" => Box::new(OllamaInferenceAdapter::new(Some(endpoint.url.clone()))),
         "anthropic" => Box::new(AnthropicAdapter::new(key, endpoint.model.clone())),
         "claude-code" | "claude_code" => Box::new(ClaudeCodeInferenceAdapter::new(None)),
+        "claude-text" | "claude_text" => {
+            Box::new(ClaudeCodeInferenceAdapter::text(claude_text_model(&endpoint.model).flatten()))
+        }
         // openrouter, openai, openai_compat, vllm, llama-cpp and anything else
         // registered: all of them speak the OpenAI chat-completions shape.
         _ => Box::new(OpenAiCompatAdapter::new(
