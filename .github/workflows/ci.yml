@@ -27,7 +27,10 @@ jobs:
   gates:
     runs-on: ubuntu-24.04
     steps:
+      # Full history: sealed spec tests read the commit at which they were red (ADR-2610221540 §5).
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: Swatinem/rust-cache@v2
       # The TypeScript scaffold's gate is `npm install && npm test`, and it
       # shipped broken because nothing ran it: `node --test <dir>` stopped

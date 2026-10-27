@@ -1,11 +1,11 @@
 ---
 id: ADR-2610270901
-status: proposed
+status: accepted
 date: 2026-10-27
 ---
 # ADR-2610270901: `claude-text` serves Claude as a tool-less completion
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-10-27
 **Drivers:** On 2026-10-27 `hexa spec draft` and `hexa spec tests` could not run. Every tier names an OpenRouter model whose key returns `401 User not found`; local `qwen3.5:27b` answers five tokens in 15 s and times out on a spec; and `claude-code` is refused because ADR-2610221540 §2 forbids a spec author or test writer that can read the repository. The operator: *"just use claude -p."* The drafts for ADR-2610261356, ADR-2610261420 and ADR-2610270853 were then made by hand-copying the `spec draft` prompt into `claude -p --tools ""`. That is the verb bypassed, and the gate's own isolation enforced by a script.
 

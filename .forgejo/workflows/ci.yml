@@ -37,12 +37,14 @@ jobs:
     container:
       image: rust:1-bookworm
     steps:
+      # Full history, not --depth 1: a spec's sealed tests and `hexa spec verify --prove` read the
+      # commit at which they were red (ADR-2610221540 §5), and a shallow clone does not have it.
       - name: checkout
         run: |
           git init -q .
           git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
           git -c http.extraheader="Authorization: Basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)" \
-              fetch -q --depth 1 origin "$GITHUB_SHA"
+              fetch -q origin "$GITHUB_SHA"
           git checkout -q FETCH_HEAD
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -75,11 +77,13 @@ jobs:
       # printed `skipping:` and passed, so on this forge, which merges every PR, the cross-language
       # half of ADR-2610100005's gate never ran (ADR-2610221540 §9). Tarballs, not apt: bookworm's
       # nodejs is 18, and the scaffold declares `engines.node >= 22`; ServeMux patterns need Go 1.22+.
-      - name: Node 22 and Go 1.24 for the cross-language gates
+      # bun runs ADR-2609160100's bench gate (`bench/gate.sh`); without it that gate cannot run here.
+      - name: Node 22, Go 1.24 and bun for the cross-language gates
         run: |
           curl -fsSL https://nodejs.org/dist/v22.11.0/node-v22.11.0-linux-x64.tar.xz | tar -xJ -C /usr/local --strip-components=1
           curl -fsSL https://go.dev/dl/go1.24.0.linux-amd64.tar.gz | tar -xz -C /usr/local
-          node --version && /usr/local/go/bin/go version
+          npm install -g --silent bun@1.1.38
+          node --version && /usr/local/go/bin/go version && bun --version
 
       # HEXA_NO_SKIP turns a skipped case into a failure that says "not proven here": a case this
       # job did not run is not a pass. HEXA_TEST_NPM and HEXA_TEST_CARGO_NET let the TS and axum
@@ -122,7 +126,7 @@ jobs:
           git init -q .
           git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
           git -c http.extraheader="Authorization: Basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)" \
-              fetch -q --depth 1 origin "$GITHUB_SHA"
+              fetch -q origin "$GITHUB_SHA"
           git checkout -q FETCH_HEAD
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

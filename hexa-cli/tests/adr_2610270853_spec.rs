@@ -141,11 +141,9 @@ impl SilentFeed {
         let held = Arc::new(Mutex::new(Vec::new()));
         let c = Arc::clone(&count);
         std::thread::spawn(move || {
-            for stream in listener.incoming() {
-                if let Ok(s) = stream {
-                    c.fetch_add(1, Ordering::SeqCst);
-                    held.lock().unwrap().push(s);
-                }
+            for s in listener.incoming().flatten() {
+                c.fetch_add(1, Ordering::SeqCst);
+                held.lock().unwrap().push(s);
             }
         });
         SilentFeed {

@@ -2032,6 +2032,11 @@ fn program_exists(cmd: &str, root: &std::path::Path, on_path: &dyn Fn(&str) -> b
     if first.starts_with('.') || first.starts_with('/') {
         return root.join(first).exists();
     }
+    // `run_gates` puts its own binary first on the gates' PATH, so `hexa`
+    // there is always the hexa running them, on PATH or not.
+    if first == "hexa" {
+        return true;
+    }
     on_path(first)
 }
 
@@ -2166,6 +2171,12 @@ async fn run_gates(ci: bool, dry_run: bool) -> anyhow::Result<()> {
         &std::env::var("PATH").unwrap_or_default(),
         &|p| p.is_dir(),
     );
+    // A gate that names `hexa` runs this binary, not whichever is installed:
+    // under `cargo run` in CI none is, and an installed one may be stale.
+    let path = match std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf)) {
+        Some(own) => format!("{}:{path}", own.display()),
+        None => path,
+    };
     if dry_run {
         let (mut with, mut without) = (0, 0);
         for f in &files {
@@ -2184,64 +2195,82 @@ async fn run_gates(ci: bool, dry_run: bool) -> anyhow::Result<()> {
         println!("\n  {with} with a gate · {without} without a gate (not run)");
         return Ok(());
     }
-    let (mut passed, mut failed, mut unrunnable, mut here, mut none, mut unproven) = (0, 0, 0, 0, 0, 0);
+    use hexa_core::ports::gate_ledger::{declaration_errors, judge, Outcome, Verdict};
+    let unbuilt = read_unbuilt(&root);
+    let mut gated = std::collections::BTreeMap::new();
+    let (mut passed, mut failed, mut unrunnable, mut here, mut none, mut unproven, mut declared) = (0, 0, 0, 0, 0, 0, 0);
     for f in &files {
         let name = f.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+        let id = adr_id(&name);
         let text = std::fs::read_to_string(f).unwrap_or_default();
-        let outcome = match gate_command(&text) {
-            None => GateRun::None,
-            Some(cmd) if !looks_runnable(&cmd, &root) => GateRun::Unrunnable(cmd),
+        let gate = gate_command(&text);
+        gated.insert(id.clone(), gate.is_some());
+        // What the gate established, and the words that say so.
+        let (outcome, said, tail) = match gate {
+            None => (Outcome::NoGate, String::new(), String::new()),
+            Some(cmd) if !looks_runnable(&cmd, &root) => {
+                (Outcome::Unrunnable, format!("not a runnable command: {}", cmd.dimmed()), String::new())
+            }
             Some(cmd) => {
                 let shell = format!("export PATH={:?} HEXA_NO_SKIP=1; {}", path, cmd);
                 let (ok, out) = hexa_exec::direct_exec::run_evidence(&shell, &root).await;
                 match classify_gate(ok, &out) {
-                    GateOutcome::Passed => GateRun::Passed,
-                    GateOutcome::Failed(tail) => {
-                        failed += 1;
-                        println!("  {} {} — gate failed: {}", "\u{2717}".red(), name, cmd);
-                        for line in tail.lines() {
-                            println!("      {}", line.dimmed());
-                        }
-                        continue;
-                    }
+                    GateOutcome::Passed => (Outcome::Passed, String::new(), String::new()),
+                    GateOutcome::Failed(tail) => (Outcome::Failed, format!("gate failed: {cmd}"), tail),
                     GateOutcome::UnrunnableHere(reason) => {
-                        here += 1;
-                        println!("  {} {} — cannot run here: {}", "\u{2717}".red(), name, reason);
-                        continue;
+                        (Outcome::CannotRunHere, format!("cannot run here: {reason}"), String::new())
                     }
                     GateOutcome::NotProvenHere(reason) => {
-                        unproven += 1;
-                        let mark = if ci { "\u{2717}".red() } else { "?".yellow() };
-                        println!("  {} {} — not proven here: {}", mark, name, reason);
-                        continue;
+                        (Outcome::NotProvenHere, format!("not proven here: {reason}"), String::new())
                     }
                 }
             }
         };
-        match &outcome {
-            GateRun::Passed => {
+        match judge(&id, &outcome, &unbuilt, ci) {
+            Verdict::Passed => {
                 passed += 1;
                 println!("  {} {}", "\u{2713}".green(), name);
             }
-            GateRun::Failed(cmd) => {
-                failed += 1;
-                println!("  {} {} — gate failed: {}", "\u{2717}".red(), name, cmd.dimmed());
+            Verdict::Fails(why) => {
+                match outcome {
+                    Outcome::Unrunnable => unrunnable += 1,
+                    Outcome::CannotRunHere => here += 1,
+                    Outcome::NotProvenHere => unproven += 1,
+                    _ => failed += 1,
+                }
+                // An undeclared gate says what it said; a declared one that passed says why that fails.
+                let line = if said.is_empty() { why } else { said };
+                println!("  {} {} — {}", "\u{2717}".red(), name, line);
+                for l in tail.lines() {
+                    println!("      {}", l.dimmed());
+                }
             }
-            GateRun::Unrunnable(cmd) => {
-                unrunnable += 1;
-                println!("  {} {} — not a runnable command: {}", "\u{2717}".red(), name, cmd.dimmed());
+            Verdict::Unbuilt { reason } => {
+                declared += 1;
+                println!("  {} {} — unbuilt (declared): {}", "\u{25cc}".yellow(), name, reason);
+                if !said.is_empty() {
+                    println!("      {}", said.dimmed());
+                }
             }
-            GateRun::None => {
+            Verdict::Unproven => {
+                unproven += 1;
+                println!("  {} {} — {}", "?".yellow(), name, said);
+            }
+            Verdict::NoGate => {
                 none += 1;
                 println!("  {} {} — records no gate", "\u{25cb}".dimmed(), name);
             }
         }
     }
+    let declaration = declaration_errors(&unbuilt, &gated);
+    for e in &declaration {
+        println!("  {} {}", "\u{2717}".red(), e);
+    }
     println!(
-        "\n  {passed} passed · {failed} failed · {unrunnable} unrunnable · {here} cannot run here · {unproven} not proven here · {none} without a gate"
+        "\n  {passed} passed · {failed} failed · {unrunnable} unrunnable · {here} cannot run here · {unproven} not proven here · {declared} unbuilt (declared) · {none} without a gate"
     );
     let unproven_fails = if ci { unproven } else { 0 };
-    if failed + unrunnable + here + unproven_fails > 0 {
+    if failed + unrunnable + here + unproven_fails + declaration.len() > 0 {
         let mut parts = Vec::new();
         if unproven_fails > 0 {
             parts.push(format!("{unproven_fails} not proven here (--ci)"));
@@ -2255,9 +2284,28 @@ async fn run_gates(ci: bool, dry_run: bool) -> anyhow::Result<()> {
         if here > 0 {
             parts.push(format!("{here} cannot run here"));
         }
+        if !declaration.is_empty() {
+            parts.push(format!("{} wrong in adr.unbuilt", declaration.len()));
+        }
         anyhow::bail!("recorded gate(s) did not pass: {}", parts.join(", "));
     }
     Ok(())
+}
+
+/// `ADR-2610161730` from `ADR-2610161730-the-delegate-runs-…`.
+fn adr_id(stem: &str) -> String {
+    stem.splitn(3, '-').take(2).collect::<Vec<_>>().join("-")
+}
+
+/// `.hexa/project.json → adr.unbuilt` (ADR-2610271110 §1). None declared
+/// when the file or the key is absent.
+fn read_unbuilt(root: &std::path::Path) -> hexa_core::ports::gate_ledger::Unbuilt {
+    std::fs::read_to_string(root.join(".hexa/project.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|v| v.get("adr")?.get("unbuilt")?.as_object().cloned())
+        .map(|m| m.into_iter().filter_map(|(k, v)| Some((k, v.as_str()?.to_string()))).collect())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -2298,6 +2346,12 @@ mod adr_gates {
         assert!(!program_exists("run the suite, then look at the report", root, &path), "a sentence is not a command");
         assert!(!program_exists("Every accepted ADR keeps its gate green", root, &path));
         assert!(!program_exists("", root, &path));
+        // ADR-2610221540's gates are `hexa spec verify <ADR>`. CI runs the
+        // gates with `cargo run`, where no `hexa` is on PATH; the binary
+        // running them is the `hexa` they name.
+        let nothing = |_: &str| false;
+        assert!(program_exists("hexa spec verify ADR-2610221834", root, &nothing), "hexa runs hexa's own gates");
+        assert!(!program_exists("hexagon build", root, &nothing), "only the program named exactly hexa");
 
         // And the real thing, against this machine.
         assert!(looks_runnable("cargo test -p hexa-cli adr_gates", root));

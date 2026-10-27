@@ -1,11 +1,11 @@
 ---
 id: ADR-2610270853
-status: proposed
+status: accepted
 date: 2026-10-27
 ---
 # ADR-2610270853: hexa knows which build it is and says when it is behind
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-10-27
 **Drivers:** On 2026-10-27 the operator ran `hexa spec accept` and got `unrecognized subcommand 'accept'`. The `hexa` on PATH (`~/.local/bin/hexa`) was built that morning from a commit without the spec pipeline; the checkout was 47 commits ahead. Both binaries printed `hexa 26.10.0`, and `hexa self-update --check` said "Already up to date". Nothing could have told them apart. The operator: *"we need to autodetect if we are not running the latest."*
 

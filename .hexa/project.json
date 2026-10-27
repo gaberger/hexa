@@ -103,5 +103,11 @@
       "hexa-infer/src/wiring.rs": "composition-root",
       "scripts/hooks": "adapters/primary"
     }
+  },
+  "adr": {
+    "unbuilt": {
+      "ADR-2610161730": "the delegate_scope test its gate names was never written; the delegate allowlist is not built",
+      "ADR-2610221834": "parallel harden is proposed and not built; its gate is its spec, which is not drafted yet"
+    }
   }
 }
