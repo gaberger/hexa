@@ -78,7 +78,7 @@ fn corpus() -> Vec<String> {
 /// Deterministic pseudo-random strings over `alphabet`.
 fn random_strings(n: usize, alphabet: &str) -> Vec<String> {
     let chars: Vec<char> = alphabet.chars().collect();
-    let mut state: u64 = 0x2610_2713_08u64;
+    let mut state: u64 = 0x0026_1027_1308_u64;
     let mut next = move || {
         state = state
             .wrapping_mul(6364136223846793005)
