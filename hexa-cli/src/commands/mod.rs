@@ -25,6 +25,7 @@ pub mod build;
 pub mod test;
 pub mod gate;
 pub mod update;
+pub mod provenance;
 pub mod worktree;
 pub mod new;
 pub mod hey;

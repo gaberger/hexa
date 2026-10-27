@@ -41,6 +41,7 @@
 //!   producer task, dropping the stream is a no-op beyond dropping the
 //!   already-collected `Vec<String>`.
 
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -91,6 +92,19 @@ pub trait ProcessSpawner: Send + Sync {
         program: &str,
         args: &[String],
     ) -> Result<SpawnedProcess, InferenceError>;
+
+    /// [`ProcessSpawner::spawn`], with `dir` as the child's working
+    /// directory (ADR-2610270901 §1). The default ignores `dir`; a spawner
+    /// that runs real processes must override it.
+    async fn spawn_in(
+        &self,
+        program: &str,
+        args: &[String],
+        dir: &Path,
+    ) -> Result<SpawnedProcess, InferenceError> {
+        let _ = dir;
+        self.spawn(program, args).await
+    }
 
     /// Spawn `program` with `args` and collect stdout as a `Vec<String>`
     /// of lines in order. The default implementation delegates to
@@ -154,6 +168,35 @@ impl ProcessSpawner for TokioProcessSpawner {
             exit_code: output.status.code().unwrap_or(-1),
         })
     }
+
+    async fn spawn_in(
+        &self,
+        program: &str,
+        args: &[String],
+        dir: &Path,
+    ) -> Result<SpawnedProcess, InferenceError> {
+        use std::process::Stdio;
+        let output = tokio::process::Command::new(program)
+            .args(args)
+            .current_dir(dir)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    InferenceError::ProviderUnavailable(format!("claude binary not found: {e}"))
+                } else {
+                    InferenceError::Network(format!("claude spawn error: {e}"))
+                }
+            })?;
+        Ok(SpawnedProcess {
+            stdout: output.stdout,
+            stderr: output.stderr,
+            exit_code: output.status.code().unwrap_or(-1),
+        })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -168,6 +211,17 @@ pub struct ClaudeCodeInferenceAdapter {
     #[allow(dead_code)]
     timeout: Duration,
     spawner: Arc<dyn ProcessSpawner>,
+    mode: Mode,
+}
+
+/// What the spawned CLI is (ADR-2610270901).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Mode {
+    /// `claude -p` with every tool, in the caller's directory.
+    Agent,
+    /// `claude-text`: a tool-less completion in an empty directory, with
+    /// `--model` when one was named.
+    Text { model: Option<String> },
 }
 
 impl ClaudeCodeInferenceAdapter {
@@ -184,6 +238,7 @@ impl ClaudeCodeInferenceAdapter {
             binary_path,
             timeout: Duration::from_secs(timeout_secs),
             spawner: Arc::new(TokioProcessSpawner::new()),
+            mode: Mode::Agent,
         }
     }
 
@@ -199,7 +254,92 @@ impl ClaudeCodeInferenceAdapter {
             binary_path,
             timeout: Duration::from_secs(DEFAULT_TIMEOUT_SECS),
             spawner,
+            mode: Mode::Agent,
         }
+    }
+
+    /// `claude-text` (ADR-2610270901): a tool-less completion, on `model`
+    /// when given, else the CLI's default.
+    pub fn text(model: Option<String>) -> Self {
+        Self { mode: Mode::Text { model }, ..Self::new(None) }
+    }
+
+    /// [`ClaudeCodeInferenceAdapter::text`] with an injected spawner.
+    pub fn text_with_spawner(model: Option<String>, spawner: Arc<dyn ProcessSpawner>) -> Self {
+        Self { mode: Mode::Text { model }, ..Self::with_spawner(None, spawner) }
+    }
+
+    /// One `claude-text` completion (ADR-2610270901 §1–§3): refused when the
+    /// request carries tools, else run in an empty directory of its own that
+    /// is removed whatever the outcome.
+    async fn complete_text(
+        &self,
+        request: &InferenceRequest,
+        model: Option<&str>,
+    ) -> Result<String, InferenceError> {
+        if !request.tools.is_empty() {
+            return Err(InferenceError::ApiError {
+                status: 400,
+                body: format!(
+                    "claude-text is a tool-less completion and cannot run the {} tool(s) this request carries",
+                    request.tools.len()
+                ),
+            });
+        }
+        let args = args_for_text(&request.system_prompt, &conversation(request), model);
+        let dir = EmptyDir::new()?;
+        let result = self.spawner.spawn_in(&self.binary_path, &args, dir.path()).await?;
+        if result.exit_code != 0 {
+            return Err(InferenceError::ApiError {
+                status: http_like_status(result.exit_code),
+                body: format!(
+                    "claude-text exited with {}: {}",
+                    result.exit_code,
+                    String::from_utf8_lossy(&result.stderr)
+                ),
+            });
+        }
+        Ok(String::from_utf8_lossy(&result.stdout).to_string())
+    }
+}
+
+/// A new, empty directory under the system temp dir, removed on drop
+/// (ADR-2610270901 §1): the CLI runs where there is nothing to read.
+struct EmptyDir(PathBuf);
+
+impl EmptyDir {
+    fn new() -> Result<Self, InferenceError> {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        for _ in 0..16 {
+            let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let dir = std::env::temp_dir().join(format!("hexa-claude-text-{}-{nanos}-{n}", std::process::id()));
+            match std::fs::create_dir(&dir) {
+                Ok(()) => return Ok(Self(dir)),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(e) => {
+                    return Err(InferenceError::ProviderUnavailable(format!(
+                        "claude-text could not create its empty directory: {e}"
+                    )))
+                }
+            }
+        }
+        Err(InferenceError::ProviderUnavailable(
+            "claude-text could not create a fresh empty directory".to_string(),
+        ))
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for EmptyDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
     }
 }
 
@@ -217,6 +357,37 @@ fn args_for_prompt(prompt: &str) -> Vec<String> {
         "text".to_string(),
         prompt.to_string(),
     ]
+}
+
+/// Args for one `claude-text` completion (ADR-2610270901 §1, §2, §4): no
+/// tools, no settings, hooks, MCP servers or slash commands, no session
+/// kept, and no `--dangerously-skip-permissions`, since nothing needs one.
+/// The system prompt is the system prompt; the conversation is the prompt,
+/// last.
+fn args_for_text(system: &str, conversation: &str, model: Option<&str>) -> Vec<String> {
+    let mut args: Vec<String> = [
+        "-p",
+        "--tools",
+        "",
+        "--setting-sources",
+        "",
+        "--strict-mcp-config",
+        "--disable-slash-commands",
+        "--no-session-persistence",
+        "--output-format",
+        "text",
+    ]
+    .iter()
+    .map(|a| a.to_string())
+    .collect();
+    if let Some(m) = model {
+        args.extend(["--model".to_string(), m.to_string()]);
+    }
+    if !system.is_empty() {
+        args.extend(["--system-prompt".to_string(), system.to_string()]);
+    }
+    args.push(conversation.to_string());
+    args
 }
 
 /// Args for `claude --version` — intentionally does NOT include
@@ -281,6 +452,19 @@ impl IInferencePort for ClaudeCodeInferenceAdapter {
         request: InferenceRequest,
     ) -> Result<InferenceResponse, InferenceError> {
         let start = std::time::Instant::now();
+        if let Mode::Text { model } = &self.mode {
+            let text = self.complete_text(&request, model.as_deref()).await?;
+            return Ok(InferenceResponse {
+                content: vec![ContentBlock::Text { text }],
+                model_used: request.model.clone(),
+                stop_reason: StopReason::EndTurn,
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+                latency_ms: start.elapsed().as_millis() as u64,
+            });
+        }
         let prompt = collapse_prompt(&request);
         let args = args_for_prompt(&prompt);
 
@@ -312,6 +496,11 @@ impl IInferencePort for ClaudeCodeInferenceAdapter {
         Box<dyn futures_stream::Stream<Item = StreamChunk> + Send + Unpin>,
         InferenceError,
     > {
+        if let Mode::Text { model } = &self.mode {
+            let text = self.complete_text(&request, model.as_deref()).await?;
+            let lines = text.lines().map(str::to_string).collect();
+            return Ok(Box::new(VecStream::from_lines(lines, StopReason::EndTurn)));
+        }
         let prompt = collapse_prompt(&request);
         let args = args_for_prompt(&prompt);
 
@@ -350,14 +539,18 @@ impl IInferencePort for ClaudeCodeInferenceAdapter {
     }
 
     fn capabilities(&self) -> InferenceCapabilities {
+        let (id, tools) = match &self.mode {
+            Mode::Agent => ("claude-code", true),
+            Mode::Text { .. } => ("claude-text", false),
+        };
         InferenceCapabilities {
             models: vec![ModelInfo {
-                id: "claude-code".to_string(),
-                provider: "claude-code".to_string(),
+                id: id.to_string(),
+                provider: id.to_string(),
                 tier: ModelTier::Sonnet,
                 context_window: 200_000,
             }],
-            supports_tool_use: true,
+            supports_tool_use: tools,
             supports_thinking: false,
             supports_caching: false,
             supports_streaming: true,
@@ -386,6 +579,37 @@ fn collapse_prompt(request: &InferenceRequest) -> String {
         }
     }
     request.system_prompt.clone()
+}
+
+/// The whole conversation as one prompt (ADR-2610270901 §2). A single user
+/// message is sent as it is; more turns are labelled and kept in order.
+fn conversation(request: &InferenceRequest) -> String {
+    use hexa_core::ports::inference::Role;
+    let text_of = |m: &hexa_core::ports::inference::Message| -> String {
+        m.content
+            .iter()
+            .filter_map(|b| match b {
+                ContentBlock::Text { text } => Some(text.as_str()),
+                ContentBlock::ToolResult { content, .. } => Some(content.as_str()),
+                ContentBlock::ToolUse { .. } => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    match request.messages.as_slice() {
+        [only] if only.role == Role::User => text_of(only),
+        turns => turns
+            .iter()
+            .map(|m| {
+                let who = match m.role {
+                    Role::User => "User",
+                    Role::Assistant => "Assistant",
+                };
+                format!("{who}:\n{}", text_of(m))
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n"),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -427,6 +651,16 @@ pub mod testing {
     pub struct MockProcessSpawner {
         responses: Mutex<VecDeque<MockResponse>>,
         calls: Mutex<Vec<(String, Vec<String>)>>,
+        dirs: Mutex<Vec<DirSeen>>,
+    }
+
+    /// The working directory of one [`ProcessSpawner::spawn_in`] call, as
+    /// it stood while the child ran.
+    #[derive(Debug, Clone)]
+    pub struct DirSeen {
+        pub path: PathBuf,
+        pub existed: bool,
+        pub empty: bool,
     }
 
     impl MockProcessSpawner {
@@ -434,7 +668,13 @@ pub mod testing {
             Self {
                 responses: Mutex::new(responses.into_iter().collect()),
                 calls: Mutex::new(Vec::new()),
+                dirs: Mutex::new(Vec::new()),
             }
+        }
+
+        /// Every directory a `spawn_in` call ran in, in call order.
+        pub fn dirs(&self) -> Vec<DirSeen> {
+            self.dirs.lock().unwrap().clone()
         }
 
         /// Returns every `(program, args)` tuple the spawner has seen,
@@ -479,6 +719,17 @@ pub mod testing {
                 MockResponse::Ok(p) => Ok(p),
                 MockResponse::Err(e) => Err(e),
             }
+        }
+
+        async fn spawn_in(
+            &self,
+            program: &str,
+            args: &[String],
+            dir: &Path,
+        ) -> Result<SpawnedProcess, InferenceError> {
+            let empty = std::fs::read_dir(dir).map(|mut d| d.next().is_none()).unwrap_or(false);
+            self.dirs.lock().unwrap().push(DirSeen { path: dir.to_path_buf(), existed: dir.is_dir(), empty });
+            self.spawn(program, args).await
         }
     }
 }

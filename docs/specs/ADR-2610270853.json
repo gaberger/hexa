@@ -1,0 +1,381 @@
+{
+  "adr": "ADR-2610270853",
+  "feature": "build provenance and staleness detection",
+  "description": "Each hexa binary embeds the commit it was built from. It reports when it is behind its own source checkout or a published release, says Unknown when it has nothing to compare against, and gives this advice only at session start and in `hexa doctor`.",
+  "universal": [
+    "§4",
+    "§5",
+    "§7"
+  ],
+  "accepted": {
+    "by": "gary",
+    "sha256": "baaa06009ec2799c9a8cdacf1b215faff32221259f18559af9d313fb01e25e6e"
+  },
+  "sealed": {
+    "hexa-cli/tests/adr_2610270853_spec.rs": "d79b8a1f4f6629bbfff9025f6bad5d7200726160d6113848e360bd16ff18b5f3"
+  },
+  "red": "bde4636",
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A clean build from a git tree prints its version and short commit",
+      "given": "hexa-cli is built from a clean git tree at commit a4d8d3c… with crate version 26.10.0",
+      "when": "the operator runs `hexa --version`",
+      "then": "the output is `hexa 26.10.0 (a4d8d3c)`, and the embedded Build has version \"26.10.0\", commit Some(the full commit hash) and dirty false",
+      "test": "hexa-cli/tests/adr_2610270853_spec.rs::s01_clean_build_prints_version_and_short_commit"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A dirty build is marked dirty",
+      "given": "hexa-cli is built from a git tree at commit a4d8d3c… that has uncommitted changes",
+      "when": "the operator runs `hexa --version`",
+      "then": "the output contains `26.10.0`, the short commit `a4d8d3c` and `-dirty`, and the embedded Build has dirty true",
+      "test": "hexa-cli/tests/adr_2610270853_spec.rs::s02_dirty_build_is_marked_dirty"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A build outside a git tree claims no commit",
+      "given": "hexa-cli is built from a source tree that is not inside a git repository",
+      "when": "the operator runs `hexa --version`",
+      "then": "the embedded Build has commit None, and the output names the version but no commit and no `-dirty`",
+      "test": "hexa-cli/tests/adr_2610270853_spec.rs::s03_build_outside_git_claims_no_commit"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A clean build is not marked dirty",
+      "given": "hexa-cli is built from a git tree with no uncommitted changes",
+      "when": "the operator runs `hexa --version`",
+      "then": "the output does not contain `-dirty`, and the embedded Build has dirty false",
+      "test": "hexa-cli/tests/adr_2610270853_spec.rs::s04_clean_build_is_not_marked_dirty"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "The case from Drivers: a binary 47 source commits behind its checkout",
+      "given": "Build { version: \"26.10.0\", commit: Some(\"d4eb586…\"), dirty: false } and a Checkout with knows_build true, build_is_ancestor true, source_commits_behind 47, and latest_release Some(\"26.10.0\")",
+      "when": "staleness(build, Some(checkout), latest_release) is called",
+      "then": "the result contains BehindCheckout { commits: 47 } and does not contain Current",
+      "test": "hexa-cli/tests/adr_2610270853_spec.rs::s05_binary_47_source_commits_behind_checkout"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "Only commits that change the binary's sources are counted",
+      "given": "a build commit that is an ancestor of HEAD, with 30 commits between them, 12 of which change crate sources, manifests, Cargo.lock or hexa-cli/assets/, so the git adapter reports source_commits_behind 12",
+      "when": "staleness is called with that Checkout",
+      "then": "the result contains BehindCheckout { commits: 12 }, not 30",
+      "test": "hexa-cli/tests/adr_2610270853_spec.rs::s06_only_source_commits_are_counted"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "A docs-only gap is not reported as behind",
+      "given": "a Build with a commit and a Checkout with knows_build true, build_is_ancestor true, source_commits_behind 0 (HEAD differs from the build only by docs commits), and latest_release equal to the build's version",
+      "when": "staleness is called",
+      "then": "the result contains no BehindCheckout and no Unknown, and every finding's advice is None",
+      "test": "hexa-cli/tests/adr_2610270853_spec.rs::s07_docs_only_gap_is_not_behind"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "A binary built from HEAD is not behind",
+      "given": "a Build whose commit equals the Checkout's head, with knows_build true, build_is_ancestor true, source_commits_behind 0",
+      "when": "staleness is called",
+      "then": "the result contains no BehindCheckout",
+      "test": "hexa-cli/tests/adr_2610270853_spec.rs::s08_binary_built_from_head_is_not_behind"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "A build commit the repository has, but not on the current branch, is named OffBranch",
+      "given": "a Build with a commit and a Checkout with knows_build true and build_is_ancestor false",
+      "when": "staleness is called",
+      "then": "the result contains OffBranch",
+      "test": "hexa-cli/tests/adr_2610270853_spec.rs::s09_off_branch_build_is_named"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "An off-branch build is not judged behind and not called current",
+      "given": "a Build with a commit and a Checkout with knows_build true, build_is_ancestor false and source_commits_behind 5",
+      "when": "staleness is called",
+      "then": "the result contains no BehindCheckout and no Current",
+      "test": "hexa-cli/tests/adr_2610270853_spec.rs::s10_off_branch_is_not_behind_nor_current"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "A repository without the build commit gets no checkout claim",
+      "given": "a Build with a commit and a Checkout with knows_build false, build_is_ancestor false, source_commits_behind 0, and latest_release Some(\"26.10.0\") equal to the build's version",
+      "when": "staleness is called",
+      "then": "the result contains neither BehindCheckout nor OffBranch",
+      "test": "hexa-cli/tests/adr_2610270853_spec.rs::s11_unknown_build_commit_gets_no_checkout_claim"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "A higher published release is reported with its version",
+      "given": "Build { version: \"26.10.0\", … } and latest_release Some(\"26.11.0\")",
+      "when": "staleness is called",
+      "then": "the result contains BehindRelease { latest: \"26.11.0\" }",
+      "test": "hexa-cli/tests/adr_2610270853_spec.rs::s12_higher_release_is_reported"
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "Release ordering compares versions numerically, as in ADR-2609151700",
+      "given": "Build { version: \"26.9.0\", … } and latest_release Some(\"26.10.0\")",
+      "when": "staleness is called",
+      "then": "the result contains BehindRelease { latest: \"26.10.0\" }",
+      "test": "hexa-cli/tests/adr_2610270853_spec.rs::s13_release_ordering_is_numeric"
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "Equal versions are not behind, whatever the commit",
+      "given": "Build { version: \"26.10.0\", commit: Some(any commit), dirty: either } and latest_release Some(\"26.10.0\")",
+      "when": "staleness is called",
+      "then": "the result contains no BehindRelease",
+      "test": "hexa-cli/tests/adr_2610270853_spec.rs::s14_equal_versions_are_not_behind"
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "A lower release is not behind, and the comparison is not lexical",
+      "given": "Build { version: \"26.10.0\", … } and latest_release Some(\"26.9.0\")",
+      "when": "staleness is called",
+      "then": "the result contains no BehindRelease",
+      "test": "hexa-cli/tests/adr_2610270853_spec.rs::s15_lower_release_is_not_behind"
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§4"
+      ],
+      "kind": "property",
+      "description": "No build is behind a release equal to its own version",
+      "given": "any Build b and any Checkout or None",
+      "when": "staleness(b, checkout, Some(b.version)) is called",
+      "then": "the result contains no BehindRelease",
+      "test": "hexa-cli/tests/adr_2610270853_spec.rs::s16_property_never_behind_own_version"
+    },
+    {
+      "id": "S17",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "The session hook asks the release feed at most once in 24 hours",
+      "given": "a release answer was cached in ~/.hexa/ less than 24 hours ago",
+      "when": "a session starts",
+      "then": "no request goes to the release feed, and the cached latest release is passed to staleness",
+      "test": "hexa-cli/tests/adr_2610270853_spec.rs::s17_session_hook_uses_cached_release"
+    },
+    {
+      "id": "S18",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "A failed or slow fetch is not retried in the same window and does not hold up the session",
+      "given": "the cache is older than 24 hours and the release feed does not answer within two seconds, or the request fails",
+      "when": "a session starts, and then another session starts within 24 hours",
+      "then": "the first session gives up on the fetch after no more than about two seconds, and the second session makes no request to the feed",
+      "test": "hexa-cli/tests/adr_2610270853_spec.rs::s18_slow_fetch_gives_up_and_is_not_retried"
+    },
+    {
+      "id": "S19",
+      "decision": [
+        "§5"
+      ],
+      "kind": "example",
+      "description": "A build with no commit and no cached release is Unknown",
+      "given": "Build { version: \"26.10.0\", commit: None, dirty: false }, any Checkout or None, and latest_release None",
+      "when": "staleness is called",
+      "then": "the result contains Unknown { why } with a non-empty why",
+      "test": "hexa-cli/tests/adr_2610270853_spec.rs::s19_no_commit_no_release_is_unknown"
+    },
+    {
+      "id": "S20",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "A check that could not be made is never reported as Current",
+      "given": "Build with commit None and latest_release None",
+      "when": "staleness is called",
+      "then": "the result does not contain Current",
+      "test": "hexa-cli/tests/adr_2610270853_spec.rs::s20_unmade_check_is_not_current"
+    },
+    {
+      "id": "S21",
+      "decision": [
+        "§5"
+      ],
+      "kind": "property",
+      "description": "No comparison is never a pass",
+      "given": "any Build with commit None, any Checkout or None, and latest_release None",
+      "when": "staleness is called",
+      "then": "the result is non-empty, contains Unknown, and contains no Current",
+      "test": "hexa-cli/tests/adr_2610270853_spec.rs::s21_property_no_comparison_is_never_a_pass"
+    },
+    {
+      "id": "S22",
+      "decision": [
+        "§5",
+        "§6"
+      ],
+      "kind": "example",
+      "description": "hexa doctor prints Unknown",
+      "given": "a hexa binary built outside a git tree, with no release answer cached in ~/.hexa/",
+      "when": "the operator runs `hexa doctor`",
+      "then": "the output includes a line saying that whether the build is stale is unknown, and why",
+      "test": "hexa-cli/tests/adr_2610270853_spec.rs::s22_doctor_prints_unknown"
+    },
+    {
+      "id": "S23",
+      "decision": [
+        "§6"
+      ],
+      "kind": "example",
+      "description": "Checkout-gap advice is one line with the rebuild command",
+      "given": "Staleness BehindCheckout { commits: 47 }",
+      "when": "advice is called",
+      "then": "it returns Some(line), the line contains no newline, contains `47`, and contains `cargo build -p hexa-cli --release`",
+      "test": "hexa-cli/tests/adr_2610270853_spec.rs::s23_checkout_gap_advice"
+    },
+    {
+      "id": "S24",
+      "decision": [
+        "§6"
+      ],
+      "kind": "example",
+      "description": "Release-gap advice is one line with the update command",
+      "given": "Staleness BehindRelease { latest: \"26.11.0\" }",
+      "when": "advice is called",
+      "then": "it returns Some(line), the line contains no newline, contains `26.11.0`, and contains `hexa self-update`",
+      "test": "hexa-cli/tests/adr_2610270853_spec.rs::s24_release_gap_advice"
+    },
+    {
+      "id": "S25",
+      "decision": [
+        "§6"
+      ],
+      "kind": "example",
+      "description": "The session-start hook prints one advice line per finding",
+      "given": "a binary that is behind its checkout and also behind a cached release",
+      "when": "the session-start hook runs",
+      "then": "it prints two lines: one with `cargo build -p hexa-cli --release` and the install path, and one with `hexa self-update`",
+      "test": "hexa-cli/tests/adr_2610270853_spec.rs::s25_one_advice_line_per_finding"
+    },
+    {
+      "id": "S26",
+      "decision": [
+        "§6"
+      ],
+      "kind": "negative",
+      "description": "Current gives no advice",
+      "given": "Staleness Current",
+      "when": "advice is called",
+      "then": "it returns None",
+      "test": "hexa-cli/tests/adr_2610270853_spec.rs::s26_current_gives_no_advice"
+    },
+    {
+      "id": "S27",
+      "decision": [
+        "§6"
+      ],
+      "kind": "negative",
+      "description": "Commands other than session start and doctor print no staleness warning",
+      "given": "a binary that is behind its checkout",
+      "when": "hexa is called from a per-tool-use hook, or runs any command other than the session-start hook and `hexa doctor`",
+      "then": "its output contains no staleness advice",
+      "test": "hexa-cli/tests/adr_2610270853_spec.rs::s27_other_commands_print_no_staleness_advice"
+    },
+    {
+      "id": "S28",
+      "decision": [
+        "§7"
+      ],
+      "kind": "example",
+      "description": "A binary behind both its checkout and a release reports both",
+      "given": "Build { version: \"26.10.0\", commit: Some(c) }, a Checkout with knows_build true, build_is_ancestor true, source_commits_behind 3, and latest_release Some(\"26.11.0\")",
+      "when": "staleness is called",
+      "then": "the result contains both BehindCheckout { commits: 3 } and BehindRelease { latest: \"26.11.0\" }",
+      "test": "hexa-cli/tests/adr_2610270853_spec.rs::s28_behind_both_reports_both"
+    },
+    {
+      "id": "S29",
+      "decision": [
+        "§7"
+      ],
+      "kind": "negative",
+      "description": "One finding does not hide another",
+      "given": "the inputs of S28",
+      "when": "staleness is called",
+      "then": "the result does not contain only one of BehindCheckout and BehindRelease, and does not contain Current",
+      "test": "hexa-cli/tests/adr_2610270853_spec.rs::s29_one_finding_does_not_hide_another"
+    },
+    {
+      "id": "S30",
+      "decision": [
+        "§7"
+      ],
+      "kind": "property",
+      "description": "Detection is pure and deterministic",
+      "given": "any Build, any Checkout or None, and any latest_release",
+      "when": "staleness is called twice with the same arguments, with no git repository or network available",
+      "then": "both calls return equal results, and neither reads git nor the release feed",
+      "test": "hexa-cli/tests/adr_2610270853_spec.rs::s30_property_detection_is_pure_and_deterministic"
+    }
+  ]
+}

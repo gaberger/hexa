@@ -282,6 +282,12 @@ pub async fn run(event: HookEvent) -> Result<()> {
 // ── Event handlers ───────────────────────────────────────────────────
 
 async fn session_start(project_dir: &Path) -> Result<()> {
+    // Before anything else, and in any directory: a stale binary is what
+    // every later line of this session would be read through (ADR-2610270853 §6).
+    for line in crate::commands::provenance::session_lines(project_dir).await {
+        println!("{} {}", "\u{26a0}".yellow(), line);
+    }
+
     let project_json = project_dir.join(".hexa/project.json");
 
     if !project_json.exists() {

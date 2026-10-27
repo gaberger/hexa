@@ -31,7 +31,7 @@ use commands::{
 #[derive(Parser)]
 #[command(
     name = "hexa",
-    version,
+    version = env!("HEXA_VERSION_LINE"),
     about = "Hexagonal architecture for LLM-driven development"
 )]
 struct Cli {
