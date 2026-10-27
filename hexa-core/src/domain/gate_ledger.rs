@@ -35,16 +35,40 @@ pub enum Verdict {
 /// `adr.unbuilt` in `.hexa/project.json`: ADR id → why it is not built yet.
 pub type Unbuilt = BTreeMap<String, String>;
 
-/// The verdict for `adr`, whose gate gave `outcome`.
+/// The verdict for `adr`, whose gate gave `outcome` (§2, §3, §5).
 pub fn judge(adr: &str, outcome: &Outcome, unbuilt: &Unbuilt, ci: bool) -> Verdict {
-    let _ = (adr, outcome, unbuilt, ci);
-    unimplemented!("ADR-2610271110: built to its sealed spec")
+    if let Some(reason) = unbuilt.get(adr) {
+        return match outcome {
+            // Built, so the declaration is now false (§3).
+            Outcome::Passed => Verdict::Fails(format!(
+                "{adr} is declared unbuilt but its gate passes: remove it from adr.unbuilt"
+            )),
+            // A declared id with no gate is the declaration's error (§4), not the gate's.
+            Outcome::NoGate => Verdict::NoGate,
+            _ => Verdict::Unbuilt { reason: reason.clone() },
+        };
+    }
+    match outcome {
+        Outcome::Passed => Verdict::Passed,
+        Outcome::Failed => Verdict::Fails("gate failed".to_string()),
+        Outcome::Unrunnable => Verdict::Fails("not a runnable command".to_string()),
+        Outcome::CannotRunHere => Verdict::Fails("cannot run here".to_string()),
+        Outcome::NotProvenHere if ci => Verdict::Fails("not proven here (--ci)".to_string()),
+        Outcome::NotProvenHere => Verdict::Unproven,
+        Outcome::NoGate => Verdict::NoGate,
+    }
 }
 
-/// What is wrong with the declaration itself: an id that names no ADR, or
-/// names one that records no gate. `gated` maps every ADR id to whether it
-/// records a gate.
+/// What is wrong with the declaration itself (§4): an id that names no ADR,
+/// or names one that records no gate. `gated` maps every ADR id to whether
+/// it records a gate. One error per bad id, in id order.
 pub fn declaration_errors(unbuilt: &Unbuilt, gated: &BTreeMap<String, bool>) -> Vec<String> {
-    let _ = (unbuilt, gated);
-    unimplemented!("ADR-2610271110: built to its sealed spec")
+    unbuilt
+        .keys()
+        .filter_map(|id| match gated.get(id) {
+            Some(true) => None,
+            Some(false) => Some(format!("adr.unbuilt names {id}, which records no gate")),
+            None => Some(format!("adr.unbuilt names {id}, which names no ADR in docs/adrs/")),
+        })
+        .collect()
 }
