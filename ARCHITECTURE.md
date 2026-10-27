@@ -126,7 +126,7 @@ Seven crates, one binary. The dependency direction is the architecture:
 
 | Crate | Role |
 |---|---|
-| **hexa-core** | The contract surface: the inference port and its mock, message/tool/validation types, value types, and `ports::edit` — the critical-path rule every editing adapter must obey. **Zero runtime dependencies**. Nothing below can bleed a runtime concern upward. |
+| **hexa-core** | The contract surface: the inference port and its mock, message/tool/validation types, value types, `ports::edit` — the critical-path rule every editing adapter must obey — `ports::spec`, the coverage rule a spec is checked against, and `ports::provenance`, the judgement of whether a binary is behind its checkout or a release. **Zero runtime dependencies**. Nothing below can bleed a runtime concern upward. |
 | **hexa-infer** | Every inference adapter (`adapters/secondary/`), behind its ports: `Backends`, `Discovery`, `EndpointRegistry`, and `LocalProvider`, the local runtime's identity. `complete.rs` is the use case; `wiring.rs` picks the adapter that serves a model. **No file outside this crate names a provider or a model.** |
 | **hexa-exec** | The agent loop, per-run worktree isolation, the adversarial harness, transcript compression, the guarded tool library, the file-backed local store — the loop and harness as use cases, everything they touch behind `Tool`, `Worktrees`, `Frontier`, `RunLog`, `MemoryStore` and `Provenance`. `do_task.rs` picks the loop for a task. |
 | **hexa-analysis** | Tree-sitter boundary checking (the parser behind `AstPort`), the one layer classifier and the project's layer map, cross-package import resolution, dead-export and cycle detection, the coverage ceiling, the layer inventory, rule conformance, the architecture fingerprint, six health detectors. Powers `hexa analyze`. |
@@ -142,7 +142,10 @@ and never constructs an adapter.
 ## The loop, and the hooks that keep it
 
 Decide (an ADR) → Gate (the command that must exit 0, written before the code)
-→ Build → Harden. `hexa loop` records where a project's work stands in
+→ Build → Harden. Since ADR-2610221540 the gate of a new decision is its spec:
+`hexa spec draft` writes scenarios from the ADR and its ports alone, a person
+runs `hexa spec accept`, and `hexa spec tests` turns each scenario into a test
+that must fail before the code exists, then seals it. `hexa loop` records where a project's work stands in
 `.hexa/loop.json`: the ADR, the gate and the stage. The file is committed
 with the branch, so it travels with the pull request; the ADR it names is the
 durable record a reviewer reads, and `hexa loop adr` refuses an ADR that is
@@ -155,7 +158,7 @@ short process that reads the harness's JSON payload; the payload's
 
 | Hook | What it does |
 |---|---|
-| `session-start` | prints the architecture fingerprint and where the work stands |
+| `session-start` | first, in any directory, one line per way this binary is stale (behind its checkout, off its branch, behind a release); then the architecture fingerprint and where the work stands |
 | `route` | sizes the prompt (T1 trivial, T2 a change with a shape, T3 feature-sized); on T2 and T3 prints the loop, on T3 drafts a workplan |
 | `pre-edit` | boundary check; in a T2 or T3 session with no gate recorded, stops the edit in mandatory mode and warns in advisory mode. A block prints its reason on stderr; a file outside the project is not held to the project's rules |
 | `pre-bash` | stops destructive commands |
@@ -180,6 +183,8 @@ All of it is files on disk.
 | Registered inference backends | `~/.hexa/inference-servers.json` (`hexa config inference`) |
 | Code knowledge graph | `graph-out/graph.json` (`hexa graph build`) |
 | ADRs, workplans | `docs/` |
+| A decision's accepted scenarios, test refs, `red` commit and seal | `docs/specs/<ADR>.json` (`hexa spec`) |
+| The newest release, asked at most once a day | `~/.hexa/release-check.json` |
 | Project config and rules | `.hexa/project.json`, `.hexa/ADR-rules.toml` |
 
 Files rather than a database because every reader is a short-lived process on one
@@ -206,7 +211,7 @@ performance: measured here, the top-leaderboard local model scored last on the g
 ## Hexagonal rules, enforced
 
 `hexa analyze` walks the AST and checks these. hexa obeys them itself: **A+ / 100 /
-0 boundary violations, 0 cycles, 149/149 files in a layer**, with every import
+0 boundary violations, 0 cycles, 165/165 files in a layer**, with every import
 between its crates checked. `hexa_grades_itself_by_ratchet` fails on any new
 violation.
 

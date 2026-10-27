@@ -58,11 +58,10 @@ The most-cited decision of all, referenced 39 times, did not exist. Nothing
 raised an error, because nothing read a citation against the ledger. A document
 that cannot fail is indistinguishable from a document that is wrong.
 
-`hexa adr doctor` is the gate that closed it: 153 ids are cited today and 2
-resolve to nothing, both of them test fixtures. The audit that found it is
+`hexa adr doctor` is the gate that closed it: no cited id resolves to nothing,
+and CI fails the build if one does. The audit that found it is
 [`docs/analysis/2609151900-adrs-as-memory-investigation.md`](docs/analysis/2609151900-adrs-as-memory-investigation.md),
-and [`docs/EVIDENCE.md`](docs/EVIDENCE.md) carries the command that re-derives
-both numbers.
+and [`docs/EVIDENCE.md`](docs/EVIDENCE.md) carries the command.
 
 | | spec-driven | gate-driven |
 |---|---|---|
@@ -72,7 +71,18 @@ both numbers.
 | What decides done | a human reading two documents | the exit code |
 
 A gate is executable, so it fails the moment it stops being true. That is the
-whole difference, and it is why hexa has no spec step.
+whole difference, and it is why a spec in hexa is not prose. A decision record
+is compiled to given/when/then scenarios by a model that sees the decision and
+its ports, never the code. A person reads and accepts them. Each becomes a
+sealed test that must fail before the code exists, and no agent commit may edit
+it:
+
+```bash
+hexa spec draft <ADR>                 # scenarios from the ADR and its ports alone
+hexa spec accept <ADR>                # a person accepts what "correct" will mean
+hexa spec tests <ADR> --crate <dir>   # one test per scenario, each red, sealed
+hexa spec verify --ci                 # every sealed test, run alone; drift fails
+```
 
 ## Quick start
 
@@ -83,6 +93,8 @@ hexa bootstrap                       # prerequisites, inference server, config
 
 That installs one binary from the latest release; `hexa self-update` keeps
 it current, and `cargo build -p hexa-cli --release` builds it from source.
+`hexa --version` names the commit it was built from, and a session opens with
+a warning when the binary is behind its own checkout or a newer release.
 
 **Scaffold**
 
@@ -169,7 +181,7 @@ With the hooks installed, a session opens by printing where the work stands,
 a feature-sized edit with no recorded gate is stopped, and a code-writing
 subagent must run in its own worktree.
 
-It scaffolds Rust, Go and TypeScript. `hexa --help` lists all 27 verbs.
+It scaffolds Rust, Go and TypeScript. `hexa --help` lists every verb.
 [Getting started](docs/GETTING-STARTED.md) has the longer version.
 
 ---
@@ -450,8 +462,8 @@ Measure your own with `hexa bench agentic`.
 
 ## Architecture
 
-Seven crates, one binary, about 58k lines of source. hexa obeys its own rules:
-**A+, 100 of 100 — zero boundary violations, zero cycles** — with all 149 of its
+Seven crates, one binary, about 67k lines of Rust. hexa obeys its own rules:
+**A+, 100 of 100 — zero boundary violations, zero cycles** — with all 165 of its
 source files in a layer and every import between its crates checked, `super::`
 and inline Rust paths included. A ratchet test fails on any new violation. It
 excludes two paths, its embedded scaffold templates and its benchmark fixtures,

@@ -43,6 +43,23 @@ URL. hexa normalises both.
 CLI. That path needs no API key and has no memory ceiling. `hexa do` reaches it as
 a fallback when the local candidates fail.
 
+### The same login as a completion: `claude-text`
+
+`claude-code` is an agent: it runs tools in your checkout. The spec author and
+the test writer must see only the ADR and its ports, so `hexa spec draft` and
+`hexa spec tests` refuse it. `claude-text` is the same logged-in CLI as a plain
+completion. It runs with no tools, no settings, hooks, MCP servers or slash
+commands, in an empty directory that is removed afterwards, and it refuses a
+request that carries tools.
+
+```bash
+hexa spec draft <ADR> --model claude-text
+hexa spec tests <ADR> --model claude-text --crate <dir>
+```
+
+`claude-text:<model>` passes `<model>` to the CLI; bare `claude-text` uses its
+default. Any tier may name it like any other model (ADR-2610270901).
+
 ## Tiers
 
 A task's tier selects a model. The mapping lives in `.hexa/project.json`.
