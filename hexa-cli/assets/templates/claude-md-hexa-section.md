@@ -78,8 +78,10 @@ Three rules govern it:
 1. **domain/** imports only from **domain/**.
 2. **ports/** imports from **domain/** only, for value types.
 3. **usecases/** imports from **domain/** and **ports/** only.
-4. **adapters/primary/** imports from **ports/** only.
-5. **adapters/secondary/** imports from **ports/** only.
+4. **adapters/primary/** imports from **ports/** and **usecases/**: a driving
+   adapter may call a use case. Never **domain/** directly.
+5. **adapters/secondary/** imports from **ports/** only. A driven adapter
+   calling back into **usecases/** inverts the dependency.
 6. **Adapters NEVER import other adapters.**
 7. The **composition root** is the only file that imports an adapter.
 8. Relative imports in TypeScript use `.js` extensions (NodeNext).

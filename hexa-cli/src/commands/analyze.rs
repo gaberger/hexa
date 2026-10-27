@@ -112,6 +112,10 @@ pub async fn run(
     let mut all_violation_count = 0usize;
     // The final score, for the --grade floor at the end.
     let mut final_score: Option<u64> = None;
+    // The violations the score was computed from. `all_violation_count` sums
+    // the import scan and the deep pass, which see the same edge twice; it is
+    // right for "any?" and wrong as a number to print next to the grade.
+    let mut graded_violations: Option<usize> = None;
 
     // If --ADR-compliance flag is set, skip boundary analysis entirely
     if !adr_compliance_only {
@@ -357,6 +361,7 @@ pub async fn run(
                     }
                 }
                 parsed_files = Some(result.file_count);
+                graded_violations = Some(result.violations.len());
                 println!(
                     "    {} Analysed {} files, {} import edges",
                     if result.file_count == 0 { "\u{26a0}".yellow() } else { "\u{2713}".green() },
@@ -677,6 +682,25 @@ pub async fn run(
                         score
                     );
                     std::process::exit(1);
+                }
+                // The floor held, but a letter can hide a violation: one costs
+                // 10 points, and 90 is an A (ADR-2610261420). A pass that let
+                // one through says so, rather than reading as "no violations".
+                if total_violations > 0 {
+                    let plural = |n: usize, word: &str| format!("{n} {word}{}", if n == 1 { "" } else { "s" });
+                    let boundary = graded_violations.unwrap_or(all_violation_count);
+                    let mut what = plural(boundary, "boundary violation");
+                    if adr_errors > 0 {
+                        what = format!("{what} and {}", plural(adr_errors, "rule error"));
+                    }
+                    println!();
+                    println!(
+                        "  {} grade {} passes the floor {} with {} — --grade is a letter floor; add --exit-code to fail on any",
+                        "!".yellow(),
+                        letter.bold(),
+                        floor.bold(),
+                        what
+                    );
                 }
             }
             None => anyhow::bail!("--grade {floor}: no grade was computed"),

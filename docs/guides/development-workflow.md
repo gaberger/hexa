@@ -58,8 +58,10 @@ hexa do run "<task>" --file <path> --evidence "<cmd>"
 hexa edits, runs the command, and commits only on exit 0. A failed edit is
 reverted, so each attempt starts from the original file.
 
-For a scaffolded project there is a second gate. `--grade A` fails the build if
-the architecture grade falls below it.
+For a scaffolded project there is a second gate. `hexa scaffold --grade A` fails
+the build if the architecture grade falls below it or any import crosses a
+boundary. In CI, gate on `hexa analyze . --grade A --exit-code`: `--grade` alone
+is a letter floor, and one violation still grades A.
 
 ## 5. Harden
 
