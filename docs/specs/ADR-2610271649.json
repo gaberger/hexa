@@ -11,6 +11,10 @@
     "by": "gary",
     "sha256": "af4871c6564f6c41cde3892029b9876acda8271c65cb76fa1147e2a0b0a9581a"
   },
+  "sealed": {
+    "hexa-cli/tests/adr_2610271649_spec.rs": "690b0f4356390a1e58e1009c8bac986382864bea0c39655d0571e33f471337f6"
+  },
+  "red": "3a4b3c2",
   "specs": [
     {
       "id": "S01",
@@ -21,7 +25,8 @@
       "description": "A file listed by an analyze.adapters group belongs to that group's adapter.",
       "given": "An AdapterMap built with groups [(\"cli\", [\"hexa-cli/src/commands\", \"hexa-cli/src/fmt.rs\"])] and no layer keys.",
       "when": "adapter_of is called for \"hexa-cli/src/fmt.rs\" and for \"hexa-cli/src/commands/analyze.rs\", each with layer AdaptersPrimary.",
-      "then": "Both calls return Some(\"cli\")."
+      "then": "Both calls return Some(\"cli\").",
+      "test": "hexa-cli/tests/adr_2610271649_spec.rs::s01_a_grouped_file_belongs_to_its_group"
     },
     {
       "id": "S02",
@@ -32,7 +37,8 @@
       "description": "With no group, the longest analyze.layers key the file is under names its adapter.",
       "given": "An AdapterMap with layer keys [\"crates/x/src/adapters\", \"crates/x/src/adapters/store\"] and no groups.",
       "when": "adapter_of is called for \"crates/x/src/adapters/store/disk.rs\" and for \"crates/x/src/adapters/store/mem.rs\" (AdaptersSecondary), and for \"crates/x/src/adapters/mail.rs\" (AdaptersSecondary).",
-      "then": "The two store files get the same adapter. The mail file gets a different adapter from them, because the key covering it is the shorter \"crates/x/src/adapters\" key and not the store key."
+      "then": "The two store files get the same adapter. The mail file gets a different adapter from them, because the key covering it is the shorter \"crates/x/src/adapters\" key and not the store key.",
+      "test": "hexa-cli/tests/adr_2610271649_spec.rs::s02_longest_layer_key_names_the_adapter"
     },
     {
       "id": "S03",
@@ -43,7 +49,8 @@
       "description": "With no group and no layer key, the first path segment below adapters/secondary/ or adapters/primary/ names the adapter.",
       "given": "An AdapterMap with no layer keys and no groups.",
       "when": "adapter_of is called with AdaptersSecondary for \"src/adapters/secondary/sqlite/repo.rs\", \"src/adapters/secondary/sqlite/schema.rs\" and \"src/adapters/secondary/http/client.rs\", and with AdaptersPrimary for \"src/adapters/primary/web/routes.rs\".",
-      "then": "The two sqlite files return the same Some value. The http file and the web file each return a Some value different from the sqlite one and from each other."
+      "then": "The two sqlite files return the same Some value. The http file and the web file each return a Some value different from the sqlite one and from each other.",
+      "test": "hexa-cli/tests/adr_2610271649_spec.rs::s03_first_segment_below_adapters_folder_names_the_adapter"
     },
     {
       "id": "S04",
@@ -54,7 +61,8 @@
       "description": "A file matched by no group, no layer key and no adapters/ folder segment is its own adapter.",
       "given": "An AdapterMap with no layer keys and no groups.",
       "when": "adapter_of is called with AdaptersSecondary for \"tools/local_store.rs\" and for \"tools/telegram_notifier.rs\".",
-      "then": "Each returns Some, and the two values differ."
+      "then": "Each returns Some, and the two values differ.",
+      "test": "hexa-cli/tests/adr_2610271649_spec.rs::s04_an_unmatched_file_is_its_own_adapter"
     },
     {
       "id": "S05",
@@ -65,7 +73,8 @@
       "description": "A layer key that names a source file also covers that file's module directory.",
       "given": "An AdapterMap with layer keys [\"src/store.rs\"] and no groups.",
       "when": "adapter_of is called with AdaptersSecondary for \"src/store.rs\" and for \"src/store/disk.rs\".",
-      "then": "Both return the same Some value."
+      "then": "Both return the same Some value.",
+      "test": "hexa-cli/tests/adr_2610271649_spec.rs::s05_a_file_key_covers_its_module_directory"
     },
     {
       "id": "S06",
@@ -76,7 +85,8 @@
       "description": "A file outside the adapter layers has no adapter, even when a group lists it.",
       "given": "An AdapterMap with groups [(\"cli\", [\"hexa-cli/src\"])].",
       "when": "adapter_of is called for \"hexa-cli/src/domain.rs\" with Domain, and for the same file with Ports, Usecases, Infrastructure, CompositionRoot, EntryPoint and Unknown.",
-      "then": "Every call returns None."
+      "then": "Every call returns None.",
+      "test": "hexa-cli/tests/adr_2610271649_spec.rs::s06_non_adapter_layers_have_no_adapter"
     },
     {
       "id": "S07",
@@ -87,7 +97,8 @@
       "description": "A key covers whole path segments only. A sibling whose name merely begins with the key's text is not under the key.",
       "given": "An AdapterMap with layer keys [\"src/store\"] and no groups.",
       "when": "adapter_of is called with AdaptersSecondary for \"src/store/disk.rs\" and for \"src/storefront.rs\".",
-      "then": "The two files do not get the same adapter."
+      "then": "The two files do not get the same adapter.",
+      "test": "hexa-cli/tests/adr_2610271649_spec.rs::s07_keys_cover_whole_segments_only"
     },
     {
       "id": "S08",
@@ -98,7 +109,8 @@
       "description": "A group takes precedence over a layer key that also covers the file, so the file does not get the key's adapter.",
       "given": "An AdapterMap with layer keys [\"svc/adapters\"] and groups [(\"mailer\", [\"svc/adapters/mail.rs\"])].",
       "when": "adapter_of is called with AdaptersSecondary for \"svc/adapters/mail.rs\" and for \"svc/adapters/db.rs\".",
-      "then": "mail.rs returns Some(\"mailer\"). db.rs returns a value other than Some(\"mailer\")."
+      "then": "mail.rs returns Some(\"mailer\"). db.rs returns a value other than Some(\"mailer\").",
+      "test": "hexa-cli/tests/adr_2610271649_spec.rs::s08_a_group_beats_a_layer_key"
     },
     {
       "id": "S09",
@@ -109,7 +121,8 @@
       "description": "Every file in an adapter layer has exactly one adapter, and the answer is deterministic. No file outside an adapter layer has an adapter.",
       "given": "Any valid AdapterMap, any project-relative path and any HexLayer.",
       "when": "adapter_of(path, layer) is called twice.",
-      "then": "Both calls return equal results. The result is Some exactly when layer is AdaptersPrimary or AdaptersSecondary, and None otherwise."
+      "then": "Both calls return equal results. The result is Some exactly when layer is AdaptersPrimary or AdaptersSecondary, and None otherwise.",
+      "test": "hexa-cli/tests/adr_2610271649_spec.rs::s09_adapter_of_is_total_on_adapter_layers_and_deterministic"
     },
     {
       "id": "S10",
@@ -120,7 +133,8 @@
       "description": "An import between two different secondary adapters is reported as a violation.",
       "given": "A project with no analyze.adapters, where \"src/adapters/secondary/tools/run.rs\" imports \"src/adapters/secondary/local_store/mod.rs\".",
       "when": "hexa analyze is run on the project.",
-      "then": "The result contains one DependencyViolation for that edge, whose rule is \"adapters must not import from other adapters\". For that edge crosses_adapters returns true."
+      "then": "The result contains one DependencyViolation for that edge, whose rule is \"adapters must not import from other adapters\". For that edge crosses_adapters returns true.",
+      "test": "hexa-cli/tests/adr_2610271649_spec.rs::s10_import_between_two_secondary_adapters_is_a_violation"
     },
     {
       "id": "S11",
@@ -131,7 +145,8 @@
       "description": "An import from a primary adapter to a different secondary adapter is still reported.",
       "given": "An ImportEdge from \"src/adapters/primary/web/h.rs\" (AdaptersPrimary) to \"src/adapters/secondary/db/repo.rs\" (AdaptersSecondary), and an empty AdapterMap.",
       "when": "crosses_adapters is called on that edge.",
-      "then": "It returns true, and hexa analyze reports the edge with the rule \"adapters must not import from other adapters\"."
+      "then": "It returns true, and hexa analyze reports the edge with the rule \"adapters must not import from other adapters\".",
+      "test": "hexa-cli/tests/adr_2610271649_spec.rs::s11_primary_to_other_secondary_adapter_is_reported"
     },
     {
       "id": "S12",
@@ -142,7 +157,8 @@
       "description": "An import inside one adapter is not a violation.",
       "given": "An edge from \"src/adapters/secondary/sqlite/repo.rs\" to \"src/adapters/secondary/sqlite/schema.rs\", both AdaptersSecondary, and an empty AdapterMap.",
       "when": "crosses_adapters is called and hexa analyze is run.",
-      "then": "crosses_adapters returns false, and no violation is reported for the edge."
+      "then": "crosses_adapters returns false, and no violation is reported for the edge.",
+      "test": "hexa-cli/tests/adr_2610271649_spec.rs::s12_an_import_inside_one_adapter_is_not_a_violation"
     },
     {
       "id": "S13",
@@ -153,7 +169,8 @@
       "description": "A module declaring its own submodule stays exempt.",
       "given": "A project where \"src/adapters/mod.rs\" declares the submodule \"src/adapters/secondary\", producing an edge between adapter-layer files.",
       "when": "hexa analyze is run.",
-      "then": "No \"adapters must not import from other adapters\" violation is reported for that edge."
+      "then": "No \"adapters must not import from other adapters\" violation is reported for that edge.",
+      "test": "hexa-cli/tests/adr_2610271649_spec.rs::s13_a_module_declaring_its_submodule_is_exempt"
     },
     {
       "id": "S14",
@@ -164,7 +181,8 @@
       "description": "An edge with an end outside the adapter layers does not cross adapters.",
       "given": "An edge from \"src/adapters/secondary/db/repo.rs\" (AdaptersSecondary) to \"src/ports/store.rs\" (Ports), and an edge from \"src/usecases/run.rs\" (Usecases) to \"src/ports/store.rs\" (Ports).",
       "when": "crosses_adapters is called on each edge.",
-      "then": "Both calls return false."
+      "then": "Both calls return false.",
+      "test": "hexa-cli/tests/adr_2610271649_spec.rs::s14_an_edge_leaving_the_adapter_layers_does_not_cross"
     },
     {
       "id": "S15",
@@ -175,7 +193,8 @@
       "description": "An edge crosses adapters exactly when both ends are adapters with different adapter_of values, and the rule is the same in either direction.",
       "given": "Any AdapterMap and any ImportEdge e.",
       "when": "crosses_adapters(e) is evaluated, and also on e with from and to swapped.",
-      "then": "The result equals: both layers are adapter layers and adapter_of(from_file, from_layer) differs from adapter_of(to_file, to_layer). Swapping the ends does not change the result."
+      "then": "The result equals: both layers are adapter layers and adapter_of(from_file, from_layer) differs from adapter_of(to_file, to_layer). Swapping the ends does not change the result.",
+      "test": "hexa-cli/tests/adr_2610271649_spec.rs::s15_crosses_adapters_matches_adapter_of_and_is_symmetric"
     },
     {
       "id": "S16",
@@ -186,7 +205,8 @@
       "description": "A declared group turns imports between its members into imports inside one adapter.",
       "given": "A .hexa/project.json with analyze.adapters {\"cli\": [\"hexa-cli/src/commands\", \"hexa-cli/src/fmt.rs\"]}, both paths classified AdaptersPrimary, and \"hexa-cli/src/commands/analyze.rs\" importing \"hexa-cli/src/fmt.rs\".",
       "when": "hexa analyze is run.",
-      "then": "AdapterMap::new returns Ok, and no cross-adapter violation is reported for the edge."
+      "then": "AdapterMap::new returns Ok, and no cross-adapter violation is reported for the edge.",
+      "test": "hexa-cli/tests/adr_2610271649_spec.rs::s16_a_group_makes_member_imports_internal"
     },
     {
       "id": "S17",
@@ -197,7 +217,8 @@
       "description": "A path listed in two groups is rejected with an error naming it.",
       "given": "Groups [(\"a\", [\"src/adapters/secondary/x.rs\"]), (\"b\", [\"src/adapters/secondary/x.rs\"])].",
       "when": "AdapterMap::new is called.",
-      "then": "It returns Err, and the message contains \"src/adapters/secondary/x.rs\"."
+      "then": "It returns Err, and the message contains \"src/adapters/secondary/x.rs\".",
+      "test": "hexa-cli/tests/adr_2610271649_spec.rs::s17_a_path_in_two_groups_is_rejected"
     },
     {
       "id": "S18",
@@ -208,7 +229,8 @@
       "description": "A group whose paths are in different layers is rejected with an error naming a path.",
       "given": "A layer_of that maps \"src/web\" to AdaptersPrimary and \"src/db\" to AdaptersSecondary, and groups [(\"mixed\", [\"src/web\", \"src/db\"])].",
       "when": "AdapterMap::new is called.",
-      "then": "It returns Err, and the message contains \"src/web\" or \"src/db\"."
+      "then": "It returns Err, and the message contains \"src/web\" or \"src/db\".",
+      "test": "hexa-cli/tests/adr_2610271649_spec.rs::s18_a_group_spanning_layers_is_rejected"
     },
     {
       "id": "S19",
@@ -219,7 +241,8 @@
       "description": "hexa analyze does not ignore an invalid adapters configuration.",
       "given": "A project.json whose analyze.adapters lists one path in two groups.",
       "when": "hexa analyze is run.",
-      "then": "The run reports a rule error naming the path. The rule error costs 10 points of the health score, as compute_health_score charges for rule errors."
+      "then": "The run reports a rule error naming the path. The rule error costs 10 points of the health score, as compute_health_score charges for rule errors.",
+      "test": "hexa-cli/tests/adr_2610271649_spec.rs::s19_analyze_reports_an_invalid_adapters_configuration"
     },
     {
       "id": "S20",
@@ -230,7 +253,8 @@
       "description": "Any configuration that repeats a path across groups is rejected.",
       "given": "Any groups list in which some path string appears in two different groups.",
       "when": "AdapterMap::new is called with any layer keys.",
-      "then": "It returns Err, and the message contains a repeated path."
+      "then": "It returns Err, and the message contains a repeated path.",
+      "test": "hexa-cli/tests/adr_2610271649_spec.rs::s20_any_repeated_path_across_groups_is_rejected"
     },
     {
       "id": "S21",
@@ -241,7 +265,8 @@
       "description": "hexa's own configuration groups its split adapters.",
       "given": "hexa's .hexa/project.json.",
       "when": "Its analyze.adapters is read and an AdapterMap is built from it.",
-      "then": "There are groups named cli, treesitter, inference-http and git. These pairs each resolve to the same adapter: hexa-cli/src/fmt.rs and hexa-cli/src/assets.rs with the commands files; treesitter_adapter.rs with treesitter_api.rs; vec_stream with the hexa-infer/src/adapters/secondary modules; and hexa-git's history.rs and worktree.rs with hexa-exec's git_history.rs and git_worktrees.rs."
+      "then": "There are groups named cli, treesitter, inference-http and git. These pairs each resolve to the same adapter: hexa-cli/src/fmt.rs and hexa-cli/src/assets.rs with the commands files; treesitter_adapter.rs with treesitter_api.rs; vec_stream with the hexa-infer/src/adapters/secondary modules; and hexa-git's history.rs and worktree.rs with hexa-exec's git_history.rs and git_worktrees.rs.",
+      "test": "hexa-cli/tests/adr_2610271649_spec.rs::s21_hexas_configuration_groups_its_split_adapters"
     },
     {
       "id": "S22",
@@ -252,7 +277,8 @@
       "description": "hexa's groups do not hide the real couplings.",
       "given": "The AdapterMap built from hexa's .hexa/project.json.",
       "when": "adapter_of is evaluated for the hexa-exec/src/tools files, local_store and telegram_notifier.",
-      "then": "No tools file shares an adapter with local_store or telegram_notifier, and local_store and telegram_notifier are different adapters."
+      "then": "No tools file shares an adapter with local_store or telegram_notifier, and local_store and telegram_notifier are different adapters.",
+      "test": "hexa-cli/tests/adr_2610271649_spec.rs::s22_hexas_groups_do_not_hide_real_couplings"
     },
     {
       "id": "S23",
@@ -263,7 +289,8 @@
       "description": "The hexa-exec tools reach the store and the notifier through ports that default_deps wires.",
       "given": "hexa's source tree.",
       "when": "The imports of every file under hexa-exec/src/tools are listed.",
-      "then": "None imports crate::local_store or crate::telegram_notifier. The store and the operator notifier the tools use are supplied by hexa_exec::default_deps()."
+      "then": "None imports crate::local_store or crate::telegram_notifier. The store and the operator notifier the tools use are supplied by hexa_exec::default_deps().",
+      "test": "hexa-cli/tests/adr_2610271649_spec.rs::s23_tools_reach_store_and_notifier_through_ports"
     },
     {
       "id": "S24",
@@ -274,7 +301,8 @@
       "description": "No direct adapter-to-adapter edge remains for the couplings named in the ADR.",
       "given": "hexa analyzed with the within-layer rule on.",
       "when": "The import graph is inspected.",
-      "then": "There is no edge from hexa-exec/src/tools to local_store or telegram_notifier, none from frontier.rs to hexa-infer's spend, and none from hexa-infer's discover, local_provider or spend to tiers or registry."
+      "then": "There is no edge from hexa-exec/src/tools to local_store or telegram_notifier, none from frontier.rs to hexa-infer's spend, and none from hexa-infer's discover, local_provider or spend to tiers or registry.",
+      "test": "hexa-cli/tests/adr_2610271649_spec.rs::s24_no_named_adapter_to_adapter_edge_remains"
     },
     {
       "id": "S25",
@@ -285,7 +313,8 @@
       "description": "hexa grades itself A+ with zero boundary violations under the corrected rule.",
       "given": "hexa's repository, with the within-layer cross-adapter check on.",
       "when": "hexa analyze . is run, and the hexa_grades_itself_by_ratchet test runs.",
-      "then": "An AdapterMap built from hexa's .hexa/project.json (analyze.layers keys and analyze.adapters groups) is Ok, and under it crosses_adapters is false for every import edge hexa analyze reads; zero boundary violations are reported, the grade is A+, and the ratchet test passes."
+      "then": "An AdapterMap built from hexa's .hexa/project.json (analyze.layers keys and analyze.adapters groups) is Ok, and under it crosses_adapters is false for every import edge hexa analyze reads; zero boundary violations are reported, the grade is A+, and the ratchet test passes.",
+      "test": "hexa-cli/tests/adr_2610271649_spec.rs::s25_hexa_grades_itself_a_plus_under_the_corrected_rule"
     },
     {
       "id": "S26",
@@ -296,7 +325,8 @@
       "description": "No coupling is excused, and a new cross-adapter import breaks the ratchet.",
       "given": "hexa's .hexa/project.json, and a copy of the tree with one added import from a hexa-exec tool to crate::local_store.",
       "when": "The configuration is searched for exceptions, and hexa analyze plus the ratchet test are run on the modified copy.",
-      "then": "The configuration has no exception or allow-list entry for any adapter pair. The modified copy reports one \"adapters must not import from other adapters\" violation, its score drops by 10, and hexa_grades_itself_by_ratchet fails."
+      "then": "The configuration has no exception or allow-list entry for any adapter pair. The modified copy reports one \"adapters must not import from other adapters\" violation, its score drops by 10, and hexa_grades_itself_by_ratchet fails.",
+      "test": "hexa-cli/tests/adr_2610271649_spec.rs::s26_no_exception_and_a_new_cross_adapter_import_is_caught"
     }
   ]
 }
