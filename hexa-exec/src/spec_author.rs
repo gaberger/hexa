@@ -237,6 +237,19 @@ fn refuse_an_agent(model: &str) -> Result<(), String> {
 /// The fenced block in a reply, or the reply.
 fn block(reply: &str) -> String {
     let t = reply.trim();
+    // A reply that opens a fence on its own line and closes one on its own
+    // line is one block, even when its body holds ``` inside a string: a test
+    // of a model reply carrying a code fence has one. Cutting at the first
+    // inner fence kept half a file.
+    let lines: Vec<&str> = t.lines().collect();
+    if let (Some(open), Some(close)) = (
+        lines.iter().position(|l| l.trim_start().starts_with("```")),
+        lines.iter().rposition(|l| l.trim() == "```"),
+    ) {
+        if close > open {
+            return lines[open + 1..close].join("\n").trim().to_string();
+        }
+    }
     let Some(start) = t.find("```") else { return t.to_string() };
     let body = &t[start + 3..];
     let fenced = body.split("```").next().unwrap_or(body);
@@ -487,7 +500,15 @@ pub async fn generate_tests(
     let names = tests_by_scenario(&body, &ids);
     let missing: Vec<&str> = ids.iter().copied().filter(|i| !names.contains_key(*i)).collect();
     if !missing.is_empty() {
-        return Err(format!("the generated tests name no test for {}: every scenario gets one", missing.join(", ")));
+        // Keep what the writer said, so a short reply can be told from a
+        // misnamed test without paying for another generation.
+        let kept = std::env::temp_dir().join(format!("{}-tests-reply.md", spec.adr));
+        let _ = std::fs::write(&kept, &reply);
+        return Err(format!(
+            "the generated tests name no test for {}: every scenario gets one (the reply is in {})",
+            missing.join(", "),
+            kept.display()
+        ));
     }
 
     let stem = format!("{}_spec", spec.adr.to_lowercase().replace('-', "_"));
@@ -758,5 +779,7 @@ mod tests {
         assert_eq!(block("```{\"a\": 1}```"), "{\"a\": 1}");
         assert_eq!(block("Here:\n```json\n{\"a\": 1}\n```\n"), "{\"a\": 1}");
         assert_eq!(block("{\"a\": 1}"), "{\"a\": 1}");
+        // A fence inside the body, as a test of a fenced model reply has, is not the end.
+        assert_eq!(block("```rust\nlet r = \"```rust\\nx\\n```\";\nfn t() {}\n```\n"), "let r = \"```rust\\nx\\n```\";\nfn t() {}");
     }
 }
