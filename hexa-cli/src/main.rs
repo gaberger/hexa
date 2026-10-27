@@ -177,17 +177,17 @@ enum Commands {
         #[command(subcommand)]
         action: commands::graph::GraphAction,
     },
-    /// Hey Hex — natural language task classifier (ADR-2026-04-14-0000)
+    /// Say what you want in plain English; hexa picks the verb, shows it, and runs it on confirmation
     Hey(HeyArgs),
     /// Adversarially verify a claim about the repo — returns CONFIRMED / REFUTED / INCONCLUSIVE
     Verify(commands::verify::VerifyArgs),
-    /// Direct executor — task → one agent → evidence → commit (ADR-2026-06-04-1740 Path A)
+    /// One gated change: an agent edits a file, your command runs, and it commits only on exit 0
     #[command(name = "do")]
     Do {
         #[command(subcommand)]
         action: commands::direct::DoAction,
     },
-    /// Agentic inference benchmarks — run the corpus through the loop in isolated worktrees (ADR-2606071734)
+    /// Measure which models pass the agent loop here: the corpus, each model, in isolated worktrees
     Bench {
         #[command(subcommand)]
         action: commands::bench::BenchAction,
@@ -198,7 +198,7 @@ enum Commands {
     Build(commands::build::BuildArgs),
     /// Adversarial pass — hunt a target for bugs, verify each, fix under a gate
     Harden(commands::build::HardenArgs),
-    /// Insight extraction surfaces (punch-list, gap detection)
+    /// Find follow-ups that were mentioned in recent transcripts and routed nowhere
     Insight {
         #[command(subcommand)]
         action: InsightAction,
@@ -223,22 +223,22 @@ enum Commands {
     },
     /// What inference has cost: tokens and dollars, by source and model
     Spend(commands::spend_cmd::SpendArgs),
-    /// Architecture Decision Records
+    /// Architecture Decision Records: list, search, accept, and check every citation and gate
     Adr {
         #[command(subcommand)]
         action: AdrAction,
     },
-    /// Gate quality — which stated requirement is verified by nothing (ADR-2609160300)
+    /// Check the gate itself: which module can be deleted without the gate noticing
     Gate {
         #[command(subcommand)]
         action: GateAction,
     },
-    /// Behavioral specs (docs/specs/)
+    /// The gate-first pipeline: draft an ADR's spec, a person accepts it, seal tests that fail first, verify them
     Spec {
         #[command(subcommand)]
         action: SpecAction,
     },
-    /// Workplan management (create, list, status)
+    /// Workplans for a larger change: create, list, status, and reconcile against the code
     Plan {
         #[command(subcommand)]
         action: PlanAction,
@@ -253,19 +253,19 @@ enum Commands {
         #[command(subcommand)]
         action: SkillAction,
     },
-    /// Inspect and sync embedded assets baked into the binary (ADR-2026-03-22-1522)
+    /// List and install what is embedded in the binary: scaffold templates, provider presets, schemas
     Assets {
         #[command(subcommand)]
         action: commands::assets_cmd::AssetsAction,
     },
-    /// Project status
+    /// Project, config and git state at a glance
     Status,
-    /// Internal documentation health (ADR-047) — terminology, freshness, module READMEs
+    /// Check the docs: freshness, terminology and module READMEs
     Docs {
         #[command(subcommand)]
         action: commands::docs::DocsAction,
     },
-    /// Installation verification and pipeline validation (ADR-067)
+    /// Check the install: PATH, toolchain, inference, and whether this binary is behind
     Doctor {
         /// Show detailed output
         #[arg(long, short)]
@@ -277,7 +277,7 @@ enum Commands {
         #[arg(value_name = "CHECK")]
         check: Option<String>,
     },
-    /// Update hexa to the latest release (ADR-2026-04-08-0929)
+    /// Install the newest published release (a binary built from a checkout is current only with it)
     #[command(name = "self-update")]
     SelfUpdate {
         /// Only check for updates, do not install

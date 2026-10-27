@@ -2,6 +2,7 @@
 
 use clap::Args;
 use colored::Colorize;
+use hexa_core::ports::intent::{route, Routed};
 
 #[derive(Args, Debug)]
 pub struct HeyArgs {
@@ -203,14 +204,25 @@ fn classify_intent(text: &str) -> TaskIntent {
         return TaskIntent::Unknown(format!("__SSH__{}__{}", host, command));
     }
 
-    // Calibration
-    if t.contains("calibrate") || (t.contains("test") && t.contains("inference")) {
-        return TaskIntent::HexCommand {
-            args: "config inference test --all".into(),
-            destructive: false,
-            description: "Calibrate all registered inference providers".into(),
-        };
+    // The routing table is pure and checked against the CLI (ADR-2610271308).
+    match route(text) {
+        Routed::Hexa(r) => {
+            return TaskIntent::HexCommand {
+                args: r.command,
+                destructive: r.destructive,
+                description: r.description,
+            }
+        }
+        Routed::Shell(r) => {
+            return TaskIntent::Shell {
+                cmd: r.command,
+                destructive: r.destructive,
+                description: r.description,
+            }
+        }
+        Routed::None => {}
     }
+
     // Benchmark
     if t.contains("bench") || t.contains("benchmark") {
         // Match the word against the models this project actually configures,
@@ -240,86 +252,6 @@ fn classify_intent(text: &str) -> TaskIntent {
             };
         }
     }
-    // Rebuild
-    if t.contains("rebuild") || (t.contains("build") && t.contains("release")) {
-        return TaskIntent::Shell {
-            cmd: "cargo build -p hexa-cli --release".into(),
-            destructive: false,
-            description: "Rebuild hexa in release mode".into(),
-        };
-    }
-    // Nexus logs
-    // README check / generate
-    if t.contains("readme") {
-        let args = if t.contains("generate") || t.contains("write") || t.contains("create") {
-            "readme generate"
-        } else {
-            "readme check"
-        };
-        return TaskIntent::HexCommand {
-            args: args.into(),
-            destructive: false,
-            description: format!("Run {}", args),
-        };
-    }
-    // Documentation
-    if t.contains("documentation") || t.contains("docs") {
-        return TaskIntent::HexCommand {
-            args: "brief".into(),
-            destructive: false,
-            description: "Show project documentation briefing".into(),
-        };
-    }
-    // Security audit / vulnerabilities / dependabot
-    if t.contains("security") || t.contains("vulnerabilit") || t.contains("dependabot") {
-        return TaskIntent::Shell {
-            cmd: "cargo audit".into(),
-            destructive: false,
-            description: "Scan dependencies for security vulnerabilities".into(),
-        };
-    }
-    // Audit (developer report)
-    if t.contains("audit") {
-        return TaskIntent::HexCommand {
-            args: "report audit".into(),
-            destructive: false,
-            description: "Show developer audit report for hexa dev sessions".into(),
-        };
-    }
-    // Help / list commands
-    if t.contains("help") || (t.contains("list") && t.contains("command")) {
-        return TaskIntent::HexCommand {
-            args: "--help".into(),
-            destructive: false,
-            description: "Show hexa CLI help and available commands".into(),
-        };
-    }
-    // Reconcile workplans
-    if t.contains("reconcile") {
-        return TaskIntent::HexCommand {
-            args: "plan reconcile --all --update".into(),
-            destructive: false,
-            description: "Reconcile all workplan statuses with git".into(),
-        };
-    }
-    // Cleanup worktrees (DESTRUCTIVE)
-    if (t.contains("clean") || t.contains("remove") || t.contains("delete")) && t.contains("worktree") {
-        return TaskIntent::HexCommand {
-            args: "dev worktree cleanup --force".into(),
-            destructive: true,
-            description: "Remove merged worktrees and their branches".into(),
-        };
-    }
-    // What's broken / health check
-    if (t.contains("what") && (t.contains("broken") || t.contains("wrong") || t.contains("status")))
-        || t.contains("validate")
-        || t.contains("health") {
-        return TaskIntent::HexCommand {
-            args: "brain validate".into(),
-            destructive: false,
-            description: "Run brain self-consistency validation".into(),
-        };
-    }
     // Run a workplan
     if t.contains("run") || t.contains("execute") {
         // Extract workplan name
@@ -331,160 +263,6 @@ fn classify_intent(text: &str) -> TaskIntent {
             };
         }
     }
-    // Brief
-    if t.contains("brief") || t.contains("summary") {
-        return TaskIntent::HexCommand {
-            args: "brief".into(),
-            destructive: false,
-            description: "Show developer briefing".into(),
-        };
-    }
-    // Brain/daemon status - check before general "status" to avoid false match
-    if t.contains("brain") && (t.contains("status") || t.contains("daemon")) {
-        return TaskIntent::HexCommand {
-            args: "sched daemon-status".into(),
-            destructive: false,
-            description: "Show brain scheduler status".into(),
-        };
-    }
-    // Start brain/daemon
-    if (t.contains("start") || t.contains("run") || t.contains("launch")) && (t.contains("brain") || t.contains("daemon")) {
-        return TaskIntent::HexCommand {
-            args: "sched daemon --background".into(),
-            destructive: false,
-            description: "Start the brain scheduler daemon".into(),
-        };
-    }
-    // Stop brain/daemon
-    if t.contains("stop") && (t.contains("brain") || t.contains("daemon")) {
-        return TaskIntent::HexCommand {
-            args: "sched daemon-stop".into(),
-            destructive: false,
-            description: "Stop the brain scheduler daemon".into(),
-        };
-    }
-    // Prime brain (start daemon + discover workplans + seed queue)
-    if t.contains("prime") && t.contains("brain") {
-        return TaskIntent::HexCommand {
-            args: "sched prime".into(),
-            destructive: false,
-            description: "Prime brain: start daemon, discover workplans, seed queue".into(),
-        };
-    }
-    // Validate brain
-    if t.contains("validate") && t.contains("brain") {
-        return TaskIntent::HexCommand {
-            args: "sched validate".into(),
-            destructive: false,
-            description: "Run brain self-diagnostics".into(),
-        };
-    }
-    // Sched watch - watch brain tick events
-    if t.contains("watch") && (t.contains("brain") || t.contains("tick") || t.contains("sched")) {
-        return TaskIntent::HexCommand {
-            args: "sched watch".into(),
-            destructive: false,
-            description: "Watch brain tick events in real-time".into(),
-        };
-    }
-    // Sched queue - show queue
-    if (t.contains("queue") || t.contains("tasks")) && (t.contains("sched") || t.contains("brain")) {
-        return TaskIntent::HexCommand {
-            args: "sched queue list".into(),
-            destructive: false,
-            description: "Show brain task queue".into(),
-        };
-    }
-    // Status / what's happening
-    if t.contains("status") || t.contains("pulse") || (t.contains("what") && (t.contains("doing") || t.contains("happening") || t.contains("going"))) {
-        return TaskIntent::HexCommand {
-            args: "status".into(),
-            destructive: false,
-            description: "Show project status".into(),
-        };
-    }
-    // Show workplans / what plans are running
-    if t.contains("list") && (t.contains("plan") || t.contains("workplan"))
-        || (t.contains("what") && t.contains("plan")) {
-        return TaskIntent::HexCommand {
-            args: "plan list".into(),
-            destructive: false,
-            description: "List all workplans".into(),
-        };
-    }
-    // List inference providers
-    if t.contains("list") && (t.contains("inference") || t.contains("provider")) {
-        return TaskIntent::HexCommand {
-            args: "config inference list".into(),
-            destructive: false,
-            description: "List inference providers".into(),
-        };
-    }
-    // Git status
-    if t.contains("git") && (t.contains("status") || t.contains("what") || t.contains("changed")) {
-        return TaskIntent::HexCommand {
-            args: "git status".into(),
-            destructive: false,
-            description: "Show git status".into(),
-        };
-    }
-    // Analyze architecture
-    if t.contains("analyze") || t.contains("architecture") {
-        return TaskIntent::HexCommand {
-            args: "dev analyze .".into(),
-            destructive: false,
-            description: "Analyze project architecture".into(),
-        };
-    }
-    // Test / tests
-    if t.contains("test") && !t.contains("inference") {
-        return TaskIntent::Shell {
-            cmd: "cargo test --workspace".into(),
-            destructive: false,
-            description: "Run all tests".into(),
-        };
-    }
-    // Git log
-    if t.contains("git") && t.contains("log") {
-        return TaskIntent::HexCommand {
-            args: "git log".into(),
-            destructive: false,
-            description: "Show git commit history".into(),
-        };
-    }
-    // Git diff
-    if t.contains("git") && (t.contains("diff") || t.contains("changes")) {
-        return TaskIntent::HexCommand {
-            args: "git diff".into(),
-            destructive: false,
-            description: "Show uncommitted changes".into(),
-        };
-    }
-    // List files / what's here
-    if t.contains("list") && (t.contains("file") || t.contains("directory") || t.contains("dir")) {
-        return TaskIntent::Shell {
-            cmd: "ls -la".into(),
-            destructive: false,
-            description: "List files in current directory".into(),
-        };
-    }
-    // Show secrets status
-    if t.contains("show") && t.contains("secret") {
-        return TaskIntent::HexCommand {
-            args: "secrets status".into(),
-            destructive: false,
-            description: "Show secrets backend status".into(),
-        };
-    }
-    // Show inbox
-    if t.contains("inbox") || (t.contains("message") && (t.contains("pending") || t.contains("unread"))) {
-        return TaskIntent::HexCommand {
-            args: "inbox list".into(),
-            destructive: false,
-            description: "Show agent notification inbox".into(),
-        };
-    }
-
     TaskIntent::Unknown(text.to_string())
 }
 
@@ -534,21 +312,10 @@ pub async fn run(args: HeyArgs) -> anyhow::Result<()> {
                     return Ok(());
                 }
             } else {
-                // P3: LLM fallback for generic intents
-                println!("  {} keyword classifier couldn't match. Falling back to local LLM...", "⚠".yellow());
-                match llm_classify(t).await {
-                    Ok(Some((k, p, d))) => (box_leak_str(k), p, false, d),
-                    Ok(None) => {
-                        println!("  {} LLM also couldn't classify. Try:", "✗".red());
-                        println!("    hexa brain enqueue hexa-command -- \"<your-command>\"");
-                        return Ok(());
-                    }
-                    Err(e) => {
-                        println!("  {} LLM fallback failed: {}", "✗".red(), e);
-                        println!("    Try: hexa brain enqueue hexa-command -- \"<your-command>\"");
-                        return Ok(());
-                    }
-                }
+                // No rule matched. Say so; never run a nearest guess (ADR-2610271308 §5).
+                println!("  {} no hexa verb matches that request.", "✗".red());
+                println!("    `hexa --help` lists every verb; `hexa go` suggests the next one.");
+                return Ok(());
             }
         }
     };
@@ -556,8 +323,9 @@ pub async fn run(args: HeyArgs) -> anyhow::Result<()> {
     println!("  {} {}", "→".green(), description);
     println!("    {}: {}", kind.dimmed(), payload.dimmed());
 
-    // Confirmation for destructive
-    if destructive && !args.yes {
+    // A route that changes the tree, git or the install is confirmed even with
+    // `--yes` (ADR-2610271308 §6).
+    if destructive {
         use std::io::Write;
         print!("  {} Proceed? [y/N]: ", "!".yellow().bold());
         std::io::stdout().flush()?;
@@ -581,49 +349,6 @@ pub async fn run(args: HeyArgs) -> anyhow::Result<()> {
     }
 
     Ok(())
-}
-
-/// Leak a String into a &'static str so it matches the &str arms above.
-/// Only used for the LLM fallback path (bounded by the number of user prompts).
-fn box_leak_str(s: String) -> &'static str {
-    Box::leak(s.into_boxed_str())
-}
-
-async fn llm_classify(text: &str) -> anyhow::Result<Option<(String, String, String)>> {
-    let prompt = format!(
-        "Classify this intent into a hexa CLI task. Respond ONLY with JSON like {{\"kind\":\"hexa-command\",\"payload\":\"analyze .\",\"description\":\"...\"}} or {{\"kind\":\"unknown\"}}.\n\nValid kinds: hexa-command (hexa <args>), shell (cargo/git/ls/echo only), workplan (path).\n\nIntent: {}",
-        text
-    );
-    // Classification is the cheapest thing hexa asks a model to do, so it runs
-    // on T1. The model id comes from `.hexa/project.json` rather than being
-    // written here: G1's test is that no file outside hexa-infer names one.
-    let Some(model) = hexa_infer::tier_model("t1") else {
-        return Ok(None); // no T1 model configured — fall back to the rules
-    };
-    let content_owned = tokio::time::timeout(
-        std::time::Duration::from_secs(45),
-        hexa_infer::complete_text(&model, "", &prompt, 200),
-    )
-    .await
-    .map_err(|_| anyhow::anyhow!("intent classification timed out after 45s"))?
-    .map_err(|e| anyhow::anyhow!("intent classification: {e}"))?;
-    let content = content_owned.as_str();
-    // Parse JSON from response
-    if let Some(start) = content.find('{') {
-        if let Some(end) = content.rfind('}') {
-            let json_str = &content[start..=end];
-            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(json_str) {
-                let kind = parsed.get("kind").and_then(|v| v.as_str()).unwrap_or("");
-                if kind == "unknown" { return Ok(None); }
-                let payload = parsed.get("payload").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let description = parsed.get("description").and_then(|v| v.as_str()).unwrap_or("LLM-classified").to_string();
-                if !payload.is_empty() && ["hexa-command", "shell", "workplan"].contains(&kind) {
-                    return Ok(Some((kind.to_string(), payload, description)));
-                }
-            }
-        }
-    }
-    Ok(None)
 }
 
 async fn llm_translate_shell_for_host(action: &str, host: Option<&str>) -> anyhow::Result<String> {
@@ -695,7 +420,7 @@ async fn execute_intent(kind: &str, payload: &str) -> (bool, String) {
     let me = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("hexa"));
     let output = match kind {
         "hexa-command" => {
-            tokio::process::Command::new(&me).args(payload.split_whitespace()).output().await
+            tokio::process::Command::new(&me).args(hexa_argv(payload)).output().await
         }
         "workplan" => {
             tokio::process::Command::new(&me).args(["plan", "execute", payload]).output().await
@@ -709,6 +434,15 @@ async fn execute_intent(kind: &str, payload: &str) -> (bool, String) {
             (o.status.success(), String::from_utf8_lossy(text).trim().to_string())
         }
         Err(e) => (false, format!("{kind}: {e}")),
+    }
+}
+
+/// The argv for a routed hexa command. A memory query is one argument however
+/// many words it has; every other route is split on whitespace.
+fn hexa_argv(command: &str) -> Vec<String> {
+    match command.strip_prefix("memory search ") {
+        Some(q) => vec!["memory".into(), "search".into(), q.to_string()],
+        None => command.split_whitespace().map(String::from).collect(),
     }
 }
 
