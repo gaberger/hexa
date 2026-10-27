@@ -11,7 +11,7 @@
   ],
   "accepted": {
     "by": "gary",
-    "sha256": "5c5693755ec5c22180369f240e3826023b85da3161e54af01c55a6ec0d45d211"
+    "sha256": "f568704bba46520d6bd64d2997678de048ee1b39c862a9e2c8ac2839ddda2cc5"
   },
   "specs": [
     {
@@ -420,7 +420,7 @@
       "description": "No hexa design or hexa drift run writes outside the allowed directories",
       "given": "any project, any CLAUDE.md artifact directory setting, any arguments and any fake model replies",
       "when": "any `hexa design` or `hexa drift` command runs",
-      "then": "the set of paths created, modified or deleted is a subset of files under the artifact directory and docs/analysis/"
+      "then": "every run exits 0, and the set of paths created, modified or deleted is a non-empty subset of files under the artifact directory and docs/analysis/"
     }
   ]
 }
