@@ -1,0 +1,257 @@
+{
+  "adr": "ADR-2610271308",
+  "feature": "hey routes only to real verbs",
+  "description": "`hexa hey` resolves plain-English requests through a pure routing table that names only verbs hexa has, routes the core verbs, drops the dead ones, says when nothing matches and marks destructive routes.",
+  "universal": [
+    "§1",
+    "§2",
+    "§3",
+    "§4",
+    "§5",
+    "§6"
+  ],
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "route answers a hexa request from text alone",
+      "given": "the routing table in hexa-core/src/domain/intent.rs",
+      "when": "route(\"grade the architecture\") is called",
+      "then": "it returns Routed::Hexa with command \"analyze .\" and a non-empty one-line description"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "route answers a non-hexa request with a Shell route",
+      "given": "the routing table",
+      "when": "route(\"show me the git status\") is called",
+      "then": "it returns Routed::Shell with command \"git status\""
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "route does not consult the filesystem",
+      "given": "no file or directory named nowhere/at-all exists",
+      "when": "route(\"harden nowhere/at-all\") is called",
+      "then": "it returns Routed::Hexa with command \"harden nowhere/at-all\". It does not fail, check the path or return Routed::None because the path is missing"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§1"
+      ],
+      "kind": "property",
+      "description": "route is a pure function of its text",
+      "given": "any string text",
+      "when": "route(text) is called twice, in any working directory",
+      "then": "both results are equal, and calling route creates, changes or deletes no file"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "the table lists the core verbs and each one exists",
+      "given": "the built hexa binary",
+      "when": "hexa_commands() is read and `hexa <verb and subcommands> --help` is run for each entry, with any argument placeholder left out",
+      "then": "the list includes the verbs for analyze, loop, go, adr gates, doctor, self-update, harden and memory search, and every --help run exits 0"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "a removed verb in the table fails the check",
+      "given": "a table entry naming a verb the binary does not have, such as \"brain validate\"",
+      "when": "the whole-table check runs against the binary",
+      "then": "`hexa brain validate --help` fails and the check reports that entry as failing"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§2"
+      ],
+      "kind": "property",
+      "description": "every hexa route the router produces is in the checked table",
+      "given": "any request text",
+      "when": "route(text) returns Routed::Hexa(r)",
+      "then": "the verb and subcommands of r.command, without its trailing arguments, match an entry of hexa_commands()"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "git state requests route to shell git commands",
+      "given": "the routing table",
+      "when": "route is called with \"what's the git status\", \"show recent commits\" and \"what changed (diff)\"",
+      "then": "it returns Routed::Shell with \"git status\", \"git log --oneline -20\" and \"git diff --stat\" respectively, never Routed::Hexa"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "requests for removed systems get no hexa route",
+      "given": "the routing table",
+      "when": "route is called with \"validate the brain\", \"show my inbox\", \"give me the brief\", \"run the report audit\", \"secrets status\" and \"scheduler status\"",
+      "then": "none of the results is Routed::Hexa with a command starting with brain, inbox, brief, report, secrets or sched"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§3"
+      ],
+      "kind": "property",
+      "description": "no route, and no table entry, names a dead verb",
+      "given": "any request text",
+      "when": "route(text) is called and hexa_commands() is read",
+      "then": "no Routed::Hexa command, and no entry of hexa_commands(), has brain, sched, inbox, brief, report or secrets as its first word"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "the read-only core verbs are routed",
+      "given": "the routing table",
+      "when": "route is called with \"what's the architecture grade\", \"where does the work stand\", \"what should I do next\", \"check every decision's gate\", \"check my install\" and \"update hexa\"",
+      "then": "it returns Routed::Hexa with \"analyze .\", \"loop\", \"go\", \"adr gates\", \"doctor\" and \"self-update --check\" respectively"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "verbs that take an argument carry it from the request",
+      "given": "the routing table",
+      "when": "route is called with \"harden src/parser\", \"bug-hunt src/parser\" and \"search memory for retry backoff\"",
+      "then": "it returns Routed::Hexa with \"harden src/parser\" for the first two and \"memory search retry backoff\" for the third"
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "a required argument the request lacks is not invented",
+      "given": "the routing table",
+      "when": "route is called with \"harden it\" with no path, or \"search memory\" with no search words",
+      "then": "neither returns Routed::Hexa with a harden or memory search command. No path or search words are filled in"
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§4"
+      ],
+      "kind": "property",
+      "description": "route arguments always come from the request",
+      "given": "any request text",
+      "when": "route(text) returns Routed::Hexa(r) whose command is harden <path> or memory search <words>",
+      "then": "<path> or <words> is non-empty and appears in text"
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§5"
+      ],
+      "kind": "example",
+      "description": "an unmatched request returns None",
+      "given": "the routing table",
+      "when": "route(\"make me a sandwich\") is called",
+      "then": "it returns Routed::None"
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§5"
+      ],
+      "kind": "example",
+      "description": "hey says when it found no verb",
+      "given": "a request that route maps to Routed::None",
+      "when": "`hexa hey \"make me a sandwich\"` is run",
+      "then": "it prints that it found no verb, points at `hexa --help` and runs no command"
+    },
+    {
+      "id": "S17",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "hey never runs a nearest guess, even with --yes",
+      "given": "a request close to a verb name but matching no rule, such as \"doctr plz\"",
+      "when": "`hexa hey --yes \"doctr plz\"` is run",
+      "then": "no hexa or shell command is run, and the no-verb message pointing at `hexa --help` is printed"
+    },
+    {
+      "id": "S18",
+      "decision": [
+        "§5"
+      ],
+      "kind": "property",
+      "description": "text that matches no rule always gives None",
+      "given": "any string with none of the table's trigger words, including the empty string and random letters",
+      "when": "route(text) is called",
+      "then": "it returns Routed::None"
+    },
+    {
+      "id": "S19",
+      "decision": [
+        "§6"
+      ],
+      "kind": "example",
+      "description": "changing routes are marked destructive",
+      "given": "the routing table",
+      "when": "route is called with \"harden src/parser\" and \"clean up the dev worktrees\"",
+      "then": "it returns routes with commands \"harden src/parser\" and \"dev worktree cleanup\", each with destructive: true"
+    },
+    {
+      "id": "S20",
+      "decision": [
+        "§6"
+      ],
+      "kind": "negative",
+      "description": "--yes does not skip confirmation for a destructive route",
+      "given": "a request that routes to \"harden src/parser\" (destructive: true)",
+      "when": "`hexa hey --yes \"harden src/parser\"` is run and the confirmation prompt is refused",
+      "then": "it asks for confirmation, and when refused it does not run `hexa harden src/parser`"
+    },
+    {
+      "id": "S21",
+      "decision": [
+        "§6"
+      ],
+      "kind": "negative",
+      "description": "read-only routes are not marked destructive",
+      "given": "the routing table",
+      "when": "route is called with \"update hexa\", \"check my install\" and \"what's the git status\"",
+      "then": "the routes for \"self-update --check\", \"doctor\" and \"git status\" all have destructive: false"
+    },
+    {
+      "id": "S22",
+      "decision": [
+        "§6"
+      ],
+      "kind": "property",
+      "description": "every tree-, git- or install-changing route is destructive",
+      "given": "any request text",
+      "when": "route(text) returns a Route whose command starts with harden, is self-update without --check, or is dev worktree cleanup",
+      "then": "that Route has destructive: true"
+    }
+  ]
+}
