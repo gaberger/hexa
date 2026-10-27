@@ -7,6 +7,10 @@
     "§5",
     "§7"
   ],
+  "accepted": {
+    "by": "gary",
+    "sha256": "baaa06009ec2799c9a8cdacf1b215faff32221259f18559af9d313fb01e25e6e"
+  },
   "specs": [
     {
       "id": "S01",
