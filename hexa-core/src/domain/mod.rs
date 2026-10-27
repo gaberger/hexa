@@ -5,6 +5,7 @@ pub mod api_optimization;
 pub mod claude_mods;
 pub mod gate_ledger;
 pub mod intent;
+pub mod design;
 pub mod messages;
 pub mod provenance;
 pub mod spec;
