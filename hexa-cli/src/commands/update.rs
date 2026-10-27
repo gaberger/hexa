@@ -204,6 +204,14 @@ pub(crate) fn newest_release_tag(releases: &[serde_json::Value]) -> Option<Strin
         .map(|(_, tag)| tag)
 }
 
+/// The newest published release's tag, asked of the feed once.
+pub(crate) async fn latest_release_tag() -> anyhow::Result<String> {
+    let client = reqwest::Client::builder()
+        .user_agent(format!("hexa/{}", CURRENT_VERSION))
+        .build()?;
+    fetch_latest_tag(&client).await
+}
+
 async fn fetch_latest_tag(client: &reqwest::Client) -> anyhow::Result<String> {
     let resp = client
         .get(GITHUB_RELEASES_API)

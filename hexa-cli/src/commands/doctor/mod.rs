@@ -20,7 +20,11 @@ pub async fn run_doctor(_verbose: bool, _fix: bool) -> anyhow::Result<()> {
     println!("  {}", "Installation:".bold());
     let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_else(|_| "unknown".to_string());
     println!("    binary:       {}", exe);
-    println!("    version:      hexa {}", env!("CARGO_PKG_VERSION"));
+    println!("    version:      hexa {}", env!("HEXA_VERSION_LINE"));
+    let here = std::env::current_dir().unwrap_or_default();
+    for line in crate::commands::provenance::doctor_lines(&here) {
+        println!("    staleness:    {line}");
+    }
     let on_path = tokio::process::Command::new("which").arg("hexa").output().await;
     match on_path {
         Ok(o) if o.status.success() => {
