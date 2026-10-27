@@ -277,10 +277,14 @@ with this check reported 539 errors across 114 orphan ids; the stubs under
 
 ## The gate runner says why a gate did not run
 
-**Claim.** `hexa adr gates` prefixes PATH with `~/.cargo/bin`, reports a cargo
-that cannot read the lock file or an unreachable host as "cannot run here"
-rather than "gate failed", prints the last ten lines of a real failure, and
-treats a gate that exited 0 having run zero tests as failed.
+**Claim.** `hexa adr gates` prefixes PATH with its own binary's directory, so a
+gate that names `hexa` runs the hexa running the gates, and then with
+`~/.cargo/bin`. It reports a cargo that cannot read the lock file or an
+unreachable host as "cannot run here" rather than "gate failed", prints the last
+ten lines of a real failure, and treats a gate that exited 0 having run zero
+tests as failed. An ADR declared in `.hexa/project.json → adr.unbuilt` is
+reported as `unbuilt (declared)` with its reason, and fails the run only if its
+gate passes (ADR-2610271110).
 
 ```bash
 cargo test -p hexa-cli --lib adr_gates_classify
