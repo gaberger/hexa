@@ -1,0 +1,422 @@
+{
+  "adr": "ADR-2610271736",
+  "feature": "Elephant-Goldfish design review and drift report",
+  "description": "hexa vendors EGM's prompts at a pinned commit, runs each goldfish reviewer as one isolated tool-less completion, runs EGM's review stages in order, reports doc/code drift, and never writes code or approves designs.",
+  "universal": [
+    "§1",
+    "§3",
+    "§4",
+    "§5",
+    "§8"
+  ],
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A vendored copy that matches its pin verifies",
+      "given": "a Pin with repository https://github.com/google/elephant-goldfish-model, commit a8380ab5f0aba392c97e31c79f9a6666b3f09f14 and files [(\"agents/critic.md\", h1), (\"LICENSE\", h2)]; present lists exactly those two paths; read returns bytes whose sha256 is h1 and h2 respectively",
+      "when": "verify_pin(pin, present, read, sha256) is called",
+      "then": "it returns Ok(())"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A file whose hash differs from its pin is refused and named",
+      "given": "a Pin recording agents/critic.md with hash h1 and LICENSE with hash h2; both are present; agents/critic.md's bytes hash to h9, not h1",
+      "when": "verify_pin is called",
+      "then": "it returns Err whose list names agents/critic.md and does not name LICENSE"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A recorded file that is missing is refused and named",
+      "given": "a Pin recording agents/critic.md and LICENSE; present lists only LICENSE, whose hash matches; read returns None for agents/critic.md",
+      "when": "verify_pin is called",
+      "then": "it returns Err whose list names agents/critic.md"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A file present but not recorded in the pin is refused and named",
+      "given": "a Pin recording only LICENSE with a matching hash; present lists LICENSE and agents/extra.md",
+      "when": "verify_pin is called",
+      "then": "it returns Err whose list names agents/extra.md"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§1"
+      ],
+      "kind": "property",
+      "description": "verify_pin names exactly the set of mismatched, missing and unrecorded files",
+      "given": "any Pin, any present list, any read function and a deterministic sha256",
+      "when": "verify_pin is called",
+      "then": "it returns Ok(()) if and only if the set of present paths equals the set of recorded paths and every recorded file's bytes hash to its recorded hash; otherwise the Err list contains every recorded path whose hash differs or which is missing, and every present path not recorded, and no other path"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "The checked-in vendored copy matches UPSTREAM.json",
+      "given": "the repository's hexa-cli/assets/egm/ directory and its UPSTREAM.json",
+      "when": "UPSTREAM.json is parsed into a Pin and verify_pin is run over the files in hexa-cli/assets/egm/ (excluding UPSTREAM.json itself)",
+      "then": "it returns Ok(()); the Pin's commit is a8380ab5f0aba392c97e31c79f9a6666b3f09f14; the recorded files include LICENSE, resources/execution_instructions.md, at least one agents/*.md and one resources/document_standards/*.md, and the skills egm-brainstorm, egm-draft, egm-review, egm-resolve and egm-drift-report"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "Attribution document and help text name EGM",
+      "given": "the repository at this ADR's implementation",
+      "when": "docs/ATTRIBUTIONS.md, README.md, `hexa design --help` and `hexa drift --help` are read",
+      "then": "docs/ATTRIBUTIONS.md names Elephant-Goldfish Model, Google LLC, Apache-2.0, https://github.com/google/elephant-goldfish-model, commit a8380ab5f0aba392c97e31c79f9a6666b3f09f14 and Dave Rensin's essay; README.md links to docs/ATTRIBUTIONS.md or the EGM repository; both help outputs contain the name EGM or Elephant-Goldfish"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "A report from an EGM prompt names its persona and pinned commit",
+      "given": "a project with a design draft and a fake tool-less completion route returning canned findings",
+      "when": "`hexa design review <draft> --stage 6` runs and writes its report",
+      "then": "the report names the persona(s) that produced its findings and the commit a8380ab5f0aba392c97e31c79f9a6666b3f09f14"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "No EGM-derived report is written without attribution",
+      "given": "a project with Markdown docs and a fake completion route",
+      "when": "`hexa drift` writes docs/analysis/<YYYY-MM-DD>_DRIFT_REPORT.md",
+      "then": "the report is not missing the persona or pinned commit; a report lacking either fails the check"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "The goldfish prompt contains the persona, standard, document and sources",
+      "given": "persona \"PERSONA-TEXT\", standard Some(\"STANDARD-TEXT\"), document \"DOC-TEXT\", sources [(\"src/a.rs\", \"fn a() {}\")] and a cap of 1000 bytes",
+      "when": "goldfish_prompt is called",
+      "then": "the result contains PERSONA-TEXT, STANDARD-TEXT, DOC-TEXT, src/a.rs and fn a() {}"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "A reviewer's prompt has no conversation, earlier review or other reviewer's findings",
+      "given": "a review in which an earlier stage produced a finding containing the unique marker EARLIER-FINDING-XYZ and a concurrent reviewer's output containing OTHER-REVIEWER-XYZ, with a fake completion route that records every prompt it receives",
+      "when": "a later-stage reviewer goldfish (not the synthesizer) is run",
+      "then": "its recorded prompt contains neither EARLIER-FINDING-XYZ nor OTHER-REVIEWER-XYZ"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "An agent route that could read the tree is refused",
+      "given": "inference configured so that the model for `hexa design review` (via --model or inference.tier_models.t2.5) resolves to an agent route with tool access",
+      "when": "`hexa design review <draft>` is run",
+      "then": "it exits non-zero with an error saying the agent route is refused, and no completion is made"
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "The goldfish uses --model, else tier t2.5",
+      "given": "inference.tier_models.t2.5 set to a claude-text model M1 and a fake route recording the model of each call",
+      "when": "`hexa design review <draft> --stage 5` runs, then runs again with --model M2 (also claude-text)",
+      "then": "the first run's calls use M1 and the second run's calls use M2"
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§3"
+      ],
+      "kind": "property",
+      "description": "goldfish_prompt is a function of its inputs only",
+      "given": "any persona, standard, document, sources and cap",
+      "when": "goldfish_prompt is called twice with the same arguments, possibly with different environment, working directory or files on disk between calls",
+      "then": "both results are identical, and changing any byte of an input that would appear uncut in the prompt changes the result"
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§3",
+        "§4"
+      ],
+      "kind": "example",
+      "description": "A source longer than the cap is cut and the cut is stated",
+      "given": "sources [(\"src/big.rs\", 5000 bytes of 'x')] and cap_bytes 100",
+      "when": "goldfish_prompt is called",
+      "then": "the result contains no run of more than 100 'x' bytes from src/big.rs and contains a statement that src/big.rs was cut at 100 bytes"
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "Backquoted existing paths are returned in first-mention order, once each",
+      "given": "document \"See `src/b.rs`, then `src/a.rs`, and again `src/b.rs`.\" and exists returning true for src/a.rs and src/b.rs",
+      "when": "referenced_paths is called",
+      "then": "it returns [\"src/b.rs\", \"src/a.rs\"]"
+    },
+    {
+      "id": "S17",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "Paths that do not exist, or are outside the project, are not returned",
+      "given": "document \"`src/a.rs` `src/missing.rs` `../outside.rs` `/etc/passwd`\" and exists returning true only for src/a.rs",
+      "when": "referenced_paths is called",
+      "then": "it returns [\"src/a.rs\"] only"
+    },
+    {
+      "id": "S18",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "Unresolved paths are not read and are listed in the report",
+      "given": "a project whose draft names `src/real.rs` (exists) and `src/ghost.rs` (does not exist) and `../secret.txt` (outside the project, existing on disk with marker SECRET-XYZ), with a fake route recording prompts",
+      "when": "`hexa design review <draft> --stage 6` runs",
+      "then": "no recorded prompt contains SECRET-XYZ, and the review report lists src/ghost.rs and ../secret.txt as unresolved"
+    },
+    {
+      "id": "S19",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "Paths mentioned outside backquotes are not returned",
+      "given": "document \"see src/a.rs for details\" with no backquotes and exists returning true for src/a.rs",
+      "when": "referenced_paths is called",
+      "then": "it returns an empty list"
+    },
+    {
+      "id": "S20",
+      "decision": [
+        "§4"
+      ],
+      "kind": "property",
+      "description": "referenced_paths returns a duplicate-free, existing, order-preserving subset of backquoted spans",
+      "given": "any document and any exists predicate",
+      "when": "referenced_paths is called",
+      "then": "every returned path appears in the document in backquotes, exists returns true for it, no path appears twice, the paths appear in the order of their first backquoted mention, and every backquoted span for which exists returns true is returned"
+    },
+    {
+      "id": "S21",
+      "decision": [
+        "§5"
+      ],
+      "kind": "example",
+      "description": "Presets give EGM's stages in order",
+      "given": "the three presets",
+      "when": "stages_for is called on each and stage_number is applied to each result",
+      "then": "Full gives [5, 6, 7, 8, 9], FeatureSpecOnly gives [5, 6, 7, 8], and ImplementationPlanOnly gives [9]"
+    },
+    {
+      "id": "S22",
+      "decision": [
+        "§5"
+      ],
+      "kind": "example",
+      "description": "Each stage has its reviewers and findings are numbered per stage",
+      "given": "a draft and a fake route returning one distinct finding per reviewer and a synthesizer that returns its input findings",
+      "when": "`hexa design review <draft>` runs the Full preset",
+      "then": "stage_reviewers returns a non-empty list for every stage, the critic stage includes three reviewers and the implementation readiness stage three; the report has one section per stage in order 5, 6, 7, 8, 9; findings in stage 7 are numbered S7-1, S7-2, …"
+    },
+    {
+      "id": "S23",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "The review never edits the draft",
+      "given": "a draft file with known bytes and a fake route",
+      "when": "`hexa design review <draft>` completes",
+      "then": "the draft file's bytes are unchanged"
+    },
+    {
+      "id": "S24",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "A stage does not start before the previous stage's reviewers have all returned",
+      "given": "a fake route that records call start and return times and delays one stage-5 reviewer",
+      "when": "`hexa design review <draft>` runs the Full preset",
+      "then": "no stage-6 call starts before the last stage-5 reviewer call has returned"
+    },
+    {
+      "id": "S25",
+      "decision": [
+        "§5"
+      ],
+      "kind": "example",
+      "description": "--stage N runs one stage only",
+      "given": "a draft and a fake route recording calls",
+      "when": "`hexa design review <draft> --stage 7` runs",
+      "then": "only stage 7's reviewers and its synthesizer are called, and the report has only a stage 7 section"
+    },
+    {
+      "id": "S26",
+      "decision": [
+        "§5"
+      ],
+      "kind": "property",
+      "description": "Every preset runs stages in strictly ascending stage number",
+      "given": "any Preset",
+      "when": "stages_for is called",
+      "then": "the stage numbers are strictly ascending, each between 5 and 9, and every stage maps to a distinct stage_number"
+    },
+    {
+      "id": "S27",
+      "decision": [
+        "§6"
+      ],
+      "kind": "example",
+      "description": "Brainstorm and draft write their artifacts to the artifact directory",
+      "given": "a project whose CLAUDE.md has the line `EGM artifact directory: design/egm` and a fake elephant and goldfish",
+      "when": "`hexa design brainstorm \"an idea\"` and then `hexa design draft` run",
+      "then": "design/egm/concepts_brief.md and design/egm/design_draft.md exist, and the critic goldfish was called on the brief after brainstorm"
+    },
+    {
+      "id": "S28",
+      "decision": [
+        "§6"
+      ],
+      "kind": "example",
+      "description": "Without the CLAUDE.md line, artifacts go to docs/designs/",
+      "given": "a project whose CLAUDE.md has no `EGM artifact directory:` line",
+      "when": "`hexa design brainstorm \"an idea\"` runs",
+      "then": "docs/designs/concepts_brief.md is written"
+    },
+    {
+      "id": "S29",
+      "decision": [
+        "§6"
+      ],
+      "kind": "negative",
+      "description": "Resolve hands the elephant only the accepted findings",
+      "given": "a review report with findings S6-1 (marker AAA), S6-2 (marker BBB) and S7-1 (marker CCC), and a fake elephant recording its input",
+      "when": "`hexa design resolve <report> --accept S6-1,S7-1` runs",
+      "then": "the elephant's input contains the draft, AAA and CCC, and does not contain BBB"
+    },
+    {
+      "id": "S30",
+      "decision": [
+        "§6"
+      ],
+      "kind": "negative",
+      "description": "No command marks a design approved",
+      "given": "a project and fake routes",
+      "when": "every `hexa design` subcommand runs to completion",
+      "then": "none creates a git commit, writes an approval status or marker into any design artifact, or adds files to the git index under docs/designs/"
+    },
+    {
+      "id": "S31",
+      "decision": [
+        "§7"
+      ],
+      "kind": "example",
+      "description": "Drift report has one section per document, with No drift detected where none was found",
+      "given": "a project with README.md, ARCHITECTURE.md and docs/guide.md, and a fake goldfish returning a divergence for README.md only",
+      "when": "`hexa drift` runs on 2026-10-27",
+      "then": "docs/analysis/2026-10-27_DRIFT_REPORT.md has a section for each of the three documents, README.md's section lists the divergence, the other two say No drift detected, and the exit code is 0"
+    },
+    {
+      "id": "S32",
+      "decision": [
+        "§7"
+      ],
+      "kind": "negative",
+      "description": "ADRs are not checked",
+      "given": "a project with docs/adr/ADR-0001.md (or other ADR files) under the checked directory and a fake route recording prompts",
+      "when": "`hexa drift` runs",
+      "then": "no goldfish call receives an ADR's content and the report has no section for any ADR"
+    },
+    {
+      "id": "S33",
+      "decision": [
+        "§7"
+      ],
+      "kind": "negative",
+      "description": "Drift found does not fail the run unless asked",
+      "given": "a fake goldfish that returns a divergence for one document",
+      "when": "`hexa drift` runs, then `hexa drift --fail-on-drift` runs",
+      "then": "the first exits 0 and the second exits non-zero"
+    },
+    {
+      "id": "S34",
+      "decision": [
+        "§7"
+      ],
+      "kind": "example",
+      "description": "No drift with --fail-on-drift exits 0",
+      "given": "a fake goldfish that returns no divergences",
+      "when": "`hexa drift --fail-on-drift` runs",
+      "then": "it exits 0"
+    },
+    {
+      "id": "S35",
+      "decision": [
+        "§8"
+      ],
+      "kind": "example",
+      "description": "Design and drift commands write only to their artifact directory and docs/analysis/",
+      "given": "a project tree snapshot and fake routes",
+      "when": "`hexa design brainstorm`, `draft`, `review`, `resolve` and `hexa drift` each run",
+      "then": "every file created or modified lies under the artifact directory or docs/analysis/"
+    },
+    {
+      "id": "S36",
+      "decision": [
+        "§8"
+      ],
+      "kind": "negative",
+      "description": "A model reply proposing code changes does not write code",
+      "given": "a fake elephant whose reply includes a full replacement for src/lib.rs",
+      "when": "`hexa design resolve <report> --accept S6-1` runs",
+      "then": "src/lib.rs is unchanged and no file outside the artifact directory and docs/analysis/ is written"
+    },
+    {
+      "id": "S37",
+      "decision": [
+        "§8"
+      ],
+      "kind": "property",
+      "description": "No hexa design or hexa drift run writes outside the allowed directories",
+      "given": "any project, any CLAUDE.md artifact directory setting, any arguments and any fake model replies",
+      "when": "any `hexa design` or `hexa drift` command runs",
+      "then": "the set of paths created, modified or deleted is a subset of files under the artifact directory and docs/analysis/"
+    }
+  ]
+}
