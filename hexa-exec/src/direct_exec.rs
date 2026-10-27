@@ -149,6 +149,12 @@ pub struct DirectResult {
     pub evidence_passed: bool,
     pub evidence_output: String,
     pub error: Option<String>,
+    /// Files the run changed but was not given, restored before its gate
+    /// (an isolated run only; parley K17).
+    pub restored_unlisted: Vec<String>,
+    /// Files the run changed but was not given, left as they are because the
+    /// run shares the operator's tree, where they may be the operator's own.
+    pub left_modified: Vec<String>,
 }
 
 /// Hard cap on grounded lines. The local code model is loaded with a 4096-token
@@ -586,6 +592,9 @@ impl DirectResult {
             evidence_passed: false,
             evidence_output: String::new(),
             error: Some(msg),
+
+            restored_unlisted: Vec::new(),
+            left_modified: Vec::new(),
         }
     }
 }
@@ -637,6 +646,9 @@ async fn exec_attempts(deps: &ExecDeps, task: &DirectTask, repo_root: &std::path
         evidence_passed: false,
         evidence_output: String::new(),
         error: None,
+
+        restored_unlisted: Vec::new(),
+        left_modified: Vec::new(),
     };
 
     let mut last_error: Option<String> = None;
@@ -1084,7 +1096,7 @@ pub async fn run_evidence(cmd: &str, repo_root: &std::path::Path) -> (bool, Stri
 /// START of a run so the commit can include the operator's pre-run supporting files
 /// (a spec, a module registration) that the evidence depended on — without sweeping in
 /// anything that appears *concurrently* after the run begins.
-pub(crate) async fn dirty_paths(repo_root: &std::path::Path) -> Vec<String> {
+pub async fn dirty_paths(repo_root: &std::path::Path) -> Vec<String> {
     let out = match tokio::process::Command::new("git")
         .args(["status", "--porcelain", "--untracked-files=all"])
         .current_dir(repo_root)
@@ -1135,6 +1147,51 @@ fn tracked_in_head(repo_root: &std::path::Path, path: &str) -> bool {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
+}
+
+/// The paths changed since the run started that it was not given: dirty now,
+/// not dirty in `start_dirty`, and neither `file` nor an `--also` path
+/// (parley K17: a delegate's `cargo fmt` left 29 such files behind).
+pub async fn unlisted_changes(
+    repo_root: &std::path::Path,
+    start_dirty: &[String],
+    file: &str,
+    also: &[String],
+) -> Vec<String> {
+    let given: Vec<String> = std::iter::once(normalize_also(file)).chain(also.iter().map(|p| normalize_also(p))).collect();
+    let mut v: Vec<String> = dirty_paths(repo_root)
+        .await
+        .into_iter()
+        .filter(|p| !start_dirty.contains(p) && !given.contains(p))
+        .collect();
+    v.sort();
+    v.dedup();
+    v
+}
+
+/// Puts each path back as `HEAD` has it: a tracked file is checked out (which
+/// also undoes a deletion), and an untracked one is removed. Returns the paths
+/// it could not restore, so a caller can refuse rather than carry on.
+pub async fn restore_unlisted(repo_root: &std::path::Path, paths: &[String]) -> Vec<String> {
+    let mut kept = Vec::new();
+    for p in paths {
+        let ok = if tracked_in_head(repo_root, p) {
+            tokio::process::Command::new("git")
+                .args(["checkout", "-q", "HEAD", "--"])
+                .arg(p)
+                .current_dir(repo_root)
+                .output()
+                .await
+                .is_ok_and(|o| o.status.success())
+        } else {
+            let abs = repo_root.join(p);
+            !abs.exists() || std::fs::remove_file(&abs).is_ok()
+        };
+        if !ok {
+            kept.push(p.clone());
+        }
+    }
+    kept
 }
 
 /// `commit`, plus every `--also` path that exists after the run, or that is

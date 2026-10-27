@@ -8,6 +8,7 @@ fn pass() -> DirectResult {
         ok: true, attempts: 1, edit_applied: true,
         committed: Some("h".into()), evidence_passed: true,
         evidence_output: String::new(), error: None,
+        restored_unlisted: vec![], left_modified: vec![],
     }
 }
 fn fail() -> DirectResult {
@@ -15,6 +16,7 @@ fn fail() -> DirectResult {
         ok: false, attempts: 1, edit_applied: false,
         committed: None, evidence_passed: false,
         evidence_output: String::new(), error: Some("x".into()),
+        restored_unlisted: vec![], left_modified: vec![],
     }
 }
 
