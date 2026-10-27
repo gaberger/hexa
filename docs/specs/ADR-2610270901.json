@@ -1,0 +1,266 @@
+{
+  "adr": "ADR-2610270901",
+  "feature": "claude-text completion route",
+  "description": "The model id `claude-text` is served by `claude -p` as a tool-less completion. It runs in a fresh empty directory, sends the system prompt as the system prompt, refuses tool definitions, and takes an optional `:<model>` suffix.",
+  "universal": [
+    "§1",
+    "§2",
+    "§3",
+    "§4"
+  ],
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "The bare `claude-text` model id is served by the Claude CLI adapter in text mode with the isolating flags.",
+      "given": "An inference request whose model id is `claude-text`, with a single user message `hello`.",
+      "when": "The request is completed.",
+      "then": "The adapter invokes `claude -p` with `--tools \"\"`, `--setting-sources \"\"`, `--strict-mcp-config`, `--disable-slash-commands`, `--no-session-persistence` and `--output-format text`. The completion text returned is the CLI's stdout."
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "An endpoint registered with provider `claude-text` is served the same way.",
+      "given": "An endpoint registered with provider `claude-text` under some other name.",
+      "when": "A request is routed to that endpoint.",
+      "then": "It is served by the Claude CLI adapter in text mode, with the same flags as for model id `claude-text`."
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "The CLI runs in a new empty directory, which is removed afterwards.",
+      "given": "A `claude-text` request issued from a caller whose working directory contains files.",
+      "when": "The request is completed successfully.",
+      "then": "The CLI's working directory is not the caller's directory. It contained no entries when the CLI started. It no longer exists after the call returns."
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "Text mode never passes `--dangerously-skip-permissions`.",
+      "given": "Any `claude-text` request.",
+      "when": "The adapter builds the CLI invocation.",
+      "then": "The argument list does not contain `--dangerously-skip-permissions`."
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "The empty directory is removed even when the CLI fails.",
+      "given": "A `claude-text` request where the CLI exits non-zero or cannot be spawned.",
+      "when": "The request is completed.",
+      "then": "An error is returned and the temporary directory no longer exists."
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "Text mode does not run in the caller's directory.",
+      "given": "A `claude-text` request issued from a repository directory.",
+      "when": "The adapter spawns the CLI.",
+      "then": "The CLI's working directory is neither the caller's directory nor any ancestor or descendant of it."
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§1"
+      ],
+      "kind": "property",
+      "description": "Every `claude-text` invocation is isolated and cleaned up.",
+      "given": "Any `claude-text` request, with any messages and any `claude-text:<model>` suffix, and any CLI outcome (success, non-zero exit, spawn failure).",
+      "when": "The request is completed.",
+      "then": "The invocation carries all six isolating flags. It never carries `--dangerously-skip-permissions`. It ran in a directory that was freshly created and empty at start, and that directory does not exist afterwards."
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "The system prompt and the user message are both delivered.",
+      "given": "A `claude-text` request with system prompt `You are the spec author.` and user message `Draft ADR-X`.",
+      "when": "The adapter builds the CLI invocation.",
+      "then": "`--system-prompt` is passed with value `You are the spec author.`, and the prompt argument contains `Draft ADR-X`."
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "The system prompt is not dropped or folded into the prompt.",
+      "given": "A `claude-text` request with a system prompt and one user message.",
+      "when": "The adapter builds the CLI invocation.",
+      "then": "The system prompt text appears as the value of `--system-prompt`, not only inside the prompt argument. The invocation is not built from the last user message alone."
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "With no system prompt, no `--system-prompt` flag is sent.",
+      "given": "A `claude-text` request with no system prompt and one user message.",
+      "when": "The adapter builds the CLI invocation.",
+      "then": "The argument list does not contain `--system-prompt`, and the prompt carries the user message."
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "A multi-turn conversation is sent as the prompt, not just the last user message.",
+      "given": "A `claude-text` request with user message `A`, assistant message `B` and user message `C`.",
+      "when": "The adapter builds the CLI invocation.",
+      "then": "The prompt argument contains `A`, `B` and `C`."
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§2"
+      ],
+      "kind": "property",
+      "description": "Nothing in the request is lost.",
+      "given": "Any `claude-text` request with an optional system prompt and one or more conversation messages.",
+      "when": "The adapter builds the CLI invocation.",
+      "then": "If a system prompt is present it is the exact value of `--system-prompt`, and every message's content appears in the prompt argument."
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "`claude-text` is not treated as a frontier CLI agent.",
+      "given": "The model id `claude-text`.",
+      "when": "`served_by_frontier_cli` is evaluated for it.",
+      "then": "It returns false."
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "The spec verbs accept `claude-text`.",
+      "given": "An ADR and the model id `claude-text`.",
+      "when": "`hexa spec draft <ADR> --model claude-text` or `hexa spec tests <ADR> --model claude-text --crate <dir>` checks the model.",
+      "then": "The model is not refused under ADR-2610221540 §2."
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "A request carrying tool definitions is refused, and the error names `claude-text`.",
+      "given": "A `claude-text` request that includes one or more tool definitions.",
+      "when": "The request is completed.",
+      "then": "An error is returned whose message contains `claude-text`. The CLI is not invoked, and no completion with the tools silently dropped is returned."
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "Other `claude` ids are still treated as agents.",
+      "given": "The model id `claude-code`.",
+      "when": "`served_by_frontier_cli` is evaluated for it.",
+      "then": "It returns true. Only `claude-text` and `claude-text:<model>` are excluded."
+    },
+    {
+      "id": "S17",
+      "decision": [
+        "§3"
+      ],
+      "kind": "property",
+      "description": "No `claude-text` id is an agent, and no tool-carrying request is served.",
+      "given": "Any model id of the form `claude-text` or `claude-text:<model>`, and any request to it.",
+      "when": "`served_by_frontier_cli` is evaluated, and the request is completed.",
+      "then": "`served_by_frontier_cli` is false. Any request with a non-empty set of tool definitions yields an error naming `claude-text`, without invoking the CLI."
+    },
+    {
+      "id": "S18",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "The suffix after the colon selects the model.",
+      "given": "A request with model id `claude-text:opus`.",
+      "when": "The adapter builds the CLI invocation.",
+      "then": "The argument list contains `--model opus`, and the other text-mode flags are unchanged."
+    },
+    {
+      "id": "S19",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "Bare `claude-text` passes no `--model`.",
+      "given": "A request with model id `claude-text`.",
+      "when": "The adapter builds the CLI invocation.",
+      "then": "The argument list does not contain `--model`."
+    },
+    {
+      "id": "S20",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "No concrete Claude model id is hard-coded outside `hexa-infer`.",
+      "given": "The workspace source outside the `hexa-infer` crate.",
+      "when": "It is searched for `claude-text:` followed by a model name.",
+      "then": "No match is found."
+    },
+    {
+      "id": "S21",
+      "decision": [
+        "§4"
+      ],
+      "kind": "property",
+      "description": "The model flag is exactly the suffix.",
+      "given": "Any non-empty string `m`.",
+      "when": "A request with model id `claude-text:m` is built into a CLI invocation.",
+      "then": "`--model` appears exactly once, with value `m`."
+    },
+    {
+      "id": "S22",
+      "decision": [
+        "§5"
+      ],
+      "kind": "example",
+      "description": "This ADR's tests are recorded red before the adapter exists, then sealed.",
+      "given": "The hand-written tests for ADR-2610270901, committed before text mode is implemented.",
+      "when": "They are recorded and `hexa spec seal ADR-2610270901` is run.",
+      "then": "Each test was recorded failing against the unbuilt adapter, the seal succeeds, and `hexa spec verify ADR-2610270901` checks those sealed tests."
+    },
+    {
+      "id": "S23",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "The bootstrap exception is not available to other ADRs.",
+      "given": "Any ADR other than ADR-2610270901 whose spec or tests were produced outside `hexa spec draft` or `hexa spec tests`.",
+      "when": "`hexa spec verify` is run for that ADR.",
+      "then": "The ADR does not pass on the strength of the ADR-2610270901 exception; the normal gate applies."
+    }
+  ]
+}

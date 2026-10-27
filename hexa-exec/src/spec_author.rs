@@ -252,7 +252,8 @@ const AUTHOR: &str = "You are the spec author. Turn an architecture decision rec
 given / when / then scenarios a person can read and a test can check. You are given the ADR and the \
 port and domain signatures it names, and nothing else; you have not seen and must not guess at any \
 implementation. Every numbered decision (§n) needs at least one `example` scenario and at least one \
-`negative` scenario (what the decision must refuse). Cite decisions as \"§n\". Answer with one JSON \
+`negative` scenario (what the decision must refuse). Every decision you list as `universal` also needs \
+at least one `property` scenario (the rule, stated over all inputs). Cite decisions as \"§n\". Answer with one JSON \
 object and nothing else.";
 
 #[derive(Debug)]
