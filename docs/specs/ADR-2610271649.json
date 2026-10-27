@@ -9,7 +9,7 @@
   ],
   "accepted": {
     "by": "gary",
-    "sha256": "8528349d7b04e4ee72ccb6e5d07d382eff825bda2077fbe6f540e93fab56fe4e"
+    "sha256": "af4871c6564f6c41cde3892029b9876acda8271c65cb76fa1147e2a0b0a9581a"
   },
   "specs": [
     {
@@ -285,7 +285,7 @@
       "description": "hexa grades itself A+ with zero boundary violations under the corrected rule.",
       "given": "hexa's repository, with the within-layer cross-adapter check on.",
       "when": "hexa analyze . is run, and the hexa_grades_itself_by_ratchet test runs.",
-      "then": "Zero boundary violations are reported, the grade is A+, and the ratchet test passes."
+      "then": "An AdapterMap built from hexa's .hexa/project.json (analyze.layers keys and analyze.adapters groups) is Ok, and under it crosses_adapters is false for every import edge hexa analyze reads; zero boundary violations are reported, the grade is A+, and the ratchet test passes."
     },
     {
       "id": "S26",
