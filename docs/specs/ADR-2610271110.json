@@ -11,12 +11,8 @@
   ],
   "accepted": {
     "by": "gary",
-    "sha256": "b44d9442fb3a85c660691ad1445e0318852283803a49f708bdb0d312e5091408"
+    "sha256": "d377bdd33b3bf7667a57e1b92865552c2f1a46b28551f6599c2021a8ce26dc28"
   },
-  "sealed": {
-    "hexa-core/tests/adr_2610271110_spec.rs": "113f8bbacb70feecca9f858c30ddbf1bcfba0e1a0793214348de808c21933d41"
-  },
-  "red": "622096f",
   "specs": [
     {
       "id": "S01",
@@ -282,5 +278,9 @@
       "then": "each pair of results is equal",
       "test": "hexa-core/tests/adr_2610271110_spec.rs::s22_property_both_functions_deterministic"
     }
-  ]
+  ],
+  "red": "622096f",
+  "sealed": {
+    "hexa-core/tests/adr_2610271110_spec.rs": "113f8bbacb70feecca9f858c30ddbf1bcfba0e1a0793214348de808c21933d41"
+  }
 }
