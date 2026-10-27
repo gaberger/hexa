@@ -12,7 +12,7 @@
     "sha256": "baaa06009ec2799c9a8cdacf1b215faff32221259f18559af9d313fb01e25e6e"
   },
   "sealed": {
-    "hexa-cli/tests/adr_2610270853_spec.rs": "d79b8a1f4f6629bbfff9025f6bad5d7200726160d6113848e360bd16ff18b5f3"
+    "hexa-cli/tests/adr_2610270853_spec.rs": "008d0f986e79c3ef3dc7c53f36ac499bff08130a4859e40a02be9f9adf578333"
   },
   "red": "bde4636",
   "specs": [
