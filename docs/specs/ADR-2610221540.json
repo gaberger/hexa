@@ -2,6 +2,17 @@
   "adr": "ADR-2610221540",
   "feature": "an ADR is compiled to a spec, the spec to sealed tests",
   "description": "ADR-2610221540 stated as behaviour: drafting from the ADR and ports alone, coverage, acceptance, red-first generation, the seal, verification and --prove, and the ledger fixes.",
+  "accepted": {
+    "by": "gary",
+    "sha256": "1d6f9f0907cde2d47f204a6b9d2410480cc497ede936867e6f92f865c6f97a49"
+  },
+  "sealed": {
+    "hexa-cli/tests/a_decision_is_covered_by_a_sealed_spec.rs": "3adf53bd834631dc8bfc2f56b7b566db26826bdffaed93505cc36145ebefbaae",
+    "hexa-cli/tests/a_test_was_red_before_the_code.rs": "4b9dd29c253acb78dc900d867db1feaf8f840b3e591ea0a4f849731423d2ae5d",
+    "hexa-cli/tests/the_ledger_reads_every_gate_and_no_skip_passes.rs": "415540a622855638be957774d035087bcee6ae85a7b1f7c5e3c1aebec6f6213c",
+    "hexa-exec/tests/a_sealed_test_is_never_committed.rs": "f20f9118d347cc1856380e411416a70af40672e54595238822ed71bc50982fc9",
+    "hexa-exec/tests/a_spec_is_drafted_and_its_tests_generated_red.rs": "db3453ebf4efaa12a3667e8d17655655704cde34f2a9e6dec84d0328578e049a"
+  },
   "specs": [
     {
       "id": "S01",
