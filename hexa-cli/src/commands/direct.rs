@@ -36,7 +36,9 @@ pub enum DoAction {
         /// An additional repo-relative file the run may create or edit besides --file
         /// (repeatable; may not exist yet). Each that exists after a passing run is
         /// committed in the same commit as --file; on a failed run they are restored
-        /// (created ones deleted). No other new file is ever committed.
+        /// (created ones deleted). No other new file is ever committed. Any
+        /// other file a claude-* delegate changes is restored before the gate
+        /// in an isolated run, and left (and named) on the operator's tree.
         #[arg(long = "also", value_name = "ALSO")]
         also: Vec<String>,
     },
@@ -88,6 +90,33 @@ pub async fn run(action: DoAction) -> anyhow::Result<()> {
             let committed = r.get("committed").and_then(|v| v.as_str());
             let step_word = if fast { "attempt(s)" } else { "step(s)" };
             let ev_label = if ev { "pass".green() } else { "fail".red() };
+
+            // Files the run changed but was not given (parley K17): name them
+            // whatever the outcome, so they are never left without a word.
+            let names = |key: &str| -> Vec<String> {
+                r.get(key)
+                    .and_then(|v| v.as_array())
+                    .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+                    .unwrap_or_default()
+            };
+            let restored = names("restored_unlisted");
+            if !restored.is_empty() {
+                println!(
+                    "  {} restored {} file(s) the run was not given: {}",
+                    "!".yellow().bold(),
+                    restored.len(),
+                    restored.join(", ")
+                );
+            }
+            let left = names("left_modified");
+            if !left.is_empty() {
+                println!(
+                    "  {} {} file(s) changed during the run that it was not given were left as they are (operator tree): {}",
+                    "!".yellow().bold(),
+                    left.len(),
+                    left.join(", ")
+                );
+            }
 
             if ok {
                 println!(

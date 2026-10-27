@@ -129,6 +129,9 @@ async fn react_attempts(
         evidence_passed: false,
         evidence_output: String::new(),
         error: None,
+
+        restored_unlisted: Vec::new(),
+        left_modified: Vec::new(),
     };
 
     let context_block = direct_exec::gather_context(&*deps.memory, task).await;
@@ -862,6 +865,9 @@ pub async fn claude_attempts(
         evidence_passed: false,
         evidence_output: String::new(),
         error: None,
+
+        restored_unlisted: Vec::new(),
+        left_modified: Vec::new(),
     };
     let abs_path = repo_root.join(&task.file);
     let snapshot = std::fs::read_to_string(&abs_path).unwrap_or_default();
@@ -886,9 +892,23 @@ pub async fn claude_attempts(
         Err(crate::ports::FrontierError::Timeout(t)) => {
             let _ = std::fs::write(&abs_path, &snapshot);
             also_snapshot.restore();
-            result.error = Some(format!("claude -p timed out after {}s", t.as_secs()));
+            let mut msg = format!("claude -p timed out after {}s", t.as_secs());
+            if let Err(e) = settle_unlisted(repo_root, task, factory, &start_dirty, &mut result).await {
+                msg.push_str(&format!("; {e}"));
+            }
+            result.error = Some(msg);
             return (result, 1, model);
         }
+    }
+
+    // The delegate has a shell and is only *told* to keep to its files (parley
+    // K17: its `cargo fmt` left 29 files changed). Settle what it changed
+    // beyond them before the gate, so the gate judges what is committed.
+    if let Err(e) = settle_unlisted(repo_root, task, factory, &start_dirty, &mut result).await {
+        let _ = std::fs::write(&abs_path, &snapshot);
+        also_snapshot.restore();
+        result.error = Some(e);
+        return (result, 1, model);
     }
 
     result.edit_applied = std::fs::read_to_string(&abs_path).map(|c| c != snapshot).unwrap_or(false);
@@ -924,13 +944,58 @@ pub async fn claude_attempts(
     } else {
         let _ = std::fs::write(&abs_path, &snapshot);
         also_snapshot.restore();
-        result.error = Some(if vacuous {
+        let mut msg = if vacuous {
             "claude: evidence passed vacuously (0 tests) — reverted".to_string()
         } else {
             "claude: evidence did not pass — reverted".to_string()
-        });
+        };
+        if !result.restored_unlisted.is_empty() {
+            msg.push_str(&format!(
+                ". Before the gate the run restored {} file(s) it was not given: {}. If the change needs \
+                 them, name each with --also",
+                result.restored_unlisted.len(),
+                result.restored_unlisted.join(", ")
+            ));
+        }
+        result.error = Some(msg);
     }
     (result, 1, model)
+}
+
+/// The files the delegate changed but was not given (`--file`, `--also`, or
+/// dirty before the run). An isolated run owns its tree, so it restores them
+/// and records them in `restored_unlisted`. The operator's tree may hold the
+/// operator's own concurrent edits, which no check can tell apart, so there
+/// they are left and recorded in `left_modified`. Errs, naming them, when an
+/// isolated run cannot restore one: carrying on would commit from a tree the
+/// gate never judged.
+async fn settle_unlisted(
+    repo_root: &std::path::Path,
+    task: &DirectTask,
+    factory: bool,
+    start_dirty: &[String],
+    result: &mut DirectResult,
+) -> Result<(), String> {
+    let unlisted = direct_exec::unlisted_changes(repo_root, start_dirty, &task.file, &task.also).await;
+    if unlisted.is_empty() {
+        return Ok(());
+    }
+    if !factory {
+        tracing::warn!(files = ?unlisted, "delegate changed files it was not given; left on the operator tree");
+        result.left_modified = unlisted;
+        return Ok(());
+    }
+    let kept = direct_exec::restore_unlisted(repo_root, &unlisted).await;
+    tracing::warn!(files = ?unlisted, "delegate changed files it was not given; restored");
+    result.restored_unlisted = unlisted;
+    if kept.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "the delegate changed files it was not given and these could not be restored: {}; nothing committed",
+            kept.join(", ")
+        ))
+    }
 }
 
 /// The delegate's instruction. With no `--also` files it is held to its one
