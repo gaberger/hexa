@@ -13,6 +13,10 @@
     "by": "gary",
     "sha256": "b44d9442fb3a85c660691ad1445e0318852283803a49f708bdb0d312e5091408"
   },
+  "sealed": {
+    "hexa-core/tests/adr_2610271110_spec.rs": "113f8bbacb70feecca9f858c30ddbf1bcfba0e1a0793214348de808c21933d41"
+  },
+  "red": "622096f",
   "specs": [
     {
       "id": "S01",
@@ -23,7 +27,8 @@
       "description": "The declared reason is carried into the verdict verbatim",
       "given": "unbuilt = {\"ADR-2610161730\": \"delegate_scope test not written yet\"}",
       "when": "judge(\"ADR-2610161730\", &Outcome::Failed, &unbuilt, true)",
-      "then": "returns Verdict::Unbuilt { reason: \"delegate_scope test not written yet\" }"
+      "then": "returns Verdict::Unbuilt { reason: \"delegate_scope test not written yet\" }",
+      "test": "hexa-core/tests/adr_2610271110_spec.rs::s01_declared_reason_carried_verbatim"
     },
     {
       "id": "S02",
@@ -34,7 +39,8 @@
       "description": "A declaration covers only its own id; another entry's reason is never borrowed",
       "given": "unbuilt = {\"ADR-2610161730\": \"not written\"}",
       "when": "judge(\"ADR-2610221834\", &Outcome::Failed, &unbuilt, true)",
-      "then": "the verdict is not Verdict::Unbuilt (it is a Fails verdict, as for any undeclared ADR whose gate failed under --ci)"
+      "then": "the verdict is not Verdict::Unbuilt (it is a Fails verdict, as for any undeclared ADR whose gate failed under --ci)",
+      "test": "hexa-core/tests/adr_2610271110_spec.rs::s02_declaration_covers_only_its_own_id"
     },
     {
       "id": "S03",
@@ -45,7 +51,8 @@
       "description": "Each failing outcome of a declared ADR becomes Unbuilt under --ci",
       "given": "unbuilt = {\"ADR-A\": \"why\"}",
       "when": "judge(\"ADR-A\", o, &unbuilt, true) for each o in [Failed, Unrunnable, CannotRunHere, NotProvenHere]",
-      "then": "each returns Verdict::Unbuilt { reason: \"why\" }"
+      "then": "each returns Verdict::Unbuilt { reason: \"why\" }",
+      "test": "hexa-core/tests/adr_2610271110_spec.rs::s03_each_failing_outcome_of_declared_adr_is_unbuilt_under_ci"
     },
     {
       "id": "S04",
@@ -56,7 +63,8 @@
       "description": "A declared ADR is reported as unbuilt outside --ci too",
       "given": "unbuilt = {\"ADR-A\": \"why\"}",
       "when": "judge(\"ADR-A\", &Outcome::NotProvenHere, &unbuilt, false)",
-      "then": "returns Verdict::Unbuilt { reason: \"why\" }"
+      "then": "returns Verdict::Unbuilt { reason: \"why\" }",
+      "test": "hexa-core/tests/adr_2610271110_spec.rs::s04_declared_adr_unbuilt_outside_ci"
     },
     {
       "id": "S05",
@@ -67,7 +75,8 @@
       "description": "A declared, still-unbuilt ADR is never counted as passed and never fails --ci",
       "given": "unbuilt = {\"ADR-A\": \"why\"}",
       "when": "judge(\"ADR-A\", &Outcome::Failed, &unbuilt, true)",
-      "then": "the verdict is neither Verdict::Passed nor Verdict::Fails(_)"
+      "then": "the verdict is neither Verdict::Passed nor Verdict::Fails(_)",
+      "test": "hexa-core/tests/adr_2610271110_spec.rs::s05_declared_unbuilt_never_passed_never_fails"
     },
     {
       "id": "S06",
@@ -78,7 +87,8 @@
       "description": "For a declared ADR, every non-passing gate outcome is Unbuilt with the declared reason",
       "given": "any adr id, any reason r, any unbuilt map U with U[adr] = r, any ci",
       "when": "judge(adr, o, &U, ci) for o in {Failed, Unrunnable, CannotRunHere, NotProvenHere}",
-      "then": "the result equals Verdict::Unbuilt { reason: r }"
+      "then": "the result equals Verdict::Unbuilt { reason: r }",
+      "test": "hexa-core/tests/adr_2610271110_spec.rs::s06_property_declared_non_passing_is_unbuilt_with_reason"
     },
     {
       "id": "S07",
@@ -89,7 +99,8 @@
       "description": "A declared ADR whose gate passes fails the run and says to remove the declaration",
       "given": "unbuilt = {\"ADR-A\": \"why\"}",
       "when": "judge(\"ADR-A\", &Outcome::Passed, &unbuilt, true)",
-      "then": "returns Verdict::Fails(msg), where msg names adr.unbuilt and tells the user to remove ADR-A from it"
+      "then": "returns Verdict::Fails(msg), where msg names adr.unbuilt and tells the user to remove ADR-A from it",
+      "test": "hexa-core/tests/adr_2610271110_spec.rs::s07_declared_adr_passing_fails_and_says_remove"
     },
     {
       "id": "S08",
@@ -100,7 +111,8 @@
       "description": "The list cannot hide a working gate, even outside --ci",
       "given": "unbuilt = {\"ADR-A\": \"why\"}",
       "when": "judge(\"ADR-A\", &Outcome::Passed, &unbuilt, false)",
-      "then": "the verdict is neither Verdict::Passed nor Verdict::Unbuilt { .. }; it is Verdict::Fails(_)"
+      "then": "the verdict is neither Verdict::Passed nor Verdict::Unbuilt { .. }; it is Verdict::Fails(_)",
+      "test": "hexa-core/tests/adr_2610271110_spec.rs::s08_list_cannot_hide_working_gate_outside_ci"
     },
     {
       "id": "S09",
@@ -111,7 +123,8 @@
       "description": "A passing gate on a declared ADR always fails",
       "given": "any adr, any U containing adr, any ci",
       "when": "judge(adr, &Outcome::Passed, &U, ci)",
-      "then": "the result matches Verdict::Fails(_)"
+      "then": "the result matches Verdict::Fails(_)",
+      "test": "hexa-core/tests/adr_2610271110_spec.rs::s09_property_passing_gate_on_declared_adr_fails"
     },
     {
       "id": "S10",
@@ -122,7 +135,8 @@
       "description": "An id that names no ADR is reported",
       "given": "unbuilt = {\"ADR-0000000000\": \"x\"}; gated = {\"ADR-A\": true}",
       "when": "declaration_errors(&unbuilt, &gated)",
-      "then": "returns exactly one error, which names ADR-0000000000 and says it names no ADR"
+      "then": "returns exactly one error, which names ADR-0000000000 and says it names no ADR",
+      "test": "hexa-core/tests/adr_2610271110_spec.rs::s10_unknown_id_is_reported"
     },
     {
       "id": "S11",
@@ -133,7 +147,8 @@
       "description": "An id that names an ADR with no gate is reported",
       "given": "unbuilt = {\"ADR-B\": \"x\"}; gated = {\"ADR-B\": false}",
       "when": "declaration_errors(&unbuilt, &gated)",
-      "then": "returns exactly one error, which names ADR-B and says it records no gate"
+      "then": "returns exactly one error, which names ADR-B and says it records no gate",
+      "test": "hexa-core/tests/adr_2610271110_spec.rs::s11_ungated_id_is_reported"
     },
     {
       "id": "S12",
@@ -144,7 +159,8 @@
       "description": "A valid declaration yields no errors, and an empty one never does",
       "given": "gated = {\"ADR-A\": true, \"ADR-B\": false}",
       "when": "declaration_errors is called with {\"ADR-A\": \"x\"}, and separately with {}",
-      "then": "both calls return an empty Vec"
+      "then": "both calls return an empty Vec",
+      "test": "hexa-core/tests/adr_2610271110_spec.rs::s12_valid_and_empty_declarations_have_no_errors"
     },
     {
       "id": "S13",
@@ -155,7 +171,8 @@
       "description": "Exactly the bad ids are reported",
       "given": "any unbuilt map U and any gated map G",
       "when": "declaration_errors(&U, &G)",
-      "then": "each id in U that is absent from G or has G[id] == false appears in exactly one error; no error names an id with G[id] == true; the result is empty iff every id in U has G[id] == true"
+      "then": "each id in U that is absent from G or has G[id] == false appears in exactly one error; no error names an id with G[id] == true; the result is empty iff every id in U has G[id] == true",
+      "test": "hexa-core/tests/adr_2610271110_spec.rs::s13_property_exactly_bad_ids_reported"
     },
     {
       "id": "S14",
@@ -166,7 +183,8 @@
       "description": "Undeclared ADRs keep today's verdicts",
       "given": "unbuilt = {} (empty)",
       "when": "judge is called on ADR-A with (Passed, ci=true), (Failed, ci=true), (NotProvenHere, ci=true), (NotProvenHere, ci=false), and (NoGate, ci=true)",
-      "then": "the results are, in order: Passed, Fails(_), Fails(_), Unproven, NoGate"
+      "then": "the results are, in order: Passed, Fails(_), Fails(_), Unproven, NoGate",
+      "test": "hexa-core/tests/adr_2610271110_spec.rs::s14_undeclared_adrs_keep_todays_verdicts"
     },
     {
       "id": "S15",
@@ -177,7 +195,8 @@
       "description": "Declaring other ADRs does not soften an undeclared failure",
       "given": "unbuilt = {\"ADR-B\": \"why\"}",
       "when": "judge(\"ADR-A\", &Outcome::Unrunnable, &unbuilt, true)",
-      "then": "returns Verdict::Fails(_), not Verdict::Unbuilt"
+      "then": "returns Verdict::Fails(_), not Verdict::Unbuilt",
+      "test": "hexa-core/tests/adr_2610271110_spec.rs::s15_other_declarations_do_not_soften_failure"
     },
     {
       "id": "S16",
@@ -188,7 +207,8 @@
       "description": "The declaration has no effect on an ADR outside it",
       "given": "any adr, any outcome o, any ci, any map U that does not contain adr",
       "when": "judge(adr, &o, &U, ci) is compared with judge(adr, &o, &Unbuilt::new(), ci)",
-      "then": "the two results are equal, and neither is Verdict::Unbuilt"
+      "then": "the two results are equal, and neither is Verdict::Unbuilt",
+      "test": "hexa-core/tests/adr_2610271110_spec.rs::s16_property_declaration_no_effect_outside_it"
     },
     {
       "id": "S17",
@@ -199,7 +219,8 @@
       "description": "hexa's own list holds at most the two named ADRs",
       "given": "hexa's .hexa/project.json",
       "when": "the ledger test reads adr.unbuilt",
-      "then": "it passes: the list has at most 2 entries, and each key is ADR-2610161730 or ADR-2610221834"
+      "then": "it passes: the list has at most 2 entries, and each key is ADR-2610161730 or ADR-2610221834",
+      "test": "hexa-core/tests/adr_2610271110_spec.rs::s17_hexa_list_holds_at_most_two_named_adrs"
     },
     {
       "id": "S18",
@@ -210,7 +231,8 @@
       "description": "A new entry fails the ledger test",
       "given": "hexa's adr.unbuilt with a third id added (for example ADR-2610271110)",
       "when": "the ledger test runs",
-      "then": "it fails and names the id that was added"
+      "then": "it fails and names the id that was added",
+      "test": "hexa-core/tests/adr_2610271110_spec.rs::s18_new_entry_fails_ledger_test"
     },
     {
       "id": "S19",
@@ -221,7 +243,8 @@
       "description": "Removing a built decision is allowed",
       "given": "hexa's adr.unbuilt with ADR-2610221834 removed, leaving only ADR-2610161730",
       "when": "the ledger test runs",
-      "then": "it passes"
+      "then": "it passes",
+      "test": "hexa-core/tests/adr_2610271110_spec.rs::s19_removing_built_decision_is_allowed"
     },
     {
       "id": "S20",
@@ -232,7 +255,8 @@
       "description": "The judgement works from its arguments alone",
       "given": "a working directory with no .hexa/project.json and no ADR files",
       "when": "judge(\"ADR-X\", &Outcome::Failed, &{\"ADR-X\": \"r\"}, true) and declaration_errors(&{\"ADR-X\": \"r\"}, &{\"ADR-X\": true}) are called",
-      "then": "they return Unbuilt { reason: \"r\" } and an empty Vec respectively, with no I/O and no gate executed"
+      "then": "they return Unbuilt { reason: \"r\" } and an empty Vec respectively, with no I/O and no gate executed",
+      "test": "hexa-core/tests/adr_2610271110_spec.rs::s20_judgement_works_from_arguments_alone"
     },
     {
       "id": "S21",
@@ -243,7 +267,8 @@
       "description": "judge does not run the gate itself or look ADRs up",
       "given": "an adr id that names no ADR on disk, outcome Passed, empty unbuilt",
       "when": "judge(\"ADR-NOPE\", &Outcome::Passed, &Unbuilt::new(), true)",
-      "then": "returns Verdict::Passed, decided only from the outcome given; no command is run and no file is read"
+      "then": "returns Verdict::Passed, decided only from the outcome given; no command is run and no file is read",
+      "test": "hexa-core/tests/adr_2610271110_spec.rs::s21_judge_decides_from_outcome_only"
     },
     {
       "id": "S22",
@@ -254,7 +279,8 @@
       "description": "Both functions are deterministic",
       "given": "any arguments",
       "when": "judge and declaration_errors are each called twice with the same arguments",
-      "then": "each pair of results is equal"
+      "then": "each pair of results is equal",
+      "test": "hexa-core/tests/adr_2610271110_spec.rs::s22_property_both_functions_deterministic"
     }
   ]
 }
