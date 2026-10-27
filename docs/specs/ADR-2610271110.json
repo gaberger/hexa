@@ -133,9 +133,9 @@
       ],
       "kind": "example",
       "description": "An id that names no ADR is reported",
-      "given": "unbuilt = {\"ADR-0000000000\": \"x\"}; gated = {\"ADR-A\": true}",
+      "given": "unbuilt = {\"ADR-NOFILE\": \"x\"}; gated = {\"ADR-A\": true}",
       "when": "declaration_errors(&unbuilt, &gated)",
-      "then": "returns exactly one error, which names ADR-0000000000 and says it names no ADR",
+      "then": "returns exactly one error, which names ADR-NOFILE and says it names no ADR",
       "test": "hexa-core/tests/adr_2610271110_spec.rs::s10_unknown_id_is_reported"
     },
     {
