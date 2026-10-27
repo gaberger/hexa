@@ -95,12 +95,9 @@ fn entries_in(path: &Path) -> Vec<Value> {
         .unwrap_or_default()
 }
 
-/// `inference.budget_usd_per_day` from `.hexa/project.json`, if declared.
-pub fn budget_usd_per_day() -> Option<f64> {
-    budget_in(&crate::tiers::project_root())
-}
-
-fn budget_in(root: &Path) -> Option<f64> {
+/// `inference.budget_usd_per_day` from `<root>/.hexa/project.json`, if
+/// declared. Which root is wiring: the crate root passes the project's.
+pub fn budget_in(root: &Path) -> Option<f64> {
     let text = std::fs::read_to_string(root.join(".hexa").join("project.json")).ok()?;
     let v: Value = serde_json::from_str(&text).ok()?;
     v.get("inference")?.get("budget_usd_per_day")?.as_f64().filter(|b| *b > 0.0)

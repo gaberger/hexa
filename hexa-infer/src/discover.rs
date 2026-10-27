@@ -13,17 +13,16 @@ use std::time::Duration;
 use crate::endpoint::Endpoint;
 use crate::ports::Found;
 
-/// Discover from the real environment, registry and PATH.
-pub fn discover() -> Vec<Found> {
+/// Discover from the real environment, the registered `endpoints` and PATH.
+pub fn discover(endpoints: &[Endpoint]) -> Vec<Found> {
     let env = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
-    let endpoints = crate::registry::load();
     let claude = std::process::Command::new("which")
         .arg("claude")
         .output()
         .ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
-    discover_with(&env, &endpoints, claude.as_deref(), &probe)
+    discover_with(&env, endpoints, claude.as_deref(), &probe)
 }
 
 /// The same, with every input injected. What the tests drive.
@@ -36,13 +35,13 @@ fn discover_with(
     let mut out = Vec::new();
 
     // The local server, wherever the environment points it.
-    let p = crate::local_provider();
+    let p = crate::ports::local_provider();
     let via = [p.host_env, "OLLAMA_HOST"]
         .iter()
         .find(|k| env(k).is_some())
         .map(|k| k.to_string())
         .unwrap_or_else(|| "default address".to_string());
-    let url = crate::local_provider::base_url_with(&p, env);
+    let url = crate::ports::base_url_with(&p, env);
     // A local runtime serves whatever has been pulled into it; doctor
     // enumerates it (ADR-2609131617 §2), so it starts unenumerated.
     out.push(Found { kind: "local", name: p.display_name.to_string(), detail: url.clone(), via, reachable: probe(&url), models: Vec::new() });
@@ -168,11 +167,14 @@ fn probe(url: &str) -> Option<bool> {
 
 /// [`Discovery`](crate::ports::Discovery) over the real environment,
 /// registry and PATH.
-pub struct EnvDiscovery;
+pub struct EnvDiscovery {
+    /// The registered endpoints, loaded by the crate root.
+    pub endpoints: Vec<Endpoint>,
+}
 
 impl crate::ports::Discovery for EnvDiscovery {
     fn discover(&self) -> Vec<Found> {
-        discover()
+        discover(&self.endpoints)
     }
 }
 

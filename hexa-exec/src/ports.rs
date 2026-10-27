@@ -154,6 +154,31 @@ pub trait RunLog: Send + Sync {
     fn recent(&self, limit: usize) -> Vec<Value>;
 }
 
+/// Where a tool that proposes a change files it for a person to approve, and
+/// where a tool reads what inference has cost (ADR-2610271649 §5). The tools
+/// hold this, never the store behind it.
+pub trait ToolLedger: Send + Sync {
+    /// File one proposed action; its id.
+    fn propose_action(&self, kind: &str, payload: &str, source: &str) -> Result<u64, String>;
+    /// The most recent `limit` spend rows, each keyed by `group_by`.
+    fn spend_rows(&self, group_by: &str, limit: usize) -> Vec<Value>;
+}
+
+/// Who hears when an agent escalates to its operator (ADR-2610271649 §5).
+/// Not configured is not an error: the escalation is still recorded.
+#[async_trait]
+pub trait OperatorNotifier: Send + Sync {
+    async fn send(&self, message: &str) -> Result<(), String>;
+}
+
+/// Where a frontier call's spend is checked and recorded (ADR-2610271649 §5).
+pub trait SpendLog: Send + Sync {
+    /// `Err` with the reason when today's budget is spent.
+    fn check_budget(&self) -> Result<(), String>;
+    /// Record one `claude -p --output-format json` answer's usage under `source`.
+    fn record_frontier(&self, reply: &Value, input_tokens: u64, output_tokens: u64, cost_usd: Option<f64>, source: &str);
+}
+
 /// What a build run can say about itself, truthfully.
 ///
 /// Every field is something the run observed. There is deliberately no field

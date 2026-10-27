@@ -14,11 +14,11 @@
 //! that validates the wrong subject passes for the wrong reason, which looks
 //! exactly like passing.
 //!
-//! [`configured_tiers`] fixes that by reading the same config the dispatcher
+//! [`crate::configured_tiers`] fixes that by reading the same config the dispatcher
 //! reads. There is no hardcoded model list here either — a default model in
 //! this file would be a model the operator never chose.
 
-use crate::ports::LocalProvider;
+use crate::ports::{base_url_with, LocalProvider};
 
 impl LocalProvider {
     /// Where the server actually is: the host environment variable if set,
@@ -46,24 +46,6 @@ impl LocalProvider {
     }
 }
 
-/// `base_url`, with the environment reader injected. The local server's
-/// address comes from `host_env` (`HEXA_OLLAMA_HOST`), then `OLLAMA_HOST`,
-/// then the default port; a bare `host:port` gets `http://`.
-pub fn base_url_with(p: &LocalProvider, env: &dyn Fn(&str) -> Option<String>) -> String {
-    // Trim before deciding: a blank override falls back to the default,
-    // and "  " once became "http://".
-    let raw = env(p.host_env)
-        .map(|v| v.trim().trim_end_matches('/').to_string())
-        .filter(|v| !v.is_empty())
-        .or_else(|| env("OLLAMA_HOST").map(|v| v.trim().trim_end_matches('/').to_string()).filter(|v| !v.is_empty()));
-    match raw {
-        Some(v) => {
-            if v.starts_with("http://") || v.starts_with("https://") { v } else { format!("http://{v}") }
-        }
-        None => p.default_base_url(),
-    }
-}
-
 /// `socket_addr`, with the environment reader injected (ADR-2609131749).
 fn socket_addr_with(p: &LocalProvider, env: &dyn Fn(&str) -> Option<String>) -> String {
     let url = base_url_with(p, env);
@@ -74,22 +56,6 @@ fn socket_addr_with(p: &LocalProvider, env: &dyn Fn(&str) -> Option<String>) -> 
     } else {
         format!("{host_port}:{}", p.default_port)
     }
-}
-
-/// The tiers this project configures, as `(label, tier key, model id)`.
-///
-/// Empty when `.hexa/project.json` declares none — which is a real answer, and
-/// a caller should say so rather than substitute a guess.
-pub fn configured_tiers() -> Vec<(&'static str, &'static str, String)> {
-    configured_tiers_in(&crate::tiers::project_root())
-}
-
-/// [`configured_tiers`], rooted at an explicit directory (ADR-2609131749).
-fn configured_tiers_in(root: &std::path::Path) -> Vec<(&'static str, &'static str, String)> {
-    [("T1", "t1"), ("T2", "t2"), ("T2.5", "t2.5")]
-        .into_iter()
-        .filter_map(|(label, key)| crate::tiers::tier_model_in(root, key).map(|m| (label, key, m)))
-        .collect()
 }
 
 #[cfg(test)]
@@ -146,27 +112,6 @@ mod tests {
     #[test]
     fn the_install_hint_is_never_empty() {
         assert!(!local_provider().install_hint().is_empty());
-    }
-
-    /// `configured_tiers` must return what the project declares and nothing
-    /// else. A hardcoded fallback here would put a model id back into the
-    /// code path this module exists to clear.
-    #[test]
-    fn no_config_means_no_tiers_rather_than_a_default() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        assert!(configured_tiers_in(dir.path()).is_empty(), "an unconfigured project produced tiers");
-
-        // And it returns exactly what is declared, no more.
-        std::fs::create_dir_all(dir.path().join(".hexa")).unwrap();
-        std::fs::write(
-            dir.path().join(".hexa/project.json"),
-            r#"{"inference":{"tier_models":{"t1":"a-model","t2.5":"c-model"}}}"#,
-        )
-        .unwrap();
-        let got = configured_tiers_in(dir.path());
-        assert_eq!(got.len(), 2, "{got:?}");
-        assert_eq!(got[0], ("T1", "t1", "a-model".to_string()));
-        assert_eq!(got[1], ("T2.5", "t2.5", "c-model".to_string()), "a dotted key is read as a key");
     }
 
     /// ADR-2609131749 §3: the next person will follow the pattern they see.

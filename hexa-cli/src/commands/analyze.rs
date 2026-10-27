@@ -360,6 +360,11 @@ pub async fn run(
                         println!("        … and {} more", result.violations.len() - 10);
                     }
                 }
+                // A declaration the analyzer could not use costs a rule
+                // error; say which, or the lost points are unexplained.
+                for e in &result.config_errors {
+                    println!("    {} {}", "\u{2717}".red(), e.red());
+                }
                 parsed_files = Some(result.file_count);
                 graded_violations = Some(result.violations.len());
                 println!(
@@ -2177,7 +2182,7 @@ async fn run_json(root: &Path, strict: bool, adr_compliance_only: bool) -> anyho
             // score, and the difference is invisible (ADR-2609211430 §1).
             result["score_components"] = serde_json::json!({
                 "violations": deep.violations.len(),
-                "rule_errors": rule_error_count(root),
+                "rule_errors": rule_error_count(root) + deep.config_errors.len(),
                 "circular_deps": deep.circular_deps.len(),
                 "dead_exports": deep.dead_exports.len(),
                 "unused_ports": deep.unused_ports.len(),
@@ -2188,6 +2193,10 @@ async fn run_json(root: &Path, strict: bool, adr_compliance_only: bool) -> anyho
             // The API contract's findings, each traceable to a line
             // (ADR-2610092245 §6).
             result["api"] = serde_json::json!(deep.api);
+            // The whole result, as the analyzer returned it, for a consumer
+            // that reads the types rather than this summary (ADR-2610271649).
+            result["config_errors"] = serde_json::json!(deep.config_errors);
+            result["analysis"] = serde_json::to_value(&deep).unwrap_or_default();
             // And the items themselves, so a count can be checked. This
             // held for two of the four inputs and not for the two that
             // carry the most weight: `violations` below is the import-scan

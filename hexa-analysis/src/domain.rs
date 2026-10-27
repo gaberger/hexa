@@ -174,6 +174,10 @@ pub struct ArchAnalysisResult {
     /// The API contract's errors and unserved ports (ADR-2610092245 §6).
     #[serde(default)]
     pub api: ApiFindings,
+    /// Declarations in `.hexa/project.json` the analyzer could not use, each
+    /// naming what is wrong. Each is a rule error (ADR-2610271649 §3).
+    #[serde(default)]
+    pub config_errors: Vec<String>,
 }
 
 /// The share of the graded files that have a layer. An import touching an
@@ -746,5 +750,119 @@ impl ConformanceReport {
         } else {
             1
         }
+    }
+}
+
+// ── Adapter identity (ADR-2610271649) ────────────────────
+
+/// Which adapter each file belongs to, so an import between two adapters in
+/// the same layer can be told from an import inside one adapter.
+#[derive(Debug, Clone, Default)]
+pub struct AdapterMap {
+    /// `analyze.layers` keys, longest first.
+    layer_keys: Vec<String>,
+    /// `analyze.adapters`: group name → path prefixes.
+    groups: Vec<(String, Vec<String>)>,
+}
+
+/// Is `path` under `key`, on whole path segments? A key naming a source file
+/// also names its module: `src/store.rs` covers `src/store/Disk`.
+fn under_key(path: &str, key: &str) -> bool {
+    let under = |k: &str| path == k || path.strip_prefix(k).is_some_and(|rest| rest.starts_with('/'));
+    under(key)
+        || [".rs", ".ts", ".tsx", ".go"]
+            .iter()
+            .find_map(|ext| key.strip_suffix(ext))
+            .is_some_and(under)
+}
+
+impl AdapterMap {
+    /// From the declared `analyze.layers` keys and `analyze.adapters` groups.
+    /// `layer_of` is the project's layer classification, used to reject a
+    /// group whose paths are in different layers. A path in two groups is an
+    /// error naming it.
+    pub fn new(
+        layer_keys: Vec<String>,
+        groups: Vec<(String, Vec<String>)>,
+        layer_of: &dyn Fn(&str) -> HexLayer,
+    ) -> Result<Self, String> {
+        let trim = |p: &str| p.trim_matches('/').to_string();
+        let groups: Vec<(String, Vec<String>)> = groups
+            .into_iter()
+            .map(|(name, paths)| (name, paths.iter().map(|p| trim(p)).collect()))
+            .collect();
+        let mut owner: Vec<(&str, &str)> = Vec::new();
+        for (name, paths) in &groups {
+            for path in paths {
+                if let Some((_, other)) = owner.iter().find(|(p, g)| *p == path.as_str() && *g != name.as_str()) {
+                    return Err(format!(
+                        "analyze.adapters: \"{path}\" is in both \"{other}\" and \"{name}\"; a file belongs to one adapter"
+                    ));
+                }
+                owner.push((path.as_str(), name.as_str()));
+            }
+            if let Some(first) = paths.first() {
+                let layer = layer_of(first);
+                if let Some(odd) = paths.iter().find(|p| layer_of(p) != layer) {
+                    return Err(format!(
+                        "analyze.adapters[\"{name}\"]: \"{first}\" is {layer} but \"{odd}\" is {}; one adapter is in one layer",
+                        layer_of(odd)
+                    ));
+                }
+            }
+        }
+        let mut layer_keys: Vec<String> = layer_keys.iter().map(|k| trim(k)).collect();
+        layer_keys.sort_by_key(|k| std::cmp::Reverse(k.len()));
+        Ok(Self { layer_keys, groups })
+    }
+
+    /// The adapter `path` belongs to, given its layer; `None` when `layer` is
+    /// not an adapter layer.
+    pub fn adapter_of(&self, path: &str, layer: HexLayer) -> Option<String> {
+        if !matches!(layer, HexLayer::AdaptersPrimary | HexLayer::AdaptersSecondary) {
+            return None;
+        }
+        // The group with the longest matching path, so a nested declaration wins.
+        let group = self
+            .groups
+            .iter()
+            .flat_map(|(name, paths)| paths.iter().map(move |p| (name, p)))
+            .filter(|(_, p)| under_key(path, p))
+            .max_by_key(|(_, p)| p.len())
+            .map(|(name, _)| name.clone());
+        if group.is_some() {
+            return group;
+        }
+        if let Some(key) = self.layer_keys.iter().find(|k| under_key(path, k)) {
+            return Some(key.clone());
+        }
+        for side in ["adapters/primary/", "adapters/secondary/"] {
+            let at = if path.starts_with(side) {
+                Some(0)
+            } else {
+                path.find(&format!("/{side}")).map(|i| i + 1)
+            };
+            if let Some(i) = at {
+                let base = i + side.len();
+                let first = path[base..].split('/').next().unwrap_or("");
+                let first = [".rs", ".ts", ".tsx", ".go"]
+                    .iter()
+                    .find_map(|ext| first.strip_suffix(ext))
+                    .unwrap_or(first);
+                return Some(format!("{}{first}", &path[..base]));
+            }
+        }
+        Some(path.to_string())
+    }
+}
+
+/// Does `edge` run from one adapter to a different adapter?
+pub fn crosses_adapters(edge: &ImportEdge, adapters: &AdapterMap) -> bool {
+    match (
+        adapters.adapter_of(&edge.from_file, edge.from_layer),
+        adapters.adapter_of(&edge.to_file, edge.to_layer),
+    ) {
+        (Some(from), Some(to)) => from != to,
+        _ => false,
     }
 }

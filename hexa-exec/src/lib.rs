@@ -55,6 +55,7 @@ pub fn repo_root() -> String {
 pub fn default_tools() -> tool_registry::ToolRegistry {
     use std::sync::Arc;
     use tools::*;
+    let ledger: Arc<dyn ports::ToolLedger> = Arc::new(local_store::LocalLedger);
     let mut reg = tool_registry::ToolRegistry::new();
     reg.register(Arc::new(cargo_check::CargoCheck));
     reg.register(Arc::new(dep_audit::DepAudit));
@@ -62,16 +63,16 @@ pub fn default_tools() -> tool_registry::ToolRegistry {
     reg.register(Arc::new(repo_read::RepoRead));
     reg.register(Arc::new(secret_scan::SecretScan));
     reg.register(Arc::new(web_search::WebSearch));
-    reg.register(Arc::new(adr_draft::AdrDraft));
-    reg.register(Arc::new(spec_draft::SpecDraft));
-    reg.register(Arc::new(code_patch::CodePatch));
-    reg.register(Arc::new(cost_meter::CostMeter));
-    reg.register(Arc::new(workplan_emit::WorkplanEmit));
-    reg.register(Arc::new(adr_status_set::AdrStatusSet));
+    reg.register(Arc::new(adr_draft::AdrDraft::new(ledger.clone())));
+    reg.register(Arc::new(spec_draft::SpecDraft::new(ledger.clone())));
+    reg.register(Arc::new(code_patch::CodePatch::new(ledger.clone())));
+    reg.register(Arc::new(cost_meter::CostMeter::new(ledger.clone())));
+    reg.register(Arc::new(workplan_emit::WorkplanEmit::new(ledger.clone())));
+    reg.register(Arc::new(adr_status_set::AdrStatusSet::new(ledger)));
     reg.register(Arc::new(workspace_boundary_check::WorkspaceBoundaryCheck));
-    reg.register(Arc::new(escalate_to_operator::EscalateToOperator));
+    reg.register(Arc::new(escalate_to_operator::EscalateToOperator::new(Arc::new(telegram_notifier::TelegramNotifier::from_env()))));
     reg.register(Arc::new(typescript_check::TypescriptCheck));
-    reg.register(Arc::new(memory_search::MemorySearch));
+    reg.register(Arc::new(memory_search::MemorySearch::new(Arc::new(memory()))));
     reg
 }
 
@@ -120,9 +121,24 @@ pub fn memory() -> impl ports::MemoryStore {
     local_store::LocalMemory
 }
 
+/// [`ports::SpendLog`] on hexa-infer's spend log and the project's budget.
+/// Wiring, so it lives at the crate root: the frontier adapter holds the
+/// port, and only this file names the crate behind it (ADR-2610271649 §5).
+struct InferSpend;
+
+impl ports::SpendLog for InferSpend {
+    fn check_budget(&self) -> Result<(), String> {
+        hexa_infer::spend_budget_check()
+    }
+    fn record_frontier(&self, reply: &serde_json::Value, input_tokens: u64, output_tokens: u64, cost_usd: Option<f64>, source: &str) {
+        let model = hexa_infer::spend::model_from_frontier_json(reply);
+        hexa_infer::spend::record_with(&model, input_tokens, output_tokens, cost_usd, source);
+    }
+}
+
 /// The frontier agent, wired: the operator's logged-in `claude` CLI.
 pub fn frontier_agent() -> std::sync::Arc<dyn ports::Frontier> {
-    std::sync::Arc::new(frontier::ClaudeCli)
+    std::sync::Arc::new(frontier::ClaudeCli::new(std::sync::Arc::new(InferSpend)))
 }
 
 /// The run log, wired: the local runs file.

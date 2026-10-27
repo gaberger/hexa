@@ -29,6 +29,54 @@ pub mod workspace_boundary_check;
 
 pub use crate::ports::{Tool, ToolResult};
 
+/// Ports that do nothing, for tests of a tool's schema and arguments.
+#[cfg(test)]
+pub(crate) mod doubles {
+    use crate::ports::{MemoryScope, MemoryStore, ToolLedger};
+    use serde_json::Value;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    struct NullLedger;
+    impl ToolLedger for NullLedger {
+        fn propose_action(&self, _: &str, _: &str, _: &str) -> Result<u64, String> {
+            Ok(0)
+        }
+        fn spend_rows(&self, _: &str, _: usize) -> Vec<Value> {
+            Vec::new()
+        }
+    }
+
+    struct NullMemory;
+    impl MemoryStore for NullMemory {
+        fn path(&self, _: MemoryScope) -> PathBuf {
+            PathBuf::new()
+        }
+        fn put(&self, _: MemoryScope, _: &str, _: &str) -> Result<(), String> {
+            Ok(())
+        }
+        fn get(&self, _: MemoryScope, _: &str) -> Option<String> {
+            None
+        }
+        fn entries(&self, _: MemoryScope, _: usize) -> Vec<(String, String)> {
+            Vec::new()
+        }
+        fn search(&self, _: MemoryScope, _: &str) -> Vec<(String, String)> {
+            Vec::new()
+        }
+        fn delete(&self, _: MemoryScope, _: &str) -> Result<bool, String> {
+            Ok(false)
+        }
+    }
+
+    pub(crate) fn ledger() -> Arc<dyn ToolLedger> {
+        Arc::new(NullLedger)
+    }
+    pub(crate) fn memory() -> Arc<dyn MemoryStore> {
+        Arc::new(NullMemory)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

@@ -5,14 +5,20 @@
 //!
 //! ADR-034 Phase 3.
 
-use super::domain::{DependencyViolation, HexLayer, ImportEdge};
+use super::domain::{crosses_adapters, AdapterMap, DependencyViolation, HexLayer, ImportEdge};
 use super::layer_classifier::get_violation_rule;
+
+/// The rule an import between two adapters breaks, in either layer.
+const CROSS_ADAPTER: &str = "adapters must not import from other adapters";
 
 /// Find all hexagonal boundary violations in a set of import edges.
 ///
 /// Skips edges where either endpoint is `Unknown` — these are files
-/// outside the hexa layer structure (tests, config, build scripts).
-pub fn find_violations(edges: &[ImportEdge]) -> Vec<DependencyViolation> {
+/// outside the hexa layer structure (tests, config, build scripts). An edge
+/// the layer table allows is still a violation when it runs between two
+/// adapters `adapters` tells apart (ADR-2610271649 §2): the table answers by
+/// layer, and two adapters in one layer share it.
+pub fn find_violations_in(edges: &[ImportEdge], adapters: &AdapterMap) -> Vec<DependencyViolation> {
     let mut violations = Vec::new();
 
     for edge in edges {
@@ -24,7 +30,9 @@ pub fn find_violations(edges: &[ImportEdge]) -> Vec<DependencyViolation> {
             continue;
         }
 
-        if let Some(rule) = get_violation_rule(edge.from_layer, edge.to_layer) {
+        let rule = get_violation_rule(edge.from_layer, edge.to_layer)
+            .or_else(|| crosses_adapters(edge, adapters).then_some(CROSS_ADAPTER));
+        if let Some(rule) = rule {
             violations.push(DependencyViolation {
                 edge: edge.clone(),
                 rule: rule.to_string(),
@@ -69,6 +77,11 @@ fn declares_own_submodule(from_file: &str, to_file: &str) -> bool {
 mod tests {
     use super::*;
     use crate::layer_classifier::classify_layer;
+
+    /// With adapters told apart by folder name alone.
+    fn find_violations(edges: &[ImportEdge]) -> Vec<DependencyViolation> {
+        find_violations_in(edges, &AdapterMap::default())
+    }
 
     #[test]
     fn a_parent_module_declaring_its_child_is_not_a_violation() {
