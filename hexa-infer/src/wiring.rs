@@ -62,11 +62,18 @@ pub fn served_by_frontier_cli(model: &str) -> bool {
 
 /// [`served_by_frontier_cli`] against a given registry: the registry decides when an endpoint
 /// serves the model, otherwise the same prefix rule [`adapter_for`] uses.
-pub(crate) fn served_by_frontier_cli_in(endpoints: &[Endpoint], model: &str) -> bool {
+pub fn served_by_frontier_cli_in(endpoints: &[Endpoint], model: &str) -> bool {
     if let Some(endpoint) = registry::serving(endpoints, model) {
         return matches!(endpoint.provider.to_ascii_lowercase().as_str(), "claude-code" | "claude_code");
     }
     model.to_lowercase().starts_with("claude")
+}
+
+/// A `claude-text` id (ADR-2610270901 §4): `None` when `model` is not one,
+/// `Some(None)` for bare `claude-text`, `Some(Some(m))` for `claude-text:m`.
+pub fn claude_text_model(model: &str) -> Option<Option<String>> {
+    let _ = model;
+    unimplemented!("ADR-2610270901: built to its sealed tests")
 }
 
 /// The `--model` argument to pass the frontier CLI, if any.
@@ -117,7 +124,7 @@ fn adapter_for(model: &str) -> Box<dyn IInferencePort> {
 /// daemon kept keys in a SpacetimeDB vault and resolved references at dispatch
 /// time under a 3-second timeout — a distributed system standing in for
 /// `std::env::var`, for a single-user tool on one machine.
-fn adapter_for_endpoint(endpoint: &Endpoint) -> Box<dyn IInferencePort> {
+pub fn adapter_for_endpoint(endpoint: &Endpoint) -> Box<dyn IInferencePort> {
     let key = resolve_key(endpoint);
     match endpoint.provider.to_ascii_lowercase().as_str() {
         // The local runtime streams NDJSON of its own; its adapter speaks that.

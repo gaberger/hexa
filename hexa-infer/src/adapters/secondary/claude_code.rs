@@ -41,6 +41,7 @@
 //!   producer task, dropping the stream is a no-op beyond dropping the
 //!   already-collected `Vec<String>`.
 
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -91,6 +92,19 @@ pub trait ProcessSpawner: Send + Sync {
         program: &str,
         args: &[String],
     ) -> Result<SpawnedProcess, InferenceError>;
+
+    /// [`ProcessSpawner::spawn`], with `dir` as the child's working
+    /// directory (ADR-2610270901 §1). The default ignores `dir`; a spawner
+    /// that runs real processes must override it.
+    async fn spawn_in(
+        &self,
+        program: &str,
+        args: &[String],
+        dir: &Path,
+    ) -> Result<SpawnedProcess, InferenceError> {
+        let _ = dir;
+        self.spawn(program, args).await
+    }
 
     /// Spawn `program` with `args` and collect stdout as a `Vec<String>`
     /// of lines in order. The default implementation delegates to
@@ -168,6 +182,17 @@ pub struct ClaudeCodeInferenceAdapter {
     #[allow(dead_code)]
     timeout: Duration,
     spawner: Arc<dyn ProcessSpawner>,
+    mode: Mode,
+}
+
+/// What the spawned CLI is (ADR-2610270901).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Mode {
+    /// `claude -p` with every tool, in the caller's directory.
+    Agent,
+    /// `claude-text`: a tool-less completion in an empty directory, with
+    /// `--model` when one was named.
+    Text { model: Option<String> },
 }
 
 impl ClaudeCodeInferenceAdapter {
@@ -184,6 +209,7 @@ impl ClaudeCodeInferenceAdapter {
             binary_path,
             timeout: Duration::from_secs(timeout_secs),
             spawner: Arc::new(TokioProcessSpawner::new()),
+            mode: Mode::Agent,
         }
     }
 
@@ -199,7 +225,21 @@ impl ClaudeCodeInferenceAdapter {
             binary_path,
             timeout: Duration::from_secs(DEFAULT_TIMEOUT_SECS),
             spawner,
+            mode: Mode::Agent,
         }
+    }
+
+    /// `claude-text` (ADR-2610270901): a tool-less completion, on `model`
+    /// when given, else the CLI's default.
+    pub fn text(model: Option<String>) -> Self {
+        let _ = model;
+        unimplemented!("ADR-2610270901: built to its sealed tests")
+    }
+
+    /// [`ClaudeCodeInferenceAdapter::text`] with an injected spawner.
+    pub fn text_with_spawner(model: Option<String>, spawner: Arc<dyn ProcessSpawner>) -> Self {
+        let _ = (model, spawner);
+        unimplemented!("ADR-2610270901: built to its sealed tests")
     }
 }
 
@@ -427,6 +467,16 @@ pub mod testing {
     pub struct MockProcessSpawner {
         responses: Mutex<VecDeque<MockResponse>>,
         calls: Mutex<Vec<(String, Vec<String>)>>,
+        dirs: Mutex<Vec<DirSeen>>,
+    }
+
+    /// The working directory of one [`ProcessSpawner::spawn_in`] call, as
+    /// it stood while the child ran.
+    #[derive(Debug, Clone)]
+    pub struct DirSeen {
+        pub path: PathBuf,
+        pub existed: bool,
+        pub empty: bool,
     }
 
     impl MockProcessSpawner {
@@ -434,7 +484,13 @@ pub mod testing {
             Self {
                 responses: Mutex::new(responses.into_iter().collect()),
                 calls: Mutex::new(Vec::new()),
+                dirs: Mutex::new(Vec::new()),
             }
+        }
+
+        /// Every directory a `spawn_in` call ran in, in call order.
+        pub fn dirs(&self) -> Vec<DirSeen> {
+            self.dirs.lock().unwrap().clone()
         }
 
         /// Returns every `(program, args)` tuple the spawner has seen,
@@ -479,6 +535,17 @@ pub mod testing {
                 MockResponse::Ok(p) => Ok(p),
                 MockResponse::Err(e) => Err(e),
             }
+        }
+
+        async fn spawn_in(
+            &self,
+            program: &str,
+            args: &[String],
+            dir: &Path,
+        ) -> Result<SpawnedProcess, InferenceError> {
+            let empty = std::fs::read_dir(dir).map(|mut d| d.next().is_none()).unwrap_or(false);
+            self.dirs.lock().unwrap().push(DirSeen { path: dir.to_path_buf(), existed: dir.is_dir(), empty });
+            self.spawn(program, args).await
         }
     }
 }
