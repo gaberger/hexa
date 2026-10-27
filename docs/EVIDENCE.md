@@ -74,8 +74,15 @@ hexa analyze .
 ```
 
 Expected: `Architecture grade: A+ — score 100/100`, `0 boundary violations`,
-`coverage 149/149 files in a layer`, and `score_components` all zero (with
+`coverage 165/165 files in a layer`, and `score_components` all zero (with
 `coverage_ceiling` 100) in `hexa analyze . --json`.
+
+```bash
+find hexa-*/src -name '*.rs' | xargs cat | wc -l
+```
+
+Expected: about 67,000, the "lines of Rust" in the README, tests inside
+`src/` included.
 
 ```bash
 cargo test -p hexa-cli --test hexa_grades_itself_by_ratchet
