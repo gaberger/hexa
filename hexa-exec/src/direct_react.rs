@@ -340,7 +340,9 @@ async fn apply_and_verify(
     let (passed, output) = direct_exec::run_evidence(&task.evidence, repo_root).await;
     let vacuous = passed && direct_exec::evidence_is_vacuous(&output);
     if passed && !vacuous {
-        match direct_exec::commit(repo_root, &task.file, &task.instruction, factory, start_dirty).await {
+        match direct_exec::commit_with_also(repo_root, &task.file, &task.instruction, factory, start_dirty, &task.also)
+            .await
+        {
             Ok(hash) => EditOutcome::Committed(hash),
             Err(e) => {
                 // Do NOT revert. The change passed the gate; it is correct work,
@@ -351,6 +353,7 @@ async fn apply_and_verify(
                 let _ = std::process::Command::new("git")
                     .args(["reset", "-q", "--"])
                     .arg(&task.file)
+                    .args(existing_also(repo_root, &task.also))
                     .current_dir(repo_root)
                     .output();
                 EditOutcome::CommitFailed(direct_exec::commit_failure_hint(&e))
@@ -827,13 +830,22 @@ async fn claude_execute(deps: &ExecDeps, task: DirectTask) -> (DirectResult, u32
     out
 }
 
-async fn claude_attempts(
+/// One frontier-delegate (`claude -p`) attempt inside `repo_root`: snapshot the
+/// target and every `--also` path, let the delegate edit, run the evidence gate,
+/// and commit the target plus the `--also` files on a real pass — or restore all
+/// of them on a failure or timeout. Returns the result, attempts spent, and model.
+pub async fn claude_attempts(
     deps: &ExecDeps,
     task: &DirectTask,
     repo_root: &std::path::Path,
     factory: bool,
 ) -> (DirectResult, u32, String) {
     let model = task.model.clone().unwrap_or_else(|| "claude-code".to_string());
+    // Refuse an escaping --also path before the delegate is ever started.
+    let also_snapshot = match direct_exec::AlsoSnapshot::capture(repo_root, &task.also) {
+        Ok(s) => s,
+        Err(e) => return (DirectResult::err(e), 0, model),
+    };
     let agent = match hexa_infer::wiring::frontier_model_arg(&model) {
         None => deps.frontier.clone(),
         Some(id) => match deps.frontier.on_model(&id) {
@@ -864,12 +876,7 @@ async fn claude_attempts(
     let abs_path = repo_root.join(&task.file);
     let snapshot = std::fs::read_to_string(&abs_path).unwrap_or_default();
 
-    let prompt = format!(
-        "Task: {}\n\nEdit ONLY the file `{}` in this repository so that the shell command \
-         `{}` exits 0. Make the change directly to the file now. Do not ask questions and do \
-         not explain — just apply the edit.",
-        task.instruction, task.file, task.evidence
-    );
+    let prompt = delegate_prompt(task);
     let timeout = Duration::from_secs(
         std::env::var("CLAUDE_TIMEOUT_SECS").ok().and_then(|s| s.parse().ok()).unwrap_or(300),
     );
@@ -888,6 +895,7 @@ async fn claude_attempts(
         }
         Err(crate::ports::FrontierError::Timeout(t)) => {
             let _ = std::fs::write(&abs_path, &snapshot);
+            also_snapshot.restore();
             result.error = Some(format!("claude -p timed out after {}s", t.as_secs()));
             return (result, 1, model);
         }
@@ -900,7 +908,9 @@ async fn claude_attempts(
     result.attempts = 1;
 
     if passed && !vacuous {
-        match direct_exec::commit(repo_root, &task.file, &task.instruction, factory, &start_dirty).await {
+        match direct_exec::commit_with_also(repo_root, &task.file, &task.instruction, factory, &start_dirty, &task.also)
+            .await
+        {
             Ok(hash) => {
                 result.ok = true;
                 result.evidence_passed = true;
@@ -913,6 +923,7 @@ async fn claude_attempts(
                 let _ = std::process::Command::new("git")
                     .args(["reset", "-q", "--"])
                     .arg(&task.file)
+                    .args(existing_also(repo_root, &task.also))
                     .current_dir(repo_root)
                     .output();
                 result.evidence_passed = true;
@@ -922,6 +933,7 @@ async fn claude_attempts(
         }
     } else {
         let _ = std::fs::write(&abs_path, &snapshot);
+        also_snapshot.restore();
         result.error = Some(if vacuous {
             "claude: evidence passed vacuously (0 tests) — reverted".to_string()
         } else {
@@ -929,4 +941,28 @@ async fn claude_attempts(
         });
     }
     (result, 1, model)
+}
+
+/// The delegate's instruction. With no `--also` files it is held to its one
+/// file; otherwise it is told exactly which extra files it may create or edit.
+fn delegate_prompt(task: &DirectTask) -> String {
+    let scope = if task.also.is_empty() {
+        format!("Edit ONLY the file `{}`", task.file)
+    } else {
+        let also = task.also.iter().map(|p| format!("`{p}`")).collect::<Vec<_>>().join(", ");
+        format!(
+            "Edit the file `{}` (and you may create or edit only these additional files: {also})",
+            task.file
+        )
+    };
+    format!(
+        "Task: {}\n\n{scope} in this repository so that the shell command `{}` exits 0. Make the \
+         change directly to the file now. Do not ask questions and do not explain — just apply the edit.",
+        task.instruction, task.evidence
+    )
+}
+
+/// The `--also` paths that exist in `repo_root`, for unstaging after a failed commit.
+fn existing_also<'a>(repo_root: &'a std::path::Path, also: &'a [String]) -> impl Iterator<Item = &'a String> + 'a {
+    also.iter().filter(move |p| repo_root.join(p).exists())
 }

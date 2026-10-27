@@ -215,7 +215,7 @@ violation.
 | 1 | `domain/` imports only `domain/` |
 | 2 | `ports/` imports `domain/` only |
 | 3 | `usecases/` imports `domain/` + `ports/` only |
-| 4 | adapters import `ports/` **only**, never the domain directly |
+| 4 | adapters import `ports/`, never the domain directly; a primary (driving) adapter may also call `usecases/`, a secondary one may not |
 | 5 | adapters never import other adapters |
 | 6 | only a composition root — a crate's `lib.rs`, or a file declared one — imports an adapter |
 | 7 | relative imports in scaffolded TypeScript use `.js` extensions (NodeNext) |

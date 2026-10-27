@@ -162,6 +162,7 @@ async fn run_one(fx: &Fixture, arm: &str, model: Option<&str>) -> ArmResult {
         fast,
         max_steps: None,
         isolate: Some(true),
+        ..Default::default()
     };
 
     print!("  {:<22} {:<5} … ", fx.id.dimmed(), arm);

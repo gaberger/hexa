@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct DirectTask {
     /// What to do, in plain language.
     pub instruction: String,
@@ -52,6 +52,91 @@ pub struct DirectTask {
     /// to commit on its own branch. Absent ⇒ isolated.
     #[serde(default)]
     pub isolate: Option<bool>,
+    /// Repo-relative paths the run may create or edit besides `file`. Each one
+    /// that exists after a passing run is committed with the target; on a failed
+    /// run they are restored (deleted if they did not exist before).
+    #[serde(default)]
+    pub also: Vec<String>,
+}
+
+/// Refuse any `--also` path that could leave the repository or reach into
+/// `.git`: empty, absolute, `..`, bare `.`, or a `.git` component.
+pub fn validate_also_paths(paths: &[String]) -> Result<(), String> {
+    use std::path::Component;
+    for p in paths {
+        if p.trim().is_empty() {
+            return Err("--also: an empty path is not a file".to_string());
+        }
+        let mut normal = 0usize;
+        for c in std::path::Path::new(p).components() {
+            match c {
+                Component::CurDir => {}
+                Component::Normal(n) if n == ".git" => {
+                    return Err(format!("--also `{p}`: a path into .git is never a run's to write"));
+                }
+                Component::Normal(_) => normal += 1,
+                Component::ParentDir => {
+                    return Err(format!("--also `{p}`: `..` may leave the repository"));
+                }
+                Component::RootDir | Component::Prefix(_) => {
+                    return Err(format!("--also `{p}`: must be repo-relative, not absolute"));
+                }
+            }
+        }
+        if normal == 0 {
+            return Err(format!("--also `{p}`: names no file"));
+        }
+    }
+    Ok(())
+}
+
+/// `./a/b` → `a/b`, so a listed path matches git's own spelling.
+fn normalize_also(p: &str) -> String {
+    let mut s = p;
+    while let Some(rest) = s.strip_prefix("./") {
+        s = rest;
+    }
+    s.to_string()
+}
+
+/// The pre-run state of every `--also` path: its bytes, or its absence.
+#[derive(Debug, Clone)]
+pub struct AlsoSnapshot {
+    entries: Vec<(std::path::PathBuf, Option<Vec<u8>>)>,
+}
+
+impl AlsoSnapshot {
+    pub fn capture(repo_root: &std::path::Path, also: &[String]) -> Result<AlsoSnapshot, String> {
+        validate_also_paths(also)?;
+        let entries = also
+            .iter()
+            .map(|p| {
+                let abs = repo_root.join(normalize_also(p));
+                let bytes = if abs.is_file() { std::fs::read(&abs).ok() } else { None };
+                (abs, bytes)
+            })
+            .collect();
+        Ok(AlsoSnapshot { entries })
+    }
+
+    /// Put every `--also` path back as it was. Best-effort: never panics.
+    pub fn restore(&self) {
+        for (abs, bytes) in &self.entries {
+            match bytes {
+                Some(b) => {
+                    if let Some(parent) = abs.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    let _ = std::fs::write(abs, b);
+                }
+                None => {
+                    if abs.is_file() {
+                        let _ = std::fs::remove_file(abs);
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -702,7 +787,9 @@ async fn exec_attempts(deps: &ExecDeps, task: &DirectTask, repo_root: &std::path
         if passed && !vacuous {
             result.evidence_passed = true;
             // 5. Commit the target + the pre-run supporting files (start-snapshot).
-            match commit(repo_root, &task.file, &task.instruction, factory, &start_dirty).await {
+            match commit_with_also(repo_root, &task.file, &task.instruction, factory, &start_dirty, &task.also)
+                .await
+            {
                 Ok(hash) => {
                     result.committed = Some(hash);
                     result.ok = true;
@@ -1324,12 +1411,40 @@ async fn restore_seal(repo_root: &std::path::Path, path: &str, start_dirty: &[St
     abs.parent().is_none_or(|d| std::fs::create_dir_all(d).is_ok()) && std::fs::write(&abs, &head.stdout).is_ok()
 }
 
-pub(crate) async fn commit(
+/// `commit_with_also` with no `--also` paths.
+#[cfg(test)]
+async fn commit(
     repo_root: &std::path::Path,
     file: &str,
     instruction: &str,
     factory: bool,
     start_dirty: &[String],
+) -> Result<String, String> {
+    commit_with_also(repo_root, file, instruction, factory, start_dirty, &[]).await
+}
+
+/// Whether `path` is tracked in `HEAD` (so its absence now is a deletion).
+fn tracked_in_head(repo_root: &std::path::Path, path: &str) -> bool {
+    std::process::Command::new("git")
+        .args(["cat-file", "-e"])
+        .arg(format!("HEAD:{path}"))
+        .current_dir(repo_root)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// `commit`, plus every `--also` path that exists after the run, or that is
+/// tracked in `HEAD` and missing after the run (a deletion the run made, recorded
+/// in the commit) — and nothing else new: an unlisted untracked file stays out
+/// (the concurrency guard). An `--also` path neither present nor tracked is skipped.
+pub async fn commit_with_also(
+    repo_root: &std::path::Path,
+    file: &str,
+    instruction: &str,
+    factory: bool,
+    start_dirty: &[String],
+    also: &[String],
 ) -> Result<String, String> {
     // The code side may only make a sealed test pass, never change it
     // (ADR-2610221540 §6). Judged over the whole tree, not this commit's
@@ -1353,6 +1468,7 @@ pub(crate) async fn commit(
             broken.join(", ")
         ));
     }
+    validate_also_paths(also)?;
     // Commit the target PLUS the pre-run supporting files (spec / module-registration
     // the evidence needed) so the commit reproduces the green state — not just the
     // target (which left supporting files uncommitted, a broken committed state). Scope
@@ -1370,9 +1486,13 @@ pub(crate) async fn commit(
             paths.push(p.clone());
         }
     }
+    for p in also.iter().map(|p| normalize_also(p)) {
+        if !paths.contains(&p) && (repo_root.join(&p).exists() || tracked_in_head(repo_root, &p)) {
+            paths.push(p);
+        }
+    }
     let add = tokio::process::Command::new("git")
-        .arg("add")
-        .arg("--")
+        .args(["add", "-A", "--"])
         .args(&paths)
         .current_dir(repo_root)
         .output()
@@ -1456,7 +1576,7 @@ pub(crate) fn repo_root() -> std::path::PathBuf {
 
 #[cfg(test)]
 mod commit_snapshot_tests {
-    use super::{commit, dirty_paths};
+    use super::{commit, commit_with_also, dirty_paths};
     use std::process::Command as Git;
 
     fn git(dir: &std::path::Path, args: &[&str]) {
@@ -1485,7 +1605,7 @@ mod commit_snapshot_tests {
         assert!(start_dirty.iter().any(|p| p == "support.rs"),
             "start snapshot must see the supporting file, got {start_dirty:?}");
         std::fs::write(dir.join("target.rs"), "fn t() {}").unwrap();
-        commit(dir, "target.rs", "add target", false, &start_dirty).await.unwrap();
+        commit_with_also(dir, "target.rs", "add target", false, &start_dirty, &[]).await.unwrap();
         let st = Git::new("git").args(["status", "--porcelain"]).current_dir(dir).output().unwrap();
         assert!(String::from_utf8_lossy(&st.stdout).trim().is_empty(),
             "tree must be clean — support.rs should have been committed with the target");
@@ -1667,7 +1787,7 @@ mod commit_snapshot_tests {
         let start_dirty = dirty_paths(dir).await; // empty: clean tree at start
         std::fs::write(dir.join("concurrent.rs"), "// not ours").unwrap();
         std::fs::write(dir.join("target.rs"), "fn t() {}").unwrap();
-        commit(dir, "target.rs", "add target", false, &start_dirty).await.unwrap();
+        commit_with_also(dir, "target.rs", "add target", false, &start_dirty, &[]).await.unwrap();
         let st = Git::new("git").args(["status", "--porcelain"]).current_dir(dir).output().unwrap();
         assert!(String::from_utf8_lossy(&st.stdout).contains("concurrent.rs"),
             "a change appearing after run-start must NOT be swept into the commit");
@@ -1689,7 +1809,7 @@ mod commit_snapshot_tests {
         std::fs::write(dir.join("unrelated.rs"), "// different package WIP").unwrap();
         let start_dirty = dirty_paths(dir).await;
         std::fs::write(dir.join("mypkg/src/target.rs"), "fn t() {}").unwrap();
-        commit(dir, "mypkg/src/target.rs", "add", false, &start_dirty).await.unwrap();
+        commit_with_also(dir, "mypkg/src/target.rs", "add", false, &start_dirty, &[]).await.unwrap();
         let files = Git::new("git").args(["show", "--name-only", "--format=", "HEAD"]).current_dir(dir).output().unwrap();
         let names = String::from_utf8_lossy(&files.stdout);
         assert!(names.contains("mypkg/src/target.rs"), "target committed");
