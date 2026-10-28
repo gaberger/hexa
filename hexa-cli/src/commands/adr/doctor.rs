@@ -62,6 +62,8 @@ pub enum FindingKind {
     SupersededUnlinked,
     /// An ADR id cited in code, docs, CODEOWNERS or .hexa/*.toml has no file under docs/adrs/ or docs/adrs/historical/
     DanglingCitation,
+    /// `**Design:**` names a path that is not a file in the project (ADR-2610281011 §4).
+    DanglingDesign,
 }
 
 /// What the daemon is allowed to do without human consent (ADR-2026-04-27-0800 §1a).
@@ -106,6 +108,7 @@ const RULE_TABLE: &[(FindingKind, AutoFixTier, Severity)] = &[
     (FindingKind::StaleProposed,       AutoFixTier::B, Severity::Warning),
     (FindingKind::SupersededUnlinked,  AutoFixTier::B, Severity::Warning),
     (FindingKind::DanglingCitation,    AutoFixTier::C, Severity::Error),
+    (FindingKind::DanglingDesign,      AutoFixTier::C, Severity::Error),
 ];
 
 /// Look up the (tier, severity) for a given finding kind. Panics if the rule
@@ -149,7 +152,32 @@ pub async fn run() -> anyhow::Result<Vec<Finding>> {
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."));
     findings.extend(dangling_citations(&scan_repo_citations(&root), &known_adr_ids(&adr_dir)));
+    findings.extend(dangling_designs(&adrs, &|rel| root.join(rel).is_file()));
     Ok(findings)
+}
+
+/// One `DanglingDesign` finding per ADR whose `**Design:**` line names a path
+/// that is not a file in the project (ADR-2610281011 §4). An ADR with no
+/// such line has nothing to check.
+pub(crate) fn dangling_designs(adrs: &[(PathBuf, String)], is_file: &dyn Fn(&str) -> bool) -> Vec<Finding> {
+    let mut out = Vec::new();
+    for (path, content) in adrs {
+        for line in content.lines() {
+            let Some(design) = line.trim().strip_prefix("**Design:**") else { continue };
+            let design = design.trim().trim_matches('`').trim();
+            let inside = !design.is_empty() && !design.starts_with('/') && !design.split('/').any(|c| c == "..");
+            if !inside || !is_file(design) {
+                let adr_id = extract_filename_adr_id(path).unwrap_or_default();
+                out.push(finding(
+                    adr_id.clone(),
+                    path.clone(),
+                    FindingKind::DanglingDesign,
+                    format!("{adr_id} names the design {design}, which is not a file in the project"),
+                ));
+            }
+        }
+    }
+    out
 }
 
 /// Pure detection over a pre-loaded ADR corpus. Split out from [`run`] so tests
@@ -1276,6 +1304,7 @@ fn kind_slug(kind: FindingKind) -> &'static str {
         FindingKind::StaleProposed => "stale-proposed",
         FindingKind::SupersededUnlinked => "superseded-unlinked",
         FindingKind::DanglingCitation => "dangling-citation",
+        FindingKind::DanglingDesign => "dangling-design",
     }
 }
 
@@ -1874,6 +1903,7 @@ mod tests {
             FindingKind::StaleProposed,
             FindingKind::SupersededUnlinked,
             FindingKind::DanglingCitation,
+            FindingKind::DanglingDesign,
         ];
         for k in all {
             let _ = rule_for(k);

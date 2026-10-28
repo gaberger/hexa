@@ -9,6 +9,28 @@ hexa does not trust a change because its tests pass. It trusts a change whose
 gate was written before the code, by something that never saw the code, and
 which failed until the code existed. This skill is that loop, verb by verb.
 
+## 0. Design (optional, before the decision)
+
+For a feature-sized change, stress-test the idea before deciding it, with the
+Elephant-Goldfish Model (EGM; see `docs/ATTRIBUTIONS.md`). The elephant drafts
+with the project's context; each goldfish reviewer is one tool-less completion
+that sees only the document and the source it names.
+
+```bash
+hexa design brainstorm "<idea>"          # concepts_brief.md, then the critic goldfish's critique
+hexa design draft                        # design_draft.md from the brief
+hexa loop design <draft>                 # record the draft; the loop's stage is design
+hexa design review <draft>               # stages 5 to 9; the report records the draft's sha256
+hexa design resolve <report> --accept S6-1,S7-2   # apply only the findings you accept
+hexa design review <draft>               # again: a revised draft needs a review of its new bytes
+git commit <draft>                       # a person settles the design by committing it
+hexa design adr <draft>                  # a proposed ADR that cites it; the loop moves to decide
+```
+
+`hexa design adr` refuses a draft that is untracked, uncommitted, or changed
+since a review covering stages 5 to 8. `hexa go` prints the next of these
+steps. Skip this section for a small change: an ADR may be written directly.
+
 ## 1. Decide
 
 Write an ADR in `docs/adrs/` with numbered decisions (`1.`, `2.` …) under
@@ -64,6 +86,7 @@ hexa spec verify --prove ADR-<id>  # each test existed and failed at its red com
 hexa harden <path> --gate "<command>"   # hunt, verify each finding, fix under the gate
 hexa analyze .                          # the architecture grade
 hexa spec verify --ci                   # what CI runs
+hexa drift --since <base>               # do the docs this change touched still describe the code?
 hexa loop stage done                    # writes the evidence into the ADR
 ```
 

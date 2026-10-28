@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 
 use futures::future::join_all;
 use hexa_core::domain::design::{self, Pin, Preset, Stage};
+use hexa_core::domain::workflow::{self, DesignNext, DesignState};
 use sha2::{Digest, Sha256};
 
 /// Each referenced source file is cut at this many bytes (§4).
@@ -494,7 +495,11 @@ pub async fn review(
     say: &dyn Fn(&str),
 ) -> Res<String> {
     let draft_rel = ws.relative(draft)?;
-    let document = ws.read(&draft_rel)?;
+    let bytes = std::fs::read(ws.root.join(&draft_rel)).map_err(|e| format!("reading {draft_rel}: {e}"))?;
+    let document = String::from_utf8_lossy(&bytes).into_owned();
+    // The bytes this review read (ADR-2610281011 §2), said before any call.
+    let draft_sha = sha256_hex(&bytes);
+    say(&format!("Draft sha256: {draft_sha}"));
     let stages = match scope {
         ReviewScope::Stage(n) => {
             vec![design::stage_from_number(n).ok_or_else(|| format!("--stage {n}: EGM's review stages are 5 to 9"))?]
@@ -505,7 +510,7 @@ pub async fn review(
     };
     let sources = sources_of(&ws.root, &document, &draft_rel);
     let mut report = format!(
-        "# Design review of {draft_rel}\n\nDraft: `{draft_rel}`\nModel: `{model}`\n{}. Each reviewer is one \
+        "# Design review of {draft_rel}\n\nDraft: `{draft_rel}`\nDraft sha256: {draft_sha}\nModel: `{model}`\n{}. Each reviewer is one \
          tool-less completion given its persona, its standard, the draft and the source the draft names; \
          a synthesizer deduplicates each section.\n{}\n",
         egm.credit("Written by hexa design review"),
@@ -598,6 +603,7 @@ pub async fn drift(
     egm: &Egm,
     root: &Path,
     dir: Option<&str>,
+    since: Option<&str>,
     model: &str,
     today: &str,
     say: &dyn Fn(&str),
@@ -605,11 +611,31 @@ pub async fn drift(
     const PERSONA: &str = "codebase_details";
     const SKILL: &str = "skills/egm-drift-report/SKILL.md";
     let writer = Writer { root: root.to_path_buf(), allowed: vec![ANALYSIS_DIR.to_string()] };
-    let docs = drift_documents(root, dir)?;
+    let mut docs = drift_documents(root, dir)?;
     if docs.is_empty() {
         return Err("no Markdown document to check".into());
     }
-    say(&format!("{} document(s) on {model}", docs.len()));
+    // Only what a change touched (ADR-2610281011 §6).
+    if let Some(base) = since {
+        let changed = changed_since(root, base)?;
+        let named: Vec<(String, Vec<String>)> = docs
+            .iter()
+            .map(|d| {
+                let text = std::fs::read_to_string(root.join(d)).unwrap_or_default();
+                (d.clone(), design::referenced_paths(&text, &|_| true))
+            })
+            .collect();
+        docs = design::docs_touched(&named, &changed);
+        if docs.is_empty() {
+            let line = format!("No document touched since {base}");
+            say(&line);
+            let report = format!("# Drift report {today}\n\n{line}.\n");
+            let rel = format!("{ANALYSIS_DIR}/{today}_DRIFT_REPORT.md");
+            writer.write(&rel, &report, say)?;
+            return Ok((rel, Vec::new()));
+        }
+    }
+    say(&format!("{} document(s) on {model}: {}", docs.len(), docs.join(", ")));
     let persona = egm.persona(PERSONA)?;
     let instruction = format!(
         "{}\n\nhexa's instruction for this call: apply the drift instructions above to the one document under \
@@ -712,4 +738,212 @@ fn drift_documents(root: &Path, dir: Option<&str>) -> Res<Vec<String>> {
         }
     }
     Ok(docs)
+}
+
+// ------------------------------------------------------------------ git
+
+fn git(root: &Path, args: &[&str]) -> Res<std::process::Output> {
+    std::process::Command::new("git")
+        .args(args)
+        .current_dir(root)
+        .output()
+        .map_err(|e| format!("git {}: {e}", args.join(" ")))
+}
+
+/// Paths `git diff --name-only <base>` lists: committed and uncommitted changes since `base`.
+fn changed_since(root: &Path, base: &str) -> Res<Vec<String>> {
+    let out = git(root, &["diff", "--name-only", base, "--"])?;
+    if !out.status.success() {
+        return Err(format!("git diff {base}: {}", String::from_utf8_lossy(&out.stderr).trim()));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).lines().map(str::to_string).filter(|l| !l.is_empty()).collect())
+}
+
+fn tracked(root: &Path, rel: &str) -> bool {
+    git(root, &["ls-files", "--error-unmatch", "--", rel]).is_ok_and(|o| o.status.success())
+}
+
+/// Tracked by git, with no uncommitted change.
+fn committed(root: &Path, rel: &str) -> bool {
+    tracked(root, rel)
+        && git(root, &["status", "--porcelain", "--", rel]).is_ok_and(|o| o.status.success() && o.stdout.is_empty())
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+// ------------------------------------------------------------------ the loop's design step
+
+/// The loop's stage words, in order (ADR-2610281011 §1).
+pub fn loop_stage_words() -> Vec<&'static str> {
+    workflow::loop_stages().into_iter().map(workflow::stage_word).collect()
+}
+
+/// Every review report in the artifact directory: the Markdown files that
+/// record a draft sha256, by path.
+fn review_reports(ws: &Workspace) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let Ok(rd) = std::fs::read_dir(ws.root.join(&ws.dir)) else { return out };
+    for e in rd.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if !name.ends_with(".md") || !e.path().is_file() {
+            continue;
+        }
+        if let Ok(text) = std::fs::read_to_string(e.path()) {
+            if design::reviewed_sha(&text).is_some() {
+                out.push((format!("{}/{name}", ws.dir), text));
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+fn design_state(ws: &Workspace, draft: &str) -> DesignState {
+    DesignState {
+        draft: Some(draft.to_string()),
+        draft_sha256: std::fs::read(ws.root.join(draft)).ok().map(|b| sha256_hex(&b)),
+        reviews: review_reports(ws).into_iter().map(|(_, t)| t).collect(),
+        committed: committed(&ws.root, draft),
+    }
+}
+
+/// The command `hexa go` suggests for the recorded draft (§5), if any.
+pub fn next_design_command(ws: &Workspace, draft: Option<&str>) -> Option<String> {
+    let state = match draft {
+        Some(d) => design_state(ws, d),
+        None => DesignState { draft: None, draft_sha256: None, reviews: Vec::new(), committed: false },
+    };
+    match workflow::next_design_action(&state) {
+        DesignNext::Nothing => None,
+        DesignNext::Review(d) => Some(format!("hexa design review {d}")),
+        DesignNext::Commit(d) => Some(format!("git commit {d}")),
+        DesignNext::ToAdr(d) => Some(format!("hexa design adr {d}")),
+    }
+}
+
+/// `draft` relative to the project root, if it is a file inside the project
+/// (`hexa loop design`, §1).
+pub fn draft_in_project(ws: &Workspace, draft: &str) -> Res<String> {
+    let refuse = || format!("{draft} is not a file inside the project");
+    let rel = ws.relative(draft).map_err(|_| refuse())?;
+    if !ws.root.join(&rel).is_file() {
+        return Err(refuse());
+    }
+    Ok(rel)
+}
+
+/// `hexa design adr` (§3): a reviewed, committed draft compiled into a
+/// proposed ADR that cites it. Returns the new ADR's id and path. The ADR's
+/// decisions are the design's sections, numbered; a person edits them
+/// before accepting. No model is called and no spec is written.
+pub fn design_adr(ws: &Workspace, draft: &str, now: chrono::NaiveDateTime, say: &dyn Fn(&str)) -> Res<(String, String)> {
+    let rel = ws.relative(draft)?;
+    if !tracked(&ws.root, &rel) {
+        return Err(format!("{rel} is not tracked by git: commit the design first, so the decision cites what was reviewed"));
+    }
+    if !committed(&ws.root, &rel) {
+        return Err(format!("{rel} has uncommitted changes: commit it, so the decision cites what was reviewed"));
+    }
+    let bytes = std::fs::read(ws.root.join(&rel)).map_err(|e| format!("reading {rel}: {e}"))?;
+    let sha = sha256_hex(&bytes);
+    let reports = review_reports(ws);
+    let Some((report, _)) = reports.iter().find(|(_, t)| design::review_covers(t, &sha).is_ok()) else {
+        let why: Vec<String> = reports
+            .iter()
+            .map(|(p, t)| format!("{p}: {}", design::review_covers(t, &sha).err().unwrap_or_default()))
+            .collect();
+        return Err(format!(
+            "no review covers {rel} as it is now (sha256 {sha}); run `hexa design review {rel}`{}",
+            if why.is_empty() { String::new() } else { format!(". {}", why.join("; ")) }
+        ));
+    };
+    let text = String::from_utf8_lossy(&bytes);
+    let text = strip_header(&text);
+    let (title, context, decisions) = compile_design(text, &rel);
+    let adr_dir = "docs/adrs";
+    let mut stamp = now;
+    let id = loop {
+        let id = format!("ADR-{}", stamp.format("%y%m%d%H%M"));
+        let taken = std::fs::read_dir(ws.root.join(adr_dir))
+            .map(|rd| rd.flatten().any(|e| e.file_name().to_string_lossy().starts_with(&format!("{id}-"))))
+            .unwrap_or(false);
+        if !taken {
+            break id;
+        }
+        stamp += chrono::Duration::minutes(1);
+    };
+    let slug = slug(&title);
+    let path = format!("{adr_dir}/{id}-{slug}.md");
+    let date = now.format("%Y-%m-%d");
+    let numbered: String = decisions.iter().enumerate().map(|(i, d)| format!("{}. {d}\n", i + 1)).collect();
+    let body = format!(
+        "---\nid: {id}\nstatus: proposed\ndate: {date}\n---\n# {id}: {title}\n\n**Status:** Proposed\n**Date:** {date}\n\
+         **Drivers:** The design `{rel}`, reviewed by the goldfish at sha256 `{sha}` (`{report}`).\n**Design:** {rel}\n\n\
+         ## Context\n\n{context}\n\n## Decision\n\n{numbered}\n## Consequences\n\nTo be written before acceptance.\n\n\
+         ## Implementation\n\nTo be written before acceptance: name the port and domain files each decision changes.\n\n\
+         ## Gate\n\nTo be written before acceptance: the command that must exit 0.\n\n\
+         ## References\n\n- `{rel}`: the reviewed design.\n- `{report}`: its review.\n"
+    );
+    let writer = Writer { root: ws.root.clone(), allowed: vec![adr_dir.to_string()] };
+    writer.write(&path, &body, say)?;
+    Ok((id, path))
+}
+
+/// The design's title (its first H1), its opening as context, and one
+/// decision per `##` section: the heading in bold, then its first paragraph.
+fn compile_design(text: &str, rel: &str) -> (String, String, Vec<String>) {
+    let mut title = None;
+    let mut context: Vec<&str> = Vec::new();
+    let mut sections: Vec<(String, Vec<&str>)> = Vec::new();
+    for line in text.lines() {
+        let t = line.trim();
+        if title.is_none() && t.starts_with("# ") {
+            title = Some(t.trim_start_matches("# ").trim().trim_start_matches("Design:").trim().to_string());
+        } else if let Some(h) = t.strip_prefix("## ") {
+            sections.push((h.trim().to_string(), Vec::new()));
+        } else if let Some((_, body)) = sections.last_mut() {
+            body.push(line);
+        } else {
+            context.push(line);
+        }
+    }
+    let first_paragraph = |lines: &[&str]| -> String {
+        lines
+            .iter()
+            .map(|l| l.trim())
+            .skip_while(|l| l.is_empty())
+            .take_while(|l| !l.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let title = title.unwrap_or_else(|| {
+        Path::new(rel).file_stem().map(|s| s.to_string_lossy().replace(['-', '_'], " ")).unwrap_or_default()
+    });
+    let context = match first_paragraph(&context) {
+        c if c.is_empty() => format!("See the design `{rel}`."),
+        c => format!("{c}\n\nThe design is `{rel}`."),
+    };
+    let mut decisions: Vec<String> = sections
+        .iter()
+        .map(|(h, body)| match first_paragraph(body) {
+            p if p.is_empty() => format!("**{h}.**"),
+            p => format!("**{h}.** {p}"),
+        })
+        .collect();
+    if decisions.is_empty() {
+        decisions.push(format!("**Adopt the design.** As `{rel}` describes it."));
+    }
+    (title, context, decisions)
+}
+
+fn slug(title: &str) -> String {
+    let s: String = title
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    let s = s.split('-').filter(|w| !w.is_empty()).collect::<Vec<_>>().join("-");
+    if s.is_empty() { "design".to_string() } else { s.chars().take(60).collect::<String>().trim_end_matches('-').to_string() }
 }

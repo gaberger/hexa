@@ -1,6 +1,8 @@
 //! The hexa loop's stages and the design step's next action
 //! (ADR-2610281011). Pure: the caller reads the loop, the files and git.
 
+use super::design::review_covers;
+
 /// The loop's stages, in order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LoopStage {
@@ -14,19 +16,25 @@ pub enum LoopStage {
 
 /// Every stage, in the order the loop runs them.
 pub fn loop_stages() -> Vec<LoopStage> {
-    unimplemented!("ADR-2610281011: built to its sealed spec")
+    use LoopStage::*;
+    vec![Design, Decide, Gate, Build, Harden, Done]
 }
 
 /// The stage `word` names (`design`, `decide`, …), if any.
 pub fn parse_stage(word: &str) -> Option<LoopStage> {
-    let _ = word;
-    unimplemented!("ADR-2610281011: built to its sealed spec")
+    loop_stages().into_iter().find(|s| stage_word(*s) == word)
 }
 
 /// The word for `stage`, as `hexa loop stage` takes it.
 pub fn stage_word(stage: LoopStage) -> &'static str {
-    let _ = stage;
-    unimplemented!("ADR-2610281011: built to its sealed spec")
+    match stage {
+        LoopStage::Design => "design",
+        LoopStage::Decide => "decide",
+        LoopStage::Gate => "gate",
+        LoopStage::Build => "build",
+        LoopStage::Harden => "harden",
+        LoopStage::Done => "done",
+    }
 }
 
 /// What the design step has on disk.
@@ -56,6 +64,16 @@ pub enum DesignNext {
 }
 
 pub fn next_design_action(state: &DesignState) -> DesignNext {
-    let _ = state;
-    unimplemented!("ADR-2610281011: built to its sealed spec")
+    let Some(draft) = &state.draft else { return DesignNext::Nothing };
+    let covered = state
+        .draft_sha256
+        .as_deref()
+        .is_some_and(|h| state.reviews.iter().any(|r| review_covers(r, h).is_ok()));
+    if !covered {
+        DesignNext::Review(draft.clone())
+    } else if !state.committed {
+        DesignNext::Commit(draft.clone())
+    } else {
+        DesignNext::ToAdr(draft.clone())
+    }
 }

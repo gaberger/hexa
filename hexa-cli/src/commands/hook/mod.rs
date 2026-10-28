@@ -981,7 +981,7 @@ async fn route(project_dir: &Path) -> Result<()> {
                                 match spawn_plan_draft(content) {
                                     Ok(draft_path) => {
                                         println!(
-                                            "[HEX] feature-sized task. Decide (ADR in docs/adrs/, `hexa loop adr <ID>`) \u{2192} Gate (`hexa loop gate '<cmd>'`, before the code) \u{2192} Build \u{2192} Harden \u{2192} `hexa analyze .`; drafting a workplan in the background"
+                                            "[HEX] feature-sized task. Design (`hexa design brainstorm \"<idea>\"`, optional) \u{2192} Decide (ADR in docs/adrs/, `hexa loop adr <ID>`) \u{2192} Gate (`hexa loop gate '<cmd>'`, before the code) \u{2192} Build \u{2192} Harden \u{2192} `hexa analyze .`; drafting a workplan in the background"
                                         );
                                         println!(
                                             "[HEX] draft: {} (run `hexa plan drafts list` to see it, `hexa plan drafts approve <name>` to keep it)",

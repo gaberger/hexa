@@ -41,6 +41,9 @@ const HEXA_COMMANDS: &[&str] = &[
     "plan reconcile --all --update",
     "config inference list",
     "config inference test --all",
+    "design brainstorm <idea>",
+    "design review <path>",
+    "drift",
 ];
 
 /// Every hexa command the table can route to, so each can be checked against
@@ -131,6 +134,47 @@ pub fn route(text: &str) -> Routed {
             ),
             None => Routed::None,
         };
+    }
+
+    // Design (ADR-2610281011 §7). Brainstorming an idea writes files, so it
+    // is confirmed; the idea is the rest of the request.
+    if let Some(i) = pos("brainstorm") {
+        let mut j = i + 1;
+        while ws.get(j).is_some_and(|w| matches!(w.key.as_str(), "about" | "on" | "for")) {
+            j += 1;
+        }
+        let idea = ws
+            .get(j)
+            .map(|w| text[w.start..].trim().trim_end_matches(['.', '?', '!']).replace('"', "'"))
+            .unwrap_or_default();
+        return if idea.is_empty() {
+            Routed::None
+        } else {
+            hexa(
+                format!("design brainstorm \"{idea}\""),
+                true,
+                format!("Brainstorm \"{idea}\" into a concepts brief, then have the critic goldfish review it"),
+            )
+        };
+    }
+    // Reviewing a design needs the draft's path; without one there is no route.
+    if has("review") && starts("design") {
+        return match ws.iter().find_map(|w| path_like(w.raw)) {
+            Some(p) => hexa(
+                format!("design review {p}"),
+                false,
+                format!("Review {p} with the goldfish reviewers, stage by stage"),
+            ),
+            None => Routed::None,
+        };
+    }
+    // Whether the docs still describe the code.
+    if has("drift")
+        || ((has("docs") || has("documentation") || has("doc"))
+            && (starts("match") || starts("agree") || starts("disagree") || starts("describ"))
+            && has("code"))
+    {
+        return hexa("drift", false, "Report where the docs and the code disagree");
     }
 
     // Searching memory: the query is the rest of the request.

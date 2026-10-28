@@ -66,6 +66,8 @@ the top-leaderboard local model scored last on the grid.
    | hand-editing then hoping | `hexa do run "<task>" --file <f> --evidence "<cmd>"` |
    | building a whole system by hand | `hexa build '<challenge>' --target <dir> --gate '<cmd>'` |
    | eyeballing a diff for bugs | `hexa harden <path> --gate '<cmd>'` |
+   | deciding a big change before anyone has attacked it | `hexa design brainstorm` → `hexa design review` → `hexa design adr` |
+   | assuming the docs still describe the code | `hexa drift --since <base>` |
    | "I think this is fine" | `hexa analyze .` — the architecture grade |
    | deleting code you *think* is dead | `hexa graph consumers <path>` — the excision oracle |
    | a lesson you will forget | `hexa memory store lesson:<topic> "<text>"` |
@@ -149,9 +151,17 @@ hexa bench agentic
 
 ## Development pipeline (gate-first)
 
-ADR-2609121400, amended by ADR-2610221540. **The ADR is compiled to a spec,
-the spec to sealed tests that fail, and only then is code written.**
+ADR-2609121400, amended by ADR-2610221540 and ADR-2610281011. **The ADR is
+compiled to a spec, the spec to sealed tests that fail, and only then is code
+written.**
 
+0. **Design** (optional; for a feature-sized change) — stress-test the idea
+   before deciding it, with the Elephant-Goldfish Model:
+   `hexa design brainstorm "<idea>"`, `hexa design draft`, `hexa loop design <draft>`,
+   `hexa design review <draft>`, `hexa design resolve <report> --accept <ids>`,
+   then review again. A person commits the draft; `hexa design adr <draft>`
+   turns it into a proposed ADR that cites it, and refuses a draft that is
+   uncommitted or changed since its review.
 1. **Decide** — an ADR in `docs/adrs/` with numbered decisions (`1.`, `2.` …
    at the margin of `## Decision`). Name the port and domain files it decides
    in backquotes; write new port signatures with the ADR.
@@ -168,7 +178,7 @@ the spec to sealed tests that fail, and only then is code written.**
    acceptance and seal, never by editing a test.
 6. **Harden** — `hexa harden`: adversarial hunt, default-refute, every fix gated.
 7. **Ship** — `hexa spec verify --ci` (and `--prove` on the spec you changed),
-   README, commit.
+   `hexa drift --since <base>` for the docs the change touched, README, commit.
 
 ADRs accepted before ADR-2610221540 are legacy, without a spec; their count is
 ratcheted and only falls. Every ADR from it on must have a spec, or
