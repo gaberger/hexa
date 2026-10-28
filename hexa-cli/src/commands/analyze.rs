@@ -1740,8 +1740,18 @@ fn evaluate_import_policies(
             sites.push((r.raw_path, r.line));
         }
         sites.sort_by_key(|(_, line)| *line);
+        // `pub use day::Day;` beside `pub mod day;` is this file's own child
+        // module, not a crate named `day`.
+        let children = if lang == hexa_analysis::ports::Language::Rust {
+            hexa_analysis::import_policy::rust_child_modules(&source)
+        } else {
+            Vec::new()
+        };
 
         for (raw_path, line) in sites {
+            if children.iter().any(|c| *c == first_segment(lang, &raw_path)) {
+                continue;
+            }
             let origin = classify(lang, &raw_path, &names);
             for policy in &matching {
                 let verdict = judge(lang, &raw_path, origin, &policy.allow, &policy.deny);

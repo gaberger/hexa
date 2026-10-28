@@ -74,6 +74,32 @@ pub fn names_external(first_segment: &str, names: &ProjectNames) -> bool {
     names.rust_dependencies.iter().any(|d| d == &normalised)
 }
 
+/// The child modules a Rust file declares: `mod x;`, `pub mod x;`,
+/// `pub(crate) mod x { … }`. In Rust 2018 a `use` path whose first segment
+/// names one of them — `pub use day::Day;` beside `pub mod day;` — resolves
+/// to that child module, not to a crate, so it is the project's own code.
+pub fn rust_child_modules(source: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for line in source.lines() {
+        let mut t = line.trim_start();
+        if let Some(rest) = t.strip_prefix("pub") {
+            t = rest.trim_start();
+            if t.starts_with('(') {
+                match t.find(')') {
+                    Some(i) => t = t[i + 1..].trim_start(),
+                    None => continue,
+                }
+            }
+        }
+        let Some(rest) = t.strip_prefix("mod ") else { continue };
+        let name: String = rest.trim_start().chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+        if !name.is_empty() && !out.contains(&name) {
+            out.push(name);
+        }
+    }
+    out
+}
+
 /// The separator that divides one segment of a module path from the next.
 fn separator(lang: Language) -> &'static str {
     match lang {
@@ -282,6 +308,12 @@ mod tests {
     }
 
     // ── Rust ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn a_child_module_declared_in_the_file_is_found_in_every_form() {
+        let src = "pub mod day;\nmod streaks;\npub(crate) mod book {\n}\n#[cfg(test)]\nmod tests {}\n// not mod here\nlet module = 1;\n";
+        assert_eq!(rust_child_modules(src), ["day", "streaks", "book", "tests"]);
+    }
 
     #[test]
     fn rust_tells_its_own_code_from_everybody_elses() {
