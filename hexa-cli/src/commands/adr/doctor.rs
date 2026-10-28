@@ -684,7 +684,10 @@ pub(crate) fn scan_repo_citations(root: &Path) -> Vec<CitingSite> {
                 // A directory with its own `.git` is another checkout — a
                 // linked worktree (`.git` is a file) or a nested clone — and
                 // its citations are that checkout's, not this repository's.
-                if SKIP_DIRS.contains(&name) || rel == historical || path.join(".git").exists() {
+                // So is a nested project with its own ledger: an example under
+                // `examples/` cites its own `docs/adrs/`, not this one's.
+                let own_ledger = path.join("docs").join("adrs").is_dir();
+                if SKIP_DIRS.contains(&name) || rel == historical || path.join(".git").exists() || own_ledger {
                     continue;
                 }
                 stack.push(path);
@@ -1888,6 +1891,19 @@ pub fn exit_code(findings: &[Finding], strict: bool) -> i32 {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_nested_project_with_its_own_ledger_cites_that_ledger_not_this_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("docs/adrs")).unwrap();
+        std::fs::create_dir_all(root.join("examples/app/docs/adrs")).unwrap();
+        std::fs::write(root.join("examples/app/README.md"), "See ADR-2610281223.\n").unwrap();
+        std::fs::write(root.join("README.md"), "See ADR-2610281224.\n").unwrap();
+        let ids: Vec<String> = scan_repo_citations(root).into_iter().map(|(_, _, id)| id).collect();
+        assert_eq!(ids, ["ADR-2610281224"]);
+    }
+
     use super::*;
 
     // ── Rule-table tests (P1.1) ──────────────────────────────────────────
