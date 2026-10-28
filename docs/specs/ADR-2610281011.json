@@ -1,0 +1,491 @@
+{
+  "adr": "ADR-2610281011",
+  "feature": "design as the first stage of the hexa loop",
+  "description": "Design becomes the loop's optional first stage. A review records the draft bytes it read. Only a reviewed, committed draft becomes a proposed ADR that cites it. hexa go, hexa hey and the loop guidance know the design verbs. hexa drift --since checks only the documents a change touched.",
+  "universal": [
+    "§1",
+    "§2",
+    "§5",
+    "§6",
+    "§7"
+  ],
+  "accepted": {
+    "by": "gary",
+    "sha256": "e9b2ce36cc930b19dcc3154e0d1c002635000b2dcc30c43ad4bc46effc0d8bb6"
+  },
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "The loop's stages are design, decide, gate, build, harden, done, in that order",
+      "given": "nothing",
+      "when": "loop_stages() is called",
+      "then": "it returns [Design, Decide, Gate, Build, Harden, Done], in exactly that order, and stage_word gives \"design\", \"decide\", \"gate\", \"build\", \"harden\" and \"done\" for them"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "parse_stage reads the design stage",
+      "given": "the word \"design\"",
+      "when": "parse_stage(\"design\") is called",
+      "then": "it returns Some(LoopStage::Design)"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "parse_stage refuses a word that names no stage",
+      "given": "the words \"\", \"brainstorm\", \"review\" and \"designing\"",
+      "when": "parse_stage is called on each",
+      "then": "each returns None"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§1"
+      ],
+      "kind": "property",
+      "description": "stage_word and parse_stage round-trip for every stage, and the stage order matches the enum order",
+      "given": "any stage s in loop_stages()",
+      "when": "stage_word(s) is parsed back with parse_stage",
+      "then": "parse_stage(stage_word(s)) == Some(s). loop_stages() is strictly increasing under the LoopStage ordering. No two stages share a word."
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "hexa loop design records a draft inside the project and sets the stage to design",
+      "given": "a project with a file docs/design/idea.md and a loop at any stage",
+      "when": "`hexa loop design docs/design/idea.md` runs",
+      "then": "the loop records docs/design/idea.md as its draft, its stage reads `design`, and the command exits successfully"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "hexa loop design refuses a draft that is not a file inside the project",
+      "given": "a project with no file ghost.md, and a file that exists outside the project",
+      "when": "`hexa loop design ghost.md`, `hexa loop design ../outside.md` and `hexa loop design /etc/hosts` run",
+      "then": "each exits with an error, records no draft, and leaves the loop's stage unchanged"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "Design is optional: a loop with no design recorded starts at decide",
+      "given": "a fresh loop with no draft recorded",
+      "when": "the loop's stage is read",
+      "then": "it is `decide`, not `design`"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "reviewed_sha reads back the recorded draft hash",
+      "given": "a report whose text contains the line `Draft sha256: ab12cd34` among other content",
+      "when": "reviewed_sha(report) is called",
+      "then": "it returns Some(\"ab12cd34\")"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "reviewed_sha finds nothing in a report with no hash line",
+      "given": "a report with stage sections but no `Draft sha256:` line",
+      "when": "reviewed_sha(report) is called",
+      "then": "it returns None"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "review_covers accepts a report with the matching hash and sections for stages 5 to 8",
+      "given": "a report with `Draft sha256: H` and a section for each of stages 5, 6, 7 and 8",
+      "when": "review_covers(report, \"H\") is called, and reviewed_stages(report) is called",
+      "then": "review_covers returns Ok(()), and reviewed_stages returns [ZoomOut, Comprehension, Critic, IntermediateZoomOut] in report order"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "review_covers refuses a report recorded against a different hash",
+      "given": "a report with `Draft sha256: H1` and sections for stages 5 to 8",
+      "when": "review_covers(report, \"H2\") is called",
+      "then": "it returns Err, and the message says the hash differs"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "review_covers refuses a report with no hash",
+      "given": "a report with sections for stages 5 to 8 and no `Draft sha256:` line",
+      "when": "review_covers(report, \"H\") is called",
+      "then": "it returns Err, and the message says the hash is missing"
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "review_covers names the missing stage numbers",
+      "given": "a report with `Draft sha256: H` and sections for stages 5 and 7 only",
+      "when": "review_covers(report, \"H\") is called",
+      "then": "it returns Err, and the message names stages 6 and 8"
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "A stage-9-only report does not cover a draft",
+      "given": "a report with `Draft sha256: H` and a section for stage 9 only",
+      "when": "review_covers(report, \"H\") is called",
+      "then": "it returns Err naming stages 5, 6, 7 and 8"
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§2"
+      ],
+      "kind": "property",
+      "description": "review_covers is Ok exactly when the hash matches and stages 5 to 8 are all present",
+      "given": "any report and any draft_sha",
+      "when": "review_covers(report, draft_sha) is called",
+      "then": "it returns Ok if and only if reviewed_sha(report) == Some(draft_sha) and reviewed_stages(report) contains each of stages 5, 6, 7 and 8. An extra stage 9 section never turns Ok into Err."
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "hexa design review records the hash of the draft bytes it read",
+      "given": "a draft file whose bytes hash, under sha256, to H",
+      "when": "`hexa design review <draft>` writes its report",
+      "then": "the report contains the line `Draft sha256: H`"
+    },
+    {
+      "id": "S17",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "A reviewed, committed draft becomes a proposed ADR that cites it",
+      "given": "a draft that git tracks with no uncommitted changes, and a report in the artifact directory that passes review_covers against the draft's current sha256",
+      "when": "`hexa design adr <draft>` runs",
+      "then": "it writes exactly one new file, docs/adrs/ADR-<next id>-<slug>.md, containing `**Status:** Proposed`, numbered decisions under `## Decision`, and the line `**Design:** <draft>`. The loop records that ADR and its stage is `decide`. No spec is written, and the ADR is not accepted."
+    },
+    {
+      "id": "S18",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "hexa design adr refuses a draft with uncommitted changes",
+      "given": "a covered draft that has uncommitted changes",
+      "when": "`hexa design adr <draft>` runs",
+      "then": "it exits with an error, writes nothing under docs/adrs/, and leaves the loop unchanged"
+    },
+    {
+      "id": "S19",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "hexa design adr refuses a draft that git does not track",
+      "given": "an untracked draft",
+      "when": "`hexa design adr <draft>` runs",
+      "then": "it exits with an error and writes no ADR"
+    },
+    {
+      "id": "S20",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "A draft revised after its review must be reviewed again",
+      "given": "a committed draft whose only review report records the sha256 of an earlier revision, as after `hexa design resolve`",
+      "when": "`hexa design adr <draft>` runs",
+      "then": "it exits with an error saying no review covers the draft's current bytes, writes no ADR, and makes no completion"
+    },
+    {
+      "id": "S21",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "No other hexa design command writes under docs/adrs/",
+      "given": "a project whose docs/adrs/ holds a known set of files",
+      "when": "`hexa design brainstorm`, `draft`, `review` and `resolve` each run",
+      "then": "docs/adrs/ holds exactly the same files with the same bytes afterwards"
+    },
+    {
+      "id": "S22",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "An ADR whose Design line resolves passes the doctor",
+      "given": "an ADR with `**Design:** docs/design/idea.md`, where that file exists in the project",
+      "when": "`hexa adr doctor` runs",
+      "then": "it reports no error for that ADR's design line"
+    },
+    {
+      "id": "S23",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "hexa adr doctor reports a Design line that does not resolve",
+      "given": "an ADR with `**Design:** docs/design/gone.md`, where no such file exists",
+      "when": "`hexa adr doctor` runs",
+      "then": "it reports an error naming that ADR and the path docs/design/gone.md"
+    },
+    {
+      "id": "S24",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "An ADR with no Design line is not an error",
+      "given": "an otherwise valid ADR with no `**Design:**` line",
+      "when": "`hexa adr doctor` runs",
+      "then": "it reports no error about a missing design"
+    },
+    {
+      "id": "S25",
+      "decision": [
+        "§5"
+      ],
+      "kind": "example",
+      "description": "Each design state maps to its next action",
+      "given": "draft d with sha H in four states: (a) no draft recorded; (b) no report covers H; (c) a report covers H and committed is false; (d) a report covers H and committed is true",
+      "when": "next_design_action is called on each",
+      "then": "it returns (a) Nothing, (b) Review(d), (c) Commit(d) and (d) ToAdr(d)"
+    },
+    {
+      "id": "S26",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "A review of an earlier revision does not advance past Review, even when the draft is committed",
+      "given": "a DesignState with draft d, draft_sha256 H2, committed true, and a single review that records H1 and has sections for stages 5 to 8",
+      "when": "next_design_action(state) is called",
+      "then": "it returns Review(d), not ToAdr(d)"
+    },
+    {
+      "id": "S27",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "hexa go prints no design suggestion when no draft is recorded",
+      "given": "a loop with no draft recorded",
+      "when": "`hexa go` runs",
+      "then": "its output contains no `hexa design review`, `hexa design adr` or `git commit` suggestion"
+    },
+    {
+      "id": "S28",
+      "decision": [
+        "§5"
+      ],
+      "kind": "example",
+      "description": "hexa go prints the verb that matches the next action",
+      "given": "recorded draft d in the Review, Commit and ToAdr states in turn",
+      "when": "`hexa go` runs in each",
+      "then": "it prints `hexa design review d`, then `git commit d`, then `hexa design adr d`"
+    },
+    {
+      "id": "S29",
+      "decision": [
+        "§5"
+      ],
+      "kind": "property",
+      "description": "The next action follows from coverage and commit state for every state",
+      "given": "any DesignState",
+      "when": "next_design_action(state) is called",
+      "then": "It returns Nothing if and only if draft is None. Otherwise it carries the draft path. It returns Review exactly when no review passes review_covers against draft_sha256 (or draft_sha256 is None). It returns Commit exactly when one does and committed is false, and ToAdr exactly when one does and committed is true."
+    },
+    {
+      "id": "S30",
+      "decision": [
+        "§6"
+      ],
+      "kind": "example",
+      "description": "docs_touched returns changed documents and documents that name changed paths, in docs order",
+      "given": "docs [(\"a.md\", [\"src/x.rs\"]), (\"b.md\", [\"src/y.rs\"]), (\"c.md\", [])] and changed [\"c.md\", \"src/x.rs\"]",
+      "when": "docs_touched(docs, changed) is called",
+      "then": "it returns [\"a.md\", \"c.md\"]"
+    },
+    {
+      "id": "S31",
+      "decision": [
+        "§6"
+      ],
+      "kind": "negative",
+      "description": "docs_touched returns nothing for a change that touches no document",
+      "given": "docs [(\"a.md\", [\"src/x.rs\"])] and changed [\"src/z.rs\"]",
+      "when": "docs_touched(docs, changed) is called",
+      "then": "it returns an empty list"
+    },
+    {
+      "id": "S32",
+      "decision": [
+        "§6"
+      ],
+      "kind": "negative",
+      "description": "hexa drift --since makes no completion when nothing is touched",
+      "given": "a ref whose diff touches no document and no path any document names",
+      "when": "`hexa drift --since <ref>` runs",
+      "then": "the report holds the line `No document touched since <ref>`, and no completion is made"
+    },
+    {
+      "id": "S33",
+      "decision": [
+        "§6"
+      ],
+      "kind": "example",
+      "description": "hexa drift --since runs one goldfish per touched document and no others",
+      "given": "three documents, of which exactly two name paths changed since the ref",
+      "when": "`hexa drift --since <ref>` runs",
+      "then": "exactly two completions are made, one per touched document, and the untouched document is not checked"
+    },
+    {
+      "id": "S34",
+      "decision": [
+        "§6"
+      ],
+      "kind": "example",
+      "description": "Without --since, drift checks every document",
+      "given": "three documents",
+      "when": "`hexa drift` runs without --since",
+      "then": "all three documents are checked"
+    },
+    {
+      "id": "S35",
+      "decision": [
+        "§6"
+      ],
+      "kind": "property",
+      "description": "docs_touched is exactly the ordered, deduplicated set of documents changed or naming a change",
+      "given": "any docs list and any changed list",
+      "when": "docs_touched(docs, changed) is called",
+      "then": "Each output element is a document from docs that is in changed or names a path in changed. Every such document appears, once, in the order of its first appearance in docs. With an empty changed list, the output is empty."
+    },
+    {
+      "id": "S36",
+      "decision": [
+        "§7"
+      ],
+      "kind": "example",
+      "description": "A brainstorm request routes to design brainstorm with the idea, behind confirmation",
+      "given": "the request `brainstorm an offline sync mode`",
+      "when": "route(text) is called",
+      "then": "it returns Routed::Hexa with a command that starts `design brainstorm \"` and whose quoted idea holds `offline sync mode`, with destructive set to true"
+    },
+    {
+      "id": "S37",
+      "decision": [
+        "§7"
+      ],
+      "kind": "example",
+      "description": "A design review request with a path routes to design review",
+      "given": "the request `review the design in docs/design/idea.md`",
+      "when": "route(text) is called",
+      "then": "it returns Routed::Hexa with command `design review docs/design/idea.md` and destructive set to false"
+    },
+    {
+      "id": "S38",
+      "decision": [
+        "§7"
+      ],
+      "kind": "negative",
+      "description": "A design review request without a path has no route",
+      "given": "the request `review my design`",
+      "when": "route(text) is called",
+      "then": "it returns Routed::None"
+    },
+    {
+      "id": "S39",
+      "decision": [
+        "§7"
+      ],
+      "kind": "example",
+      "description": "Drift requests route to drift",
+      "given": "the requests `check for drift` and `do the docs match the code?`",
+      "when": "route is called on each",
+      "then": "each returns Routed::Hexa with command `drift` and destructive set to false"
+    },
+    {
+      "id": "S40",
+      "decision": [
+        "§7"
+      ],
+      "kind": "property",
+      "description": "Every design or drift route is a command the table lists",
+      "given": "any request that routes to a command starting with `design` or `drift`",
+      "when": "hexa_commands() is read",
+      "then": "it holds `drift`, `design review <path>` and `design brainstorm <idea>` (written with placeholders), and the routed command's words before its argument match one of them"
+    },
+    {
+      "id": "S41",
+      "decision": [
+        "§8"
+      ],
+      "kind": "example",
+      "description": "The feature-sized prompt hook names design first",
+      "given": "a feature-sized prompt",
+      "when": "the prompt hook emits its guidance",
+      "then": "the guidance contains ``Design (`hexa design brainstorm \"<idea>\"`, optional) → Decide``, with Design before Decide"
+    },
+    {
+      "id": "S42",
+      "decision": [
+        "§8"
+      ],
+      "kind": "example",
+      "description": "The skill and CLAUDE.md cover the design verbs and drift --since",
+      "given": "the /hexa-workflow skill and hexa's CLAUDE.md",
+      "when": "they are read",
+      "then": "The skill has a section before Decide naming `hexa design brainstorm`, `draft`, `review`, `resolve` and `adr`, and its ship step runs `hexa drift --since <base>`. CLAUDE.md's pipeline has a step 0, Design, naming the same verbs."
+    },
+    {
+      "id": "S43",
+      "decision": [
+        "§8"
+      ],
+      "kind": "negative",
+      "description": "The guidance no longer starts at Decide",
+      "given": "the feature-sized prompt hook's guidance and the /hexa-workflow skill",
+      "when": "they are read",
+      "then": "neither presents Decide as the first step: in each, design appears before Decide"
+    }
+  ]
+}

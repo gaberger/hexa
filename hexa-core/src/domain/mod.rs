@@ -10,4 +10,5 @@ pub mod messages;
 pub mod provenance;
 pub mod spec;
 pub mod tools;
+pub mod workflow;
 pub mod validation;

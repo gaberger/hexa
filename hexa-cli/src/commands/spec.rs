@@ -94,6 +94,9 @@ pub async fn run(action: SpecAction) -> anyhow::Result<()> {
 #[derive(Deserialize)]
 struct SpecFile {
     feature: String,
+    /// Set on an ADR's ledger spec (ADR-2610221540); `show` matches it.
+    #[serde(default)]
+    adr: String,
     #[serde(default)]
     description: String,
     specs: Vec<SpecScenario>,
@@ -113,6 +116,22 @@ struct SpecScenario {
     then: String,
     #[serde(default)]
     negative_spec: bool,
+    /// A ledger scenario's decisions (`§1`) and kind (`example`, `negative`,
+    /// `property`), in place of `category` and `negative_spec`.
+    #[serde(default)]
+    decision: Vec<String>,
+    #[serde(default)]
+    kind: String,
+}
+
+impl SpecScenario {
+    fn group(&self) -> String {
+        if self.category.is_empty() { self.decision.join(", ") } else { self.category.clone() }
+    }
+
+    fn negative(&self) -> bool {
+        self.negative_spec || self.kind == "negative"
+    }
 }
 
 #[derive(Deserialize)]
@@ -271,7 +290,7 @@ async fn show(feature: &str, check: bool) -> anyhow::Result<()> {
     let query = feature.to_lowercase();
     let matches: Vec<&(PathBuf, SpecFile)> = all
         .iter()
-        .filter(|(_, s)| s.feature.to_lowercase().contains(&query))
+        .filter(|(_, s)| s.adr.eq_ignore_ascii_case(feature) || s.feature.to_lowercase().contains(&query))
         .collect();
 
     if matches.is_empty() {
@@ -282,11 +301,11 @@ async fn show(feature: &str, check: bool) -> anyhow::Result<()> {
     for (path, spec) in &matches {
         // ── Header ──────────────────────────────────────────────────────────
         let cat_count = spec.specs.iter()
-            .map(|s| s.category.as_str())
+            .map(SpecScenario::group)
             .filter(|c| !c.is_empty())
             .collect::<std::collections::HashSet<_>>()
             .len();
-        let neg_count = spec.specs.iter().filter(|s| s.negative_spec).count();
+        let neg_count = spec.specs.iter().filter(|s| s.negative()).count();
 
         println!("{} {}", "\u{2b21}".cyan(), spec.feature.bold());
         if !spec.description.is_empty() {
@@ -301,16 +320,17 @@ async fn show(feature: &str, check: bool) -> anyhow::Result<()> {
 
         // ── Scenarios grouped by category ───────────────────────────────────
         let mut categories: Vec<String> = spec.specs.iter()
-            .map(|s| s.category.clone())
+            .map(SpecScenario::group)
             .collect::<std::collections::HashSet<_>>()
             .into_iter()
             .collect();
-        categories.sort();
+        // `§10` after `§9`: by length, then text.
+        categories.sort_by(|a, b| (a.len(), a).cmp(&(b.len(), b)));
 
         for cat in &categories {
             println!("  {}", cat.bold().underline());
-            for s in spec.specs.iter().filter(|s| &s.category == cat) {
-                let sign = if s.negative_spec {
+            for s in spec.specs.iter().filter(|s| &s.group() == cat) {
+                let sign = if s.negative() {
                     " [−]".to_string().red().to_string()
                 } else {
                     String::new()
