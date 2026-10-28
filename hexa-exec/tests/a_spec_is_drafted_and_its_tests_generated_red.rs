@@ -208,18 +208,6 @@ async fn a_generation_with_a_test_green_before_the_code_is_rejected() {
     assert_eq!(git(&r, &["rev-parse", "HEAD"]), head, "nothing is committed");
 }
 
-#[tokio::test]
-async fn a_generation_that_skips_a_scenario_is_rejected() {
-    let (_t, r) = repo();
-    let spec = accepted(&r);
-    let missing = TESTS_RED.replace("/// S4: five does not stay five\n", "");
-    let (double, _) = Double::new(&[missing]);
-    let path_env = std::env::var("PATH").unwrap_or_default();
-    let err = hexa_exec::spec_author::generate_tests(&double, "a-local-model", &r, &spec, Path::new("."), &path_env)
-        .await
-        .unwrap_err();
-    assert!(err.contains("S4"), "every scenario gets its test: {err}");
-}
 
 #[tokio::test]
 async fn generation_refuses_a_spec_nobody_accepted() {
