@@ -465,7 +465,7 @@ pub async fn reprove(
         let text = std::fs::read_to_string(root.join(file)).map_err(|e| anyhow::anyhow!("{file}: {e}"))?;
         let left = hexa_core::ports::spec::without_tests(&text, names);
         // A file left with no test is gone, not kept as a husk.
-        if left.contains("#[test]") || left.contains("::test]") {
+        if !hexa_core::ports::spec::test_fns(&left).is_empty() {
             std::fs::write(root.join(file), left)?;
         } else {
             std::fs::remove_file(root.join(file))?;
