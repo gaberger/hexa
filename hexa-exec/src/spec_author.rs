@@ -191,7 +191,7 @@ fn adr_text(root: &Path, adr_id: &str) -> Result<String, String> {
 /// Every other `.rs` file the ADR names in backquotes that exists, in order
 /// of first mention: the writer sees its public signatures, never a body
 /// (ADR-2610281442 §1).
-fn signature_files(root: &Path, adr_text: &str) -> Vec<String> {
+fn signature_files(exists: &dyn Fn(&str) -> bool, adr_text: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let pieces: Vec<&str> = adr_text.split('`').collect();
     for &span in pieces.iter().take(pieces.len().saturating_sub(1)).skip(1) {
@@ -199,7 +199,7 @@ fn signature_files(root: &Path, adr_text: &str) -> Vec<String> {
         if span.ends_with(".rs")
             && !span.contains(char::is_whitespace)
             && !is_contract(span)
-            && root.join(span).is_file()
+            && exists(span)
             && !out.iter().any(|o| o == span)
         {
             out.push(span.to_string());
@@ -208,11 +208,11 @@ fn signature_files(root: &Path, adr_text: &str) -> Vec<String> {
     out
 }
 
-fn signature_block(root: &Path, files: &[String]) -> String {
+fn signature_block(read: &dyn Fn(&str) -> Option<String>, files: &[String]) -> String {
     files
         .iter()
         .map(|f| {
-            let src = std::fs::read_to_string(root.join(f)).unwrap_or_default();
+            let src = read(f).unwrap_or_default();
             format!("--- {f} (public signatures; bodies elided) ---\n{}\n", hexa_core::domain::spec::public_signatures(&src))
         })
         .collect()
@@ -232,11 +232,17 @@ fn is_contract(path: &str) -> bool {
 /// fence, flips the parity. Prose between spans is never a path: it holds
 /// whitespace, which no span counted here may.
 fn given_files(root: &Path, adr_text: &str) -> Vec<String> {
+    given_files_in(&|p| root.join(p).is_file(), adr_text)
+}
+
+/// [`given_files`], with what exists decided by `exists`: the working tree,
+/// or the tree of the commit red is proved at.
+fn given_files_in(exists: &dyn Fn(&str) -> bool, adr_text: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let pieces: Vec<&str> = adr_text.split('`').collect();
     for &span in pieces.iter().take(pieces.len().saturating_sub(1)).skip(1) {
         let pathlike = span.contains('/') && Path::new(span).extension().is_some() && !span.contains(char::is_whitespace);
-        if pathlike && is_contract(span) && root.join(span).is_file() && !out.iter().any(|g| g == span) {
+        if pathlike && is_contract(span) && exists(span) && !out.iter().any(|g| g == span) {
             out.push(span.to_string());
         }
     }
@@ -244,10 +250,17 @@ fn given_files(root: &Path, adr_text: &str) -> Vec<String> {
 }
 
 fn given_block(root: &Path, given: &[String]) -> String {
-    given
-        .iter()
-        .map(|g| format!("--- {g} ---\n{}\n", std::fs::read_to_string(root.join(g)).unwrap_or_default()))
-        .collect()
+    given_block_from(&|g| std::fs::read_to_string(root.join(g)).ok(), given)
+}
+
+fn given_block_from(read: &dyn Fn(&str) -> Option<String>, given: &[String]) -> String {
+    given.iter().map(|g| format!("--- {g} ---\n{}\n", read(g).unwrap_or_default())).collect()
+}
+
+/// A file as it stands in `commit`'s tree.
+fn file_at(root: &Path, commit: &str, path: &str) -> Option<String> {
+    let out = std::process::Command::new("git").args(["show", &format!("{commit}:{path}")]).current_dir(root).output().ok()?;
+    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 /// A model reachable only through an agent CLI can read the repository for
@@ -527,7 +540,34 @@ pub async fn generate_tests_with(
     })?;
     let lib = lib_name(&manifest).ok_or("the crate's manifest names no package")?;
     let text = adr_text(root, &spec.adr)?;
-    let given = given_files(root, &text);
+
+    // Where red is proved: HEAD, or an earlier commit the code postdates (§3).
+    let base = match &options.red_at {
+        None => None,
+        Some(c) => {
+            let c = git(root, &["rev-parse", "--verify", &format!("{c}^{{commit}}")]).await.map_err(|_| format!("{c} is not a commit"))?;
+            let ancestor = tokio::process::Command::new("git")
+                .args(["merge-base", "--is-ancestor", &c, "HEAD"])
+                .current_dir(root)
+                .status()
+                .await
+                .map_err(|e| e.to_string())?;
+            if !ancestor.success() {
+                return Err(format!("{c} is not an ancestor of HEAD: red must be proved at a commit this branch grew from"));
+            }
+            Some(c)
+        }
+    };
+    // What the writer sees comes from the tree red is proved at: the API that
+    // existed before the code, and never the code (ADR-2610221540 §2).
+    // A file that did not exist there yet is read from the working tree: a
+    // test that leans on it cannot build at the red commit and is refused.
+    let read = |p: &str| match &base {
+        Some(c) => file_at(root, c, p).or_else(|| std::fs::read_to_string(root.join(p)).ok()),
+        None => std::fs::read_to_string(root.join(p)).ok(),
+    };
+    let exists = |p: &str| read(p).is_some();
+    let given = given_files_in(&exists, &text);
     let scenarios = serde_json::to_string_pretty(&spec.accepted_content().specs).map_err(|e| e.to_string())?;
     let paths: String = given
         .iter()
@@ -537,7 +577,7 @@ pub async fn generate_tests_with(
         .iter()
         .map(|b| format!("The crate's `{b}` binary is `env!(\"CARGO_BIN_EXE_{b}\")`.\n"))
         .collect();
-    let signatures = signature_files(root, &text);
+    let signatures = signature_files(&exists, &text);
     let sig_paths: String = signatures
         .iter()
         .filter_map(|g| module_of(root, g).map(|m| format!("`{g}` is reached as `{m}`.\n")))
@@ -546,8 +586,8 @@ pub async fn generate_tests_with(
         "The crate is `{lib}`; tests reach it as `{lib}::…`.\n{paths}{sig_paths}{bins}\nThe ADR:\n\n{text}\n\n\
          The port and domain signatures:\n\n{}\nThe public API of the other files the ADR names:\n\n{}\n\
          The accepted scenarios:\n\n{scenarios}\n",
-        given_block(root, &given),
-        signature_block(root, &signatures)
+        given_block_from(&read, &given),
+        signature_block(&read, &signatures)
     );
     let reply = hexa_infer::complete::complete_text_with(backends, model, WRITER, &user, 8000).await?;
     let body = block(&reply);
@@ -594,22 +634,9 @@ pub async fn generate_tests_with(
     let refs: BTreeMap<String, String> = names.iter().map(|(sid, f)| (sid.clone(), format!("{file}::{f}"))).collect();
     let head = git(root, &["rev-parse", "HEAD"]).await?;
 
-    // Where red is proved: HEAD, or an earlier commit the code postdates (§3).
-    let red_commit = match &options.red_at {
+    let red_commit = match &base {
         None => None,
-        Some(c) => {
-            let c = git(root, &["rev-parse", "--verify", &format!("{c}^{{commit}}")]).await.map_err(|_| format!("{c} is not a commit"))?;
-            let ancestor = tokio::process::Command::new("git")
-                .args(["merge-base", "--is-ancestor", &c, "HEAD"])
-                .current_dir(root)
-                .status()
-                .await
-                .map_err(|e| e.to_string())?;
-            if !ancestor.success() {
-                return Err(format!("{c} is not an ancestor of HEAD: red must be proved at a commit this branch grew from"));
-            }
-            Some(red_commit_at(root, &c, &file, &body, &spec.adr).await?)
-        }
+        Some(c) => Some(red_commit_at(root, c, &file, &body, &spec.adr).await?),
     };
     let check_at = red_commit.clone().unwrap_or_else(|| head.clone());
     let mut rejected = red_at(root, path_env, &check_at, &file, &body, &refs).await.unwrap_or_else(|e| vec![e]);
