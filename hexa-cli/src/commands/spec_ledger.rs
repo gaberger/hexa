@@ -356,7 +356,7 @@ pub async fn tests(
         }
         None
     };
-    let options = hexa_exec::spec_author::TestOptions { red_at, replace: replace.clone(), only: None };
+    let options = hexa_exec::spec_author::TestOptions { red_at, replace: replace.clone(), only: None, because: None };
     let model = model_for(model, "t2")?;
     let path_env = gate_path(
         std::env::var_os("HOME").map(PathBuf::from).as_deref(),
@@ -438,7 +438,8 @@ pub async fn reprove(
         &|p| p.is_dir(),
     );
     println!("{} {} {} on {}", "\u{2b21} spec tests".cyan().bold(), a.id, only.join(", "), model);
-    let options = hexa_exec::spec_author::TestOptions { red_at, replace: None, only: Some(only.to_vec()) };
+    let options =
+        hexa_exec::spec_author::TestOptions { red_at, replace: None, only: Some(only.to_vec()), because: because.clone() };
     let g = hexa_exec::generate_spec_tests(&model, &root, &spec, Path::new(krate), &path_env, &options)
         .await
         .map_err(|e| anyhow::anyhow!(e))?;
@@ -462,7 +463,13 @@ pub async fn reprove(
     }
     for (file, names) in &by_file {
         let text = std::fs::read_to_string(root.join(file)).map_err(|e| anyhow::anyhow!("{file}: {e}"))?;
-        std::fs::write(root.join(file), hexa_core::ports::spec::without_tests(&text, names))?;
+        let left = hexa_core::ports::spec::without_tests(&text, names);
+        // A file left with no test is gone, not kept as a husk.
+        if left.contains("#[test]") || left.contains("::test]") {
+            std::fs::write(root.join(file), left)?;
+        } else {
+            std::fs::remove_file(root.join(file))?;
+        }
         spec.sealed.remove(file);
     }
     for s in spec.specs.iter_mut().filter(|s| only.contains(&s.id)) {

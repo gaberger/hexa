@@ -759,7 +759,17 @@ pub async fn generate_tests_with(
                 let kept = hexa_core::domain::spec::without_tests(&src, &replaced);
                 out.push_str(&format!("--- {f} (sealed; the new file sits beside it) ---\n{kept}\n"));
             }
-            if out.is_empty() { out } else { format!("The tests already sealed for this spec; reuse their imports and helpers, and name no function the same:\n\n{out}\n") }
+            let mut out = if out.is_empty() {
+                out
+            } else {
+                format!("The tests already sealed for this spec; reuse their imports and helpers, and name no function the same:\n\n{out}\n")
+            };
+            if let Some(why) = &options.because {
+                out.push_str(&format!(
+                    "These scenarios are re-proved because: {why}\nThe tests they replace failed for that reason; write the new ones so that they do not.\n\n"
+                ));
+            }
+            out
         }
     };
     let user = format!(
@@ -941,6 +951,8 @@ pub struct TestOptions {
     /// Re-prove only these scenarios, into a new file, and leave the commit
     /// to the caller (ADR-2610281628 §2).
     pub only: Option<Vec<String>>,
+    /// Why they are re-proved; the writer is told.
+    pub because: Option<String>,
 }
 
 #[derive(Debug, Clone)]
