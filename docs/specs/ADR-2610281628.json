@@ -1,0 +1,213 @@
+{
+  "adr": "ADR-2610281628",
+  "feature": "re-prove an amended decision only where it changed",
+  "description": "Re-accepting a changed spec keeps each unchanged scenario's test, red commit and seal; named scenarios are re-proved alone into a new sealed file, with their old tests removed on the record; and a test that does not build at its red commit counts as red, as `--prove` counts it.",
+  "universal": [
+    "§1",
+    "§2"
+  ],
+  "accepted": {
+    "by": "gary (run by Claude on gary's instruction)",
+    "sha256": "59dc1e017477ebf2b09585c27b0a60713250cfc90026d1b9be31ef4f36974ac5"
+  },
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "An unchanged scenario keeps its test and its own red commit",
+      "given": "a previous spec whose scenario S01 has test `tests/a_spec.rs::s01` and red `abc1234`, and an accepted spec whose S01 has the same decision, kind, description, given, when and then",
+      "when": "rebind(previous, accepted) is called",
+      "then": "the returned S01 has test `tests/a_spec.rs::s01` and red `abc1234`, and every other field of the returned spec equals the accepted spec's"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "An unchanged scenario proved at the spec-level red gets that red written onto it",
+      "given": "a previous spec with spec-level red `def5678` whose S02 has test `tests/a_spec.rs::s02` and no red of its own, and an accepted spec whose S02 is identical in decision, kind, description, given, when and then",
+      "when": "rebind(previous, accepted) is called",
+      "then": "the returned S02 has test `tests/a_spec.rs::s02` and red `def5678`"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A scenario whose behaviour changed loses its test and red",
+      "given": "a previous spec whose S03 has test `tests/a_spec.rs::s03` and red `abc1234`, and an accepted spec whose S03 differs only in its `then`",
+      "when": "rebind(previous, accepted) is called",
+      "then": "the returned S03 has no test and no red, and carries the accepted `then`"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A change to any one compared field drops the binding",
+      "given": "for each of decision, kind, description, given and when in turn, a previous S04 with a test and red and an accepted S04 that differs from it in that field alone",
+      "when": "rebind(previous, accepted) is called",
+      "then": "in every case the returned S04 has no test and no red"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A new scenario gains no test, even when the previous spec has a red",
+      "given": "a previous spec with spec-level red `def5678` and no scenario S09, and an accepted spec that adds S09",
+      "when": "rebind(previous, accepted) is called",
+      "then": "the returned S09 has no test and no red"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "Re-accepting keeps the seal of a file whose tests all belong to unchanged scenarios",
+      "given": "an accepted spec sealed over `tests/a_spec.rs` and `tests/a_spec_2.rs`, where only a scenario tested in `tests/a_spec_2.rs` has changed",
+      "when": "`hexa spec accept` accepts the changed spec",
+      "then": "the written spec keeps the seal of `tests/a_spec.rs` with its hash unchanged, drops the seal of `tests/a_spec_2.rs`, and the unchanged scenarios keep their tests and red commits"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "Removing a scenario drops the seal of the file that held its test",
+      "given": "an accepted spec sealed over `tests/a_spec.rs`, which holds the test of S05, and a changed spec that removes S05",
+      "when": "`hexa spec accept` accepts the changed spec",
+      "then": "the written spec no longer seals `tests/a_spec.rs` and no scenario names S05's test while the seal of a file holding only unchanged scenarios' tests is kept, hash unchanged."
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§1"
+      ],
+      "kind": "property",
+      "description": "Rebinding never alters behaviour and carries a binding only across an identical scenario",
+      "given": "any previous spec and any accepted spec",
+      "when": "rebind(previous, accepted) is called",
+      "then": "the result's accepted_content equals the accepted spec's accepted_content, and each result scenario has a test exactly when previous holds a scenario with the same id and the same decision, kind, description, given, when and then that has a test; that test and red (or previous's spec-level red if its own is unset) are the ones carried"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "without_tests removes a named test with its docs and attributes and keeps the rest",
+      "given": "a source with `/// doc` and `#[test]` `#[ignore]` above `fn s03() {…}`, followed by `#[test] fn s04() {…}`",
+      "when": "without_tests(source, [\"s03\"]) is called",
+      "then": "the result has no `fn s03`, no `/// doc` line and none of s03's attributes, and `#[test] fn s04() {…}` remains byte for byte"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "without_tests leaves alone what only looks like the named test",
+      "given": "a source holding a helper `fn s03_helper()` that is not a test, a string literal containing `fn s03()`, a comment mentioning `s03`, and no `#[test] fn s03`",
+      "when": "without_tests(source, [\"s03\"]) is called",
+      "then": "the result equals the source"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "Re-proving named scenarios writes a new file, binds and seals it, removes the old tests, in one commit",
+      "given": "an accepted spec for a crate holding `tests/adr_spec.rs` with sealed test `s15b`, and no `tests/adr_spec_2.rs`",
+      "when": "`hexa spec tests <ADR> --only S15b --because \"one reply is no longer enough\"` runs",
+      "then": "a test for S15b is written to `tests/adr_spec_2.rs`, proved red, S15b names it and its red commit, both files are sealed, `s15b` and its docs and attributes are gone from `tests/adr_spec.rs`, and one commit holds it all with a message naming both files and the reason"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "Re-proving a scenario that still has a test requires a reason",
+      "given": "an accepted spec whose scenario S15b has a sealed test",
+      "when": "`hexa spec tests <ADR> --only S15b` runs without `--because`",
+      "then": "it is refused, no file is written or removed, the spec is unchanged and nothing is committed, and the refusal names `--because`."
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "A scenario left without a test by re-acceptance may be named without a reason",
+      "given": "an accepted spec whose S03 has no test after rebinding, and existing files `tests/adr_spec.rs` and `tests/adr_spec_2.rs`",
+      "when": "`hexa spec tests <ADR> --only S03` runs without `--because`",
+      "then": "S03's test is written to `tests/adr_spec_3.rs`, proved red, bound and sealed, and no other test file is changed"
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "Scenarios not named are not regenerated or rebound",
+      "given": "an accepted spec with sealed scenarios S01 and S02",
+      "when": "`hexa spec tests <ADR> --only S02 --because \"changed\"` runs",
+      "then": "S01's test, red commit and test function are unchanged, and the new file holds a test for S02 only"
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§2"
+      ],
+      "kind": "property",
+      "description": "without_tests removes exactly the named test functions",
+      "given": "any Rust source and any list of names",
+      "when": "without_tests(source, names) is called",
+      "then": "the result holds no `#[test]` function whose name is in names, every other item of the source remains unchanged in its order, and without_tests(source, []) equals the source"
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "A test that did not build at its red commit is red when the new file builds at HEAD",
+      "given": "a generated test that calls a function absent at commit `abc1234`, and a new test file that builds at HEAD",
+      "when": "the test is proved with `--red-at abc1234`",
+      "then": "the test counts as red at `abc1234` and the scenario is bound with that red commit, as `hexa spec verify --prove` would count it"
+    },
+    {
+      "id": "S17",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "A test that builds and passes at the red commit is refused",
+      "given": "a generated test that builds and passes at commit `abc1234`",
+      "when": "the test is proved with `--red-at abc1234`",
+      "then": "it is refused as not red, and no scenario is bound to it, and the refusal names the test that passed at the red commit."
+    },
+    {
+      "id": "S18",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "A failure to build is not red when the new file does not build at HEAD",
+      "given": "a generated test that does not build at `abc1234`, in a new test file that also does not build at HEAD",
+      "when": "the test is proved with `--red-at abc1234`",
+      "then": "it is refused, and no scenario is bound to it, and the refusal says the new file does not build at HEAD."
+    }
+  ]
+}
