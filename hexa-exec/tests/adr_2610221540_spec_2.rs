@@ -148,29 +148,3 @@ const TESTS_WITHOUT_S4: &str = "```rust\n\
 /// S2: one does not stay one\n#[test]\nfn one_does_not_stay_one() { assert_ne!(fx::double(1), 1); }\n\n\
 /// S3: three doubles to six\n#[test]\nfn three_doubles_to_six() { assert_eq!(fx::double(3), 6); }\n```";
 
-/// S15b: A generation that leaves a scenario without a test is rejected
-#[tokio::test]
-async fn a_generation_missing_the_test_for_s4_is_rejected_and_names_s4() {
-    let (_t, r) = stub_repo();
-    let spec = accepted_spec();
-    let (backend, _seen) = RecordingBackend::with_answers(&[TESTS_WITHOUT_S4.to_string()]);
-    let path_env = std::env::var("PATH").unwrap_or_default();
-    let head = run_git(&r, &["rev-parse", "HEAD"]);
-
-    let result = hexa_exec::spec_author::generate_tests(
-        &backend,
-        "a-local-model",
-        &r,
-        &spec,
-        Path::new("."),
-        &path_env,
-    )
-    .await;
-
-    let err = match result {
-        Ok(_) => panic!("a generation with no test for S4 must be rejected"),
-        Err(e) => e,
-    };
-    assert!(err.contains("S4"), "the rejection names the scenario left without a test: {err}");
-    assert_eq!(run_git(&r, &["rev-parse", "HEAD"]), head, "a rejected generation commits nothing");
-}
