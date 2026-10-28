@@ -1,0 +1,515 @@
+{
+  "adr": "ADR-2610281223",
+  "feature": "habit-streak core",
+  "description": "Days, parsed habit names, the habit book, streaks, the store and clock ports, and the Habits use cases, with the scaffold counter removed.",
+  "universal": [
+    "§1",
+    "§2",
+    "§3",
+    "§4",
+    "§5",
+    "§6"
+  ],
+  "accepted": {
+    "by": "Gary (run by Claude on Gary's instruction)",
+    "sha256": "cb6ebe39bf29f0981e2d9643d3ecc5b21a5a2ef7b0d622589c9a7c04f3c47f60"
+  },
+  "sealed": {
+    "tests/adr_2610281223_spec.rs": "90c7773eeb4dd3f6669b93e068bea58f903fd9b8d5a31850b31f44c4179434db"
+  },
+  "red": "4d606d2",
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A Day round-trips its count, and pred is the day before.",
+      "given": "Day::from_days(20000)",
+      "when": "days() and pred() are read",
+      "then": "days() is 20000 and pred() equals Day::from_days(19999).",
+      "test": "tests/adr_2610281223_spec.rs::s01_day_round_trips_and_pred_is_day_before"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "Days order by their count, including across what would be a month or year boundary.",
+      "given": "Day::from_days(-1), Day::from_days(0) and Day::from_days(365)",
+      "when": "they are compared",
+      "then": "from_days(-1) < from_days(0) < from_days(365), and from_days(0).pred() equals from_days(-1) with no calendar logic involved.",
+      "test": "tests/adr_2610281223_spec.rs::s02_days_order_by_count"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "Days whose counts differ by more than 1 are not consecutive.",
+      "given": "the recorded days {Day::from_days(10), Day::from_days(12)}",
+      "when": "streaks is computed with today = Day::from_days(12)",
+      "then": "longest is 1 and current is 1, because day 11 is missing and the two days do not form a run.",
+      "test": "tests/adr_2610281223_spec.rs::s03_days_two_apart_are_not_consecutive"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§1"
+      ],
+      "kind": "property",
+      "description": "A Day round-trips any count, and pred always subtracts exactly one.",
+      "given": "any i64 n with n > i64::MIN",
+      "when": "Day::from_days(n) is built",
+      "then": "days() == n, pred().days() == n - 1, pred() < Day::from_days(n), and Day::from_days(n) == Day::from_days(m) exactly when n == m.",
+      "test": "tests/adr_2610281223_spec.rs::s04_day_round_trip_property"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "Parsing trims the raw name, keeps the trimmed spelling, and lowercases the key.",
+      "given": "the raw text \"  Read Book \"",
+      "when": "HabitName::parse is called",
+      "then": "it returns Ok, display() is \"Read Book\" and key() is \"read book\".",
+      "test": "tests/adr_2610281223_spec.rs::s05_parse_trims_and_lowercases_key"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "Names that differ only in case are equal.",
+      "given": "HabitName::parse(\"Read\") and HabitName::parse(\"rEAD\")",
+      "when": "the two names are compared",
+      "then": "they are equal, while their display() values stay \"Read\" and \"rEAD\".",
+      "test": "tests/adr_2610281223_spec.rs::s06_names_differing_in_case_are_equal"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "An empty or whitespace-only name is refused.",
+      "given": "the raw texts \"\" and \" \\t \"",
+      "when": "HabitName::parse is called on each",
+      "then": "each returns Err(NameError::Empty).",
+      "test": "tests/adr_2610281223_spec.rs::s07_empty_or_whitespace_name_is_refused"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "A control character inside the trimmed name is refused.",
+      "given": "the raw texts \"re\\u{0}ad\", \"a\\u{7}b\" and \"line\\u{1b}x\"",
+      "when": "HabitName::parse is called on each",
+      "then": "each returns Err(NameError::ControlCharacter).",
+      "test": "tests/adr_2610281223_spec.rs::s08_control_character_is_refused"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§2"
+      ],
+      "kind": "property",
+      "description": "Parsing behaves the same way over every input string.",
+      "given": "any string raw",
+      "when": "HabitName::parse(raw) is called",
+      "then": "if raw.trim() is empty it returns Err(Empty); otherwise, if raw.trim() contains a char with is_control(), it returns Err(ControlCharacter); otherwise it returns Ok(name) with name.display() == raw.trim() and name.key() == raw.trim().to_lowercase().",
+      "test": "tests/adr_2610281223_spec.rs::s09_parse_property"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§2"
+      ],
+      "kind": "property",
+      "description": "Name equality is key equality.",
+      "given": "any two strings a and b that both parse",
+      "when": "their parsed names are compared",
+      "then": "the names are equal exactly when a.trim().to_lowercase() == b.trim().to_lowercase().",
+      "test": "tests/adr_2610281223_spec.rs::s10_name_equality_is_key_equality"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "Adding a new habit and then finding it.",
+      "given": "an empty HabitBook",
+      "when": "add(\"Read\") is called",
+      "then": "it returns true, find(\"read\") returns a habit whose name.display() is \"Read\" and whose days are empty, and habits() has length 1.",
+      "test": "tests/adr_2610281223_spec.rs::s11_add_then_find"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "Checking, unchecking and removing report what happened.",
+      "given": "a book holding the habit \"Read\" with no days",
+      "when": "check(Read, d5), check(Read, d5), uncheck(Read, d5), uncheck(Read, d5) and remove(Read) are called in turn",
+      "then": "they return Some(true), Some(false), Some(true), Some(false) and true, and afterwards find(Read) is None.",
+      "test": "tests/adr_2610281223_spec.rs::s12_check_uncheck_remove_report"
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "habits() returns the habits in key order, regardless of insertion order or case.",
+      "given": "an empty book",
+      "when": "\"walk\", \"Apple\" and \"banana\" are added in that order",
+      "then": "habits() lists the displays \"Apple\", \"banana\" and \"walk\".",
+      "test": "tests/adr_2610281223_spec.rs::s13_habits_in_key_order"
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "from_entries collapses repeated days within one entry.",
+      "given": "the entries [(\"Read\", [d3, d3, d1])]",
+      "when": "HabitBook::from_entries is called",
+      "then": "it returns Ok, and find(Read).days is exactly {d1, d3}.",
+      "test": "tests/adr_2610281223_spec.rs::s14_from_entries_collapses_repeated_days"
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "Adding a habit whose key already exists is refused, and the existing habit is left unchanged.",
+      "given": "a book holding \"Read\" with the day d1 recorded",
+      "when": "add(\"READ\") is called",
+      "then": "it returns false, the book still has one habit, its display is \"Read\" and its days are {d1}.",
+      "test": "tests/adr_2610281223_spec.rs::s15_duplicate_add_is_refused"
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "Operations on an absent habit return None or false and leave the book unchanged.",
+      "given": "a book holding only \"Read\"",
+      "when": "check(Walk, d1), uncheck(Walk, d1), find(Walk) and remove(Walk) are called",
+      "then": "they return None, None, None and false, and the book equals its prior value.",
+      "test": "tests/adr_2610281223_spec.rs::s16_absent_habit_operations"
+    },
+    {
+      "id": "S17",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "from_entries refuses two entries with the same key and names both spellings.",
+      "given": "the entries [(\"Read\", [d1]), (\"read\", [d2])]",
+      "when": "HabitBook::from_entries is called",
+      "then": "it returns Err(DuplicateName { first: \"Read\", second: \"read\" }).",
+      "test": "tests/adr_2610281223_spec.rs::s17_from_entries_refuses_duplicate_key"
+    },
+    {
+      "id": "S18",
+      "decision": [
+        "§3"
+      ],
+      "kind": "property",
+      "description": "The book holds at most one habit per key, and each day at most once, under any sequence of operations.",
+      "given": "any sequence of add, check, uncheck and remove calls over arbitrary names and days",
+      "when": "the book's habits() are inspected after each call",
+      "then": "no two habits share a key, habits() is sorted strictly by key, and check(n, d) returns Some(true) only when d was not in find(n).days just before the call.",
+      "test": "tests/adr_2610281223_spec.rs::s18_book_invariants_property"
+    },
+    {
+      "id": "S19",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "Current and longest streaks when today is recorded.",
+      "given": "the days {1, 2, 3, 7, 8} and today = 8",
+      "when": "streaks is called",
+      "then": "it returns Streaks { current: 2, longest: 3, checked_today: true }.",
+      "test": "tests/adr_2610281223_spec.rs::s19_streaks_when_today_recorded"
+    },
+    {
+      "id": "S20",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "The grace rule keeps yesterday's run alive.",
+      "given": "the days {5, 6, 7} and today = 8",
+      "when": "streaks is called",
+      "then": "it returns Streaks { current: 3, longest: 3, checked_today: false }.",
+      "test": "tests/adr_2610281223_spec.rs::s20_grace_rule"
+    },
+    {
+      "id": "S21",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "No days give all zeros.",
+      "given": "an empty set of days and today = 100",
+      "when": "streaks is called",
+      "then": "it returns Streaks { current: 0, longest: 0, checked_today: false }.",
+      "test": "tests/adr_2610281223_spec.rs::s21_no_days_all_zero"
+    },
+    {
+      "id": "S22",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "A run that ended two or more days ago is not current.",
+      "given": "the days {1, 2, 3} and today = 5",
+      "when": "streaks is called",
+      "then": "current is 0, longest is 3 and checked_today is false.",
+      "test": "tests/adr_2610281223_spec.rs::s22_old_run_not_current"
+    },
+    {
+      "id": "S23",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "Days after today count toward none of the three values.",
+      "given": "the days {9, 10, 11, 12} and today = 9",
+      "when": "streaks is called",
+      "then": "it returns Streaks { current: 1, longest: 1, checked_today: true }.",
+      "test": "tests/adr_2610281223_spec.rs::s23_future_days_ignored"
+    },
+    {
+      "id": "S24",
+      "decision": [
+        "§4"
+      ],
+      "kind": "property",
+      "description": "streaks matches the rule for any days and any today.",
+      "given": "any set of days and any today, with past = the days that are <= today",
+      "when": "streaks(days, today) is called",
+      "then": "checked_today == past.contains(today); longest is the length of the longest run of consecutive counts in past, or 0 when past is empty; current is the length of the run in past ending at today when today is in past, else the run ending at today.pred() when that day is in past, else 0; current <= longest; and the result equals streaks(past, today).",
+      "test": "tests/adr_2610281223_spec.rs::s24_streaks_property"
+    },
+    {
+      "id": "S25",
+      "decision": [
+        "§5"
+      ],
+      "kind": "example",
+      "description": "In-memory doubles satisfy the ports through &self, using only types imported from the ports module.",
+      "given": "a test that imports only crate::ports and defines a store wrapping a RefCell<Option<HabitBook>>, plus a fixed clock",
+      "when": "save(&book) and then load() are called through &dyn HabitStore, and today() through &dyn Clock",
+      "then": "load returns the saved book, and today returns the fixed Day; Day, HabitName, NameError, Habit, HabitBook, DuplicateName and Streaks all resolve through crate::ports.",
+      "test": "tests/adr_2610281223_spec.rs::s25_in_memory_doubles_through_ports_only"
+    },
+    {
+      "id": "S26",
+      "decision": [
+        "§5"
+      ],
+      "kind": "example",
+      "description": "Each StoreError variant displays as a non-empty line.",
+      "given": "StoreError::NotFound, Malformed(\"bad json\"), UnknownVersion(7) and Io(\"denied\")",
+      "when": "each is formatted with Display",
+      "then": "each string is non-empty, Malformed contains \"bad json\", UnknownVersion contains \"7\" and Io contains \"denied\".",
+      "test": "tests/adr_2610281223_spec.rs::s26_store_error_display"
+    },
+    {
+      "id": "S27",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "A Display string never spans more than one line, even when its payload holds a newline.",
+      "given": "StoreError::Malformed(\"line one\\nline two\") and StoreError::Io(\"a\\r\\nb\")",
+      "when": "each is formatted with Display",
+      "then": "neither output contains '\\n' or '\\r'.",
+      "test": "tests/adr_2610281223_spec.rs::s27_store_error_display_single_line"
+    },
+    {
+      "id": "S28",
+      "decision": [
+        "§5"
+      ],
+      "kind": "property",
+      "description": "Every StoreError displays as exactly one line.",
+      "given": "any StoreError: NotFound, Malformed(s) or Io(s) for any string s, or UnknownVersion(v) for any u64 v",
+      "when": "it is formatted with Display",
+      "then": "the output is non-empty and contains no '\\n' or '\\r'.",
+      "test": "tests/adr_2610281223_spec.rs::s28_store_error_display_property"
+    },
+    {
+      "id": "S29",
+      "decision": [
+        "§6"
+      ],
+      "kind": "example",
+      "description": "add on a missing store creates the habit and saves once.",
+      "given": "a store whose load returns Err(NotFound) and a fixed clock",
+      "when": "Habits::add(\"Read\") is called",
+      "then": "it returns Added { created: true }, save is called exactly once, and the saved book holds just \"Read\" with no days.",
+      "test": "tests/adr_2610281223_spec.rs::s29_add_on_missing_store"
+    },
+    {
+      "id": "S30",
+      "decision": [
+        "§6"
+      ],
+      "kind": "example",
+      "description": "check with no day records today.",
+      "given": "a store holding \"Read\" with no days and a clock at day 50",
+      "when": "check(\"read\", None) is called",
+      "then": "it returns Recorded(day 50), save is called once, and the saved book has days {50} for Read.",
+      "test": "tests/adr_2610281223_spec.rs::s30_check_without_day_records_today"
+    },
+    {
+      "id": "S31",
+      "decision": [
+        "§6"
+      ],
+      "kind": "example",
+      "description": "Repeated check and uncheck report the outcome, and a call that changes nothing saves nothing.",
+      "given": "a store holding \"Read\" with the days {49} and a clock at day 50",
+      "when": "check(\"Read\", Some(49)) and then uncheck(\"Read\", Some(48)) are called",
+      "then": "they return AlreadyRecorded(49) and NotRecorded(48), and save is never called.",
+      "test": "tests/adr_2610281223_spec.rs::s31_no_change_no_save"
+    },
+    {
+      "id": "S32",
+      "decision": [
+        "§6"
+      ],
+      "kind": "example",
+      "description": "status reports every habit in key order, or the one named, without saving.",
+      "given": "a store holding \"walk\" with days {49, 50} and \"Apple\" with days {10}, and a clock at day 50",
+      "when": "status(None) and then status(Some(\"WALK\")) are called",
+      "then": "the first returns [Apple { current: 0, longest: 1, checked_today: false }, walk { current: 2, longest: 2, checked_today: true }], the second returns only the walk entry, and save is never called.",
+      "test": "tests/adr_2610281223_spec.rs::s32_status_all_and_one"
+    },
+    {
+      "id": "S33",
+      "decision": [
+        "§6"
+      ],
+      "kind": "example",
+      "description": "remove deletes the habit and saves once.",
+      "given": "a store holding \"Read\" and \"Walk\"",
+      "when": "remove(\"read\") is called",
+      "then": "it returns RemovedHabit, save is called once, and the saved book holds only Walk.",
+      "test": "tests/adr_2610281223_spec.rs::s33_remove_saves_once"
+    },
+    {
+      "id": "S34",
+      "decision": [
+        "§6"
+      ],
+      "kind": "negative",
+      "description": "A future day is refused and nothing is saved.",
+      "given": "a store holding \"Read\" and a clock at day 50",
+      "when": "check(\"Read\", Some(51)) is called",
+      "then": "it returns Err(FutureDate { day: 51, today: 50 }) and save is never called.",
+      "test": "tests/adr_2610281223_spec.rs::s34_future_day_refused"
+    },
+    {
+      "id": "S35",
+      "decision": [
+        "§6"
+      ],
+      "kind": "negative",
+      "description": "Naming an absent habit returns UnknownHabit with the known names in key order.",
+      "given": "a store holding \"walk\" and \"Apple\"",
+      "when": "check(\"Run\", None), uncheck(\"Run\", d1), remove(\"Run\") and status(Some(\"Run\")) are called",
+      "then": "each returns Err(UnknownHabit { name: \"Run\", known: [\"Apple\", \"walk\"] }) and save is never called.",
+      "test": "tests/adr_2610281223_spec.rs::s35_unknown_habit_lists_known"
+    },
+    {
+      "id": "S36",
+      "decision": [
+        "§6"
+      ],
+      "kind": "negative",
+      "description": "A missing store makes every method other than add report UnknownHabit for a named habit.",
+      "given": "a store whose load returns Err(NotFound)",
+      "when": "remove(\"Read\") is called",
+      "then": "it returns Err(UnknownHabit { name: \"Read\", known: [] }) and save is never called; status(None) returns an empty Vec.",
+      "test": "tests/adr_2610281223_spec.rs::s36_missing_store_unknown_habit"
+    },
+    {
+      "id": "S37",
+      "decision": [
+        "§6"
+      ],
+      "kind": "negative",
+      "description": "Invalid names, duplicate adds and store failures are refused without saving.",
+      "given": "a store holding \"Read\", and a second store whose load returns Err(Io(\"denied\"))",
+      "when": "add(\"  \") and add(\"READ\") are called on the first store, and add(\"Walk\") on the second",
+      "then": "they return Err(InvalidName(Empty)), AlreadyExists and Err(Store(Io(\"denied\"))) respectively, and save is never called.",
+      "test": "tests/adr_2610281223_spec.rs::s37_refusals_without_saving"
+    },
+    {
+      "id": "S38",
+      "decision": [
+        "§6"
+      ],
+      "kind": "negative",
+      "description": "A save failure is returned as a Store error.",
+      "given": "a store holding \"Read\" whose save returns Err(Io(\"full\"))",
+      "when": "check(\"Read\", None) is called",
+      "then": "it returns Err(Store(Io(\"full\"))).",
+      "test": "tests/adr_2610281223_spec.rs::s38_save_failure_is_store_error"
+    },
+    {
+      "id": "S39",
+      "decision": [
+        "§6"
+      ],
+      "kind": "property",
+      "description": "Over every call, load happens first and save happens at most once, and only when the book changed.",
+      "given": "any starting book, any clock day, and any use-case call with arbitrary arguments, against a recording store",
+      "when": "the call returns",
+      "then": "load was the first store call; save was called at most once; and save was called exactly when the result is Ok and the book after the call differs from the loaded book (Added{created:true}, Recorded, Removed or RemovedHabit).",
+      "test": "tests/adr_2610281223_spec.rs::s39_load_first_save_at_most_once_property"
+    },
+    {
+      "id": "S40",
+      "decision": [
+        "§7"
+      ],
+      "kind": "example",
+      "description": "The crate builds and its tests run without the counter.",
+      "given": "the crate after this ADR",
+      "when": "cargo test is run",
+      "then": "it compiles and runs the habit tests, the file tests/counter.rs does not exist, and src/lib.rs declares the domain, ports and usecases modules.",
+      "test": "tests/adr_2610281223_spec.rs::s40_crate_builds_without_counter"
+    },
+    {
+      "id": "S41",
+      "decision": [
+        "§7"
+      ],
+      "kind": "negative",
+      "description": "No counter item remains, and the composition root names no adapter.",
+      "given": "the source tree under src/, and tests/counter.rs if it exists (no other file under tests/ is searched: a test file may name what it checks for)",
+      "when": "it is searched for the identifiers Count, CounterStore, CountValue, InMemoryCounterStore, increment, counter( and increment_once",
+      "then": "none is found, and the domain, ports and usecases modules name no adapter type",
+      "test": "tests/adr_2610281223_spec.rs::s41_no_counter_items_and_core_names_no_adapter"
+    }
+  ]
+}

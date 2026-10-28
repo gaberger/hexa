@@ -1,0 +1,470 @@
+{
+  "adr": "ADR-2610281300",
+  "feature": "habit-streak edges: dates, JSON file store, data path, command line",
+  "description": "The adapters and command line around the habit-streak core: strict YYYY-MM-DD dates, a version 1 JSON book that is refused rather than rewritten when invalid, all-or-nothing writes, a fixed data-path order, and a CLI whose exit codes say whose problem it is.",
+  "universal": [
+    "§1",
+    "§2",
+    "§3",
+    "§5",
+    "§6",
+    "§8"
+  ],
+  "accepted": {
+    "by": "Gary",
+    "sha256": "e8bca43234ebabf6750070eb21a5e693cf7f1e4fab154abc35f73ea650cfa05a"
+  },
+  "sealed": {
+    "tests/adr_2610281300_spec.rs": "0dcdb975bf9ad0a2d824e10d39c7c16156091e562d7cf471ce078665245a3907"
+  },
+  "red": "8b45501",
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "The epoch and an ordinary date parse to their day counts and format back",
+      "given": "a ChronoCalendar",
+      "when": "parse is called with \"1970-01-01\" and with \"2026-01-05\", and format is called with each result",
+      "then": "\"1970-01-01\" parses to Day::from_days(0), \"2026-01-05\" parses to Day::from_days(20458), and formatting those days gives \"1970-01-01\" and \"2026-01-05\"",
+      "test": "tests/adr_2610281300_spec.rs::s01_epoch_and_ordinary_date_round_trip"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A leap day parses only in a leap year",
+      "given": "a ChronoCalendar",
+      "when": "parse is called with \"2024-02-29\" and with \"2023-02-29\"",
+      "then": "\"2024-02-29\" returns Some(day) and that day formats as \"2024-02-29\"; \"2023-02-29\" returns None",
+      "test": "tests/adr_2610281300_spec.rs::s02_leap_day_only_in_leap_year"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "Any text that is not exactly ten characters forming a real YYYY-MM-DD date is refused",
+      "given": "a ChronoCalendar",
+      "when": "parse is called with \"2026-1-05\", \"2026-02-30\", \" 2026-01-05\", \"2026-01-05 \", \"2026-01-05T00\", \"2026/01/05\", \"20260105\", \"2026-13-01\", \"2026-00-10\", \"2026-01-00\", \"+026-01-05\", \"２０２６-01-05\" (full-width digits) and \"\"",
+      "then": "every call returns None",
+      "test": "tests/adr_2610281300_spec.rs::s03_non_dates_are_refused"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§1"
+      ],
+      "kind": "property",
+      "description": "format is the inverse of parse across years 0000 to 9999",
+      "given": "any real calendar date with a year from 0000 to 9999, written as YYYY-MM-DD",
+      "when": "the text is parsed and the resulting day is formatted",
+      "then": "parse returns Some(day), format(day) equals the original text, and parse(format(day)) equals Some(day)",
+      "test": "tests/adr_2610281300_spec.rs::s04_format_inverts_parse"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§1"
+      ],
+      "kind": "property",
+      "description": "parse accepts only text of exactly ten characters",
+      "given": "any string whose length in characters is not 10",
+      "when": "ChronoCalendar parse is called on it",
+      "then": "it returns None",
+      "test": "tests/adr_2610281300_spec.rs::s05_only_ten_characters_parse"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "today is the local calendar date",
+      "given": "a ChronoCalendar and the local calendar date as YYYY-MM-DD, read from the system immediately before and after the call",
+      "when": "today is called and the result is formatted",
+      "then": "the formatted result equals the local date read before or the one read after",
+      "test": "tests/adr_2610281300_spec.rs::s06_today_is_local_date"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "A saved book is written as pretty-printed version 1 JSON, habits in key order and dates ascending, ending in a newline",
+      "given": "a JsonFileStore on a path in an existing temporary directory, and a book whose habit \"Read\" has check-ins 2026-01-06 and 2026-01-05 and whose habit \"Gym\" has none, added in that order",
+      "when": "the book is saved and the file is read back as text",
+      "then": "the file parses as JSON equal to {\"version\":1,\"habits\":{\"Gym\":{\"checkins\":[]},\"Read\":{\"checkins\":[\"2026-01-05\",\"2026-01-06\"]}}}, \"Gym\" appears in the text before \"Read\", \"2026-01-05\" appears before \"2026-01-06\", the text spans more than one line, and the last character is a newline",
+      "test": "tests/adr_2610281300_spec.rs::s07_saved_book_format"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "A hand-written valid file loads into the matching book",
+      "given": "a file containing {\"version\": 1, \"habits\": {\"Read\": {\"checkins\": [\"2026-01-05\", \"2026-01-06\"]}}}",
+      "when": "a JsonFileStore on that path loads it",
+      "then": "load returns a book with exactly one habit, Read, checked in on exactly the days 2026-01-05 and 2026-01-06",
+      "test": "tests/adr_2610281300_spec.rs::s08_hand_written_file_loads"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "A file in a different shape is not read as a book",
+      "given": "a file containing {\"version\": 1, \"habits\": [{\"name\": \"Read\", \"checkins\": []}]}",
+      "when": "a JsonFileStore on that path loads it",
+      "then": "load returns Err(Malformed(_)) and does not return a book",
+      "test": "tests/adr_2610281300_spec.rs::s09_other_shape_is_malformed"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§2"
+      ],
+      "kind": "property",
+      "description": "Saving a loaded book reproduces the file the store wrote, byte for byte",
+      "given": "any book with any valid habit names and any check-in days in years 0000 to 9999, saved by a JsonFileStore",
+      "when": "the file is loaded and the loaded book is saved again to a second path",
+      "then": "the second file is byte-identical to the first, and loading it gives a book with the same habits and check-ins",
+      "test": "tests/adr_2610281300_spec.rs::s10_resave_is_byte_identical"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "A version other than 1 is reported as an unknown version",
+      "given": "a file containing {\"version\": 2, \"habits\": {}}",
+      "when": "a JsonFileStore loads it",
+      "then": "load returns Err(UnknownVersion(2)) and the file is byte-identical afterwards",
+      "test": "tests/adr_2610281300_spec.rs::s11_version_two_is_unknown"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "Each kind of invalid book is refused as Malformed with a message naming the fault",
+      "given": "one file for each of: text that is not JSON; the top level [1]; {\"habits\": {}} with no version; {\"version\": \"1\", \"habits\": {}}; {\"version\": 1.5, \"habits\": {}}; {\"version\": -1, \"habits\": {}}; {\"version\": 1, \"habits\": {}, \"extra\": 0}; {\"version\": 1, \"habits\": {\"Read\": {\"checkins\": [], \"note\": \"x\"}}}; {\"version\": 1, \"habits\": {\"Read\": {\"checkins\": [\"2026-02-30\"]}}}; a habit whose key HabitName::parse refuses; the key \"Read\" written twice; the keys \"Read\" and \"read\"",
+      "when": "a JsonFileStore loads each file",
+      "then": "every load returns Err(Malformed(message)) with a non-empty one-line message naming the fault (for example the bad date \"2026-02-30\", the duplicated key, the extra field name, or the two names differing in case), and no file is changed",
+      "test": "tests/adr_2610281300_spec.rs::s12_each_invalid_book_is_malformed"
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "A refused file is never rewritten by the command line",
+      "given": "a data file containing invalid JSON at a path named with --file",
+      "when": "habit_streak::run is called with [\"--file\", path, \"check\", \"Read\", \"--date\", \"2026-01-05\"]",
+      "then": "run returns 2, stderr is one line starting \"error: \", and the file is byte-identical afterwards",
+      "test": "tests/adr_2610281300_spec.rs::s13_refused_file_not_rewritten"
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§3"
+      ],
+      "kind": "property",
+      "description": "No invalid book loads",
+      "given": "any file content that is a valid version 1 book altered by exactly one of the faults §3 lists (an unknown field added at any level, a date replaced by text parse refuses, a key replaced by a name HabitName::parse refuses, a key duplicated, a key duplicated with a case change, or version replaced by a non-integer)",
+      "when": "a JsonFileStore loads it",
+      "then": "load returns Err(Malformed(_)), never Ok, and the file is byte-identical afterwards",
+      "test": "tests/adr_2610281300_spec.rs::s14_no_invalid_book_loads"
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§3"
+      ],
+      "kind": "property",
+      "description": "Any non-negative integer version other than 1 is an unknown version",
+      "given": "any non-negative integer n other than 1, and a file {\"version\": n, \"habits\": {}}",
+      "when": "a JsonFileStore loads it",
+      "then": "load returns Err(UnknownVersion(n))",
+      "test": "tests/adr_2610281300_spec.rs::s15_any_other_version_is_unknown"
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "At the default path a missing file is an empty book and save creates the directories",
+      "given": "a JsonFileStore built with is_default true on <tmp>/a/b/habits.json, where <tmp>/a does not exist",
+      "when": "load is called, then a book with one habit Read is saved",
+      "then": "load returns an empty book, save returns Ok, and <tmp>/a/b/habits.json now exists and loads as a book with the habit Read",
+      "test": "tests/adr_2610281300_spec.rs::s16_default_path_missing_is_empty_and_save_creates_dirs"
+    },
+    {
+      "id": "S17",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "At a named path a missing file is NotFound, not a new history",
+      "given": "a JsonFileStore built with is_default false on <tmp>/habits.json, which does not exist",
+      "when": "load is called",
+      "then": "load returns Err(NotFound) and no file is created at <tmp>/habits.json",
+      "test": "tests/adr_2610281300_spec.rs::s17_named_missing_file_is_not_found"
+    },
+    {
+      "id": "S18",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "At a named path a missing parent directory is not created",
+      "given": "a JsonFileStore built with is_default false on <tmp>/typo/habits.json, where <tmp>/typo does not exist",
+      "when": "save is called with any book",
+      "then": "save returns Err(Io(_)) and <tmp>/typo does not exist afterwards",
+      "test": "tests/adr_2610281300_spec.rs::s18_named_missing_parent_not_created"
+    },
+    {
+      "id": "S19",
+      "decision": [
+        "§4",
+        "§8"
+      ],
+      "kind": "negative",
+      "description": "A mistyped --file fails with exit 2 instead of starting a new history",
+      "given": "no file at <tmp>/habitz.json",
+      "when": "habit_streak::run is called with [\"--file\", \"<tmp>/habitz.json\", \"check\", \"Read\"]",
+      "then": "run returns 2, stderr is one line starting \"error: \", and <tmp>/habitz.json does not exist afterwards",
+      "test": "tests/adr_2610281300_spec.rs::s19_mistyped_file_exits_2"
+    },
+    {
+      "id": "S20",
+      "decision": [
+        "§5"
+      ],
+      "kind": "example",
+      "description": "A save replaces the file whole and leaves no temporary file",
+      "given": "an existing book file at <tmp>/habits.json in a directory holding no other files",
+      "when": "a JsonFileStore on that path saves a different book",
+      "then": "save returns Ok, the file loads as the new book, and the directory contains only habits.json",
+      "test": "tests/adr_2610281300_spec.rs::s20_save_replaces_whole_file"
+    },
+    {
+      "id": "S21",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "A failed save does not touch the original file and cleans up after itself",
+      "given": "an existing book file at <tmp>/d/habits.json, with <tmp>/d made read-only so no new file can be created in it",
+      "when": "a JsonFileStore on that path saves a different book",
+      "then": "save returns Err(Io(_)), the file is byte-identical to before, and <tmp>/d contains no file other than habits.json",
+      "test": "tests/adr_2610281300_spec.rs::s21_failed_save_leaves_original"
+    },
+    {
+      "id": "S22",
+      "decision": [
+        "§5"
+      ],
+      "kind": "property",
+      "description": "After any save the target holds either the old content or the new, never a mix",
+      "given": "any existing book file and any book to save, with the save either succeeding or failing because the directory refuses new files",
+      "when": "save is called",
+      "then": "on Ok the file loads as the new book; on Err(Io(_)) the file is byte-identical to before; and in both cases the directory contains no leftover temporary file",
+      "test": "tests/adr_2610281300_spec.rs::s22_save_is_all_or_nothing"
+    },
+    {
+      "id": "S23",
+      "decision": [
+        "§6"
+      ],
+      "kind": "example",
+      "description": "The flag wins, then HABIT_STREAK_FILE, then XDG_DATA_HOME, then HOME",
+      "given": "an environment where HABIT_STREAK_FILE=/e/h.json, XDG_DATA_HOME=/x and HOME=/h",
+      "when": "resolve_data_path is called with Some(\"/f/h.json\"), then with None, then with None after HABIT_STREAK_FILE is removed, then with None after XDG_DATA_HOME is also removed",
+      "then": "the results are DataPath { path: /f/h.json, is_default: false }, DataPath { path: /e/h.json, is_default: false }, DataPath { path: /x/habit-streak/habits.json, is_default: true } and DataPath { path: /h/.local/share/habit-streak/habits.json, is_default: true }",
+      "test": "tests/adr_2610281300_spec.rs::s23_data_path_precedence"
+    },
+    {
+      "id": "S24",
+      "decision": [
+        "§6"
+      ],
+      "kind": "negative",
+      "description": "Empty variables are skipped and no source at all is an error",
+      "given": "an environment where HABIT_STREAK_FILE, XDG_DATA_HOME and HOME are all set to the empty string",
+      "when": "resolve_data_path is called with None, and again with every variable unset",
+      "then": "both calls return Err(NoDataPath)",
+      "test": "tests/adr_2610281300_spec.rs::s24_empty_or_unset_everything_is_no_data_path"
+    },
+    {
+      "id": "S25",
+      "decision": [
+        "§6"
+      ],
+      "kind": "negative",
+      "description": "An empty HABIT_STREAK_FILE does not override the default path",
+      "given": "an environment where HABIT_STREAK_FILE is the empty string and HOME=/h",
+      "when": "resolve_data_path is called with None",
+      "then": "it returns DataPath { path: /h/.local/share/habit-streak/habits.json, is_default: true }",
+      "test": "tests/adr_2610281300_spec.rs::s25_empty_env_file_falls_back_to_home"
+    },
+    {
+      "id": "S26",
+      "decision": [
+        "§6"
+      ],
+      "kind": "property",
+      "description": "The first non-empty source in the fixed order is chosen, and only the last two are default",
+      "given": "any flag (present or absent) and any values (unset, empty or non-empty) for HABIT_STREAK_FILE, XDG_DATA_HOME and HOME",
+      "when": "resolve_data_path is called",
+      "then": "the result comes from the first of flag, HABIT_STREAK_FILE, XDG_DATA_HOME, HOME that is present and non-empty, with is_default true exactly when it came from XDG_DATA_HOME or HOME, and is Err(NoDataPath) exactly when none is present and non-empty",
+      "test": "tests/adr_2610281300_spec.rs::s26_first_non_empty_source_chosen"
+    },
+    {
+      "id": "S27",
+      "decision": [
+        "§7"
+      ],
+      "kind": "example",
+      "description": "status prints aligned lines in key order with streaks and a not-checked-today mark",
+      "given": "a book file named with --file holding habit \"Gym\" checked in on the two days before today and habit \"Read\" checked in today",
+      "when": "habit_streak::run is called with [\"--file\", path, \"status\"]",
+      "then": "run returns 0 and stdout is two lines, first Gym then Read, where \"Gym\" is padded to the length of \"Read\" so the remaining text starts in the same column, the Gym line contains \"current 2\", \"longest 2\" and ends \" (not checked today)\", and the Read line contains \"current 1\", \"longest 1\" and does not contain \"not checked today\"",
+      "test": "tests/adr_2610281300_spec.rs::s27_status_lines"
+    },
+    {
+      "id": "S28",
+      "decision": [
+        "§7"
+      ],
+      "kind": "example",
+      "description": "status on an empty book tells the person how to start",
+      "given": "a book file named with --file holding {\"version\": 1, \"habits\": {}}",
+      "when": "habit_streak::run is called with [\"--file\", path, \"status\"]",
+      "then": "run returns 0 and stdout is exactly the line \"No habits yet. Add one with: habit-streak add <name>\"",
+      "test": "tests/adr_2610281300_spec.rs::s28_status_empty_book"
+    },
+    {
+      "id": "S29",
+      "decision": [
+        "§7"
+      ],
+      "kind": "example",
+      "description": "Commands report what happened, naming the habit and the day",
+      "given": "a book file named with --file holding an empty book",
+      "when": "run is called in turn with add Read, check Read --date 2026-01-05, uncheck Read --date 2026-01-05, and remove Read --yes, each after --file path",
+      "then": "each returns 0 and prints one line to stdout naming \"Read\"; the check and uncheck lines also contain \"2026-01-05\"; afterwards the file holds no habits",
+      "test": "tests/adr_2610281300_spec.rs::s29_commands_report"
+    },
+    {
+      "id": "S30",
+      "decision": [
+        "§7",
+        "§8"
+      ],
+      "kind": "example",
+      "description": "A command whose end state already held says so and exits 0",
+      "given": "a book file named with --file holding habit Read checked in on 2026-01-05",
+      "when": "run is called with check Read --date 2026-01-05, and then with add Read",
+      "then": "each returns 0, prints one line to stdout naming Read, and the file loads with the same habits and check-ins as before",
+      "test": "tests/adr_2610281300_spec.rs::s30_already_held_exits_0"
+    },
+    {
+      "id": "S31",
+      "decision": [
+        "§7"
+      ],
+      "kind": "negative",
+      "description": "An unknown habit is an error that lists the known habits",
+      "given": "a book file named with --file holding habits Gym and Read",
+      "when": "run is called with [\"--file\", path, \"check\", \"Run\"]",
+      "then": "stdout is empty, and stderr is exactly one line starting \"error: \" that contains \"Run\", \"Gym\" and \"Read\"",
+      "test": "tests/adr_2610281300_spec.rs::s31_unknown_habit_lists_known"
+    },
+    {
+      "id": "S32",
+      "decision": [
+        "§7"
+      ],
+      "kind": "negative",
+      "description": "uncheck without --date is refused",
+      "given": "a book file named with --file holding habit Read checked in today",
+      "when": "run is called with [\"--file\", path, \"uncheck\", \"Read\"]",
+      "then": "run returns 1, stderr is one line starting \"error: \", and the file is byte-identical afterwards",
+      "test": "tests/adr_2610281300_spec.rs::s32_uncheck_needs_date"
+    },
+    {
+      "id": "S33",
+      "decision": [
+        "§8"
+      ],
+      "kind": "example",
+      "description": "Help exits 0",
+      "given": "any environment",
+      "when": "run is called with [\"--help\"]",
+      "then": "run returns 0 and the help text is written to stdout",
+      "test": "tests/adr_2610281300_spec.rs::s33_help_exits_0"
+    },
+    {
+      "id": "S34",
+      "decision": [
+        "§8"
+      ],
+      "kind": "negative",
+      "description": "Usage errors, invalid names, unknown habits and future dates exit 1 without changing the file",
+      "given": "a book file named with --file holding habit Read",
+      "when": "run is called, each after --file path, with: frobnicate; check (no habit); remove Read (no --yes); check Read --date 2026-1-05; add with a name HabitName::parse refuses; check Run; check Read --date set to tomorrow",
+      "then": "each returns 1, writes one line starting \"error: \" to stderr, and leaves the file byte-identical; remove Read without --yes leaves Read in the book",
+      "test": "tests/adr_2610281300_spec.rs::s34_user_errors_exit_1"
+    },
+    {
+      "id": "S35",
+      "decision": [
+        "§8"
+      ],
+      "kind": "negative",
+      "description": "No data path exits 2",
+      "given": "an environment with HABIT_STREAK_FILE, XDG_DATA_HOME and HOME all unset",
+      "when": "run is called with [\"status\"]",
+      "then": "run returns 2 and stderr is one line starting \"error: \"",
+      "test": "tests/adr_2610281300_spec.rs::s35_no_data_path_exits_2"
+    },
+    {
+      "id": "S36",
+      "decision": [
+        "§8"
+      ],
+      "kind": "property",
+      "description": "Any store error exits 2 and leaves the file byte-identical",
+      "given": "any command other than add that reads or writes the book, run against a file that is malformed, has an unknown version, is missing at a named path, or sits in a directory that refuses new files; and add against a file that is malformed or has an unknown version",
+      "when": "habit_streak::run is called",
+      "then": "it returns 2, writes exactly one line to stderr starting \"error: \", and the file (if it existed) is byte-identical afterwards",
+      "test": "tests/adr_2610281300_spec.rs::s36_store_errors_exit_2"
+    },
+    {
+      "id": "S37",
+      "decision": [
+        "§8",
+        "§7"
+      ],
+      "kind": "property",
+      "description": "Every non-zero exit writes exactly one error line and nothing to stdout",
+      "given": "any argument list and environment for which run returns a non-zero code",
+      "when": "run is called",
+      "then": "the code is 1 or 2, stderr is exactly one line starting \"error: \", and stdout is empty",
+      "test": "tests/adr_2610281300_spec.rs::s37_non_zero_exit_shape"
+    }
+  ]
+}

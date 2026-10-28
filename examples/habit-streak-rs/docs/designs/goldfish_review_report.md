@@ -1,0 +1,445 @@
+# Design review of docs/designs/design_draft.md
+
+Draft: `docs/designs/design_draft.md`
+Draft sha256: a2f1422f3638a353a433fd112a2ac768c7e012c6d87d97b2a29108f5ae26cd10
+Model: `claude-text`
+Written by hexa design review, from the Elephant-Goldfish Model (EGM, https://github.com/google/elephant-goldfish-model, Google LLC, Apache-2.0) at commit a8380ab5f0aba392c97e31c79f9a6666b3f09f14. Each reviewer is one tool-less completion given its persona, its standard, the draft and the source the draft names; a synthesizer deduplicates each section.
+Source supplied (each cut at 12000 bytes): `src/lib.rs`, `src/domain/mod.rs`, `src/ports/mod.rs`, `src/usecases/mod.rs`, `src/adapters/mod.rs`, `src/adapters/secondary/mod.rs`, `CLAUDE.md`, `Cargo.toml`
+Unresolved paths (outside the project or not found; not read): `domain/`, `ports/`, `usecases/`, `adapters/`, `chrono_calendar.rs`, `~/.local/share/habit-streak/habits.json`, `src/main.rs`, `lib.rs`, `main.rs`, `src/<layer>/mod.rs`, `/home/gary`, `/home/gary/.local/share/habit-streak/`, `habits.json`, `~/Sync/habits.json`, `HABIT_STREAK_FILE=~/Sync/habits.json`, `~/Sync`, `HABIT_STREAK_FILE=~/Sync/habit.json`, `tests/`, `1.0`, `.<filename>.<pid>.tmp`, `$XDG_DATA_HOME/habit-streak/habits.json`, `$HOME/.local/share/habit-streak/habits.json`, `src/adapters/secondary/chrono_calendar.rs`, `/etc/localtime`, `tests/streak_oracle.rs`, `tests/date_codec.rs`, `scripts/gate.sh`, `src/`, `examples/`, `benches/`, `docs/adrs/ADR-NNN-habit-streak-dependencies-and-dates.md`, `docs/adrs/`, `Cargo.lock`, `src/domain/day.rs`, `src/domain/habit_name.rs`, `src/domain/habit_book.rs`, `src/domain/streaks.rs`, `src/ports/habit_store.rs`, `src/ports/clock.rs`, `src/ports/date_text.rs`, `src/usecases/habits.rs`, `src/usecases/error.rs`, `src/adapters/primary/mod.rs`, `src/adapters/primary/cli.rs`, `src/adapters/secondary/json_file_store.rs`, `tests/json_store.rs`, `tests/usecases.rs`, `tests/cli_e2e.rs`, `README.md`, `./scripts/gate.sh`, `HABIT_STREAK_FILE=/tmp/hs-manual.json`, `/tmp/hs-manul.json`
+
+## Stage 5: Initial zoom out
+
+Personas: `zoom_out` (standard `zoom-out-standard`); synthesized by `synthesizer`.
+
+- S5-1: **🟡 Major: storage and file-path concepts leak into the port and the use case.** *Scope:* Ports › `StoreError` (`path: PathBuf`, `NotFound`, `MissingParentDirectory`); Use cases table (`Added { created_file: Option<PathBuf> }`); file 4/11 ("Keep the rule 2 doc comment").
+    - The design keeps the doc comment in `src/ports/mod.rs`: "a port that mentions a database, a URL, or a file path has already leaked."
+    - It then adds file-path and filesystem concepts to the `HabitStore` contract.
+    - It also returns a `PathBuf` from the use case, so I/O vocabulary reaches two inner layers.
+    - `run` already holds the resolved `DataPath`.
+    - **Recommendation:** Use a storage-neutral error kind plus an opaque description. Return `Added { created_store: bool }`. Have `run` or the CLI print the path it already knows, or pass the path into `execute`. *(zoom_out)*
+- S5-2: **🟡 Major: Open Question 4 reopens a rule `CLAUDE.md` already settles.** *Scope:* Open Question 4; Assumption 2; Order of work step 1 ("If the analyzer allows `chrono` in `domain/`, bring Alternative A back"); Alternative A ("This choice is reversible if…").
+    - `CLAUDE.md` says `domain/` is "Pure business logic, zero external deps".
+    - `src/domain/mod.rs` says "No I/O".
+    - Treating the analyzer's blind spot as permission ranks the tool's gaps above the stated architecture. It also leaves a conditional redesign hanging over step 1.
+    - **Recommendation:** Close OQ4 on the written rule. Remove the "bring Alternative A back" branch and the "reversible if…" clause. *(zoom_out)*
+- S5-3: **🟡 Major: the JSON read path parses the same text three times.** *Scope:* JSON file store › Read steps 3–5.
+    - The text is parsed as a generic `serde_json::Value`, then a version probe, then the full DTO.
+    - Step 3 says the `Value` is used "only for these two checks". The step-4 probe already covers both: it reports syntax errors with line and column, and it rejects a non-object top level.
+    - The step-4 version table also splits a malformed version into rows that end identically: exit 2, "The file was not changed." Only "integer `1`" versus "anything else" matters to the user.
+    - **Recommendation:** Drop step 3. Keep one version probe, so a v2 file reports "unknown version", then one DTO pass. Collapse the version rows. This is the most complex part of the design and should be the leanest. *(zoom_out)*
+- S5-4: **🟢 Nit: duplicate habit names are rejected by two mechanisms in two layers.** *Scope:* Read step 5 (duplicate-rejecting `deserialize_with`); step 7 (case-collision via `HabitBook::from_entries` → `DuplicateName`).
+    - An exact duplicate is already a collision under the case-folded key.
+    - **Recommendation:** Make the map visitor a plain collector into `Vec<(String, HabitDto)>`. Let `HabitBook::from_entries` reject all collisions. That gives one rule, one message path, and one test family. *(zoom_out)*
+- S5-5: **🟢 Nit: the date conversion carries speculative out-of-range handling.** *Scope:* Date conversion (`naive_from_day` returning `Option`, the `day <n>` fallback formatter, the "±95 million days … fits in `i32`" note); file 23 (`date_codec_formats_out_of_range_day`, property tests "over years 0000–9999").
+    - Every `Day` comes from one of three sources: strict 4-digit-year text, `Clock::today`, or one `pred()` call. An out-of-range `Day` cannot occur in practice.
+    - **Recommendation:** Replace the `Option` path and the fallback with a `debug_assert` or an `expect` with a clear message. Narrow the property range to a few centuries around today, and drop the out-of-range test. *(zoom_out)*
+- S5-6: **🟢 Nit: adapter helpers are made `pub` only for tests, near the rule 7 boundary.** *Scope:* Date conversion ("`day_from_naive` and `naive_from_day` are `pub` so that `tests/streak_oracle.rs` and `tests/date_codec.rs` use the exact conversion"); files 22–23.
+    - This widens the adapter's API for test use only.
+    - `tests/` then imports an adapter directly, which is close to "only the composition root imports an adapter".
+    - It is unverified whether the analyzer scans `tests/`.
+    - **Recommendation:** Route both tests through the `DateText` port: format the oracle's `NaiveDate` as `%Y-%m-%d` and call `ChronoCalendar.parse`. Keep the helpers private. *(zoom_out)*
+- S5-7: **🟢 Nit: architecture sections drop to code-level detail.** *Scope:* Technical Plan › Date conversion (the `719_163` constant, byte positions 0–3/5–6/8–9, the `Value::as_u64()` explanation); Composition root / file 5 (literal `main.rs` body); file 4 (step-by-step body of `run`).
+    - The architectural content fits in three statements:
+      - strict `YYYY-MM-DD`, with one adapter owning calendar math;
+      - the version is checked before the full shape;
+      - `main` delegates to `run`.
+    - Constants and offsets belong in the code and its tests. In the design they are a second copy that can drift. *(zoom_out)*
+- S5-8: **🟢 Nit: rules are restated across the Technical Plan, the per-file plan, and `gate.sh`.** *Scope:* Detailed Implementation Plan files 16, 19, 20, 24 (for example, file 20 restates the whole read/write list); file 2, gate step 5 (hand-maintained list of required test names).
+    - Three copies of the same rules invite drift. `CLAUDE.md` warns about exactly this: documentation that "sits there being confidently wrong".
+    - **Recommendation:** Have file entries reference the Technical Plan sections instead of restating them. Generate the gate's test-name check from a single source, such as one list file read by `gate.sh`. *(zoom_out)*
+
+## Stage 6: Comprehension test
+
+Personas: `comprehension` (standard `re-implementation-standard`); synthesized by `synthesizer`.
+
+- S6-1: **Severity: Major** | **Scope:** the `hexa` tool throughout (Open Questions 4–6; Order of work steps 1, 3, 4, 7; `scripts/gate.sh` step 6; Verification Plan) | The document never says what `hexa` is, how to install it, or what its verbs do (`analyze`, `graph context`, `graph consumers`, `loop gate`, `loop task add`, `harden`). The only explanation is in `CLAUDE.md`, which Additional Resources lists as covering "hexagonal rules, gate-first pipeline, and lessons", not as the tool's reference. A new reader cannot run the order of work without it. Add a short definition of `hexa`, a link, and one line per verb used.
+- S6-2: **Severity: Major** | **Scope:** "rule 1", "rule 2", "rule 3", "rules 4 and 5", "rule 6", "rule 7", "rule 4 note" (Alternative H; Scaffold code to remove table; files 4, 11, 14) | The rules are cited by number but never listed in the document. A reader has to find the numbered list in `CLAUDE.md` ("Hexagonal Architecture Rules (ENFORCED)"). The Layer map gives a partial summary but no numbers. "Rule 4 note" refers to an unnumbered paragraph in `CLAUDE.md` about ports re-exporting domain types. Inline the eight rules and the note, or link them explicitly.
+- S6-3: **Severity: Major** | **Scope:** Order of work step 1, "Record the grade"; step 7, "clear every item it reports" | "Grade" is never defined. The document gives no possible values and no floor, and it does not say whether a grade below the floor blocks the work. `CLAUDE.md` rule 7 mentions "the floor" without a value. State the expected or minimum grade.
+- S6-4: **Severity: Major** | **Scope:** "the scaffold" (Assumption 10; Open Questions 5–6; Composition root; Scaffold code to remove; file 5) | The document never says what generated the scaffold or what it contains. Only `Cargo.toml` hints at `hexa scaffold --lang rust`. Add one sentence naming the scaffold's origin and its counter example.
+- S6-5: **Severity: Major** | **Scope:** Assumption 6 and CUJ 4; CLI "Output" section | Success and no-op messages are described only loosely: "with a message", "prints that the check-in was removed", "prints that no check-in was recorded". There is no exact text for `Added`, `AlreadyExists`, `Recorded`, `AlreadyRecorded`, `Removed`, `NotRecorded`, or habit `Removed`, and no stream (stdout or stderr) is named. Under the Zero-Assumption Rule, the implementer has to invent user-visible output.
+- S6-6: **Severity: Major** | **Scope:** CLI "Errors"; `UseCaseError` | Exact message text is given only for `UnknownHabit` (CUJ 5), invalid `--date`, `NotFound`, and `NoDataPath`. It is missing for `FutureDate`, `InvalidName` (`Empty` and `ControlCharacter`), `MissingParentDirectory`, `WriteFailed`, and `UnknownVersion`. The rule that a message "names what failed … and the next step" is too vague to produce identical output across implementations.
+- S6-7: **Severity: Major** | **Scope:** CUJ 7 and CUJ 8 messages compared with the "Errors" message form; `Unreadable(io detail)` | The general form is `error: data file <path>: <reason>` followed by a closing sentence. The CUJ 7 message (`data file … is a symlink to …, which does not exist. Is the folder mounted? The file was not changed.`) and the CUJ 8 message (`data file … does not exist. Check …`) have no `error:` prefix and no colon after the path, so the authoritative form is unclear. CUJ 7 also needs the symlink target path, but `Unreadable(io detail)` does not say how that target is carried.
+- S6-8: **Severity: Major** | **Scope:** `scripts/gate.sh` step 5, "each required test listed in the Verification Plan" | The Verification Plan lists no test names. It points to "files 4 and 22 to 26, plus the domain unit tests", and the domain unit tests (files 7–10) have no required names. The document also does not say how the gate stores the list or how it matches names against `cargo test` output, which prints module-qualified names such as `tests::flag_wins_over_env ... ok`.
+- S6-9: **Severity: Nit** | **Scope:** Order of work step 3, "one `hexa loop task add` entry per file group below" | "File group" is undefined. Files are numbered 1–27 individually, and only file 18 combines several files.
+- S6-10: **Severity: Nit** | **Scope:** Assumptions intro, "The Goldfish reviewers run separately"; footer "Drafted with EGM" | "Goldfish reviewers" and "EGM" are explained only in an HTML comment, which does not show when the document is rendered. Define them in visible text or link them.
+- S6-11: **Severity: Nit** | **Scope:** Assumption 1, "the YAGNI objection" | The acronym is not expanded, and the objection itself is never stated.
+- S6-12: **Severity: Nit** | **Scope:** "ADR" (Alternative E, "the ADR records it"; Order of work step 2) | The acronym is used before file 1 implies its meaning, and it is never expanded.
+- S6-13: **Severity: Nit** | **Scope:** "the brief" / "Concepts brief" (Assumptions 2 and 4; Additional Resources) | Additional Resources says the brief is not needed. Yet Assumption 4 relies on "the brief's example file" and its `created` field, and Assumption 2 relies on what "the brief accepted", none of which the reader can see. Quote the relevant brief content inline.
+- S6-14: **Severity: Nit** | **Scope:** "gate-first pipeline" (Additional Resources; Order of work intro) | The term is used without a definition. Add one line: the gate command is written and recorded before the code, and a gate that runs 0 tests counts as a failure.
+- S6-15: **Severity: Nit** | **Scope:** Assumption 8, "the XDG rule"; Additional Resources, `habitctl` and Loop Habit Tracker | None of these has a link. Link the XDG Base Directory specification and the two baseline tools.
+- S6-16: **Severity: Nit** | **Scope:** Goals, "fixed-point tests of the date conversion" | "Fixed-point" can be read as fixed-point arithmetic. File 23 shows the intended meaning is known reference dates. Say "known-date tests" or define the term.
+- S6-17: **Severity: Nit** | **Scope:** Layer map compared with file 4 | The diagram shows `run(args, env, io)` and `cli::execute(command, &habits, &cal, io)`, but file 4 defines `run(args, env, out, err)` and `execute(…, out, err)`. Mark `io` as shorthand or make the two agree.
+- S6-18: **Severity: Nit** | **Scope:** Domain `Day::pred()`; `naive_from_day` note | The text says an out-of-range `Day` "can only come from `pred()` at the range's lower edge". It does not say what `pred()` does at `i32::MIN` (wrap, saturate, or panic), and that choice affects correctness.
+- S6-19: **Severity: Nit** | **Scope:** `status` output example | Padding of the name column is specified, but spacing between the number columns is not. It is unclear whether the `current` and `longest` values are padded or always separated by three spaces. No output format is given for `status <habit>` with a single habit.
+- S6-20: **Severity: Nit** | **Scope:** CUJ 5 message | The `known habits: …` format is undefined when the book has zero habits, for example `check x` against an empty file.
+- S6-21: **Severity: Nit** | **Scope:** CUJ 7, `HABIT_STREAK_FILE=~/Sync/habits.json` | The CUJ assumes `~` gets expanded, but the shell does not expand `~` in every assignment context. The document does not say whether the tool expands `~` itself.
+- S6-22: **Severity: Nit** | **Scope:** Files 22–23, tests importing `habit_streak::adapters::secondary::chrono_calendar` | Rule 7 says only the composition root imports an adapter. The document does not say whether `hexa analyze .` scans `tests/`, so a reader cannot tell whether these imports would be flagged as violations.
+- S6-23: **Severity: Nit** | **Scope:** Write step 4 and NFR "New files are written with mode `0600`" | Each save writes a new temp file and renames it over the target, so saving resets an existing file's permissions to `0600`. The NFR wording ("new files") hides this side effect.
+- S6-24: **Severity: Nit** | **Scope:** File 22, "window starts are biased toward 2024-02-29, year ends, and month ends" | The biasing method and its proportion are not specified, so two implementers would build different generators.
+
+## Stage 7: Critic review
+
+Personas: `design_critic` (standard `feature-spec-standard`), `structural` (standard `feature-spec-standard`), `style`; synthesized by `synthesizer`.
+
+- S7-1: 🟡 **Major · Unmounted sync folder can look like an empty book** (`design_critic`). *Scope:* JSON file store, Read step 1 and Write step 2; Data path rules (cases 3–4); CUJ 7.
+    - **Problem:** The only guard is a dangling symlink at the file itself. Three setups bypass it:
+      - An unmounted mount point that is an existing empty directory.
+      - A *directory* symlink (`~/.local/share/habit-streak -> ~/Sync/habit-streak`).
+      - `$XDG_DATA_HOME` set inside a synced or network location.
+    - **Effect:** The path resolves to the default, `symlink_metadata` reports nothing there, `status` prints "No habits yet", and `add` creates a fresh file that sync can propagate over the real history. This is the failure The Problem calls the worst one. The `StoreErrorKind` for a failed `create_dir_all` on a dangling directory symlink is also unspecified.
+    - **Recommendation:** Narrow the "missing default file = empty book" rule. Either create the default file only on `add`, or return `NotFound` when any path component is a symlink or the parent directory exists. Add tests for directory symlinks and empty mount points.
+- S7-2: 🟡 **Major · Synced-folder journey contradicts the multi-device Non-Goal** (`design_critic`). *Scope:* CUJ 7 vs. Non-Goals ("Sync, multiple devices") and Concurrency.
+    - **Problem:** People sync files mainly to use them on several devices. Two machines editing the file produce sync-conflict copies or silent lost updates. These are worse than the single-machine race the design accepts, and the README plan does not cover them.
+    - **Recommendation:** State that the synced folder is for single-writer backup only and document conflict behavior, or reconsider the storage format.
+- S7-3: 🟡 **Major · Atomicity guarantee is unqualified for non-local filesystems** (`design_critic`). *Scope:* Goals ("always either the old contents or the new contents"); Write steps 4–6.
+    - **Problem:** The guarantee relies on POSIX `rename` and `fsync` on a local filesystem. CUJ 7 supports SMB, NFS, and FUSE cloud-drive mounts, where these guarantees are weaker or absent.
+    - **Recommendation:** Scope the guarantee to local filesystems in Goals and the README, or list it as a known limitation.
+- S7-4: 🟡 **Major · No alternatives for storage format or data-safety strategy** (`design_critic`). *Scope:* Alternatives Considered; Assumption 1.
+    - **Problem:** The Alternatives Rule requires rejected designs for each major choice, and these have none. Candidates include an append-only log (which also removes lost updates and eases hand edits), SQLite, and a `.bak` of the previous file. Temp-file-then-rename protects against crashes, not against wrong writes. A logic bug that saves an empty book after a misclassified read loses history permanently.
+    - **Recommendation:** Add at least the append-only log and previous-version backup alternatives, each with a rejection reason. Consider adopting the backup, since it is cheap.
+- S7-5: 🟡 **Major · Gate may pass vacuously if `hexa analyze` exits 0 on a low grade** (`design_critic`). *Scope:* File 2 `scripts/gate.sh` step 6; Verification Plan "Static Analysis"; Order of work step 7.
+    - **Problem:** `CLAUDE.md` describes `analyze` output as a grade with deductions and a floor, not an exit status. This is the "gate that degrades silently" lesson the design itself cites.
+    - **Recommendation:** In Order of work step 1, introduce a deliberate violation and check the exit code. If it exits 0, parse the grade or violation count and fail explicitly.
+- S7-6: 🟡 **Major · Integration tests import adapters, which `CLAUDE.md` rules 5 and 7 forbid** (`design_critic`). *Scope:* Files 22–24 (`tests/streak_oracle.rs`, `tests/date_codec.rs`, `tests/json_store.rs`).
+    - **Problem:** These tests import `adapters::secondary::chrono_calendar` and `JsonFileStore` directly. If `hexa analyze .` scans `tests/`, the required gate fails on files the design mandates.
+    - **Recommendation:** In Order of work step 1, alongside Open Question 4, run `analyze` on a throwaway test that imports an adapter and record the result. If needed, route tests through a public root-level helper.
+- S7-7: 🟡 **Major · No consolidated Risks & Mitigations section** (`structural`, `design_critic`). *Scope:* whole document.
+    - **Problem:** The standard requires this section. Risks are instead scattered across The Problem, Non-Goals, Concurrency, Write step 6, and NFRs, and several risks raised in this review appear nowhere. A reader cannot confirm the list is complete.
+    - **Recommendation:** Add `## Risks & Mitigations` as a table of risk, likelihood, mitigation, and owning test.
+- S7-8: 🟡 **Major · Gate points to a test list that the Verification Plan does not contain** (`structural`). *Scope:* Order of work step 5; File 2 `scripts/gate.sh` step 5.
+    - **Problem:** Both say the required tests are "listed in the Verification Plan", but that section only points back to files 4 and 22–26.
+    - **Recommendation:** Add a consolidated required-test list to the Verification Plan, or retarget both pointers to the per-file sections.
+- S7-9: 🟡 **Major · Additional Resources and Future Improvements are orphaned H3s** (`structural`). *Scope:* the two sections after `## Non-Functional Requirements`.
+    - **Problem:** The heading hierarchy makes them subsections of NFR, but they are not NFRs.
+    - **Recommendation:** Promote them to H2, or group them under `## Appendix`.
+- S7-10: 🟡 **Major · Unverifiable superlative about `chrono`** (`style`). *Scope:* Assumption 3, first sub-bullet.
+    - **Problem:** "the crate with the longest maintenance record" cannot be checked.
+    - **Recommendation:** Replace it with a checkable fact, or with a direct reason such as `Local::now().date_naive()` with `TZ` and `/etc/localtime` support.
+- S7-11: 🟡 **Major · Unsupported quantitative claim, stated twice in different words** (`style`). *Scope:* The Problem, second bullet; File 13 "Why".
+    - **Problem:** "'Today' is the source of most bugs" and "'Today' causes most of the bugs" are unsupported.
+    - **Recommendation:** Reword as a risk statement ("Most streak edge cases depend on the local calendar date") and use one phrasing in both places.
+- S7-12: 🟡 **Major · "Costs nothing measurable" is unmeasured** (`style`). *Scope:* Alternative C, "Reason for Rejection".
+    - **Recommendation:** Use a bounded statement, for example "a linear pass over at most a few thousand dates per habit", consistent with the Performance NFR.
+- S7-13: 🟢 **Nit · `to_lowercase` is not full case folding, and there is no Unicode normalization** (`design_critic`). *Scope:* Domain `HabitName`; file 8.
+    - **Problem:** `STRASSE` and `straße` differ, and Greek final sigma is not folded. Composed and decomposed `Ä` (common in macOS hand edits) become two identical-looking habits, which defeats the look-alike goal.
+    - **Recommendation:** Document this as a limitation, or apply NFC before lowercasing. Add a test.
+- S7-14: 🟢 **Nit · Control-character rule misses Cf format characters** (`design_critic`). *Scope:* Domain `HabitName`; NFR Security.
+    - **Problem:** Bidi overrides such as U+202E can still spoof terminal output from a hand-edited file.
+    - **Recommendation:** Also reject Cf characters, or at least the bidi controls. Add a test.
+- S7-15: 🟢 **Nit · Layer map signatures disagree with the text** (`design_critic`). *Scope:* Layer map vs. Composition root and file 4.
+    - **Problem:** The diagram shows a single `io`; the text and file 4 specify separate `out` and `err` writers.
+    - **Recommendation:** Align the diagram with the text.
+- S7-16: 🟢 **Nit · Temp file lives in the synced folder, and PID collisions are unspecified** (`design_critic`). *Scope:* Write step 4; Future Improvements ("Stale temp file cleanup").
+    - **Problem:** A sync tool may upload `.<filename>.<pid>.tmp` mid-write, and a crash leftover propagates to every device. Behavior on a reused PID is also unspecified.
+    - **Recommendation:** Specify `create_new` with a retry, and mention sync-tool ignore patterns in the README.
+- S7-17: 🟢 **Nit · Rename-on-save silently resets file metadata** (`design_critic`). *Scope:* Write step 4; NFR Security ("New files are written with mode 0600").
+    - **Problem:** Every save resets mode to `0600` and ownership to the current user, breaks hard links, and drops xattrs. The text implies `0600` applies only to new files.
+    - **Recommendation:** State the actual behavior, or copy the existing mode to the temp file before the rename.
+- S7-18: 🟢 **Nit · Order of work claims to follow the pipeline but omits Diverge** (`design_critic`). *Scope:* Order of work.
+    - **Problem:** The `CLAUDE.md` pipeline includes Diverge (`hexa build`) and Harden; the order omits Diverge without explanation.
+    - **Recommendation:** Add the step, or state that it is skipped and why.
+- S7-19: 🟢 **Nit · No-subcommand invocation is unclassified** (`design_critic`). *Scope:* CLI "Parsing".
+    - **Problem:** It is unclear whether clap's `DisplayHelpOnMissingArgumentOrSubcommand` maps to help (stdout, exit 0) or error (stderr, exit 1).
+    - **Recommendation:** Specify the mapping and add it to `bad_arguments_exit_1`.
+- S7-20: 🟢 **Nit · `uncheck` of future dates is unspecified** (`design_critic`). *Scope:* Assumption 7; use-case table.
+    - **Problem:** Future dates in the file are kept but ignored. It is unclear whether `uncheck --date <future>` may remove them, or whether `FutureDate` applies to `uncheck`.
+    - **Recommendation:** Allow it explicitly and test it.
+- S7-21: 🟢 **Nit · Required-test name matching is brittle** (`design_critic`). *Scope:* File 2, gate step 5; file 24 `saved_file_mode_is_0600`.
+    - **Problem:** Module prefixes such as `tests::flag_wins_over_env ... ok` can break exact matching. On non-Unix targets the `#[cfg(unix)]` test never appears, so the gate fails.
+    - **Recommendation:** Specify suffix matching and make the required-name list platform-aware.
+- S7-22: 🟢 **Nit · `chrono` may silently fall back to UTC** (`design_critic`). *Scope:* Date conversion, `Clock::today`.
+    - **Problem:** An unreadable `/etc/localtime` or a bad `TZ` yields a wrong "today", the bug source the design emphasizes.
+    - **Recommendation:** Note it in the README limitations, or surface the zone in use (for example in `status --verbose` or an error).
+- S7-23: 🟢 **Nit · Resolved items sit under "Open Questions"** (`structural`, `style`). *Scope:* Open Questions 5 and 6.
+    - **Problem:** Items marked "resolved in this draft" contradict the heading.
+    - **Recommendation:** Move them to Assumptions or a "Resolved Questions" subsection.
+- S7-24: 🟢 **Nit · Open Questions come before the sections they depend on** (`structural`). *Scope:* Section order.
+    - **Problem:** The questions reference the day-number type, the composition root, and Order of work step 1, which are defined later.
+    - **Recommendation:** Move Open Questions after Alternatives Considered, or to the end.
+- S7-25: 🟢 **Nit · Inconsistent cross-reference style** (`structural`). *Scope:* Assumptions items 3 and 9.
+    - **Problem:** Item 3 uses plain text although `#cli-and-exit-codes` exists, and item 9 says "see Alternative I" in plain text.
+    - **Recommendation:** Use anchor links throughout.
+- S7-26: 🟢 **Nit · Bold paragraphs used as pseudo-headings** (`structural`). *Scope:* JSON file store (**Read**, **Write**); CLI and exit codes (**Parsing:**, **Output**, **Errors**).
+    - **Problem:** They are missing from the outline, have no anchors, and use inconsistent colons.
+    - **Recommendation:** Convert them to `####` headings with uniform labels.
+- S7-27: 🟢 **Nit · CUJ 7 and CUJ 8 break the Given/When/Then template** (`structural`). *Scope:* Critical User Journeys.
+    - **Problem:** An extra "**And if …**" bullet holds a second scenario with its own conditions.
+    - **Recommendation:** Split into 7a/7b and 8a/8b, or nest the extra scenario under "Then" as CUJ 2 does.
+- S7-28: 🟢 **Nit · Target File entry 18 covers three files** (`structural`). *Scope:* `#### 18.`
+    - **Problem:** It combines `src/adapters/mod.rs` and the `primary/` and `secondary/` `mod.rs` files with mixed Create/Modify actions, breaking the one-file-per-entry numbering that the Verification Plan relies on.
+    - **Recommendation:** Split it into one entry per file.
+- S7-29: 🟢 **Nit · Undefined term "file group"** (`structural`). *Scope:* Order of work step 3.
+    - **Recommendation:** Name the groups, or say "one entry per Target File".
+- S7-30: 🟢 **Nit · "Unit Tests" bullet requires integration and E2E tests** (`structural`). *Scope:* Verification Plan.
+    - **Problem:** It overlaps the separate "E2E/Integration" bullet.
+    - **Recommendation:** Relabel it (for example "Test Suite"), or split the requirements under the matching bullets.
+- S7-31: 🟢 **Nit · Redundant and subjective goal statement** (`style`). *Scope:* Overview, final paragraph.
+    - **Problem:** "stated goal… not only a means to an end" says one thing twice, and "would serve the person better" is not measurable.
+    - **Recommendation:** Quantify the cost difference, or rely on the Assumption 1 cross-reference.
+- S7-32: 🟢 **Nit · Process narration and an ambiguous "check it first"** (`style`). *Scope:* Assumptions lead-in.
+    - **Recommendation:** "Each assumption below has a defensible alternative; confirm these before implementation."
+- S7-33: 🟢 **Nit · Figurative "earns its place" and a vague baseline** (`style`). *Scope:* The Problem, first bullet.
+    - **Recommendation:** State the criterion explicitly, for example "features beyond record, report, and undo are out of scope unless they improve data safety or rule clarity."
+- S7-34: 🟢 **Nit · "The worst failure" is a ranking stated as fact** (`style`). *Scope:* The Problem, third bullet.
+    - **Recommendation:** Use "the highest-impact failure" or "the failure this design prevents first".
+- S7-35: 🟢 **Nit · "A non-zero number of tests" is roundabout** (`style`). *Scope:* Goals, last bullet.
+    - **Recommendation:** Use "every required named test", which is what the gate actually enforces.
+- S7-36: 🟢 **Nit · Informal Windows non-goal** (`style`). *Scope:* Non-Goals, last bullet.
+    - **Recommendation:** Use Assumption 8's wording: "Windows is not tested in v1."
+- S7-37: 🟢 **Nit · "Silent" and "without notice" are redundant** (`style`). *Scope:* Open Question 1; Alternative D "Cons".
+    - **Recommendation:** Drop one.
+- S7-38: 🟢 **Nit · Filler phrase "This is a deliberate choice:"** (`style`). *Scope:* JSON file store, Read step 5.
+    - **Recommendation:** Start with "The tool must never rewrite…".
+- S7-39: 🟢 **Nit · Figurative risk wording** (`style`). *Scope:* Alternative B.
+    - **Problem:** "where date bugs live", "the riskiest code", and "the layer meant to be simplest" are subjective.
+    - **Recommendation:** State the concrete risk: hand-written days-in-month and leap-year rules with no library tests.
+- S7-40: 🟢 **Nit · "No large dependency" and "a close call" are unquantified** (`style`). *Scope:* Alternative E.
+    - **Recommendation:** Quantify the trade-off (clap's compile time or dependency count against the estimated parser and test size), or remove the aside.
+- S7-41: 🟢 **Nit · Marker-rule sentence is inaccurate** (`style`). *Scope:* CLI Output.
+    - **Problem:** "A check-in today changes nothing…" is false when the current streak is 0.
+    - **Recommendation:** "The marker is not shown when today is checked or when the current streak is 0."
+- S7-42: 🟢 **Nit · "Ends the command quietly" is vague** (`style`). *Scope:* CLI Output.
+    - **Recommendation:** Specify "with no stderr output and exit 0."
+- S7-43: 🟢 **Nit · Commands that can write are labelled "read-only"** (`style`). *Scope:* NFR Data integrity.
+    - **Recommendation:** "Commands that change nothing (`status` and no-op `add`, `check`, `uncheck`) never write the file."
+- S7-44: 🟢 **Nit · Unverifiable self-assessment** (`style`). *Scope:* Additional Resources, first bullet.
+    - **Recommendation:** Keep only "Listed for provenance only."
+- S7-45: 🟢 **Nit · "The baseline the tool must beat" is vague** (`style`). *Scope:* Additional Resources, last bullet.
+    - **Recommendation:** Use "the baseline for comparison", or name the criteria: clear rules, data safety, and undo.
+- S7-46: 🟢 **Nit · Unsupported justification for having no coverage target** (`style`). *Scope:* Verification Plan, Test Coverage Requirement.
+    - **Recommendation:** Cite the `CLAUDE.md` lesson "Tests can mirror bugs", or drop the justification.
+- S7-47: 🟢 **Nit · Opaque rationale in File 2 "Why"** (`style`).
+    - **Recommendation:** "A gate that skips the analyzer would report a passing boundary check that never ran."
+- S7-48: 🟢 **Nit · Inconsistent terminology** (`style`). *Scope:* throughout.
+    - **Problem:** Three sets of terms are used interchangeably:
+      - The user is "the person", "someone who travels", and "users".
+      - The serde structs are "serde DTOs" and "data-transfer structs".
+      - The record is a "check-in" in prose and `checkins` in JSON.
+    - **Recommendation:** Pick one term for the user and one name for the structs. Note once that `checkins` is the JSON field name.
+
+## Stage 8: Intermediate zoom out
+
+Personas: `zoom_out` (standard `zoom-out-standard`); synthesized by `synthesizer`.
+
+- S8-1: **Major — Assumption 1 / Open Question 3 / Order of work step 1 (`zoom_out`):** The whole design depends on architecture practice being a project goal. The document itself says that otherwise "this design should not be built." No step in the order of work confirms this with the owner, and step 1 goes straight to scaffold analysis. Add a step 0, "owner confirms Question 3." Without that answer, the YAGNI objection the document raises against itself stays unresolved, and all later work may be wasted.
+- S8-2: **Major — Ports / `StoreError` (`path: PathBuf`, `NotFound`, `MissingParentDirectory`), use-case result `Added { created_file: Option<PathBuf> }`, and the `NotFound` mapping in `Habits::add` (`zoom_out`):** This contradicts `src/ports/mod.rs`: "a port that mentions a database, a URL, or a file path has already leaked." File paths, missing-parent-directory errors and "will create this file" now cross the port into the use-case result.
+    - The default-versus-override policy belongs to the store. It is currently split three ways: the adapter's `is_default` flag, the `NotFound` exception in `Habits::add`, and the note printed by the CLI.
+    - Recommendation: keep the path inside the adapter error's `Display`, or use an opaque location string. Express "a fresh store may be created" as a store-level capability that only `add` uses, such as `load_or_create` or `load(create_if_missing: bool)`. The use case then never sees a path.
+- S8-3: **Major — JSON file store "Write" steps 4–5 (`.<filename>.<pid>.tmp`, mode `0600`, `sync_all`, rename, delete temp on failure) (`zoom_out`):** These steps rebuild by hand what `tempfile` already provides, and `tempfile` is already in the plan as a dev dependency.
+    - `tempfile::NamedTempFile::new_in(dir)` creates the file with mode `0600` on Unix and removes it on drop.
+    - `persist(target)` performs the same-directory rename.
+    - Recommendation: make `tempfile` a runtime dependency. The pid-based naming, the manual cleanup, and part of the README caveat about leftover `.tmp` files then go away.
+- S8-4: **Major — `scripts/gate.sh` step 5 (fail unless each required test in the Verification Plan appears as `... ok`) (`zoom_out`):** This creates a second hand-maintained list of test names, kept in both the script and the design. It goes stale on every rename. It is the "second source of truth" anti-pattern the document itself cites from `CLAUDE.md`.
+    - The vacuous-gate lesson only needs a non-zero passed count, which step 4 already checks.
+    - Recommendation: drop the per-name check, or at most assert a minimum test count per test binary.
+- S8-5: **Major — Open Question 4 / Order of work step 1 ("If the analyzer allows `chrono` in `domain/`, bring Alternative A back to the owner before continuing") (`zoom_out`):** `CLAUDE.md` File Organization already says `domain/` is "Pure business logic, zero external deps." Whether the analyzer enforces that rule does not change it.
+    - Keeping a conditional redesign branch at step 1 invites churn on the design's central type.
+    - Recommendation: treat the question as answered by the repo docs and remove the branch.
+- S8-6: **Major — JSON file store "Read" steps 3–5 (generic `Value` parse, then a version-probe struct, then a full DTO parse with a custom duplicate-rejecting map deserializer) (`zoom_out`):** The file is parsed three times, and the first pass is redundant.
+    - The probe in step 4 already fails on syntax errors, and `serde_json` errors carry line and column.
+    - The probe also already fails on a non-object top level, with a type error.
+    - Recommendation: collapse the read to probe plus full parse, and wrap the error messages.
+    - Rows 2 and 3 of the version table produce the same message. Merge them into one rule: "`as_u64()` is `None` → `Malformed`."
+- S8-7: **Major — Altitude drops into implementation detail throughout the Technical Plan and file list (`zoom_out`):** Examples:
+    - The Date conversion section gives the `719_163` epoch constant, the `checked_add().and_then(...)` chain, byte-position parsing rules, and the `i32` range argument.
+    - The `streaks` section describes the `longest` / `current` loop algorithm.
+    - `HabitBook` lists method return shapes (`names()`, `find()`).
+    - File 4 gives the exact `run` signature with `&mut dyn Write`.
+    - File 5 gives the literal `main.rs` body.
+    - File 16 gives struct lifetime parameters.
+    This detail belongs in code. It inflates the document to 27 file entries and makes it brittle, because any adjustment during implementation makes the design "wrong." Recommendation: keep the interfaces and rules ("consecutive = differ by 1", the grace rule, strict `YYYY-MM-DD`) and drop the formulas and loop descriptions.
+- S8-8: **Nit — Date conversion: the `DateText::format` "`day <n>`" fallback, the `Option` from `naive_from_day`, and test `date_codec_formats_out_of_range_day` (`zoom_out`):** This code handles an input that cannot occur.
+    - Every stored `Day` comes from `DateText::parse` (years 0000–9999) or from `Clock::today`.
+    - The out-of-range case can only come from `pred()` at `chrono`'s lower bound, around 262,000 BC, and the formatting path never sees it.
+    - Recommendation: make formatting infallible for the values the tool actually produces, and drop the fallback and its test.
+- S8-9: **Nit — `DateText` port (Ports, file 14; Alternative H) (`zoom_out`):** A pure, I/O-free conversion is modeled as a trait-object port, mainly to satisfy rule 6. It works, but no boundary sits behind it.
+    - Recommendation: state this trade-off explicitly in the ADR so later readers don't copy the pattern for every shared helper.
+    - The ADR could also note that a plain value-level function in `ports/` would only be possible if `chrono` were allowed there. Since it is not, the port is the least-bad option.
+- S8-10: **Nit — Open Questions 5 and 6, marked "resolved in this draft" (`zoom_out`):** Resolved items are not open questions. Move them into Assumptions or the Composition root section, which shortens the list of decisions the owner must review.
+
+## Stage 9: Implementation readiness
+
+Personas: `implementation_readiness` (standard `implementation-readiness-standard`), `codebase_details` (standard `implementation-readiness-standard`), `style`; synthesized by `synthesizer`.
+
+- S9-1: **Major: the version probe misclassifies `null`.** Raised by `implementation_readiness` and `codebase_details`. Scope: Read step 4, the version mapping table, and files 20 and 24.
+      - The probe is `{ version: Option<serde_json::Value> }`. serde deserializes JSON `null` into `Option<T>` as `None`, which is the same result as a missing field.
+      - So `"version": null` reaches the `missing "version"` row, but the table puts it in the "must be a non-negative integer" row. Exit codes are unaffected, but the documented message is wrong.
+      - Pick one probe shape:
+        - `#[serde(default, deserialize_with = …)] version: Option<Option<Value>>`;
+        - `#[serde(default)] version: Value` with a presence flag or check;
+        - reading presence from the generic `Value` already parsed in step 3.
+      - Add `null` as an explicit case to the `version_mapping` test in file 24. That test currently covers only `"1"`, `1.0`, `-1`, missing, `0` and `2`.
+- S9-2: **Major: the `StoreErrorKind` payload types are undefined.** Raised by `implementation_readiness` and `codebase_details`. Scope: the Ports section and file 12.
+      - `Unreadable(io detail)`, `Malformed(detail)` and `WriteFailed(io detail)` have no concrete types.
+      - The plan does not choose between `io::Error`, `String` and `io::ErrorKind`. `io::Error` is neither `Clone` nor `PartialEq`, which makes test assertions awkward.
+      - CUJ 7 must print the symlink target, and a dangling symlink involves no I/O error. `Unreadable(io detail)` has nowhere to carry the target. Add either a `DanglingSymlink { target }` kind or a target field on `Unreadable`.
+      - The plan does not say whether the target is printed raw from `read_link` or resolved against the link's directory. CUJ 7 shows an absolute path.
+      - Define the enum literally, with field types.
+- S9-3: **Major: the error message text is inconsistent, incomplete, and has no owner.** Raised by `implementation_readiness` and `codebase_details`. Scope: CLI "Errors", CUJ 7, CUJ 8, and file 12 (`Display` on `StoreError`) versus file 19.
+      - The stated form is `error: data file <path>: <reason>` plus a closing sentence. CUJ 7 and CUJ 8 show `data file <path> is a symlink…` and `data file <path> does not exist…`, with no `error:` prefix and no `: ` after the path.
+      - Reason strings exist only for `NotFound` and the dangling symlink. None are given for:
+        - `Unreadable` (generic I/O);
+        - `UnknownVersion(n)`;
+        - `MissingParentDirectory`;
+        - `WriteFailed`;
+        - the case-collision `Malformed` (step 7);
+        - the bad-name `Malformed`.
+      - File 12 puts `Display` in `ports/`, but file 19 says the CLI "formats … errors". The `NotFound` text names `--file`, `HABIT_STREAK_FILE` and `add`, which is CLI vocabulary inside a port.
+      - Give one canonical template per kind and state which layer renders it.
+- S9-4: **Major: CLI success and user-error output text is unspecified.** Raised by `implementation_readiness` and `codebase_details`. Scope: CUJs 1–4, the Use cases table, CLI "Output", and file 19.
+      - No exact wording or stream (stdout or stderr) is given for:
+        - `Added` and `AlreadyExists`;
+        - `Recorded` and `AlreadyRecorded`;
+        - `Removed(day)` and `NotRecorded(day)`;
+        - `remove`'s `Removed`;
+        - `InvalidName(Empty | ControlCharacter)`;
+        - `FutureDate { date, today }`;
+        - the `-`-prefix help note.
+      - CUJ 4's "prints that the check-in was removed" is not a specification.
+      - `UnknownHabit` with zero known habits is undefined: does it print `known habits: ` followed by nothing?
+      - Exact text is currently given only for `UnknownHabit` (CUJ 5), `NotFound`, the dangling symlink, `NoDataPath`, the empty-status line, the `created_file` note, and invalid `--date`. List every other string literally.
+- S9-5: **Major: the `status` line format is not fully specified.** Raised by `implementation_readiness`. Scope: CLI "Output".
+      - The example fixes name padding to the longest name. It leaves these open:
+        - the separator width after the name;
+        - whether the `current N` and `longest N` numbers are padded or aligned across digit counts;
+        - the spacing before `(not checked today)`.
+      - `add_check_status_flow` asserts on this output, so the test author would have to guess. Give a format string, e.g. `"{name:<w$}   current {c}   longest {l}"`, and say whether numbers are padded.
+- S9-6: **Major: the outcome enum names, shapes and signatures are unspecified.** Raised by `implementation_readiness`, `codebase_details` and `style` (Nit). Scope: Domain `HabitBook`, the Use cases table, and files 9, 15 and 16.
+      - No type names are given (e.g. `AddOutcome`, `CheckOutcome`), yet file 15 re-exports "the outcome enums" without naming them.
+      - `Removed` appears twice, as `Removed(day)` for `uncheck` and as bare `Removed` for `remove`. These need separate enums with distinct names, e.g. `CheckInRemoved` and `HabitRemoved`, so prose and tests are unambiguous.
+      - `remove`'s result is listed only as `Removed`, so it could be a one-variant enum or `()`. Its unknown-name path appears only implicitly, through Assumption 6.
+      - `HabitBook::check`, `uncheck` and `find` have no stated parameter type (`HabitName` or key).
+      - The plan does not say what `check` and `uncheck` return for a missing habit: panic, `Option`, or `Result`.
+      - Specify every type name and signature.
+- S9-7: **Major: the validation order in use cases is undefined.** Raised by `implementation_readiness`. Scope: the Use cases section.
+      - The plan says only "load first". It does not say:
+        - whether `check reed --date 2099-01-01` gives `UnknownHabit` or `FutureDate`;
+        - whether an invalid name is detected before or after the unknown-habit check;
+        - whether `uncheck` accepts a future date.
+      - Assumption 7 says hand-edited future dates can exist in the file. If `uncheck` rejects future dates, the only way to remove one is another hand edit.
+      - State the check order and the `uncheck` future-date rule.
+- S9-8: **Major: the order of work leaves the build red across steps 5–6, and file groups are undefined.** Raised by `implementation_readiness` and `codebase_details`. Scope: Order of work, steps 3–6, against the Standard's "each phase must leave the codebase buildable".
+      - Step 5 writes all tests against signatures that do not exist yet. Step 6 then implements five layers with no intermediate checkpoint.
+      - So `cargo build --all-targets` and clippy fail from step 5 until the end of step 6.
+      - Fix it in one of two ways:
+        - split the work per layer: types, then tests, then implementation, then build;
+        - add an explicit step that declares all types and signatures with `todo!()` bodies, so the tests compile while still being written before the logic.
+      - Step 3's "one `hexa loop task add` entry per file group" refers to file groups that are never defined.
+- S9-9: **Major: the gate cannot enforce the required test names.** Raised by `implementation_readiness` and `codebase_details`. Scope: file 2 step 5, the Verification Plan, files 7–10 and file 25.
+      - The Verification Plan requires "every required test name in files 4 and 22 to 26, plus the domain unit tests".
+      - File 25 lists coverage areas, not test names. Files 7–10 give no test names, and file 10's cases are unnamed descriptions. So `gate.sh` cannot embed a name list.
+      - The match rule is undefined. Cargo prints module-qualified names (`test tests::flag_wins_over_env ... ok`), so the plan must choose between substring, suffix and path-qualified matching.
+      - The implementer would have to invent names and the matching rule. Give the remaining names and the exact grep pattern.
+- S9-10: **Major: gate step 6 (`hexa analyze .`) has no pass criterion.** Raised by `implementation_readiness`. Scope: gate step 6 and Order of work step 1.
+      - The plan does not say whether failure means a non-zero exit, any reported item, or a grade below a floor.
+      - Step 1 says "record the grade", but no floor is defined anywhere.
+      - If the tool exits 0 even when it reports violations, the step is vacuous, which is the failure the CLAUDE.md lessons warn about.
+      - Specify the criterion, e.g. "exit status non-zero, or output contains a violation line matching X".
+- S9-11: **Major: integration tests import adapters directly, and module visibility is unstated.** Raised by `implementation_readiness` and `codebase_details`. Scope: files 18 and 21–24.
+      - `tests/streak_oracle.rs`, `tests/date_codec.rs` and `tests/json_store.rs` import `ChronoCalendar`, `day_from_naive` and `JsonFileStore` from `habit_streak::adapters::secondary::…`.
+      - File 18 says only "declare `json_file_store` and `chrono_calendar`". It does not require `pub mod`.
+      - CLAUDE.md rule 7 says only the composition root imports an adapter. The plan does not say whether `hexa analyze .` scans `tests/`; if it does, the gate fails unexpectedly.
+      - Step 1 should check this alongside Open Question 4.
+- S9-12: **Major: the streak oracle may trip `test-must-not-redefine-its-subject`.** Raised by `codebase_details`. Scope: file 22, Order of work step 7, the gate (file 2 step 6), and the CLAUDE.md lesson "Tests can mirror bugs".
+      - The oracle deliberately re-implements the streak rule inside a test.
+      - `.hexa/ADR-rules.toml` includes `test-must-not-redefine-its-subject`, and step 7 requires clearing every analyzer item.
+      - The plan does not say whether the rule fires on the oracle or how to satisfy it, for example through naming or placement.
+- S9-13: **Major: kept doc comments contradict the design.** Raised by `codebase_details` (Major) and `implementation_readiness` (Nit). Scope: the Scaffold-removal table, the Ports section, file 12, and `src/ports/mod.rs`.
+      - The kept rule-2 comment in `src/ports/mod.rs` says "a port that mentions … a file path has already leaked".
+      - The `HabitStore` contract mentions paths throughout:
+        - `StoreError { path: PathBuf }`;
+        - `MissingParentDirectory`;
+        - "default path" versus "override path" semantics;
+        - `created_file: Option<PathBuf>` in a use-case result.
+      - The plan does not say whether to reword the comment or reshape the port, or whether the analyzer flags this.
+      - The kept comment in `src/adapters/secondary/mod.rs` calls the secondary-adapter rule "Rule 4", but CLAUDE.md numbers it rule 5.
+- S9-14: **Major: the `lib.rs` doc comment is both kept and rewritten.** Raised by `codebase_details`. Scope: the Scaffold-removal row for `src/lib.rs` versus file 4.
+      - The Scaffold-removal row keeps the "composition root" doc comment and its layer diagram. File 4 says to rewrite the doc comment.
+      - The existing diagram shows only `adapters (secondary)`, and the header line "a hexagonal skeleton that runs" describes the deleted scaffold.
+      - Keeping either breaks the CLAUDE.md lesson "Documentation about a deleted feature never fails". State which text survives.
+- S9-15: **Major: the `Day` derive list does not compile.** Raised by `codebase_details`. Scope: file 7.
+      - `Copy, Eq, Ord, Hash, Debug` omits the required supertraits: `Copy` needs `Clone`, `Eq` needs `PartialEq`, and `Ord` needs `PartialOrd`.
+      - Use `Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug`.
+- S9-16: **Major: symlink resolution on write is underspecified.** Raised by `codebase_details` (Major) and `implementation_readiness` (Nit). Scope: Write step 1 and file 20.
+      - "Follow it to the real file" does not choose between `fs::canonicalize` and `fs::read_link`.
+      - `canonicalize` fails when the file does not exist. That happens on the first-run default path and on `add` at a new override path.
+      - `read_link` returns relative targets that must be resolved against the link's directory.
+      - Specify that resolution happens only when `symlink_metadata` reports a symlink, and how chained or relative links are handled: `canonicalize` or a `read_link` loop.
+- S9-17: **Major: file and directory permissions on rewrite contradict the stated policy.** Raised by `codebase_details` (Major) and `implementation_readiness` (Nit). Scope: Write step 4 versus NFR "Security & Privacy".
+      - Every save creates a `0600` temp file and renames it over the target. A pre-existing `0644` file, or a synced file with other permissions, silently becomes `0600`. The NFR says only "new files" are `0600`.
+      - State whether an existing file's mode is preserved.
+      - State the mode for a directory created at the default path.
+      - Specify temp-file creation: whether to use `create_new`, and how a stale `.<filename>.<pid>.tmp` with the same pid is handled.
+- S9-18: **Major: the architecture-practice point is repeated four times.** Raised by `style`. Scope: Overview paragraph 3, Assumption 1, Open Question 3, and Additional Resources.
+      - The point "architecture practice is a goal; otherwise use a text file or `habitctl`" appears in all four places. State it once in Assumption 1 and cross-reference it elsewhere.
+      - Shorten "This is a stated goal of the project and is not only a means to an end" to "This is a stated project goal."
+- S9-19: **Major: the "'Today' is the source of most bugs" claim is unsupported.** Raised by `style`. Scope: The Problem, and the File 13 Why ("'Today' causes most of the bugs").
+      - The claim is unmeasured and unsourced. Rephrase it as a scoped fact: "The current streak depends on the local date, which time zones, late-night check-ins, and wrong clocks can shift."
+- S9-20: **Major: the `chrono` "longest maintenance record" claim is unsupported.** Raised by `style`. Scope: Assumption 3.
+      - Cite the basis for the comparison, or replace it with a factual reason such as "widely used and provides `Local::now().date_naive()`".
+- S9-21: **Major: files 9 and 20 both claim to own all the rules.** Raised by `style`. Scope: the File 9 Why ("Keeps every data rule in one pure place") versus the File 20 Why ("All the data-safety rules … live here").
+      - Neither claim is accurate. The duplicate-key, version and symlink rules live in the store. The case-collision and merge rules live in the domain.
+      - Name what each file owns: "name-key and date-set invariants" for file 9, "file-level read/write safety" for file 20.
+      - Drop "pure" as jargon, or define it.
+- S9-22: **Major: the composition-root justification argues for the wrong target.** Raised by `style`. Scope: the Composition root section.
+      - The second reason given for the library target, that end-to-end tests run the binary, actually justifies the binary target.
+      - Rewrite it: "The library target lets integration tests link the code. The binary target is what the end-to-end tests run."
+- S9-23: **Major: the data-integrity NFR repeats itself and mislabels commands.** Raised by `style`. Scope: Non-Functional Requirements, Data integrity.
+      - "No write when nothing changed" is followed by a sentence that restates it ("Read-only commands … never write the file").
+      - That sentence also calls no-op `add`, `check` and `uncheck` "read-only commands", but they are write commands.
+      - Remove the sentence, or rephrase it as "`status` and no-op results never write the file."
+- S9-24: **Nit: `src/main.rs` exits without flushing.** Raised by `implementation_readiness`. Scope: file 5.
+      - `process::exit` runs no destructors, and both std locks are still held at that point.
+      - Specify that `run` flushes `out` and `err` before returning, ignoring `BrokenPipe`.
+- S9-25: **Nit: E2E fixture dates are unspecified.** Raised by `implementation_readiness`. Scope: file 26.
+      - `future_date_exits_1` and `backfill_and_uncheck` need dates relative to the real "today", but the plan does not say how the test obtains it or which offsets to use.
+      - Specify, for example, "today + 1 via `chrono::Local`" and "today − 3 … today − 1".
+- S9-26: **Nit: `Day::pred()` overflow at `i32::MIN` is unspecified.** Raised by `implementation_readiness` and `codebase_details`. Scope: file 7.
+      - As written it panics in debug builds and wraps in release builds. Choose saturating subtraction or `checked_sub`, and state the choice.
+- S9-27: **Nit: `JsonFileStore::new` is called but never defined.** Raised by `implementation_readiness` and `codebase_details`. Scope: file 4 step 3 versus file 20.
+      - File 4 calls `JsonFileStore::new(path, is_default, &dyn DateText)`, but file 20 does not specify the constructor.
+- S9-28: **Nit: file 27 `README.md` is marked "(Create or Modify)".** Raised by `implementation_readiness` and `codebase_details`. Scope: file 27.
+      - The scaffold README contents are not shown, so the counter-example text the plan says to remove cannot be verified.
+      - State whether the file exists, and mark it as a single action.
+- S9-29: **Nit: the `run` signature differs between the layer map and the plan.** Raised by `codebase_details`. Scope: the Layer map versus the Composition root and file 4.
+      - The layer map shows `run(args, env, io)` and `execute(…, io)`. The Composition root and file 4 use `run(args, env, out, err)` and `execute(…, out, err)`. Make the diagram match the signatures.
+- S9-30: **Nit: the store DTOs are underspecified.** Raised by `codebase_details`. Scope: Read step 5 and file 20.
+      - The type of `FileV1.version` is not given.
+      - It is not stated whether `HabitDto.checkins` is required, so `"Run": {}` could be either `Malformed` or empty.
+      - The write-path serialization struct is not named, nor whether it reuses `FileV1` alongside the custom deserializer.
+      - `HabitBook::entries()` has no return type.
+- S9-31: **Nit: data-path edge cases are undocumented.** Raised by `codebase_details`. Scope: Data path rules and Write step 2.
+      - `--file ""` is not handled, although an empty `HABIT_STREAK_FILE` is.
+      - A relative `$XDG_DATA_HOME` is not addressed; the XDG spec says to ignore it.
+      - "Create it" does not say whether parent-directory creation is recursive. `create_dir_all` is needed when `~/.local/share` is missing, as in CUJ 1.
+- S9-32: **Nit: some `clap` configuration is unstated.** Raised by `codebase_details`. Scope: CLI "Parsing" and file 19.
+      - It is not stated whether `#[command(version)]` is enabled, which the "version request exits 0" behavior requires.
+      - Bare `habit-streak` with no subcommand is unclassified. `clap` reports it as either `DisplayHelpOnMissingArgumentOrSubcommand` or `MissingSubcommand`, so exit code 0 versus 1 is undecided.
+- S9-33: **Nit: "quickly" is unmeasurable.** Raised by `style`. Scope: The Problem ("wants to answer two questions quickly"). Drop the word or give a bound.
+- S9-34: **Nit: "weak points" is the wrong term.** Raised by `style`. Scope: The Problem ("The weak points of this problem"). Use "Risks" or "Constraints".
+- S9-35: **Nit: "clear streak rules" is subjective.** Raised by `style`. Scope: The Problem ("The tool earns its place through clear streak rules"). Use "documented streak rules", which is verifiable.
+- S9-36: **Nit: Alternative B generalizes without support.** Raised by `style`. Scope: Alternative B ("which is where date bugs live"; "adds the riskiest code").
+      - State the fact instead: "requires hand-written days-in-month and leap-year logic that `chrono` already provides."
+- S9-37: **Nit: Alternative E uses unquantified claims and a mismatched comparison.** Raised by `style`. Scope: Alternative E.
+      - "Faster compiles" is unquantified, and "This is a close call" is an opinion.
+      - "The help and error behavior is more test code than the remapping `clap` needs" compares a behavior to an amount of code. Rewrite it as "Testing hand-written help and error output needs more code than testing `clap`'s exit-code remapping."
+- S9-38: **Nit: Alternative C's "costs nothing measurable" is unsupported.** Raised by `style`. Scope: Alternative C.
+      - State the bound instead: "about 365 dates per habit per year; computation is negligible against process start-up."
+- S9-39: **Nit: the Assumptions preamble is process narration.** Raised by `style`. Scope: Assumptions preamble ("This draft was written with no clarification turns. The Goldfish reviewers run separately.").
+      - It carries no design content, and "clarification turns" is tool jargon. Remove it or move it to the provenance comment.
+- S9-40: **Nit: Assumption 9 uses a vague metaphor.** Raised by `style`. Scope: Assumption 9 ("the history has already split in two"). Say it literally: "after a second data file already exists."
+- S9-41: **Nit: resolved items sit under Open Questions.** Raised by `style`. Scope: Open Questions 5 and 6.
+      - Both are marked "resolved in this draft", which contradicts the heading.
+      - Question 5 also contains procedural instructions ("Stop and report… Do not redesign…") that belong in Order of work step 1.
+      - Move both items to Assumptions, or into the step itself.
+- S9-42: **Nit: the `chrono`-in-domain rationale and the "run `hexa analyze .`" instruction are repeated three to four times.** Raised by `style`. Scope: Open Question 4, Assumption 2, Alternative A, and Order of work step 1.
+      - Keep the rationale in Alternative A and the instruction in step 1. Cross-reference them elsewhere.
+- S9-43: **Nit: a sentence in CLI "Output" is awkward and imprecise.** Raised by `style`. Scope: CLI "Output" ("In every other case, a check-in today changes nothing the person needs to act on").
+      - Suggested: "Otherwise no marker is shown: either today is checked, or the current streak is 0."
+- S9-44: **Nit: the Windows Non-Goal is informal and duplicates Assumption 8.** Raised by `style`. Scope: Non-Goals ("Windows support beyond 'it may work'").
+      - Suggested: "Windows support; it is untested in v1 (Assumption 8)."
+- S9-45: **Nit: the Test Coverage rationale is stated as fact without support.** Raised by `style`. Scope: Verification Plan, Test Coverage ("A percentage target would reward tests written from the code").
+      - Rephrase it as the rationale it is: "A percentage target does not distinguish tests written from the rules from tests written from the code."
+- S9-46: **Nit: "beat" is informal and unmeasurable.** Raised by `style`. Scope: Additional Resources ("as the baseline the tool must beat").
+      - Suggested: "as the existing alternatives this design is compared against."
+
