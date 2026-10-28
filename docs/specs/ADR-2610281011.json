@@ -13,6 +13,10 @@
     "by": "gary (run by Claude on gary's instruction)",
     "sha256": "3733f70a30b53a6baecd89ccaee14094577efe610743dda592ea8c76ccad508f"
   },
+  "sealed": {
+    "hexa-cli/tests/adr_2610281011_spec.rs": "ff23edf13300121d4bf9c050c2ebdeb50ebfb3d080287fe6de870fb4d1f10a9c"
+  },
+  "red": "4089337",
   "specs": [
     {
       "id": "S01",
@@ -23,7 +27,8 @@
       "description": "The loop's stages are design, decide, gate, build, harden, done, in that order",
       "given": "nothing",
       "when": "loop_stages() is called",
-      "then": "it returns [Design, Decide, Gate, Build, Harden, Done], in exactly that order, and stage_word gives \"design\", \"decide\", \"gate\", \"build\", \"harden\" and \"done\" for them"
+      "then": "it returns [Design, Decide, Gate, Build, Harden, Done], in exactly that order, and stage_word gives \"design\", \"decide\", \"gate\", \"build\", \"harden\" and \"done\" for them",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s01_loop_stages_in_order"
     },
     {
       "id": "S02",
@@ -34,7 +39,8 @@
       "description": "parse_stage reads the design stage",
       "given": "the word \"design\"",
       "when": "parse_stage(\"design\") is called",
-      "then": "it returns Some(LoopStage::Design)"
+      "then": "it returns Some(LoopStage::Design)",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s02_parse_stage_design"
     },
     {
       "id": "S03",
@@ -45,7 +51,8 @@
       "description": "parse_stage refuses a word that names no stage",
       "given": "the words \"\", \"brainstorm\", \"review\" and \"designing\"",
       "when": "parse_stage is called on each",
-      "then": "each returns None"
+      "then": "each returns None",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s03_parse_stage_refuses_unknown_words"
     },
     {
       "id": "S04",
@@ -56,7 +63,8 @@
       "description": "stage_word and parse_stage round-trip for every stage, and the stage order matches the enum order",
       "given": "any stage s in loop_stages()",
       "when": "stage_word(s) is parsed back with parse_stage",
-      "then": "parse_stage(stage_word(s)) == Some(s). loop_stages() is strictly increasing under the LoopStage ordering. No two stages share a word."
+      "then": "parse_stage(stage_word(s)) == Some(s). loop_stages() is strictly increasing under the LoopStage ordering. No two stages share a word.",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s04_stage_words_round_trip"
     },
     {
       "id": "S05",
@@ -67,7 +75,8 @@
       "description": "hexa loop design records a draft inside the project and sets the stage to design",
       "given": "a project with a file docs/design/idea.md and a loop at any stage",
       "when": "`hexa loop design docs/design/idea.md` runs",
-      "then": "the loop records docs/design/idea.md as its draft, its stage reads `design`, and the command exits successfully"
+      "then": "the loop records docs/design/idea.md as its draft, its stage reads `design`, and the command exits successfully",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s05_loop_design_records_draft"
     },
     {
       "id": "S06",
@@ -78,7 +87,8 @@
       "description": "hexa loop design refuses a draft that is not a file inside the project",
       "given": "a project with no file ghost.md, a file that exists outside the project, and a file docs/designs/d.md inside it",
       "when": "`hexa loop design ghost.md`, `hexa loop design ../outside.md` and `hexa loop design /etc/hosts` run",
-      "then": "each of the three exits with an error whose message names the path and says it is not a file inside the project, records no draft, and leaves the loop's stage unchanged; `hexa loop design docs/designs/d.md` then succeeds and records that draft"
+      "then": "each of the three exits with an error whose message names the path and says it is not a file inside the project, records no draft, and leaves the loop's stage unchanged; `hexa loop design docs/designs/d.md` then succeeds and records that draft",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s06_loop_design_refuses_outside_or_missing"
     },
     {
       "id": "S07",
@@ -89,7 +99,8 @@
       "description": "Design is optional: a loop with no design recorded starts at decide",
       "given": "a fresh loop with no draft recorded",
       "when": "the loop's stage is read",
-      "then": "it is `decide`, not `design`"
+      "then": "it is `decide`, not `design`",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s07_fresh_loop_starts_at_decide"
     },
     {
       "id": "S08",
@@ -100,7 +111,8 @@
       "description": "reviewed_sha reads back the recorded draft hash",
       "given": "a report whose text contains the line `Draft sha256: ab12cd34` among other content",
       "when": "reviewed_sha(report) is called",
-      "then": "it returns Some(\"ab12cd34\")"
+      "then": "it returns Some(\"ab12cd34\")",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s08_reviewed_sha_reads_hash"
     },
     {
       "id": "S09",
@@ -111,7 +123,8 @@
       "description": "reviewed_sha finds nothing in a report with no hash line",
       "given": "a report with stage sections but no `Draft sha256:` line",
       "when": "reviewed_sha(report) is called",
-      "then": "it returns None"
+      "then": "it returns None",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s09_reviewed_sha_none_without_line"
     },
     {
       "id": "S10",
@@ -122,7 +135,8 @@
       "description": "review_covers accepts a report with the matching hash and sections for stages 5 to 8",
       "given": "a report with `Draft sha256: H` and a section for each of stages 5, 6, 7 and 8",
       "when": "review_covers(report, \"H\") is called, and reviewed_stages(report) is called",
-      "then": "review_covers returns Ok(()), and reviewed_stages returns [ZoomOut, Comprehension, Critic, IntermediateZoomOut] in report order"
+      "then": "review_covers returns Ok(()), and reviewed_stages returns [ZoomOut, Comprehension, Critic, IntermediateZoomOut] in report order",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s10_review_covers_ok"
     },
     {
       "id": "S11",
@@ -133,7 +147,8 @@
       "description": "review_covers refuses a report recorded against a different hash",
       "given": "a report with `Draft sha256: H1` and sections for stages 5 to 8",
       "when": "review_covers(report, \"H2\") is called",
-      "then": "it returns Err, and the message says the hash differs"
+      "then": "it returns Err, and the message says the hash differs",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s11_review_covers_refuses_other_hash"
     },
     {
       "id": "S12",
@@ -144,7 +159,8 @@
       "description": "review_covers refuses a report with no hash",
       "given": "a report with sections for stages 5 to 8 and no `Draft sha256:` line",
       "when": "review_covers(report, \"H\") is called",
-      "then": "it returns Err, and the message says the hash is missing"
+      "then": "it returns Err, and the message says the hash is missing",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s12_review_covers_refuses_missing_hash"
     },
     {
       "id": "S13",
@@ -155,7 +171,8 @@
       "description": "review_covers names the missing stage numbers",
       "given": "a report with `Draft sha256: H` and sections for stages 5 and 7 only",
       "when": "review_covers(report, \"H\") is called",
-      "then": "it returns Err, and the message names stages 6 and 8"
+      "then": "it returns Err, and the message names stages 6 and 8",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s13_review_covers_names_missing_stages"
     },
     {
       "id": "S14",
@@ -166,7 +183,8 @@
       "description": "A stage-9-only report does not cover a draft",
       "given": "a report with `Draft sha256: H` and a section for stage 9 only",
       "when": "review_covers(report, \"H\") is called",
-      "then": "it returns Err naming stages 5, 6, 7 and 8"
+      "then": "it returns Err naming stages 5, 6, 7 and 8",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s14_stage_nine_only_does_not_cover"
     },
     {
       "id": "S15",
@@ -177,7 +195,8 @@
       "description": "review_covers is Ok exactly when the hash matches and stages 5 to 8 are all present",
       "given": "any report and any draft_sha",
       "when": "review_covers(report, draft_sha) is called",
-      "then": "it returns Ok if and only if reviewed_sha(report) == Some(draft_sha) and reviewed_stages(report) contains each of stages 5, 6, 7 and 8. An extra stage 9 section never turns Ok into Err."
+      "then": "it returns Ok if and only if reviewed_sha(report) == Some(draft_sha) and reviewed_stages(report) contains each of stages 5, 6, 7 and 8. An extra stage 9 section never turns Ok into Err.",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s15_review_covers_property"
     },
     {
       "id": "S16",
@@ -188,7 +207,8 @@
       "description": "hexa design review records the hash of the draft bytes it read",
       "given": "a draft file whose bytes hash, under sha256, to H",
       "when": "`hexa design review <draft>` writes its report",
-      "then": "the report contains the line `Draft sha256: H`"
+      "then": "the report contains the line `Draft sha256: H`",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s16_design_review_records_draft_hash"
     },
     {
       "id": "S17",
@@ -199,7 +219,8 @@
       "description": "A reviewed, committed draft becomes a proposed ADR that cites it",
       "given": "a draft that git tracks with no uncommitted changes, and a report in the artifact directory that passes review_covers against the draft's current sha256",
       "when": "`hexa design adr <draft>` runs",
-      "then": "it writes exactly one new file, docs/adrs/ADR-<next id>-<slug>.md, containing `**Status:** Proposed`, numbered decisions under `## Decision`, and the line `**Design:** <draft>`. The loop records that ADR and its stage is `decide`. No spec is written, and the ADR is not accepted."
+      "then": "it writes exactly one new file, docs/adrs/ADR-<next id>-<slug>.md, containing `**Status:** Proposed`, numbered decisions under `## Decision`, and the line `**Design:** <draft>`. The loop records that ADR and its stage is `decide`. No spec is written, and the ADR is not accepted.",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s17_design_adr_writes_proposed_adr"
     },
     {
       "id": "S18",
@@ -210,7 +231,8 @@
       "description": "hexa design adr refuses a draft with uncommitted changes",
       "given": "a covered draft that has uncommitted changes",
       "when": "`hexa design adr <draft>` runs",
-      "then": "it exits with an error, writes nothing under docs/adrs/, and leaves the loop unchanged"
+      "then": "it exits with an error, writes nothing under docs/adrs/, and leaves the loop unchanged",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s18_design_adr_refuses_uncommitted"
     },
     {
       "id": "S19",
@@ -221,7 +243,8 @@
       "description": "hexa design adr refuses a draft that git does not track",
       "given": "an untracked draft",
       "when": "`hexa design adr <draft>` runs",
-      "then": "it exits with an error whose message says the draft is not tracked by git, and writes no ADR"
+      "then": "it exits with an error whose message says the draft is not tracked by git, and writes no ADR",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s19_design_adr_refuses_untracked"
     },
     {
       "id": "S20",
@@ -232,7 +255,8 @@
       "description": "A draft revised after its review must be reviewed again",
       "given": "a committed draft whose only review report records the sha256 of an earlier revision, as after `hexa design resolve`",
       "when": "`hexa design adr <draft>` runs",
-      "then": "it exits with an error saying no review covers the draft's current bytes, writes no ADR, and makes no completion"
+      "then": "it exits with an error saying no review covers the draft's current bytes, writes no ADR, and makes no completion",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s20_design_adr_refuses_stale_review"
     },
     {
       "id": "S21",
@@ -243,7 +267,8 @@
       "description": "No other hexa design command writes under docs/adrs/",
       "given": "a project whose docs/adrs/ holds a known set of files",
       "when": "`hexa design brainstorm`, `draft`, `review` and `resolve` each run",
-      "then": "docs/adrs/ holds exactly the same files with the same bytes afterwards"
+      "then": "docs/adrs/ holds exactly the same files with the same bytes afterwards",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s21_other_design_commands_leave_adrs_alone"
     },
     {
       "id": "S22",
@@ -254,7 +279,8 @@
       "description": "An ADR whose Design line resolves passes the doctor",
       "given": "an ADR with `**Design:** docs/design/idea.md`, where that file exists in the project",
       "when": "`hexa adr doctor` runs",
-      "then": "it reports no error for that ADR's design line; once docs/design/idea.md is deleted, the same run reports one error naming that ADR and that path"
+      "then": "it reports no error for that ADR's design line; once docs/design/idea.md is deleted, the same run reports one error naming that ADR and that path",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s22_adr_doctor_accepts_resolving_design"
     },
     {
       "id": "S23",
@@ -265,7 +291,8 @@
       "description": "hexa adr doctor reports a Design line that does not resolve",
       "given": "an ADR with `**Design:** docs/design/gone.md`, where no such file exists",
       "when": "`hexa adr doctor` runs",
-      "then": "it reports an error naming that ADR and the path docs/design/gone.md"
+      "then": "it reports an error naming that ADR and the path docs/design/gone.md",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s23_adr_doctor_reports_missing_design"
     },
     {
       "id": "S24",
@@ -276,7 +303,8 @@
       "description": "An ADR with no Design line is not an error",
       "given": "an otherwise valid ADR with no `**Design:**` line, and in the same ledger an ADR whose `**Design:**` line names a file that does not exist",
       "when": "`hexa adr doctor` runs",
-      "then": "it reports an error for the second ADR's design line and no error about the first, which has no design"
+      "then": "it reports an error for the second ADR's design line and no error about the first, which has no design",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s24_adr_without_design_is_fine"
     },
     {
       "id": "S25",
@@ -287,7 +315,8 @@
       "description": "Each design state maps to its next action",
       "given": "draft d with sha H in four states: (a) no draft recorded; (b) no report covers H; (c) a report covers H and committed is false; (d) a report covers H and committed is true",
       "when": "next_design_action is called on each",
-      "then": "it returns (a) Nothing, (b) Review(d), (c) Commit(d) and (d) ToAdr(d)"
+      "then": "it returns (a) Nothing, (b) Review(d), (c) Commit(d) and (d) ToAdr(d)",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s25_design_states_map_to_actions"
     },
     {
       "id": "S26",
@@ -298,7 +327,8 @@
       "description": "A review of an earlier revision does not advance past Review, even when the draft is committed",
       "given": "a DesignState with draft d, draft_sha256 H2, committed true, and a single review that records H1 and has sections for stages 5 to 8",
       "when": "next_design_action(state) is called",
-      "then": "it returns Review(d), not ToAdr(d)"
+      "then": "it returns Review(d), not ToAdr(d)",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s26_stale_review_stays_at_review"
     },
     {
       "id": "S27",
@@ -309,7 +339,8 @@
       "description": "hexa go prints no design suggestion when no draft is recorded",
       "given": "a loop with no draft recorded",
       "when": "`hexa go` runs",
-      "then": "its output contains no `hexa design review`, `hexa design adr` or `git commit` suggestion; after `hexa loop design <draft>` records an existing, unreviewed draft, `hexa go` prints `hexa design review <draft>`"
+      "then": "its output contains no `hexa design review`, `hexa design adr` or `git commit` suggestion; after `hexa loop design <draft>` records an existing, unreviewed draft, `hexa go` prints `hexa design review <draft>`",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s27_go_without_draft_suggests_no_design"
     },
     {
       "id": "S28",
@@ -320,7 +351,8 @@
       "description": "hexa go prints the verb that matches the next action",
       "given": "recorded draft d in the Review, Commit and ToAdr states in turn",
       "when": "`hexa go` runs in each",
-      "then": "it prints `hexa design review d`, then `git commit d`, then `hexa design adr d`"
+      "then": "it prints `hexa design review d`, then `git commit d`, then `hexa design adr d`",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s28_go_prints_matching_verb"
     },
     {
       "id": "S29",
@@ -331,7 +363,8 @@
       "description": "The next action follows from coverage and commit state for every state",
       "given": "any DesignState",
       "when": "next_design_action(state) is called",
-      "then": "It returns Nothing if and only if draft is None. Otherwise it carries the draft path. It returns Review exactly when no review passes review_covers against draft_sha256 (or draft_sha256 is None). It returns Commit exactly when one does and committed is false, and ToAdr exactly when one does and committed is true."
+      "then": "It returns Nothing if and only if draft is None. Otherwise it carries the draft path. It returns Review exactly when no review passes review_covers against draft_sha256 (or draft_sha256 is None). It returns Commit exactly when one does and committed is false, and ToAdr exactly when one does and committed is true.",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s29_next_action_property"
     },
     {
       "id": "S30",
@@ -342,7 +375,8 @@
       "description": "docs_touched returns changed documents and documents that name changed paths, in docs order",
       "given": "docs [(\"a.md\", [\"src/x.rs\"]), (\"b.md\", [\"src/y.rs\"]), (\"c.md\", [])] and changed [\"c.md\", \"src/x.rs\"]",
       "when": "docs_touched(docs, changed) is called",
-      "then": "it returns [\"a.md\", \"c.md\"]"
+      "then": "it returns [\"a.md\", \"c.md\"]",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s30_docs_touched_example"
     },
     {
       "id": "S31",
@@ -353,7 +387,8 @@
       "description": "docs_touched returns nothing for a change that touches no document",
       "given": "docs [(\"a.md\", [\"src/x.rs\"])] and changed [\"src/z.rs\"]",
       "when": "docs_touched(docs, changed) is called",
-      "then": "it returns an empty list"
+      "then": "it returns an empty list",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s31_docs_touched_empty"
     },
     {
       "id": "S32",
@@ -364,7 +399,8 @@
       "description": "hexa drift --since makes no completion when nothing is touched",
       "given": "a ref whose diff touches no document and no path any document names",
       "when": "`hexa drift --since <ref>` runs",
-      "then": "the report holds the line `No document touched since <ref>`, and no completion is made"
+      "then": "the report holds the line `No document touched since <ref>`, and no completion is made",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s32_drift_since_nothing_touched"
     },
     {
       "id": "S33",
@@ -375,7 +411,8 @@
       "description": "hexa drift --since runs one goldfish per touched document and no others",
       "given": "three documents, of which exactly two name paths changed since the ref",
       "when": "`hexa drift --since <ref>` runs",
-      "then": "exactly two completions are made, one per touched document, and the untouched document is not checked"
+      "then": "exactly two completions are made, one per touched document, and the untouched document is not checked",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s33_drift_since_checks_touched_only"
     },
     {
       "id": "S34",
@@ -386,7 +423,8 @@
       "description": "Without --since, drift checks every document",
       "given": "three documents",
       "when": "`hexa drift` runs without --since",
-      "then": "all three documents are checked"
+      "then": "all three documents are checked",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s34_drift_without_since_checks_all"
     },
     {
       "id": "S35",
@@ -397,7 +435,8 @@
       "description": "docs_touched is exactly the ordered, deduplicated set of documents changed or naming a change",
       "given": "any docs list and any changed list",
       "when": "docs_touched(docs, changed) is called",
-      "then": "Each output element is a document from docs that is in changed or names a path in changed. Every such document appears, once, in the order of its first appearance in docs. With an empty changed list, the output is empty."
+      "then": "Each output element is a document from docs that is in changed or names a path in changed. Every such document appears, once, in the order of its first appearance in docs. With an empty changed list, the output is empty.",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s35_docs_touched_property"
     },
     {
       "id": "S36",
@@ -408,7 +447,8 @@
       "description": "A brainstorm request routes to design brainstorm with the idea, behind confirmation",
       "given": "the request `brainstorm an offline sync mode`",
       "when": "route(text) is called",
-      "then": "it returns Routed::Hexa with a command that starts `design brainstorm \"` and whose quoted idea holds `offline sync mode`, with destructive set to true"
+      "then": "it returns Routed::Hexa with a command that starts `design brainstorm \"` and whose quoted idea holds `offline sync mode`, with destructive set to true",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s36_route_brainstorm"
     },
     {
       "id": "S37",
@@ -419,7 +459,8 @@
       "description": "A design review request with a path routes to design review",
       "given": "the request `review the design in docs/design/idea.md`",
       "when": "route(text) is called",
-      "then": "it returns Routed::Hexa with command `design review docs/design/idea.md` and destructive set to false"
+      "then": "it returns Routed::Hexa with command `design review docs/design/idea.md` and destructive set to false",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s37_route_design_review"
     },
     {
       "id": "S38",
@@ -430,7 +471,8 @@
       "description": "A design review request without a path has no route",
       "given": "the request `review my design`",
       "when": "route(text) is called",
-      "then": "it returns Routed::None, while `review my design docs/designs/d.md` routes to `design review docs/designs/d.md`"
+      "then": "it returns Routed::None, while `review my design docs/designs/d.md` routes to `design review docs/designs/d.md`",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s38_route_design_review_needs_path"
     },
     {
       "id": "S39",
@@ -441,7 +483,8 @@
       "description": "Drift requests route to drift",
       "given": "the requests `check for drift` and `do the docs match the code?`",
       "when": "route is called on each",
-      "then": "each returns Routed::Hexa with command `drift` and destructive set to false"
+      "then": "each returns Routed::Hexa with command `drift` and destructive set to false",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s39_route_drift"
     },
     {
       "id": "S40",
@@ -452,7 +495,8 @@
       "description": "Every design or drift route is a command the table lists",
       "given": "any request that routes to a command starting with `design` or `drift`",
       "when": "hexa_commands() is read",
-      "then": "it holds `drift`, `design review <path>` and `design brainstorm <idea>` (written with placeholders), and the routed command's words before its argument match one of them"
+      "then": "it holds `drift`, `design review <path>` and `design brainstorm <idea>` (written with placeholders), and the routed command's words before its argument match one of them",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s40_design_and_drift_routes_are_listed"
     },
     {
       "id": "S41",
@@ -463,7 +507,8 @@
       "description": "The feature-sized prompt hook names design first",
       "given": "a feature-sized prompt",
       "when": "the prompt hook emits its guidance",
-      "then": "the guidance contains ``Design (`hexa design brainstorm \"<idea>\"`, optional) → Decide``, with Design before Decide"
+      "then": "the guidance contains ``Design (`hexa design brainstorm \"<idea>\"`, optional) → Decide``, with Design before Decide",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s41_prompt_hook_names_design_first"
     },
     {
       "id": "S42",
@@ -474,7 +519,8 @@
       "description": "The skill and CLAUDE.md cover the design verbs and drift --since",
       "given": "the /hexa-workflow skill and hexa's CLAUDE.md",
       "when": "they are read",
-      "then": "The skill has a section before Decide naming `hexa design brainstorm`, `draft`, `review`, `resolve` and `adr`, and its ship step runs `hexa drift --since <base>`. CLAUDE.md's pipeline has a step 0, Design, naming the same verbs."
+      "then": "The skill has a section before Decide naming `hexa design brainstorm`, `draft`, `review`, `resolve` and `adr`, and its ship step runs `hexa drift --since <base>`. CLAUDE.md's pipeline has a step 0, Design, naming the same verbs.",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s42_skill_and_claude_md_cover_design"
     },
     {
       "id": "S43",
@@ -485,7 +531,8 @@
       "description": "The guidance no longer starts at Decide",
       "given": "the feature-sized prompt hook's guidance and the /hexa-workflow skill",
       "when": "they are read",
-      "then": "neither presents Decide as the first step: in each, design appears before Decide"
+      "then": "neither presents Decide as the first step: in each, design appears before Decide",
+      "test": "hexa-cli/tests/adr_2610281011_spec.rs::s43_guidance_no_longer_starts_at_decide"
     }
   ]
 }
