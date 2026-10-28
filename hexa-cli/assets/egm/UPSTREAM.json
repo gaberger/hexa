@@ -1,0 +1,29 @@
+{
+  "repository": "https://github.com/google/elephant-goldfish-model",
+  "commit": "a8380ab5f0aba392c97e31c79f9a6666b3f09f14",
+  "license": "Apache-2.0",
+  "files": {
+    "LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "agents/bootstrap_orchestrator.md": "5c2fa484754f8d582669500d16d5728fe95daff8bd964f8e7f09142c6a666bfc",
+    "agents/codebase_details.md": "d80db07e449b57b3b3776d1401cca72a54b6b65a0ab218b86f9064ee4b8167bc",
+    "agents/comprehension.md": "e9390a27b859dbd3b369059dc95887cd605f8cf0377a32fbecdcf4afb6a68fcc",
+    "agents/design_critic.md": "cee6294735ce2bd4fea19245852b6eb07cbe8ede7e72a4bfc829f586e4a39d0f",
+    "agents/implementation_readiness.md": "1f6aa61cfe7cb86dc94943ab3b3fd339e5baba533937198fd10edb06dfa64e8f",
+    "agents/structural.md": "f0d4fe6faee4e388366b7d653fe353a9b09f45ca1bf5dae29280e351cda7da87",
+    "agents/style.md": "9d0d59d7fac7ee479f9beea22d28b8ea20b6fea0215e06bd292a14eb2bb3b692",
+    "agents/synthesizer.md": "7cfcdb2198d031f2da249ba11be0859b8a755b47c4df42f9d920a3b75c9d5625",
+    "agents/zoom_out.md": "adc9d7b7db4c304866e61d5e5e446502231abe188ce64656939305e07ae7995f",
+    "resources/document_standards/feature-spec-standard.md": "b3e4960fd884fde880a41da782fc73342fe232769e5835a4470b3c8c517644c4",
+    "resources/document_standards/heilmeier-standard.md": "a23bc354a5651bd00d817409a72ebcb7536c249e2038c13255ce89f49f138174",
+    "resources/document_standards/implementation-readiness-standard.md": "ed0d2a085eac0fd9581d504a2ec0df2a92d6b2538636a22b16e0b1370fba6dbb",
+    "resources/document_standards/re-implementation-standard.md": "421aacbf5e9a0d4c5b794edfa4cac333f8cc67bc4cf0e3717efcad4f827e6e46",
+    "resources/document_standards/zoom-out-standard.md": "0a01013bd363a8d744f8372b65495892360d7339e4e35c767003ae38f48e6799",
+    "resources/execution_instructions.md": "06f0ee648efa2fefd79081d01f32c4930d709fa709df42d06a287f97a8582179",
+    "skills/egm-brainstorm/SKILL.md": "3b25b62bd8c4a18579031393c19afb5653c55f4b7805e65d8647168829521ad3",
+    "skills/egm-draft/SKILL.md": "64fef4c23e28dae3913352a5ce3fb0f1f4535961bd8c37bab4c4a3f39ea99d06",
+    "skills/egm-draft/references/design_doc.md": "eb8e580e4de6be88da33fdbe662d1b39a0fa7a13378d2dd240f82eb712684e0d",
+    "skills/egm-drift-report/SKILL.md": "c000ffe2e77a9fe74ee6915b314e1547337c95c79a19014c44fd976dc6511476",
+    "skills/egm-resolve/SKILL.md": "6bb1909b42b815e074bd486c6244b56eef8d61669abb3302c764a16be05af472",
+    "skills/egm-review/SKILL.md": "13fdd2e027b99b194b796f7a505c777bc4f6e4baa7d9b1a55ab713373ceee411"
+  }
+}

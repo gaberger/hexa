@@ -225,6 +225,15 @@ record: a session opens with it, a feature-sized prompt repeats it, and an
 edit for feature-sized work with no gate recorded is stopped until the gate is
 written.
 
+**Design comes before the decision; drift is checked after the docs.**
+`hexa design brainstorm`, `draft`, `review` and `resolve` run the
+[Elephant-Goldfish Model](https://github.com/google/elephant-goldfish-model):
+an elephant drafts with the project's context, and each goldfish reviewer is
+one tool-less completion that sees only the document and the source it names.
+`hexa drift` reports where the docs and the code disagree. EGM is Google LLC's,
+Apache-2.0, vendored at a pinned commit; see
+[docs/ATTRIBUTIONS.md](docs/ATTRIBUTIONS.md).
+
 ---
 
 ## Why hexagonal

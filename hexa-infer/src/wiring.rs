@@ -10,7 +10,8 @@ use async_trait::async_trait;
 use hexa_core::ports::inference::{IInferencePort, InferenceError, InferenceRequest, InferenceResponse};
 
 use crate::adapters::secondary::{
-    AnthropicAdapter, ClaudeCodeInferenceAdapter, OllamaInferenceAdapter, OpenAiCompatAdapter,
+    command, AnthropicAdapter, ClaudeCodeInferenceAdapter, CommandCompletionAdapter, OllamaInferenceAdapter,
+    OpenAiCompatAdapter,
 };
 use crate::endpoint::Endpoint;
 use crate::ports::Backends;
@@ -48,6 +49,10 @@ impl Backends for RegistryBackends {
     }
 
     fn record_spend(&self, model: &str, input_tokens: u64, output_tokens: u64) {
+        // A completion command reports no usage: there is nothing to record.
+        if command::configured().is_some() {
+            return;
+        }
         crate::spend::record(model, input_tokens, output_tokens);
     }
 }
@@ -119,6 +124,11 @@ pub fn frontier_model_arg(model: &str) -> Option<String> {
 /// reasoning weave's tier router settled on: ollama tags have no common form,
 /// so a rule like "contains a colon" misroutes anything vendor-prefixed.
 fn adapter_for(model: &str) -> Box<dyn IInferencePort> {
+    // An operator-named completion command serves every tool-less request
+    // (ADR-2610271736); a tool-using one never reaches here with it.
+    if let Some(cmd) = command::configured() {
+        return Box::new(CommandCompletionAdapter::new(cmd));
+    }
     if let Some(endpoint) = registry::serving(&registry::load(), model) {
         return adapter_for_endpoint(&endpoint);
     }

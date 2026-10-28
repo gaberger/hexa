@@ -34,13 +34,35 @@ pub fn tier_model(tier: &str) -> Option<String> {
 }
 
 /// [`tier_model`], rooted at an explicit directory. Tests drive this.
+///
+/// `.hexa/project.json` is read first; a project without the tier there may
+/// declare it in `.hexa/config.toml` under `[inference.tier_models]`.
 pub(crate) fn tier_model_in(root: &Path, tier: &str) -> Option<String> {
+    tier_in_project_json(root, tier).or_else(|| tier_in_config_toml(root, tier))
+}
+
+fn tier_in_project_json(root: &Path, tier: &str) -> Option<String> {
     let text = std::fs::read_to_string(root.join(".hexa").join("project.json")).ok()?;
     let root: serde_json::Value = serde_json::from_str(&text).ok()?;
     let models = root.get("inference")?.get("tier_models")?;
     // `t2.5` is a key with a dot in it, so a JSON pointer would misread it.
     let value = models.get(tier).and_then(|v| v.as_str())?;
     (!value.is_empty()).then(|| value.to_string())
+}
+
+fn tier_in_config_toml(root: &Path, tier: &str) -> Option<String> {
+    let text = std::fs::read_to_string(root.join(".hexa").join("config.toml")).ok()?;
+    let cfg: toml::Value = toml::from_str(&text).ok()?;
+    let value = cfg.get("inference")?.get("tier_models")?.get(tier)?.as_str()?;
+    (!value.is_empty()).then(|| value.to_string())
+}
+
+/// The route a tool-less reviewer runs on when no tier names one:
+/// `claude-text`, the `claude` CLI with no tools, on its own default model
+/// (ADR-2610270901, ADR-2610271736 §3). A route, not a model: the CLI picks
+/// the model, so no model name enters the code.
+pub fn tool_less_default() -> String {
+    "claude-text".to_string()
 }
 
 /// The models the ReAct loop may use, in preference order.

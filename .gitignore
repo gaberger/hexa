@@ -58,6 +58,7 @@ docs/benchmarks/*
 !docs/COMPARISON.md
 !docs/EVIDENCE.md
 !docs/UPGRADING.md
+!docs/ATTRIBUTIONS.md
 
 # .hexa is runtime state at any depth, except the files that define the
 # project: its config, its rule set (what `hexa analyze .` checks this
