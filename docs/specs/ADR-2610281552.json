@@ -1,0 +1,301 @@
+{
+  "adr": "ADR-2610281552",
+  "feature": "day-one project floor",
+  "description": "A project hexa has just made passes `hexa adr doctor`, because citations of hexa's own decisions resolve, and it ignores its build output and session state in `.gitignore`.",
+  "universal": [
+    "§2",
+    "§3"
+  ],
+  "accepted": {
+    "by": "gary (run by Claude on gary's instruction)",
+    "sha256": "1fa58f838e08d00a72b9e3b5f12a09029de4bd02284dbf7850182230a95f29e4"
+  },
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "The build embeds the ids of hexa's own ADR files.",
+      "given": "a hexa source tree whose `docs/adrs/` holds `ADR-2609121400.md` and `ADR-2609211430.md`",
+      "when": "`hexa-cli` is built",
+      "then": "the binary's embedded hexa ledger is exactly {`ADR-2609121400`, `ADR-2609211430`}"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A build without hexa's ADR directory embeds no ids.",
+      "given": "a hexa source tree with no `docs/adrs/` directory",
+      "when": "`hexa-cli` is built",
+      "then": "the build succeeds and the embedded hexa ledger is empty"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "Only files matching `ADR-*.md` count as decisions.",
+      "given": "a `docs/adrs/` holding `ADR-2609121400.md`, `README.md` and `ADR-2609211430.txt`",
+      "when": "`hexa-cli` is built",
+      "then": "the embedded hexa ledger is {`ADR-2609121400`} and has no entry for `README` or for `ADR-2609211430`"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "An id in the project's ledger resolves to Project.",
+      "given": "project_ids = [`ADR-2610010000`] and hexa_ids = [`ADR-2609121400`]",
+      "when": "`cited_ledger(\"ADR-2610010000\", project_ids, hexa_ids)` is called",
+      "then": "it returns `CitedLedger::Project`"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "An id that only hexa's ledger holds resolves to Hexa.",
+      "given": "project_ids = [`ADR-2610010000`] and hexa_ids = [`ADR-2609121400`]",
+      "when": "`cited_ledger(\"ADR-2609121400\", project_ids, hexa_ids)` is called",
+      "then": "it returns `CitedLedger::Hexa`"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "An id that neither ledger holds is Dangling.",
+      "given": "project_ids = [`ADR-2610010000`] and hexa_ids = [`ADR-2609121400`]",
+      "when": "`cited_ledger(\"ADR-1999010100\", project_ids, hexa_ids)` is called",
+      "then": "it returns `CitedLedger::Dangling`"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "The project's ledger takes precedence over hexa's.",
+      "given": "project_ids and hexa_ids both contain `ADR-2609121400`",
+      "when": "`cited_ledger(\"ADR-2609121400\", project_ids, hexa_ids)` is called",
+      "then": "it returns `CitedLedger::Project`, not `CitedLedger::Hexa`"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "With two empty ledgers, every id is Dangling.",
+      "given": "project_ids = [] and hexa_ids = []",
+      "when": "`cited_ledger(\"ADR-2609121400\", project_ids, hexa_ids)` is called",
+      "then": "it returns `CitedLedger::Dangling`"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "The doctor passes on a fresh project whose shipped files cite hexa's decisions.",
+      "given": "a project just made by `hexa dev new --lang rust`, whose `.hexa/ADR-rules.toml` and `/hexa-adr-create` skill cite `ADR-2609121400`, `ADR-2609211430`, `ADR-2609211600` and `ADR-2026-04-05-0900`, all of them in the embedded hexa ledger, and an empty project ledger",
+      "when": "`hexa adr doctor` runs",
+      "then": "it reports no `DanglingCitation` and exits successfully"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "The doctor still reports a citation that resolves nowhere.",
+      "given": "a project whose own text cites `ADR-1999010100`, an id in neither the project's ledger nor the embedded hexa ledger",
+      "when": "`hexa adr doctor` runs",
+      "then": "it reports exactly one `DanglingCitation`, for `ADR-1999010100`, and fails"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "A user's own citation of a hexa decision is not reported.",
+      "given": "a project ADR whose body cites `ADR-2609151930`, which the embedded hexa ledger holds and the project's ledger does not",
+      "when": "`hexa adr doctor` runs",
+      "then": "it reports no `DanglingCitation` for `ADR-2609151930`"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§2"
+      ],
+      "kind": "property",
+      "description": "Resolution order holds over all inputs.",
+      "given": "any id, any project_ids and any hexa_ids",
+      "when": "`cited_ledger(id, project_ids, hexa_ids)` is called",
+      "then": "it returns `Project` exactly when project_ids contains id; `Hexa` exactly when project_ids does not contain id and hexa_ids does; and `Dangling` exactly when neither contains id"
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§2"
+      ],
+      "kind": "property",
+      "description": "When the two ledgers are the same set, as in hexa's own repository, nothing goes unchecked.",
+      "given": "any id and any set of ids L, with project_ids = hexa_ids = L",
+      "when": "`cited_ledger(id, L, L)` is called",
+      "then": "it never returns `Hexa`: it returns `Project` when L contains id and `Dangling` otherwise"
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "Rust ignores target/ and the session state.",
+      "given": "lang = `rust`",
+      "when": "`gitignore_lines(\"rust\")` is called",
+      "then": "the result holds exactly `target/`, `.hexa/loop.json` and `.hexa/loop.lock`"
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "TS ignores node_modules/, dist/ and the session state.",
+      "given": "lang = `ts`",
+      "when": "`gitignore_lines(\"ts\")` is called",
+      "then": "the result holds exactly `node_modules/`, `dist/`, `.hexa/loop.json` and `.hexa/loop.lock`"
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "Go adds no build-output lines, only the session state.",
+      "given": "lang = `go`",
+      "when": "`gitignore_lines(\"go\")` is called",
+      "then": "the result holds exactly `.hexa/loop.json` and `.hexa/loop.lock`, and holds neither `target/` nor `node_modules/` nor `dist/`"
+    },
+    {
+      "id": "S17",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "With no existing file, the merge gives every needed line.",
+      "given": "existing = None and lang = `rust`",
+      "when": "`merged_gitignore(None, \"rust\")` is called",
+      "then": "it returns Some(text) whose lines include `target/`, `.hexa/loop.json` and `.hexa/loop.lock`, each exactly once"
+    },
+    {
+      "id": "S18",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "The merge keeps the existing text and appends only the missing lines.",
+      "given": "existing = Some(\"*.log\\ntarget/\\n\") and lang = `rust`",
+      "when": "`merged_gitignore(existing, \"rust\")` is called",
+      "then": "it returns Some(text) that begins with `*.log\\ntarget/\\n`, then holds `.hexa/loop.json` and `.hexa/loop.lock`, and holds `target/` only once"
+    },
+    {
+      "id": "S19",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "Nothing is written when nothing is missing.",
+      "given": "existing = Some(\"target/\\n.hexa/loop.json\\n.hexa/loop.lock\\n\") and lang = `rust`",
+      "when": "`merged_gitignore(existing, \"rust\")` is called",
+      "then": "it returns None"
+    },
+    {
+      "id": "S20",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "A line counts as present only when it matches a whole line, not a substring.",
+      "given": "existing = Some(\"mytarget/\\n.hexa/loop.json\\n.hexa/loop.lock\\n\") and lang = `rust`",
+      "when": "`merged_gitignore(existing, \"rust\")` is called",
+      "then": "it returns Some(text) that appends `target/` as its own line"
+    },
+    {
+      "id": "S21",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "`hexa dev new` writes the .gitignore, so the first commit holds no build output.",
+      "given": "an empty directory",
+      "when": "`hexa dev new --lang rust` runs, then `cargo build`, then `git add -A`",
+      "then": "`.gitignore` holds `target/`, `.hexa/loop.json` and `.hexa/loop.lock`, and nothing under `target/` is staged"
+    },
+    {
+      "id": "S22",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "`hexa init` leaves an already complete .gitignore unchanged.",
+      "given": "a directory whose `.gitignore` already holds every line `gitignore_lines(\"rust\")` gives, along with other user lines",
+      "when": "`hexa init --lang rust` runs",
+      "then": "`.gitignore` is byte-for-byte unchanged"
+    },
+    {
+      "id": "S23",
+      "decision": [
+        "§3"
+      ],
+      "kind": "property",
+      "description": "Every language ignores the session state.",
+      "given": "any lang among `rust`, `ts` and `go`",
+      "when": "`gitignore_lines(lang)` is called",
+      "then": "the result contains `.hexa/loop.json` and `.hexa/loop.lock`"
+    },
+    {
+      "id": "S24",
+      "decision": [
+        "§3"
+      ],
+      "kind": "property",
+      "description": "The merge is complete, preserving and duplicate-free.",
+      "given": "any existing text E (or None) and any lang among `rust`, `ts` and `go`",
+      "when": "`merged_gitignore(E, lang)` returns Some(text)",
+      "then": "text begins with E's content; every line of `gitignore_lines(lang)` is a whole line of text; and no line that `merged_gitignore` appended was already a whole line of E or appears more than once in what it appended"
+    },
+    {
+      "id": "S25",
+      "decision": [
+        "§3"
+      ],
+      "kind": "property",
+      "description": "The merge is idempotent.",
+      "given": "any existing text E (or None) and any lang among `rust`, `ts` and `go`",
+      "when": "`merged_gitignore(E, lang)` returns Some(text), and `merged_gitignore(Some(text), lang)` is then called",
+      "then": "the second call returns None"
+    },
+    {
+      "id": "S26",
+      "decision": [
+        "§3"
+      ],
+      "kind": "property",
+      "description": "None means nothing is missing.",
+      "given": "any existing text E (or None) and any lang among `rust`, `ts` and `go`",
+      "when": "`merged_gitignore(E, lang)` is called",
+      "then": "it returns None exactly when E is Some and every line of `gitignore_lines(lang)` is already a whole line of E"
+    }
+  ]
+}
