@@ -187,7 +187,8 @@ pub fn accept(adr: &str, by: Option<&str>) -> anyhow::Result<()> {
         },
         || std::env::var("USER").ok(),
     )?;
-    if record_acceptance(&mut spec, by.clone()) {
+    let previous = accepted_at_head(&root, &a.id);
+    if record_acceptance(&mut spec, by.clone(), previous.as_ref()) {
         println!(
             "  {} {} the accepted behaviour changed: its tests, red commit and seal are dropped. Run `hexa spec tests {}`",
             "!".yellow(),
@@ -204,10 +205,30 @@ pub fn accept(adr: &str, by: Option<&str>) -> anyhow::Result<()> {
 /// seals bind the behaviour accepted before them: when this acceptance
 /// replaces one of different behaviour, they are dropped, so the new
 /// acceptance needs new tests and a new seal. True when any were dropped.
-fn record_acceptance(spec: &mut Spec, by: String) -> bool {
+fn record_acceptance(spec: &mut Spec, by: String, previous: Option<&Spec>) -> bool {
     let sha256 = content_hash(spec);
     let changed = spec.accepted.as_ref().is_some_and(|a| a.sha256 != sha256);
     let bound = spec.red.is_some() || !spec.sealed.is_empty() || spec.specs.iter().any(|s| s.test.is_some() || s.red.is_some());
+    // Only what changed loses its proof (ADR-2610281628 §1): each scenario
+    // identical to its accepted predecessor keeps its test and red, and a
+    // seal goes only from a file that held a changed or removed one's test.
+    if let (true, Some(prev)) = (changed, previous) {
+        let kept = hexa_core::ports::spec::rebind(prev, spec);
+        let lost: std::collections::BTreeSet<String> = prev
+            .specs
+            .iter()
+            .filter_map(|p| p.test.as_deref())
+            .filter(|t| !kept.specs.iter().any(|k| k.test.as_deref() == Some(*t)))
+            .filter_map(|t| t.split("::").next().map(str::to_string))
+            .collect();
+        let mut sealed = prev.sealed.clone();
+        sealed.retain(|f, _| !lost.contains(f));
+        spec.specs = kept.specs;
+        spec.sealed = sealed;
+        spec.red = prev.red.clone();
+        spec.accepted = Some(Acceptance { by, sha256 });
+        return !lost.is_empty();
+    }
     if changed {
         for s in spec.specs.iter_mut() {
             s.test = None;
@@ -218,6 +239,20 @@ fn record_acceptance(spec: &mut Spec, by: String) -> bool {
     }
     spec.accepted = Some(Acceptance { by, sha256 });
     changed && bound
+}
+
+/// The spec as last accepted and committed, if HEAD holds one whose
+/// acceptance still matches its content: what a re-acceptance compares
+/// against (ADR-2610281628 §1).
+fn accepted_at_head(root: &Path, id: &str) -> Option<Spec> {
+    let out = std::process::Command::new("git")
+        .args(["show", &format!("HEAD:{SPECS}/{id}.json")])
+        .current_dir(root)
+        .output()
+        .ok()?;
+    let spec: Spec = serde_json::from_slice(&out.stdout).ok().filter(|_| out.status.success())?;
+    acceptance_holds(&spec).ok()?;
+    Some(spec)
 }
 
 /// Who accepts: `--by` if given (a blank one is refused, not replaced), else
@@ -308,7 +343,7 @@ pub async fn tests(
         }
         None
     };
-    let options = hexa_exec::spec_author::TestOptions { red_at, replace: replace.clone() };
+    let options = hexa_exec::spec_author::TestOptions { red_at, replace: replace.clone(), only: None };
     let model = model_for(model, "t2")?;
     let path_env = gate_path(
         std::env::var_os("HOME").map(PathBuf::from).as_deref(),
@@ -327,6 +362,102 @@ pub async fn tests(
     println!("  {} {} tests in {}, every one red at {}", "\u{2713}".green(), g.refs.len(), g.file, g.red);
     seal(&a.id)?;
     println!("\n  Commit {}/{}.json. The tests are sealed: build the decision until they pass.", SPECS, a.id);
+    Ok(())
+}
+
+/// `hexa spec tests <ADR> --only <ids>` (ADR-2610281628 §2): those scenarios
+/// alone, into a new file, proved red; their old tests removed from the
+/// files that held them; everything rebound, sealed and committed at once.
+pub async fn reprove(
+    adr: &str,
+    krate: &str,
+    model: Option<&str>,
+    red_at: Option<String>,
+    only: &[String],
+    because: Option<String>,
+) -> anyhow::Result<()> {
+    let root = std::env::current_dir()?;
+    let a = find(&root, adr)?;
+    let (_, mut spec) = load_text(&root, &a.id)?.ok_or_else(|| anyhow::anyhow!("{} has no spec", a.id))?;
+    let unknown: Vec<&String> = only.iter().filter(|id| !spec.specs.iter().any(|s| &s.id == *id)).collect();
+    if !unknown.is_empty() {
+        anyhow::bail!("{}: no scenario {}", a.id, unknown.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", "));
+    }
+    let bound: Vec<&str> = spec
+        .specs
+        .iter()
+        .filter(|s| only.contains(&s.id) && s.test.is_some())
+        .map(|s| s.id.as_str())
+        .collect();
+    let because = because.filter(|b| !b.trim().is_empty());
+    if !bound.is_empty() && because.is_none() {
+        anyhow::bail!(
+            "{}: {} still {} a sealed test; re-proving replaces it, so give --because \"<reason>\"",
+            a.id,
+            bound.join(", "),
+            if bound.len() == 1 { "has" } else { "have" }
+        );
+    }
+    let model = model_for(model, "t2")?;
+    let path_env = gate_path(
+        std::env::var_os("HOME").map(PathBuf::from).as_deref(),
+        &std::env::var("PATH").unwrap_or_default(),
+        &|p| p.is_dir(),
+    );
+    println!("{} {} {} on {}", "\u{2b21} spec tests".cyan().bold(), a.id, only.join(", "), model);
+    let options = hexa_exec::spec_author::TestOptions { red_at, replace: None, only: Some(only.to_vec()) };
+    let g = hexa_exec::generate_spec_tests(&model, &root, &spec, Path::new(krate), &path_env, &options)
+        .await
+        .map_err(|e| anyhow::anyhow!(e))?;
+
+    // The superseded tests leave the files that held them.
+    let mut by_file: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for s in spec.specs.iter().filter(|s| only.contains(&s.id)) {
+        if let Some((file, f)) = s.test.as_deref().and_then(hexa_core::ports::spec::test_ref) {
+            by_file.entry(file.to_string()).or_default().push(f.rsplit("::").next().unwrap_or(f).to_string());
+        }
+    }
+    for (file, names) in &by_file {
+        let text = std::fs::read_to_string(root.join(file)).map_err(|e| anyhow::anyhow!("{file}: {e}"))?;
+        std::fs::write(root.join(file), hexa_core::ports::spec::without_tests(&text, names))?;
+        spec.sealed.remove(file);
+    }
+    for s in spec.specs.iter_mut().filter(|s| only.contains(&s.id)) {
+        s.test = g.refs.get(&s.id).cloned();
+        s.red = Some(g.red.clone());
+    }
+    spec.sealed.remove(&g.file);
+    spec.sealed = seal_files(&root, &a.id, &spec)?;
+    save(&root, &spec)?;
+
+    let reason = because.unwrap_or_else(|| "left without a test when the spec was re-accepted".to_string());
+    let old: Vec<&str> = by_file.keys().map(String::as_str).collect();
+    let msg = format!(
+        "test(spec): {} re-proves {} in {}\n\n{}{}\n\nEvery new test fails at {} (ADR-2610281628 §2).",
+        a.id,
+        only.join(", "),
+        g.file,
+        if old.is_empty() { String::new() } else { format!("Removed from {}: ", old.join(", ")) },
+        reason,
+        g.red
+    );
+    let spec_file = format!("{SPECS}/{}.json", a.id);
+    let mut paths: Vec<&str> = vec![g.file.as_str(), spec_file.as_str()];
+    paths.extend(old.iter().copied());
+    let run = |args: &[&str]| -> anyhow::Result<()> {
+        let o = std::process::Command::new("git").args(args).current_dir(&root).output()?;
+        if !o.status.success() {
+            anyhow::bail!("git {}: {}", args.join(" "), String::from_utf8_lossy(&o.stderr).trim());
+        }
+        Ok(())
+    };
+    let mut add = vec!["add", "--"];
+    add.extend(paths.iter().copied());
+    run(&add)?;
+    let mut commit = vec!["-c", "user.name=hexa-spec", "-c", "user.email=spec@hexa.local", "commit", "-q", "-m", &msg, "--"];
+    commit.extend(paths.iter().copied());
+    run(&commit)?;
+    println!("  {} {} re-proved in {}, red at {}", "\u{2713}".green(), only.join(", "), g.file, g.red);
     Ok(())
 }
 
@@ -541,6 +672,19 @@ async fn prove_red(root: &Path, path_env: &str, a: &Adr, spec: &Spec) -> anyhow:
             );
             continue;
         }
+        // A test proved red at a commit from before it was written
+        // (`--red-at`, ADR-2610281628 §3) is checked there as written: the
+        // file is added to that tree, as the red check added it.
+        for (_, r) in &scenarios {
+            if let Some((file, _)) = hexa_core::ports::spec::test_ref(r) {
+                if !wt.join(file).exists() {
+                    if let Ok(body) = std::fs::read(root.join(file)) {
+                        let _ = std::fs::create_dir_all(wt.join(file).parent().unwrap_or(&wt));
+                        let _ = std::fs::write(wt.join(file), body);
+                    }
+                }
+            }
+        }
         for (sid, r) in scenarios {
             let outcome = run_test_alone(&wt, path_env, r, Some(&target)).await;
             let (ok, what) = match outcome {
@@ -648,13 +792,13 @@ mod tests {
         .unwrap();
         // A first acceptance keeps tests bound before it; re-accepting the
         // same behaviour keeps what was generated for it.
-        assert!(!record_acceptance(&mut spec, "p".into()));
-        assert!(!record_acceptance(&mut spec, "p".into()));
+        assert!(!record_acceptance(&mut spec, "p".into(), None));
+        assert!(!record_acceptance(&mut spec, "p".into(), None));
         assert_eq!(spec.specs[0].test.as_deref(), Some("tests/old.rs::t"));
         assert!(!spec.sealed.is_empty());
         // The behaviour is hand-edited after sealing, then accepted again.
         spec.specs[0].then = "a new outcome".into();
-        assert!(record_acceptance(&mut spec, "p".into()));
+        assert!(record_acceptance(&mut spec, "p".into(), None));
         assert!(acceptance_holds(&spec).is_ok());
         assert_eq!(spec.specs[0].test, None, "an old test must not hold over new behaviour");
         assert_eq!(spec.specs[0].red_commit(&spec), None);

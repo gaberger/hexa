@@ -52,9 +52,13 @@ pub enum SpecAction {
         /// Replace the sealed test file with a new generation (§4); needs --because
         #[arg(long)]
         replace: bool,
-        /// Why the sealed file is replaced; recorded in the commit
+        /// Why the sealed file is replaced, or why named scenarios are
+        /// re-proved; recorded in the commit
         #[arg(long)]
         because: Option<String>,
+        /// Re-prove only these scenarios, into a new test file (ADR-2610281628 §2)
+        #[arg(long, value_delimiter = ',', conflicts_with = "replace")]
+        only: Vec<String>,
     },
     /// Every numbered decision has an example and a negative scenario; no
     /// model involved (ADR-2610221540 §3). All ADRs when none is named
@@ -91,8 +95,12 @@ pub async fn run(action: SpecAction) -> anyhow::Result<()> {
         SpecAction::Show { feature, check } => show(&feature, check).await,
         SpecAction::Workplan { feature } => workplan(&feature).await,
         SpecAction::Draft { adr, model, force } => super::spec_ledger::draft(&adr, model.as_deref(), force).await,
-        SpecAction::Tests { adr, krate, model, red_at, replace, because } => {
-            super::spec_ledger::tests(&adr, &krate, model.as_deref(), red_at, replace, because).await
+        SpecAction::Tests { adr, krate, model, red_at, replace, because, only } => {
+            if only.is_empty() {
+                super::spec_ledger::tests(&adr, &krate, model.as_deref(), red_at, replace, because).await
+            } else {
+                super::spec_ledger::reprove(&adr, &krate, model.as_deref(), red_at, &only, because).await
+            }
         }
         SpecAction::Check { adr } => super::spec_ledger::check(adr.as_deref()),
         SpecAction::Accept { adr, by } => super::spec_ledger::accept(&adr, by.as_deref()),

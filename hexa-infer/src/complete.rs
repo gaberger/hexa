@@ -44,6 +44,30 @@ pub async fn complete_text_with(
     user: &str,
     max_tokens: u32,
 ) -> Result<String, String> {
+    complete_text_cached(backends, model, system, user, max_tokens, true).await
+}
+
+/// [`complete_text_with`], never from the cache and never into it: for a
+/// reply that is judged after it returns, such as a spec author's or a test
+/// writer's, which a retry must not be served again (ADR-2610281516 §2).
+pub async fn complete_text_fresh_with(
+    backends: &dyn Backends,
+    model: &str,
+    system: &str,
+    user: &str,
+    max_tokens: u32,
+) -> Result<String, String> {
+    complete_text_cached(backends, model, system, user, max_tokens, false).await
+}
+
+async fn complete_text_cached(
+    backends: &dyn Backends,
+    model: &str,
+    system: &str,
+    user: &str,
+    max_tokens: u32,
+    use_cache: bool,
+) -> Result<String, String> {
     let request = InferenceRequest {
         model: model.to_string(),
         system_prompt: system.to_string(),
@@ -65,7 +89,7 @@ pub async fn complete_text_with(
     // An identical tool-less completion is answered once (ADR-2610281516 §2).
     // `HEXA_NO_CACHE=1` (which `--fresh` sets) asks for a fresh one.
     let bypass = std::env::var("HEXA_NO_CACHE").is_ok_and(|v| !v.is_empty() && v != "0");
-    let cache = if bypass { None } else { backends.cache() };
+    let cache = if bypass || !use_cache { None } else { backends.cache() };
     let key = crate::ports::completion_key(model, system, user);
     if let Some(reply) = cache.and_then(|c| c.get(&key)) {
         backends.record_cache_hit(model);
