@@ -344,13 +344,10 @@ pub async fn brainstorm(
     idea: &str,
     elephant: &str,
     critic: &str,
-    force: bool,
     say: &dyn Fn(&str),
 ) -> Res<()> {
     let brief_rel = format!("{}/concepts_brief.md", ws.dir);
-    if ws.root.join(&brief_rel).exists() && !force {
-        return Err(format!("{brief_rel} exists; --force replaces it"));
-    }
+    keep_previous(ws, &brief_rel, say)?;
     say(&format!("the elephant on {elephant}, on egm-brainstorm"));
     let prompt = elephant_prompt(
         egm,
@@ -383,13 +380,20 @@ pub async fn brainstorm(
     ws.writer.write(&format!("{}/concepts_brief_critique.md", ws.dir), &text, say)
 }
 
+/// Before an artifact is rewritten, its current text is kept beside it as
+/// `<name>.previous.md`, so a person's edits are never lost to a re-run.
+fn keep_previous(ws: &Workspace, rel: &str, say: &dyn Fn(&str)) -> Res<()> {
+    let Ok(text) = std::fs::read_to_string(ws.root.join(rel)) else { return Ok(()) };
+    let previous = format!("{}.previous.md", rel.trim_end_matches(".md"));
+    ws.writer.write(&previous, &text, say)
+}
+
 /// `hexa design draft` (§6): the elephant writes `design_draft.md` from a brief.
 pub async fn draft(
     egm: &Egm,
     ws: &Workspace,
     brief: Option<&str>,
     elephant: &str,
-    force: bool,
     say: &dyn Fn(&str),
 ) -> Res<String> {
     let brief_rel = match brief {
@@ -400,9 +404,7 @@ pub async fn draft(
         .read(&brief_rel)
         .map_err(|_| format!("no brief at {brief_rel}: run `hexa design brainstorm \"<idea>\"` or name one"))?;
     let draft_rel = format!("{}/design_draft.md", ws.dir);
-    if ws.root.join(&draft_rel).exists() && !force {
-        return Err(format!("{draft_rel} exists; --force replaces it"));
-    }
+    keep_previous(ws, &draft_rel, say)?;
     say(&format!("{brief_rel}: the elephant on {elephant}, on egm-draft"));
     let brief_text = strip_header(&brief_text);
     let prompt = elephant_prompt(

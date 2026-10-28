@@ -23,9 +23,6 @@ pub enum DesignAction {
         /// The critic goldfish's model; defaults to the t2.5 tier, else claude-text
         #[arg(long)]
         goldfish_model: Option<String>,
-        /// Replace an existing concepts_brief.md
-        #[arg(long)]
-        force: bool,
     },
     /// Write design_draft.md from a brief (the elephant, on EGM's egm-draft)
     Draft {
@@ -34,9 +31,6 @@ pub enum DesignAction {
         /// The elephant's model; defaults to the t3 tier, else claude-text
         #[arg(long)]
         model: Option<String>,
-        /// Replace an existing design_draft.md
-        #[arg(long)]
-        force: bool,
     },
     /// Review a draft with EGM's goldfish reviewers, stage by stage (5 to 9).
     /// Writes goldfish_review_report.md; never edits the draft
@@ -113,18 +107,18 @@ pub async fn run(action: DesignAction) -> anyhow::Result<()> {
     let say = |line: &str| println!("  {} {line}", "\u{25b8}".cyan());
     let title = |verb: &str| println!("{}", format!("\u{2b21} design {verb}").cyan().bold());
     let r = match action {
-        DesignAction::Brainstorm { idea, model, goldfish_model, force } => {
+        DesignAction::Brainstorm { idea, model, goldfish_model } => {
             let elephant = egm::elephant_model(model.as_deref()).map_err(anyhow::Error::msg)?;
             let critic = egm::goldfish_model(goldfish_model.as_deref()).map_err(anyhow::Error::msg)?;
             title("brainstorm");
-            egm::brainstorm(&egm, &ws, &idea, &elephant, &critic, force, &say).await.map(|()| {
+            egm::brainstorm(&egm, &ws, &idea, &elephant, &critic, &say).await.map(|()| {
                 println!("\n  Read the brief and its critique, edit the brief, then `hexa design draft`.");
             })
         }
-        DesignAction::Draft { brief, model, force } => {
+        DesignAction::Draft { brief, model } => {
             let elephant = egm::elephant_model(model.as_deref()).map_err(anyhow::Error::msg)?;
             title("draft");
-            egm::draft(&egm, &ws, brief.as_deref(), &elephant, force, &say).await.map(|d| {
+            egm::draft(&egm, &ws, brief.as_deref(), &elephant, &say).await.map(|d| {
                 println!("\n  Edit the draft, then `hexa design review {d}`.");
             })
         }
