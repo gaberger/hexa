@@ -35,9 +35,14 @@ pub enum LoopAction {
         /// A shell command, e.g. "cargo test --test add"
         command: String,
     },
-    /// Record the stage: decide, gate, build, harden or done
+    /// Record the stage: design, decide, gate, build, harden or done
     Stage {
         stage: String,
+    },
+    /// Record the design draft this work is under and set the stage to design
+    /// (ADR-2610281011); the draft must be a file inside the project
+    Design {
+        draft: String,
     },
     /// Record the evidence: a command whose stdout is appended to the ADR when
     /// the stage is marked done (ADR-2609131341)
@@ -272,6 +277,16 @@ fn edit_entry(
     m.insert(session.to_string(), state.clone());
     write_entries(dir, m)?;
     Ok(state)
+}
+
+/// An explicit `hexa loop` command records into the repository it is run
+/// in: at a git work-tree root with no `.hexa/` yet, it makes one. Hooks
+/// write through [`update_loop`] alone and still record nothing elsewhere.
+pub fn ensure_state_dir(dir: &Path) -> anyhow::Result<()> {
+    if !dir.join(".hexa").is_dir() && dir.join(".git").exists() {
+        std::fs::create_dir_all(dir.join(".hexa"))?;
+    }
+    Ok(())
 }
 
 /// Merge `patch` into one session's entry and write the file.
@@ -555,6 +570,9 @@ pub fn status_line(dir: &Path) -> String {
             let gate = st.get("gate").and_then(|v| v.as_str()).unwrap_or("none");
             let stage = st.get("stage").and_then(|v| v.as_str()).unwrap_or("decide");
             let mut line = format!("Loop ({project}): stage {stage} · ADR {adr} · gate {gate}");
+            if let Some(d) = st.get("design").and_then(|v| v.as_str()) {
+                line.push_str(&format!(" · design {d}"));
+            }
             if let Some(r) = running_line(&st) {
                 line.push_str(&format!(" · {r}"));
             }
@@ -569,12 +587,11 @@ pub fn status_line(dir: &Path) -> String {
             line
         }
         None => format!(
-            "Loop ({project}): nothing recorded. Decide → Gate → Build → Harden. Record with `hexa loop adr <ID>` and `hexa loop gate '<command>'`."
+            "Loop ({project}): stage decide · nothing recorded. Design (optional) → Decide → Gate → Build → Harden. Record with `hexa loop design <draft>`, `hexa loop adr <ID>` and `hexa loop gate '<command>'`."
         ),
     }
 }
 
-const STAGES: &[&str] = &["decide", "gate", "build", "harden", "done"];
 
 /// What running the gate established (ADR-2609132059).
 ///
@@ -790,7 +807,11 @@ fn run_task(dir: &Path, action: TaskAction) -> anyhow::Result<()> {
 
 pub async fn run(action: Option<LoopAction>) -> anyhow::Result<()> {
     let cwd = std::env::current_dir()?;
-    match action.unwrap_or(LoopAction::Show) {
+    let action = action.unwrap_or(LoopAction::Show);
+    if !matches!(action, LoopAction::Show | LoopAction::Clear) {
+        ensure_state_dir(&cwd)?;
+    }
+    match action {
         LoopAction::Show => {
             println!("{} {}", "\u{2b21}".cyan(), status_line(&cwd));
             if let Some(st) = read_loop(&cwd) {
@@ -841,8 +862,9 @@ pub async fn run(action: Option<LoopAction>) -> anyhow::Result<()> {
         }
         LoopAction::Stage { stage } => {
             let stage = stage.to_lowercase();
-            if !STAGES.contains(&stage.as_str()) {
-                anyhow::bail!("stage must be one of: {}", STAGES.join(", "));
+            let stages = hexa_exec::egm::loop_stage_words();
+            if !stages.contains(&stage.as_str()) {
+                anyhow::bail!("stage must be one of: {}", stages.join(", "));
             }
             // Done means the gate ran and the evidence was taken. The gate
             // first: there is no point measuring work that does not pass
@@ -876,6 +898,12 @@ pub async fn run(action: Option<LoopAction>) -> anyhow::Result<()> {
                 }
             }
             update_loop(&cwd, serde_json::json!({ "stage": stage })).map_err(|e| anyhow::anyhow!(e))?;
+            println!("{} {}", "\u{2b21}".green(), status_line(&cwd));
+        }
+        LoopAction::Design { draft } => {
+            let ws = hexa_exec::egm::Workspace::at(cwd.clone()).map_err(anyhow::Error::msg)?;
+            let rel = hexa_exec::egm::draft_in_project(&ws, &draft).map_err(anyhow::Error::msg)?;
+            update_loop(&cwd, serde_json::json!({ "design": rel, "stage": "design" })).map_err(|e| anyhow::anyhow!(e))?;
             println!("{} {}", "\u{2b21}".green(), status_line(&cwd));
         }
         LoopAction::Clear => {

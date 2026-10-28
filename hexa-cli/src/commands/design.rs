@@ -64,6 +64,13 @@ pub enum DesignAction {
         #[arg(long)]
         model: Option<String>,
     },
+    /// Turn a reviewed, committed design into a proposed ADR that cites it
+    /// (ADR-2610281011). Refuses a draft that is untracked, uncommitted, or
+    /// changed since its last review covering stages 5 to 8
+    Adr {
+        /// The design draft
+        draft: String,
+    },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -91,6 +98,10 @@ pub struct DriftArgs {
     /// The goldfish's model; defaults to the t2.5 tier, else claude-text
     #[arg(long)]
     pub model: Option<String>,
+    /// Check only the documents that changed since this git ref, or that
+    /// name a path that did
+    #[arg(long)]
+    pub since: Option<String>,
     /// Exit non-zero when drift is found
     #[arg(long)]
     pub fail_on_drift: bool,
@@ -134,6 +145,24 @@ pub async fn run(action: DesignAction) -> anyhow::Result<()> {
                 );
             })
         }
+        DesignAction::Adr { draft } => {
+            title("adr");
+            let now = chrono::Local::now().naive_local();
+            match egm::design_adr(&ws, &draft, now, &say) {
+                Ok((id, _)) => {
+                    let cwd = std::env::current_dir()?;
+                    super::loop_cmd::ensure_state_dir(&cwd)?;
+                    super::loop_cmd::update_loop(&cwd, serde_json::json!({ "adr": id, "stage": "decide" }))
+                        .map_err(anyhow::Error::msg)?;
+                    println!("  {} the loop is under {id}, stage decide", "\u{2713}".green());
+                    println!(
+                        "\n  The ADR is Proposed. Edit its decisions, name its ports and gate, then `hexa spec draft {id}`."
+                    );
+                    Ok(())
+                }
+                Err(e) => Err(e),
+            }
+        }
     };
     r.map_err(anyhow::Error::msg)
 }
@@ -148,7 +177,7 @@ pub async fn run_drift(args: DriftArgs) -> anyhow::Result<()> {
     println!("{}", "\u{2b21} drift".cyan().bold());
     let say = |line: &str| println!("  {} {line}", "\u{25b8}".cyan());
     let root = hexa_infer::project_root();
-    let (_, results) = egm::drift(&egm, &root, args.dir.as_deref(), &model, &today, &say)
+    let (_, results) = egm::drift(&egm, &root, args.dir.as_deref(), args.since.as_deref(), &model, &today, &say)
         .await
         .map_err(anyhow::Error::msg)?;
     let drifted = results.iter().filter(|d| !d.divergences.is_empty()).count();

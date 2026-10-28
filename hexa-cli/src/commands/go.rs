@@ -12,6 +12,9 @@ pub async fn run() -> anyhow::Result<()> {
 
     let mut actions_needed = false;
 
+    // 0. The design step the loop records (ADR-2610281011 §5)
+    actions_needed |= check_design();
+
     // 1. Check if nexus is running
 
     // 2. Check if release binary is stale
@@ -34,6 +37,22 @@ pub async fn run() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// The next step for the design draft the loop records: review it, commit
+/// it, or turn it into an ADR. Nothing when no draft is recorded.
+fn check_design() -> bool {
+    let Ok(cwd) = std::env::current_dir() else { return false };
+    let draft = super::loop_cmd::read_loop(&cwd)
+        .and_then(|st| st.get("design").and_then(|v| v.as_str()).map(String::from));
+    let Ok(ws) = hexa_exec::egm::Workspace::at(cwd) else { return false };
+    match hexa_exec::egm::next_design_command(&ws, draft.as_deref()) {
+        Some(cmd) => {
+            println!("  {} design: {}", "\u{2192}".yellow(), cmd.bold());
+            true
+        }
+        None => false,
+    }
 }
 
 /// Check if the release binary is stale relative to HEAD commit time.

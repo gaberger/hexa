@@ -376,29 +376,67 @@ pub fn is_inside_project(path: &str) -> bool {
 /// The draft sha256 a review report records (`Draft sha256: <hex>`), if any
 /// (ADR-2610281011 §2).
 pub fn reviewed_sha(report: &str) -> Option<String> {
-    let _ = report;
-    unimplemented!("ADR-2610281011: built to its sealed spec")
+    report.lines().find_map(|l| {
+        let v = l.trim().strip_prefix("Draft sha256:")?.trim().trim_matches('`').trim();
+        (!v.is_empty()).then(|| v.to_string())
+    })
 }
 
 /// The stages a review report holds a section for, in report order.
 pub fn reviewed_stages(report: &str) -> Vec<Stage> {
-    let _ = report;
-    unimplemented!("ADR-2610281011: built to its sealed spec")
+    let mut out = Vec::new();
+    for line in report.lines() {
+        let t = line.trim_start();
+        if !t.starts_with('#') {
+            continue;
+        }
+        let heading = t.trim_start_matches('#').trim_start();
+        let Some(rest) = heading.strip_prefix("Stage ").or_else(|| heading.strip_prefix("stage ")) else { continue };
+        let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+        if let Some(stage) = digits.parse().ok().and_then(stage_from_number) {
+            if !out.contains(&stage) {
+                out.push(stage);
+            }
+        }
+    }
+    out
 }
 
 /// `Ok` when `report` recorded `draft_sha` and holds sections for stages 5,
 /// 6, 7 and 8; `Err` names what is missing.
 pub fn review_covers(report: &str, draft_sha: &str) -> Result<(), String> {
-    let _ = (report, draft_sha);
-    unimplemented!("ADR-2610281011: built to its sealed spec")
+    let mut problems = Vec::new();
+    match reviewed_sha(report) {
+        None => problems.push("the report records no draft sha256: it is missing".to_string()),
+        Some(h) if h != draft_sha => problems.push(format!(
+            "the report reviewed draft sha256 {h}, which differs from the draft's current {draft_sha}: the hashes do not match"
+        )),
+        Some(_) => {}
+    }
+    let reviewed = reviewed_stages(report);
+    let missing: Vec<String> = stages_for(Preset::FeatureSpecOnly)
+        .into_iter()
+        .filter(|s| !reviewed.contains(s))
+        .map(|s| stage_number(s).to_string())
+        .collect();
+    if !missing.is_empty() {
+        problems.push(format!("the report has no section for stage {}", missing.join(", ")));
+    }
+    if problems.is_empty() { Ok(()) } else { Err(problems.join("; ")) }
 }
 
 /// The documents to check for drift since a change (ADR-2610281011 §6):
 /// each `(document, paths it names)` that is itself in `changed` or names a
 /// path in `changed`, in `docs` order, each once.
 pub fn docs_touched(docs: &[(String, Vec<String>)], changed: &[String]) -> Vec<String> {
-    let _ = (docs, changed);
-    unimplemented!("ADR-2610281011: built to its sealed spec")
+    let mut out: Vec<String> = Vec::new();
+    for (doc, names) in docs {
+        let touched = changed.contains(doc) || names.iter().any(|n| changed.contains(n));
+        if touched && !out.contains(doc) {
+            out.push(doc.clone());
+        }
+    }
+    out
 }
 
 #[cfg(test)]
