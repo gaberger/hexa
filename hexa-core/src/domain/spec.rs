@@ -385,6 +385,8 @@ fn matching(b: &[u8], mask: &[bool], open: usize) -> usize {
 /// One item of a Rust file or block: its leading docs and attributes, its
 /// header (up to its body), and its body's span if it has one.
 struct Item {
+    /// From its first doc comment or attribute to its end.
+    span: (usize, usize),
     lead: Vec<String>,
     header: String,
     body: Option<(usize, usize)>,
@@ -398,6 +400,7 @@ fn items(src: &str, mask: &[bool], from: usize, to: usize) -> Vec<Item> {
     let mut out = Vec::new();
     let mut i = from;
     let mut lead: Vec<String> = Vec::new();
+    let mut lead_start: Option<usize> = None;
     let mut test_only = false;
     while i < to {
         if b[i].is_ascii_whitespace() {
@@ -412,6 +415,7 @@ fn items(src: &str, mask: &[bool], from: usize, to: usize) -> Vec<Item> {
             }
             let c = src[i..j].trim();
             if c.starts_with("///") && !c.starts_with("////") {
+                lead_start.get_or_insert(i);
                 for l in c.lines() {
                     lead.push(l.trim().to_string());
                 }
@@ -426,6 +430,7 @@ fn items(src: &str, mask: &[bool], from: usize, to: usize) -> Vec<Item> {
                 let end = matching(b, mask, open);
                 let attr = src[i..end].trim().to_string();
                 if !inner {
+                    lead_start.get_or_insert(i);
                     let compact: String = attr.chars().filter(|c| !c.is_whitespace()).collect();
                     test_only |= compact == "#[cfg(test)]" || compact == "#[test]";
                     lead.push(attr);
@@ -468,7 +473,8 @@ fn items(src: &str, mask: &[bool], from: usize, to: usize) -> Vec<Item> {
             Some((open, _)) => src[start..open].trim_end().to_string(),
             None => src[start..end].trim_end().to_string(),
         };
-        out.push(Item { lead: std::mem::take(&mut lead), header, body, text: src[start..end].trim().to_string(), test_only });
+        let span = (lead_start.take().unwrap_or(start), end);
+        out.push(Item { span, lead: std::mem::take(&mut lead), header, body, text: src[start..end].trim().to_string(), test_only });
         test_only = false;
         i = end.max(start + 1);
     }
@@ -611,13 +617,61 @@ pub fn unpassable_sites(test_source: &str) -> Vec<(usize, String)> {
 /// The accepted spec with each unchanged scenario's `test` and `red` carried
 /// over from `previous` (ADR-2610281628 §1).
 pub fn rebind(previous: &Spec, accepted: &Spec) -> Spec {
-    let _ = (previous, accepted);
-    unimplemented!("built to its sealed spec")
+    let same = |a: &Scenario, b: &Scenario| {
+        a.decision == b.decision
+            && a.kind == b.kind
+            && a.description == b.description
+            && a.given == b.given
+            && a.when == b.when
+            && a.then == b.then
+    };
+    let mut out = accepted.clone();
+    for s in out.specs.iter_mut() {
+        match previous.specs.iter().find(|p| p.id == s.id && same(p, s)) {
+            Some(p) if p.test.is_some() => {
+                s.test = p.test.clone();
+                // Proved at the spec-level red: that red, written onto it.
+                s.red = p.red.clone().or_else(|| previous.red.clone());
+            }
+            _ => {
+                s.test = None;
+                s.red = None;
+            }
+        }
+    }
+    out
 }
 
 /// `source` without the `#[test]` functions named, each with its doc
 /// comments and attributes (§2).
 pub fn without_tests(source: &str, names: &[String]) -> String {
-    let _ = (source, names);
-    unimplemented!("built to its sealed spec")
+    if names.is_empty() {
+        return source.to_string();
+    }
+    let mask = code_mask(source);
+    let mut cut: Vec<(usize, usize)> = Vec::new();
+    for it in items(source, &mask, 0, source.len()) {
+        let is_test = it.lead.iter().any(|a| {
+            let c: String = a.chars().filter(|c| !c.is_whitespace()).collect();
+            c == "#[test]" || (c.starts_with("#[") && c.ends_with("::test]"))
+        });
+        if !is_test || kind_of(&it.header) != "fn" {
+            continue;
+        }
+        let words = header_words(&it.header);
+        let name = words.iter().position(|w| w == "fn").and_then(|i| words.get(i + 1));
+        if name.is_some_and(|n| names.iter().any(|x| x == n)) {
+            // The item and the line break that ends it.
+            let end = if source[it.span.1..].starts_with('\n') { it.span.1 + 1 } else { it.span.1 };
+            cut.push((it.span.0, end));
+        }
+    }
+    let mut out = String::with_capacity(source.len());
+    let mut at = 0;
+    for (a, b) in cut {
+        out.push_str(&source[at..a]);
+        at = b;
+    }
+    out.push_str(&source[at..]);
+    out
 }
