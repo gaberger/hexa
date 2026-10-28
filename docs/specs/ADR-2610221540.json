@@ -11,7 +11,8 @@
     "hexa-cli/tests/a_test_was_red_before_the_code.rs": "4b9dd29c253acb78dc900d867db1feaf8f840b3e591ea0a4f849731423d2ae5d",
     "hexa-cli/tests/the_ledger_reads_every_gate_and_no_skip_passes.rs": "415540a622855638be957774d035087bcee6ae85a7b1f7c5e3c1aebec6f6213c",
     "hexa-exec/tests/a_sealed_test_is_never_committed.rs": "f20f9118d347cc1856380e411416a70af40672e54595238822ed71bc50982fc9",
-    "hexa-exec/tests/a_spec_is_drafted_and_its_tests_generated_red.rs": "db3453ebf4efaa12a3667e8d17655655704cde34f2a9e6dec84d0328578e049a"
+    "hexa-exec/tests/a_spec_is_drafted_and_its_tests_generated_red.rs": "d2182fb14f5fdfe79cd27ead3f597964590c1fd6335f170c65f3ee2ff70e2824",
+    "hexa-exec/tests/adr_2610221540_spec_2.rs": "465290740109c2e7486832909c1b16d81037d0f37c888d514bf78ee4feb097ab"
   },
   "specs": [
     {
@@ -252,7 +253,7 @@
       "given": "generated tests with no test for S4",
       "when": "`hexa spec tests` runs",
       "then": "it is rejected, naming S4",
-      "test": "hexa-exec/tests/a_spec_is_drafted_and_its_tests_generated_red.rs::a_generation_that_skips_a_scenario_is_rejected",
+      "test": "hexa-exec/tests/adr_2610221540_spec_2.rs::a_generation_missing_the_test_for_s4_is_rejected_and_names_s4",
       "red": "8c3d0cf"
     },
     {
