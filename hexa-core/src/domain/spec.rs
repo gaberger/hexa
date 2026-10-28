@@ -644,6 +644,26 @@ pub fn rebind(previous: &Spec, accepted: &Spec) -> Spec {
 
 /// `source` without the `#[test]` functions named, each with its doc
 /// comments and attributes (§2).
+/// The names of the `#[test]` functions in `source`, read as code: text in
+/// a string or a comment is not a test.
+pub fn test_fns(source: &str) -> Vec<String> {
+    let mask = code_mask(source);
+    items(source, &mask, 0, source.len())
+        .into_iter()
+        .filter(|it| {
+            kind_of(&it.header) == "fn"
+                && it.lead.iter().any(|a| {
+                    let c: String = a.chars().filter(|c| !c.is_whitespace()).collect();
+                    c == "#[test]" || (c.starts_with("#[") && c.ends_with("::test]"))
+                })
+        })
+        .filter_map(|it| {
+            let words = header_words(&it.header);
+            words.iter().position(|w| w == "fn").and_then(|i| words.get(i + 1)).cloned()
+        })
+        .collect()
+}
+
 pub fn without_tests(source: &str, names: &[String]) -> String {
     if names.is_empty() {
         return source.to_string();
