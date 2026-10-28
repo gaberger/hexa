@@ -8,7 +8,7 @@
   ],
   "accepted": {
     "by": "gary (run by Claude on gary's instruction)",
-    "sha256": "1fa58f838e08d00a72b9e3b5f12a09029de4bd02284dbf7850182230a95f29e4"
+    "sha256": "296b4e63dcd9d42acfad5f89ed2b638be7852cb094c5f38c37a5ba0fdbd9a55b"
   },
   "specs": [
     {
@@ -119,7 +119,7 @@
       "description": "The doctor still reports a citation that resolves nowhere.",
       "given": "a project whose own text cites `ADR-1999010100`, an id in neither the project's ledger nor the embedded hexa ledger",
       "when": "`hexa adr doctor` runs",
-      "then": "it reports exactly one `DanglingCitation`, for `ADR-1999010100`, and fails"
+      "then": "it reports exactly one `DanglingCitation`, for `ADR-1999010100`, and fails, while in the same run a citation of one of hexa's own decisions in that project is not reported."
     },
     {
       "id": "S11",
