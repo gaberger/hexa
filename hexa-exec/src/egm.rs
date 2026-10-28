@@ -260,11 +260,14 @@ impl Sources {
     }
 }
 
-/// The project context the elephant holds: CLAUDE.md, README.md and
-/// ARCHITECTURE.md, each cut, then the source `document` names.
+/// The project context the elephant holds: CLAUDE.md, README.md,
+/// ARCHITECTURE.md and the build manifest, each cut, then the source
+/// `document` names. The manifest says what language the project is in: a
+/// template CLAUDE.md alone once led the elephant to design a Rust project
+/// in TypeScript.
 fn project_context(root: &Path, document: &str) -> String {
     let mut out = String::new();
-    for f in ["CLAUDE.md", "README.md", "ARCHITECTURE.md"] {
+    for f in ["CLAUDE.md", "README.md", "ARCHITECTURE.md", "Cargo.toml", "go.mod", "package.json"] {
         if let Ok(text) = std::fs::read_to_string(root.join(f)) {
             out.push_str(&format!("## {f}\n\n{}\n\n", cut(&text, CONTEXT_CAP)));
         }
