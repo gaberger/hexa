@@ -10,6 +10,10 @@
     "by": "gary (run by Claude on gary's instruction)",
     "sha256": "296b4e63dcd9d42acfad5f89ed2b638be7852cb094c5f38c37a5ba0fdbd9a55b"
   },
+  "sealed": {
+    "hexa-cli/tests/adr_2610281552_spec.rs": "ef9ee7a1fcb09c5cb6e1e716e667eea53b7eedb997745266630e89b6569fb562"
+  },
+  "red": "94f83fb",
   "specs": [
     {
       "id": "S01",
@@ -20,7 +24,8 @@
       "description": "The build embeds the ids of hexa's own ADR files.",
       "given": "a hexa source tree whose `docs/adrs/` holds `ADR-2609121400.md` and `ADR-2609211430.md`",
       "when": "`hexa-cli` is built",
-      "then": "the binary's embedded hexa ledger is exactly {`ADR-2609121400`, `ADR-2609211430`}"
+      "then": "the binary's embedded hexa ledger is exactly {`ADR-2609121400`, `ADR-2609211430`}",
+      "test": "hexa-cli/tests/adr_2610281552_spec.rs::s01_build_embeds_ids_of_hexa_adr_files"
     },
     {
       "id": "S02",
@@ -31,7 +36,8 @@
       "description": "A build without hexa's ADR directory embeds no ids.",
       "given": "a hexa source tree with no `docs/adrs/` directory",
       "when": "`hexa-cli` is built",
-      "then": "the build succeeds and the embedded hexa ledger is empty"
+      "then": "the build succeeds and the embedded hexa ledger is empty",
+      "test": "hexa-cli/tests/adr_2610281552_spec.rs::s02_build_without_adr_directory_embeds_no_ids"
     },
     {
       "id": "S03",
@@ -42,7 +48,8 @@
       "description": "Only files matching `ADR-*.md` count as decisions.",
       "given": "a `docs/adrs/` holding `ADR-2609121400.md`, `README.md` and `ADR-2609211430.txt`",
       "when": "`hexa-cli` is built",
-      "then": "the embedded hexa ledger is {`ADR-2609121400`} and has no entry for `README` or for `ADR-2609211430`"
+      "then": "the embedded hexa ledger is {`ADR-2609121400`} and has no entry for `README` or for `ADR-2609211430`",
+      "test": "hexa-cli/tests/adr_2610281552_spec.rs::s03_only_adr_md_files_count_as_decisions"
     },
     {
       "id": "S04",
@@ -53,7 +60,8 @@
       "description": "An id in the project's ledger resolves to Project.",
       "given": "project_ids = [`ADR-2610010000`] and hexa_ids = [`ADR-2609121400`]",
       "when": "`cited_ledger(\"ADR-2610010000\", project_ids, hexa_ids)` is called",
-      "then": "it returns `CitedLedger::Project`"
+      "then": "it returns `CitedLedger::Project`",
+      "test": "hexa-cli/tests/adr_2610281552_spec.rs::s04_project_id_resolves_to_project"
     },
     {
       "id": "S05",
@@ -64,7 +72,8 @@
       "description": "An id that only hexa's ledger holds resolves to Hexa.",
       "given": "project_ids = [`ADR-2610010000`] and hexa_ids = [`ADR-2609121400`]",
       "when": "`cited_ledger(\"ADR-2609121400\", project_ids, hexa_ids)` is called",
-      "then": "it returns `CitedLedger::Hexa`"
+      "then": "it returns `CitedLedger::Hexa`",
+      "test": "hexa-cli/tests/adr_2610281552_spec.rs::s05_hexa_only_id_resolves_to_hexa"
     },
     {
       "id": "S06",
@@ -75,7 +84,8 @@
       "description": "An id that neither ledger holds is Dangling.",
       "given": "project_ids = [`ADR-2610010000`] and hexa_ids = [`ADR-2609121400`]",
       "when": "`cited_ledger(\"ADR-1999010100\", project_ids, hexa_ids)` is called",
-      "then": "it returns `CitedLedger::Dangling`"
+      "then": "it returns `CitedLedger::Dangling`",
+      "test": "hexa-cli/tests/adr_2610281552_spec.rs::s06_unknown_id_is_dangling"
     },
     {
       "id": "S07",
@@ -86,7 +96,8 @@
       "description": "The project's ledger takes precedence over hexa's.",
       "given": "project_ids and hexa_ids both contain `ADR-2609121400`",
       "when": "`cited_ledger(\"ADR-2609121400\", project_ids, hexa_ids)` is called",
-      "then": "it returns `CitedLedger::Project`, not `CitedLedger::Hexa`"
+      "then": "it returns `CitedLedger::Project`, not `CitedLedger::Hexa`",
+      "test": "hexa-cli/tests/adr_2610281552_spec.rs::s07_project_ledger_takes_precedence"
     },
     {
       "id": "S08",
@@ -97,7 +108,8 @@
       "description": "With two empty ledgers, every id is Dangling.",
       "given": "project_ids = [] and hexa_ids = []",
       "when": "`cited_ledger(\"ADR-2609121400\", project_ids, hexa_ids)` is called",
-      "then": "it returns `CitedLedger::Dangling`"
+      "then": "it returns `CitedLedger::Dangling`",
+      "test": "hexa-cli/tests/adr_2610281552_spec.rs::s08_empty_ledgers_make_every_id_dangling"
     },
     {
       "id": "S09",
@@ -108,7 +120,8 @@
       "description": "The doctor passes on a fresh project whose shipped files cite hexa's decisions.",
       "given": "a project just made by `hexa dev new --lang rust`, whose `.hexa/ADR-rules.toml` and `/hexa-adr-create` skill cite `ADR-2609121400`, `ADR-2609211430`, `ADR-2609211600` and `ADR-2026-04-05-0900`, all of them in the embedded hexa ledger, and an empty project ledger",
       "when": "`hexa adr doctor` runs",
-      "then": "it reports no `DanglingCitation` and exits successfully"
+      "then": "it reports no `DanglingCitation` and exits successfully",
+      "test": "hexa-cli/tests/adr_2610281552_spec.rs::s09_doctor_passes_on_fresh_project"
     },
     {
       "id": "S10",
@@ -119,7 +132,8 @@
       "description": "The doctor still reports a citation that resolves nowhere.",
       "given": "a project whose own text cites `ADR-1999010100`, an id in neither the project's ledger nor the embedded hexa ledger",
       "when": "`hexa adr doctor` runs",
-      "then": "it reports exactly one `DanglingCitation`, for `ADR-1999010100`, and fails, while in the same run a citation of one of hexa's own decisions in that project is not reported."
+      "then": "it reports exactly one `DanglingCitation`, for `ADR-1999010100`, and fails, while in the same run a citation of one of hexa's own decisions in that project is not reported.",
+      "test": "hexa-cli/tests/adr_2610281552_spec.rs::s10_doctor_reports_citation_resolving_nowhere"
     },
     {
       "id": "S11",
@@ -130,7 +144,8 @@
       "description": "A user's own citation of a hexa decision is not reported.",
       "given": "a project ADR whose body cites `ADR-2609151930`, which the embedded hexa ledger holds and the project's ledger does not",
       "when": "`hexa adr doctor` runs",
-      "then": "it reports no `DanglingCitation` for `ADR-2609151930`"
+      "then": "it reports no `DanglingCitation` for `ADR-2609151930`",
+      "test": "hexa-cli/tests/adr_2610281552_spec.rs::s11_user_citation_of_hexa_decision_not_reported"
     },
     {
       "id": "S12",
@@ -141,7 +156,8 @@
       "description": "Resolution order holds over all inputs.",
       "given": "any id, any project_ids and any hexa_ids",
       "when": "`cited_ledger(id, project_ids, hexa_ids)` is called",
-      "then": "it returns `Project` exactly when project_ids contains id; `Hexa` exactly when project_ids does not contain id and hexa_ids does; and `Dangling` exactly when neither contains id"
+      "then": "it returns `Project` exactly when project_ids contains id; `Hexa` exactly when project_ids does not contain id and hexa_ids does; and `Dangling` exactly when neither contains id",
+      "test": "hexa-cli/tests/adr_2610281552_spec.rs::s12_resolution_order_property"
     },
     {
       "id": "S13",
@@ -152,7 +168,8 @@
       "description": "When the two ledgers are the same set, as in hexa's own repository, nothing goes unchecked.",
       "given": "any id and any set of ids L, with project_ids = hexa_ids = L",
       "when": "`cited_ledger(id, L, L)` is called",
-      "then": "it never returns `Hexa`: it returns `Project` when L contains id and `Dangling` otherwise"
+      "then": "it never returns `Hexa`: it returns `Project` when L contains id and `Dangling` otherwise",
+      "test": "hexa-cli/tests/adr_2610281552_spec.rs::s13_same_ledgers_never_resolve_to_hexa"
     },
     {
       "id": "S14",
@@ -163,7 +180,8 @@
       "description": "Rust ignores target/ and the session state.",
       "given": "lang = `rust`",
       "when": "`gitignore_lines(\"rust\")` is called",
-      "then": "the result holds exactly `target/`, `.hexa/loop.json` and `.hexa/loop.lock`"
+      "then": "the result holds exactly `target/`, `.hexa/loop.json` and `.hexa/loop.lock`",
+      "test": "hexa-cli/tests/adr_2610281552_spec.rs::s14_rust_gitignore_lines"
     },
     {
       "id": "S15",
@@ -174,7 +192,8 @@
       "description": "TS ignores node_modules/, dist/ and the session state.",
       "given": "lang = `ts`",
       "when": "`gitignore_lines(\"ts\")` is called",
-      "then": "the result holds exactly `node_modules/`, `dist/`, `.hexa/loop.json` and `.hexa/loop.lock`"
+      "then": "the result holds exactly `node_modules/`, `dist/`, `.hexa/loop.json` and `.hexa/loop.lock`",
+      "test": "hexa-cli/tests/adr_2610281552_spec.rs::s15_ts_gitignore_lines"
     },
     {
       "id": "S16",
@@ -185,7 +204,8 @@
       "description": "Go adds no build-output lines, only the session state.",
       "given": "lang = `go`",
       "when": "`gitignore_lines(\"go\")` is called",
-      "then": "the result holds exactly `.hexa/loop.json` and `.hexa/loop.lock`, and holds neither `target/` nor `node_modules/` nor `dist/`"
+      "then": "the result holds exactly `.hexa/loop.json` and `.hexa/loop.lock`, and holds neither `target/` nor `node_modules/` nor `dist/`",
+      "test": "hexa-cli/tests/adr_2610281552_spec.rs::s16_go_gitignore_lines"
     },
     {
       "id": "S17",
@@ -196,7 +216,8 @@
       "description": "With no existing file, the merge gives every needed line.",
       "given": "existing = None and lang = `rust`",
       "when": "`merged_gitignore(None, \"rust\")` is called",
-      "then": "it returns Some(text) whose lines include `target/`, `.hexa/loop.json` and `.hexa/loop.lock`, each exactly once"
+      "then": "it returns Some(text) whose lines include `target/`, `.hexa/loop.json` and `.hexa/loop.lock`, each exactly once",
+      "test": "hexa-cli/tests/adr_2610281552_spec.rs::s17_merge_with_no_existing_file"
     },
     {
       "id": "S18",
@@ -207,7 +228,8 @@
       "description": "The merge keeps the existing text and appends only the missing lines.",
       "given": "existing = Some(\"*.log\\ntarget/\\n\") and lang = `rust`",
       "when": "`merged_gitignore(existing, \"rust\")` is called",
-      "then": "it returns Some(text) that begins with `*.log\\ntarget/\\n`, then holds `.hexa/loop.json` and `.hexa/loop.lock`, and holds `target/` only once"
+      "then": "it returns Some(text) that begins with `*.log\\ntarget/\\n`, then holds `.hexa/loop.json` and `.hexa/loop.lock`, and holds `target/` only once",
+      "test": "hexa-cli/tests/adr_2610281552_spec.rs::s18_merge_keeps_existing_and_appends_missing"
     },
     {
       "id": "S19",
@@ -218,7 +240,8 @@
       "description": "Nothing is written when nothing is missing.",
       "given": "existing = Some(\"target/\\n.hexa/loop.json\\n.hexa/loop.lock\\n\") and lang = `rust`",
       "when": "`merged_gitignore(existing, \"rust\")` is called",
-      "then": "it returns None"
+      "then": "it returns None",
+      "test": "hexa-cli/tests/adr_2610281552_spec.rs::s19_nothing_written_when_nothing_missing"
     },
     {
       "id": "S20",
@@ -229,7 +252,8 @@
       "description": "A line counts as present only when it matches a whole line, not a substring.",
       "given": "existing = Some(\"mytarget/\\n.hexa/loop.json\\n.hexa/loop.lock\\n\") and lang = `rust`",
       "when": "`merged_gitignore(existing, \"rust\")` is called",
-      "then": "it returns Some(text) that appends `target/` as its own line"
+      "then": "it returns Some(text) that appends `target/` as its own line",
+      "test": "hexa-cli/tests/adr_2610281552_spec.rs::s20_presence_is_whole_line_not_substring"
     },
     {
       "id": "S21",
@@ -240,7 +264,8 @@
       "description": "`hexa dev new` writes the .gitignore, so the first commit holds no build output.",
       "given": "an empty directory",
       "when": "`hexa dev new --lang rust` runs, then `cargo build`, then `git add -A`",
-      "then": "`.gitignore` holds `target/`, `.hexa/loop.json` and `.hexa/loop.lock`, and nothing under `target/` is staged"
+      "then": "`.gitignore` holds `target/`, `.hexa/loop.json` and `.hexa/loop.lock`, and nothing under `target/` is staged",
+      "test": "hexa-cli/tests/adr_2610281552_spec.rs::s21_dev_new_writes_gitignore_and_target_not_staged"
     },
     {
       "id": "S22",
@@ -251,7 +276,8 @@
       "description": "`hexa init` leaves an already complete .gitignore unchanged.",
       "given": "a directory whose `.gitignore` already holds every line `gitignore_lines(\"rust\")` gives, along with other user lines",
       "when": "`hexa init --lang rust` runs",
-      "then": "`.gitignore` is byte-for-byte unchanged"
+      "then": "`.gitignore` is byte-for-byte unchanged",
+      "test": "hexa-cli/tests/adr_2610281552_spec.rs::s22_init_leaves_complete_gitignore_unchanged"
     },
     {
       "id": "S23",
@@ -262,7 +288,8 @@
       "description": "Every language ignores the session state.",
       "given": "any lang among `rust`, `ts` and `go`",
       "when": "`gitignore_lines(lang)` is called",
-      "then": "the result contains `.hexa/loop.json` and `.hexa/loop.lock`"
+      "then": "the result contains `.hexa/loop.json` and `.hexa/loop.lock`",
+      "test": "hexa-cli/tests/adr_2610281552_spec.rs::s23_every_language_ignores_session_state"
     },
     {
       "id": "S24",
@@ -273,7 +300,8 @@
       "description": "The merge is complete, preserving and duplicate-free.",
       "given": "any existing text E (or None) and any lang among `rust`, `ts` and `go`",
       "when": "`merged_gitignore(E, lang)` returns Some(text)",
-      "then": "text begins with E's content; every line of `gitignore_lines(lang)` is a whole line of text; and no line that `merged_gitignore` appended was already a whole line of E or appears more than once in what it appended"
+      "then": "text begins with E's content; every line of `gitignore_lines(lang)` is a whole line of text; and no line that `merged_gitignore` appended was already a whole line of E or appears more than once in what it appended",
+      "test": "hexa-cli/tests/adr_2610281552_spec.rs::s24_merge_complete_preserving_duplicate_free"
     },
     {
       "id": "S25",
@@ -284,7 +312,8 @@
       "description": "The merge is idempotent.",
       "given": "any existing text E (or None) and any lang among `rust`, `ts` and `go`",
       "when": "`merged_gitignore(E, lang)` returns Some(text), and `merged_gitignore(Some(text), lang)` is then called",
-      "then": "the second call returns None"
+      "then": "the second call returns None",
+      "test": "hexa-cli/tests/adr_2610281552_spec.rs::s25_merge_is_idempotent"
     },
     {
       "id": "S26",
@@ -295,7 +324,8 @@
       "description": "None means nothing is missing.",
       "given": "any existing text E (or None) and any lang among `rust`, `ts` and `go`",
       "when": "`merged_gitignore(E, lang)` is called",
-      "then": "it returns None exactly when E is Some and every line of `gitignore_lines(lang)` is already a whole line of E"
+      "then": "it returns None exactly when E is Some and every line of `gitignore_lines(lang)` is already a whole line of E",
+      "test": "hexa-cli/tests/adr_2610281552_spec.rs::s26_none_means_nothing_missing"
     }
   ]
 }
