@@ -273,3 +273,20 @@ mod tests {
         assert_eq!(test_ref("tests/a.rs::"), None);
     }
 }
+
+/// A Rust file's public API: its `pub` items with every function body
+/// replaced by `{ … }`, private items and `mod tests` removed. What the test
+/// writer is shown of a file that is not a port or the domain.
+pub fn public_signatures(source: &str) -> String {
+    let _ = source;
+    unimplemented!("built to its sealed spec")
+}
+
+/// Sites in a generated test file that make a test unable to pass, as
+/// `(1-based line, the text found)`: every `todo!(` and `unimplemented!(`,
+/// and every `panic!(` that is the first statement of a function or closure
+/// body.
+pub fn unpassable_sites(test_source: &str) -> Vec<(usize, String)> {
+    let _ = test_source;
+    unimplemented!("built to its sealed spec")
+}

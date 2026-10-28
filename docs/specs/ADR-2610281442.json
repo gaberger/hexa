@@ -1,0 +1,242 @@
+{
+  "adr": "ADR-2610281442",
+  "feature": "Sealed tests that can pass, written against the public API",
+  "description": "The test writer sees the public signatures of every file the ADR names. Generations with a placeholder that cannot pass are refused. Red can be proved at an earlier ancestor commit. A sealed test file is replaced only through `hexa spec tests --replace`, with a recorded reason.",
+  "universal": [
+    "§1",
+    "§2"
+  ],
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A pub function keeps its signature and loses its body",
+      "given": "a Rust source containing `pub fn add(a: u32, b: u32) -> u32 { let s = a + b; s }`",
+      "when": "public_signatures is called on it",
+      "then": "the result contains `pub fn add(a: u32, b: u32) -> u32 { … }` and does not contain `let s = a + b`"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "Pub structs, enums, traits and impl blocks are kept, and method bodies are elided",
+      "given": "a source with `pub struct Store { pub path: String }`, `pub enum Mode { A, B }`, `pub trait Port { fn get(&self) -> u8; }` and `impl Store { pub fn new(path: String) -> Self { Store { path } } }`",
+      "when": "public_signatures is called on it",
+      "then": "the result contains `pub struct Store`, `pub enum Mode`, `pub trait Port`, `impl Store` and `pub fn new(path: String) -> Self { … }`, and does not contain `Store { path }`"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "Private items and mod tests are removed",
+      "given": "a source with `pub fn visible() {}`, `fn hidden_helper() {}`, `struct HiddenType;` and `#[cfg(test)] mod tests { #[test] fn secret_test() {} }`",
+      "when": "public_signatures is called on it",
+      "then": "the result contains `visible` and contains none of `hidden_helper`, `HiddenType`, `mod tests` or `secret_test`"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "hexa spec tests shows the writer the public signatures of each other named .rs file",
+      "given": "an ADR that names a port file, a domain file and `hexa-exec/src/usecase.rs` in backquotes, where usecase.rs has a pub constructor `pub fn new(store: S) -> Self` whose body holds the marker `BODY_MARKER_7`",
+      "when": "hexa spec tests builds the writer's inputs for that ADR",
+      "then": "the inputs hold the ADR text, the port and domain files whole, and the public signatures of usecase.rs including `pub fn new(store: S) -> Self { … }`"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "The writer never sees the body of a non-port, non-domain file",
+      "given": "the same ADR, where usecase.rs's function body holds `BODY_MARKER_7`",
+      "when": "hexa spec tests builds the writer's inputs",
+      "then": "`BODY_MARKER_7` appears nowhere in the writer's inputs"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "hexa spec draft does not gain the extra files",
+      "given": "the same ADR that names usecase.rs",
+      "when": "hexa spec draft builds the spec author's inputs",
+      "then": "the inputs hold the ADR and the port and domain files only, with no signatures or text from usecase.rs"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§1"
+      ],
+      "kind": "property",
+      "description": "No function body and no private item survives, and the operation is idempotent",
+      "given": "any Rust source whose function bodies each contain a distinct marker string, and whose private items have distinct names",
+      "when": "public_signatures is called on it, and called again on its own output",
+      "then": "no body marker and no private item name appears in the output, and the second call returns the first call's output unchanged"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "todo! and unimplemented! are reported with their 1-based lines",
+      "given": "a test source whose line 3 holds `todo!()` and whose line 7 holds `unimplemented!(\"x\")`, each inside a function body",
+      "when": "unpassable_sites is called on it",
+      "then": "it returns a site at line 3 whose text contains `todo!(` and a site at line 7 whose text contains `unimplemented!(`"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "A panic! that is the first statement of a function or closure body is a site",
+      "given": "a test source with `fn make() -> Svc {` on line 1 and `panic!(\"stub\")` on line 2 as its first statement, and a closure `let f = || { panic!(\"stub\") };` on line 5",
+      "when": "unpassable_sites is called on it",
+      "then": "sites are returned for line 2 and line 5, each with text containing `panic!(`"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "A panic! inside unwrap_or_else, a match arm or an assertion message is not a site",
+      "given": "a test source whose only panics are `x.unwrap_or_else(|e| panic!(\"{e}\"))`, a match arm `Err(e) => panic!(\"{e}\"),` and `assert!(ok, \"{}\", panic_msg)`, with real code before each one in its function",
+      "when": "unpassable_sites is called on it",
+      "then": "it returns no sites"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "hexa spec tests refuses a generation with an unpassable site and names each site",
+      "given": "a generated test file that covers every scenario and holds `todo!()` at line 12 inside a helper",
+      "when": "hexa spec tests evaluates the generation",
+      "then": "the generation is refused with a message naming line 12 and `todo!(`, and no seal and no red commit is recorded"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "A clean generated file has no sites and is not refused for this reason",
+      "given": "a generated test file with assertions only and no todo!, unimplemented! or leading panic!",
+      "when": "unpassable_sites is called on it",
+      "then": "it returns an empty list"
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§2"
+      ],
+      "kind": "property",
+      "description": "Every todo! and unimplemented! is reported at its own line, and lines shift with inserted text",
+      "given": "any test source with todo!( or unimplemented!( calls placed inside function bodies at known lines",
+      "when": "unpassable_sites is called on it, and again after k blank lines are prepended",
+      "then": "the first call reports exactly one site per call, at its line, and every reported line is between 1 and the file's line count; the second call reports the same sites with each line increased by k"
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "Red is proved at an ancestor commit and recorded",
+      "given": "an ADR whose implementation exists at HEAD, and an ancestor commit C that predates the implementation",
+      "when": "`hexa spec tests <ADR> --red-at C` runs and every generated test fails in a worktree at C with the file added",
+      "then": "refs/hexa/red/<ADR> points to a commit whose tree is C's tree plus the test file, the spec's red names that commit, and the test file is committed onto HEAD"
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "verify --prove checks red at the recorded commit",
+      "given": "a spec whose red was recorded by --red-at",
+      "when": "`hexa spec verify --prove` runs",
+      "then": "the red check runs at the commit under refs/hexa/red/<ADR> and passes when the tests fail there"
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "A commit that is not an ancestor of HEAD is refused",
+      "given": "a commit D on a branch not reachable from HEAD",
+      "when": "`hexa spec tests <ADR> --red-at D` runs",
+      "then": "it is refused for not being an ancestor of HEAD, and no ref, no red value and no commit on HEAD is written"
+    },
+    {
+      "id": "S17",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "A test that passes at the red commit is refused",
+      "given": "an ancestor commit C at which one generated test already passes",
+      "when": "`hexa spec tests <ADR> --red-at C` runs",
+      "then": "the generation is refused, naming the test that passed, and refs/hexa/red/<ADR>, the spec's red and HEAD are unchanged"
+    },
+    {
+      "id": "S18",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "A sealed file is replaced in one commit that names the file and the reason",
+      "given": "a spec with a sealed test file tests/a.rs and an accepted record, and an ancestor commit C that predates the code",
+      "when": "`hexa spec tests <ADR> --replace --red-at C --because \"helper stubbed constructor\"` runs and the new generation passes the §2 and §3 checks",
+      "then": "exactly one new commit removes the old file and adds the new one, its message names tests/a.rs and the text `helper stubbed constructor`, the seal holds the new file's hash, and the spec's accepted record and accepted_content are unchanged"
+    },
+    {
+      "id": "S19",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "--replace without --because is refused",
+      "given": "a spec with a sealed test file",
+      "when": "`hexa spec tests <ADR> --replace --red-at C` runs with no --because",
+      "then": "it is refused for the missing reason, and the sealed file, the seal and HEAD are unchanged"
+    },
+    {
+      "id": "S20",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "A replacement that fails §2 or §3 leaves the sealed file in place",
+      "given": "a spec with a sealed test file, and a regeneration that holds an `unimplemented!(` site",
+      "when": "`hexa spec tests <ADR> --replace --red-at C --because \"r\"` runs",
+      "then": "it is refused, naming the site, and the original sealed file and its seal hash are unchanged and no commit is made"
+    },
+    {
+      "id": "S21",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "Editing a sealed file by hand does not count as a replacement",
+      "given": "a sealed test file edited by hand and committed outside the verb",
+      "when": "`hexa spec verify <ADR>` runs",
+      "then": "it fails, reporting that the file's hash no longer matches its seal"
+    }
+  ]
+}
