@@ -10,11 +10,12 @@ use async_trait::async_trait;
 use hexa_core::ports::inference::{IInferencePort, InferenceError, InferenceRequest, InferenceResponse};
 
 use crate::adapters::secondary::{
-    command, AnthropicAdapter, ClaudeCodeInferenceAdapter, CommandCompletionAdapter, OllamaInferenceAdapter,
+    command, AnthropicAdapter, ClaudeCodeInferenceAdapter, CommandCompletionAdapter, FileCompletionCache,
+    OllamaInferenceAdapter,
     OpenAiCompatAdapter,
 };
 use crate::endpoint::Endpoint;
-use crate::ports::Backends;
+use crate::ports::{Backends, CompletionCache, Usage};
 use crate::registry;
 
 /// The registry-backed [`Backends`]: what `hexa_infer::complete_text` and `complete_raw` run on.
@@ -54,6 +55,42 @@ impl Backends for RegistryBackends {
             return;
         }
         crate::spend::record(model, input_tokens, output_tokens);
+    }
+
+    /// `claude-text` reports what it cost; every other route, its tokens.
+    async fn complete_with_usage(&self, request: InferenceRequest) -> Result<(InferenceResponse, Usage), InferenceError> {
+        let text_route = command::configured().is_none()
+            && registry::serving(&registry::load(), &request.model).is_none()
+            && request.tools.is_empty();
+        if let Some(m) = claude_text_model(&request.model).filter(|_| text_route) {
+            let (response, cost_usd) = ClaudeCodeInferenceAdapter::text(m).complete_with_cost(request).await?;
+            let usage = Usage { cost_usd, ..Usage::of(&response) };
+            return Ok((response, usage));
+        }
+        let response = self.complete(request).await?;
+        let usage = Usage::of(&response);
+        Ok((response, usage))
+    }
+
+    fn record_usage(&self, model: &str, usage: &Usage) {
+        if command::configured().is_some() {
+            return;
+        }
+        crate::spend::record_usage(model, usage.input_tokens, usage.output_tokens, usage.cache_read_tokens, usage.cost_usd);
+    }
+
+    /// `~/.hexa/cache/completions/`. Not for an operator-named completion
+    /// command, which may answer the same prompt differently by design.
+    fn cache(&self) -> Option<&dyn CompletionCache> {
+        if command::configured().is_some() {
+            return None;
+        }
+        static CACHE: std::sync::OnceLock<FileCompletionCache> = std::sync::OnceLock::new();
+        Some(CACHE.get_or_init(|| FileCompletionCache::new(crate::spend::home().join("cache").join("completions"))))
+    }
+
+    fn record_cache_hit(&self, model: &str) {
+        crate::spend::record_with(model, 0, 0, None, "cache");
     }
 }
 

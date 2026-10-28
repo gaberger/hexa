@@ -17,6 +17,30 @@ pub trait Backends: Send + Sync {
 
     /// Record what a completion cost.
     fn record_spend(&self, model: &str, input_tokens: u64, output_tokens: u64);
+
+    /// Run `request` and say what it cost (ADR-2610281516 §1). Defaults to
+    /// the response's tokens and no cost; a backend that is told the cost
+    /// overrides it.
+    async fn complete_with_usage(&self, request: InferenceRequest) -> Result<(InferenceResponse, Usage), InferenceError> {
+        let response = self.complete(request).await?;
+        let usage = Usage::of(&response);
+        Ok((response, usage))
+    }
+
+    /// Record a completion's whole usage. Defaults to its tokens.
+    fn record_usage(&self, model: &str, usage: &Usage) {
+        self.record_spend(model, usage.input_tokens, usage.output_tokens);
+    }
+
+    /// Where tool-less replies are kept, if anywhere (§2).
+    fn cache(&self) -> Option<&dyn CompletionCache> {
+        None
+    }
+
+    /// Record a completion answered from the cache: source `cache`, no tokens.
+    fn record_cache_hit(&self, model: &str) {
+        let _ = model;
+    }
 }
 
 // ── The local runtime ────────────────────────────────────
@@ -156,6 +180,27 @@ pub fn base_url_with(p: &LocalProvider, env: &dyn Fn(&str) -> Option<String>) ->
     }
 }
 
+/// What one completion cost, as its provider reported it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Usage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cost_usd: Option<f64>,
+}
+
+impl Usage {
+    /// A response's tokens, with no cost known.
+    pub fn of(response: &InferenceResponse) -> Usage {
+        Usage {
+            input_tokens: response.input_tokens,
+            output_tokens: response.output_tokens,
+            cache_read_tokens: response.cache_read_tokens,
+            cost_usd: None,
+        }
+    }
+}
+
 /// Replies to tool-less completions, by the sha256 of model, system and user
 /// prompt (ADR-2610281516 §2).
 pub trait CompletionCache: Send + Sync {
@@ -165,6 +210,13 @@ pub trait CompletionCache: Send + Sync {
 
 /// The cache key of one tool-less completion.
 pub fn completion_key(model: &str, system: &str, user: &str) -> String {
-    let _ = (model, system, user);
-    unimplemented!("ADR-2610281516: built to its sealed spec")
+    use sha2::{Digest, Sha256};
+    // Each field length-prefixed, so text moving across a boundary changes
+    // the key: ("ab","c") and ("a","bc") differ.
+    let mut h = Sha256::new();
+    for part in [model, system, user] {
+        h.update((part.len() as u64).to_be_bytes());
+        h.update(part.as_bytes());
+    }
+    format!("{:x}", h.finalize())
 }

@@ -152,6 +152,8 @@ pub async fn run() -> anyhow::Result<Vec<Finding>> {
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."));
     findings.extend(dangling_citations(&scan_repo_citations(&root), &known_adr_ids(&adr_dir)));
+    // A citation of one of hexa's own decisions is resolved, not dangling
+    // (ADR-2610281552 §2): the project's ledger first, then hexa's.
     findings.extend(dangling_designs(&adrs, &|rel| root.join(rel).is_file()));
     Ok(findings)
 }
@@ -669,6 +671,9 @@ pub(crate) fn scan_repo_citations(root: &Path) -> Vec<CitingSite> {
     const SKIP_DIRS: &[&str] = &["target", ".git", "node_modules", "graph-out", "tests"];
     const EXTS: &[&str] = &["rs", "md", "toml", "yml", "yaml", "json"];
     let historical = Path::new("docs").join("adrs").join("historical");
+    // A spec's scenarios are fixtures for the tests they become, as `tests/`
+    // is (ADR-2609221830 §2): an id in a scenario is data, not a citation.
+    let specs = Path::new("docs").join("specs");
     let index = Path::new("docs").join("adrs").join("INDEX.md");
 
     let mut out = Vec::new();
@@ -687,7 +692,7 @@ pub(crate) fn scan_repo_citations(root: &Path) -> Vec<CitingSite> {
                 // So is a nested project with its own ledger: an example under
                 // `examples/` cites its own `docs/adrs/`, not this one's.
                 let own_ledger = path.join("docs").join("adrs").is_dir();
-                if SKIP_DIRS.contains(&name) || rel == historical || path.join(".git").exists() || own_ledger {
+                if SKIP_DIRS.contains(&name) || rel == historical || rel == specs || path.join(".git").exists() || own_ledger {
                     continue;
                 }
                 stack.push(path);
@@ -793,14 +798,27 @@ pub(crate) fn known_adr_ids(adr_dir: &Path) -> HashSet<String> {
     known
 }
 
-/// One `DanglingCitation` finding per citing site whose id is not on disk.
+mod hexa_ledger {
+    include!(concat!(env!("OUT_DIR"), "/hexa_adr_ids.rs"));
+}
+
+/// hexa's own ADR ids, as this binary was built with them.
+pub(crate) fn hexa_adr_ids() -> Vec<String> {
+    hexa_ledger::HEXA_ADR_IDS.iter().map(|s| s.to_string()).collect()
+}
+
+/// One `DanglingCitation` finding per citing site whose id resolves in
+/// neither the project's ledger nor hexa's (ADR-2610281552 §2).
 pub(crate) fn dangling_citations(
     cited: &[CitingSite],
     known: &HashSet<String>,
 ) -> Vec<Finding> {
+    use hexa_core::ports::project_floor::{cited_ledger, CitedLedger};
+    let project: Vec<String> = known.iter().cloned().collect();
+    let hexa = hexa_adr_ids();
     cited
         .iter()
-        .filter(|(_, _, id)| !known.contains(id))
+        .filter(|(_, _, id)| cited_ledger(id, &project, &hexa) == CitedLedger::Dangling)
         .map(|(path, line, id)| {
             finding(
                 id.clone(),
@@ -1893,6 +1911,15 @@ pub fn exit_code(findings: &[Finding], strict: bool) -> i32 {
 mod tests {
 
     #[test]
+    fn a_scenario_fixture_in_a_spec_is_not_a_citation() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("docs/specs")).unwrap();
+        std::fs::write(root.join("docs/specs/ADR-1.json"), "{\"given\": \"a ledger with ADR-2610010000\"}\n").unwrap();
+        assert!(scan_repo_citations(root).is_empty());
+    }
+
+    #[test]
     fn a_nested_project_with_its_own_ledger_cites_that_ledger_not_this_one() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
@@ -2747,15 +2774,15 @@ mod adr_citations {
     fn a_citation_with_no_file_is_an_error_finding() {
         let known: HashSet<String> = ["ADR-2609121400".to_string()].into_iter().collect();
         let cited = vec![
-            (PathBuf::from("hexa-exec/src/x.rs"), 7, "ADR-001".to_string()),
+            (PathBuf::from("hexa-exec/src/x.rs"), 7, "ADR-998".to_string()),
             (PathBuf::from("hexa-exec/src/x.rs"), 9, "ADR-2609121400".to_string()),
-            (PathBuf::from("CODEOWNERS"), 1, "ADR-001".to_string()),
+            (PathBuf::from("CODEOWNERS"), 1, "ADR-998".to_string()),
         ];
         let f = dangling_citations(&cited, &known);
         assert_eq!(f.len(), 2, "one finding per citing site, none for a resolved id");
         assert!(f.iter().all(|x| x.kind == FindingKind::DanglingCitation));
         assert!(f.iter().all(|x| x.severity == Severity::Error));
-        assert!(f.iter().all(|x| x.adr_id == "ADR-001"));
+        assert!(f.iter().all(|x| x.adr_id == "ADR-998"));
         assert!(f[1].detail.contains("CODEOWNERS:1"));
     }
 

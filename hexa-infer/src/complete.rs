@@ -62,13 +62,27 @@ pub async fn complete_text_with(
         grammar: None,
     };
 
-    let response = backends.complete(request).await.map_err(|e| e.to_string())?;
+    // An identical tool-less completion is answered once (ADR-2610281516 §2).
+    // `HEXA_NO_CACHE=1` (which `--fresh` sets) asks for a fresh one.
+    let bypass = std::env::var("HEXA_NO_CACHE").is_ok_and(|v| !v.is_empty() && v != "0");
+    let cache = if bypass { None } else { backends.cache() };
+    let key = crate::ports::completion_key(model, system, user);
+    if let Some(reply) = cache.and_then(|c| c.get(&key)) {
+        backends.record_cache_hit(model);
+        return Ok(reply);
+    }
 
-    backends.record_spend(model, response.input_tokens, response.output_tokens);
+    let (response, usage) = backends.complete_with_usage(request).await.map_err(|e| e.to_string())?;
+
+    backends.record_usage(model, &usage);
 
     // The daemon returned a flat `content` string. Concatenating the text blocks reproduces that
     // exactly for a reply with no tool use, which is all this path ever asks for.
-    text_or_truncation(&response.content, response.stop_reason, model, max_tokens)
+    let text = text_or_truncation(&response.content, response.stop_reason, model, max_tokens)?;
+    if let Some(c) = cache {
+        c.put(&key, &text);
+    }
+    Ok(text)
 }
 
 /// The reply's text, or an error when there is none because the model ran

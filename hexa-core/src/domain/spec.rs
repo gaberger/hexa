@@ -571,9 +571,9 @@ pub fn public_signatures(source: &str) -> String {
 }
 
 /// Sites in a generated test file that make a test unable to pass, as
-/// `(1-based line, the text found)`: every `todo!(` and `unimplemented!(`,
-/// and every `panic!(` that is the first statement of a function or closure
-/// body.
+/// `(1-based line, the text found)`: every `todo!(`, `unimplemented!(` and
+/// `assert!(false`, and every `panic!(` that is the first statement of a
+/// function or closure body.
 pub fn unpassable_sites(test_source: &str) -> Vec<(usize, String)> {
     let src = test_source;
     let b = src.as_bytes();
@@ -586,7 +586,7 @@ pub fn unpassable_sites(test_source: &str) -> Vec<(usize, String)> {
             continue;
         }
         let rest = &src[i..];
-        for m in ["todo!(", "unimplemented!("] {
+        for m in ["todo!(", "unimplemented!(", "assert!(false"] {
             if rest.starts_with(m) {
                 out.push((line_of(i), m.to_string()));
             }

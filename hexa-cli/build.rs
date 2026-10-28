@@ -5,6 +5,30 @@ fn main() {
     // Without this, rust-embed embeds stale content after asset edits.
     println!("cargo:rerun-if-changed=assets/");
     provenance();
+    hexa_ledger();
+}
+
+/// hexa's own decisions, which the files it ships cite (ADR-2610281552 §1):
+/// the ids of `docs/adrs/` in this source tree. Without that directory (a
+/// build from a published crate), none.
+fn hexa_ledger() {
+    // The ledger and its `historical/` part, as `hexa adr doctor` reads them.
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/adrs");
+    let dirs = [dir.clone(), dir.join("historical")];
+    let mut names: Vec<String> = Vec::new();
+    for d in &dirs {
+        println!("cargo:rerun-if-changed={}", d.display());
+        names.extend(
+            std::fs::read_dir(d).into_iter().flatten().flatten().map(|e| e.file_name().to_string_lossy().into_owned()),
+        );
+    }
+    let ids = hexa_core::ports::project_floor::adr_ids(&names);
+    let body = format!(
+        "/// hexa's own ADR ids, embedded at build time.\npub const HEXA_ADR_IDS: &[&str] = &[{}];\n",
+        ids.iter().map(|i| format!("{i:?}")).collect::<Vec<_>>().join(", ")
+    );
+    let out = std::path::Path::new(&std::env::var("OUT_DIR").expect("OUT_DIR")).join("hexa_adr_ids.rs");
+    std::fs::write(out, body).expect("write hexa_adr_ids.rs");
 }
 
 /// The commit this binary is built from, and whether the tree was dirty

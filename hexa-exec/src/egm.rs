@@ -570,8 +570,10 @@ pub async fn review(
 /// the reviewers' findings and nothing else.
 async fn synthesize(egm: &Egm, model: &str, stage: Stage, replies: &[(&str, String)]) -> Res<Vec<String>> {
     let found: Vec<(&str, Vec<String>)> = replies.iter().map(|(s, r)| (*s, design::list_items(r))).collect();
-    if found.iter().all(|(_, items)| items.is_empty()) {
-        return Ok(Vec::new());
+    // One reviewer: its list is the stage's findings; there is nothing to
+    // merge (ADR-2610281516 §4).
+    if !design::needs_synthesis(stage) {
+        return Ok(found.into_iter().flat_map(|(_, items)| items).collect());
     }
     let mut findings = String::new();
     for (stem, items) in &found {
