@@ -13,6 +13,10 @@
     "by": "gary (run by Claude on gary's instruction)",
     "sha256": "cdaef0dffb4b9a31c700de5e9f364c637eaa75a985b9707c916c36a39f9b9a30"
   },
+  "sealed": {
+    "hexa-cli/tests/adr_2610281516_spec.rs": "7ed495af1b0dbe270111ebffbc491e15cceb948cf331f67beba3504d4eae7d1c"
+  },
+  "red": "02c6cea",
   "specs": [
     {
       "id": "S01",
@@ -23,7 +27,8 @@
       "description": "claude-text reads the reply and the usage from claude's JSON output and records both in the spend log.",
       "given": "A claude-text backend whose `claude` process is a stub. The stub prints `{\"result\":\"hello\",\"usage\":{\"input_tokens\":120,\"output_tokens\":7,\"cache_read_input_tokens\":100},\"total_cost_usd\":0.0042}` on stdout.",
       "when": "A completion is requested with the user prompt \"say hello\".",
-      "then": "The stub was invoked with `-p` and `--output-format json`. The reply is exactly \"hello\". The spend log gains one entry for that model with input_tokens 120, output_tokens 7, cache_read_input_tokens 100 and cost 0.0042 USD."
+      "then": "The stub was invoked with `-p` and `--output-format json`. The reply is exactly \"hello\". The spend log gains one entry for that model with input_tokens 120, output_tokens 7, cache_read_input_tokens 100 and cost 0.0042 USD.",
+      "test": "hexa-cli/tests/adr_2610281516_spec.rs::s01_claude_text_reads_json_reply_and_usage"
     },
     {
       "id": "S02",
@@ -34,7 +39,8 @@
       "description": "The prompt reaches claude on stdin.",
       "given": "A claude-text backend whose `claude` stub records its stdin and its argv, then prints a valid JSON result.",
       "when": "A completion is requested with the user prompt \"PROMPT-MARKER-1\".",
-      "then": "The stub's stdin contains \"PROMPT-MARKER-1\"."
+      "then": "The stub's stdin contains \"PROMPT-MARKER-1\".",
+      "test": "hexa-cli/tests/adr_2610281516_spec.rs::s02_prompt_reaches_claude_on_stdin"
     },
     {
       "id": "S03",
@@ -45,7 +51,8 @@
       "description": "The prompt is never passed as an argument, and a prompt over 128 KiB still goes through.",
       "given": "A claude-text backend whose `claude` stub records its argv and stdin, and a user prompt of 200 KiB that ends in \"TAIL-MARKER\".",
       "when": "The completion is requested.",
-      "then": "No argv element contains \"TAIL-MARKER\" or any 1 KiB slice of the prompt. Stdin holds the whole prompt. The call does not fail with an argument-length error."
+      "then": "No argv element contains \"TAIL-MARKER\" or any 1 KiB slice of the prompt. Stdin holds the whole prompt. The call does not fail with an argument-length error.",
+      "test": "hexa-cli/tests/adr_2610281516_spec.rs::s03_large_prompt_not_in_argv"
     },
     {
       "id": "S04",
@@ -56,7 +63,8 @@
       "description": "The raw JSON envelope is not returned as the reply, and a zero-token entry is not recorded as if usage had been read.",
       "given": "A `claude` stub that prints a JSON object whose `result` is \"answer\" and whose usage reports 50 input and 5 output tokens.",
       "when": "The completion is requested.",
-      "then": "The reply does not contain \"usage\" or \"total_cost_usd\" and equals \"answer\". The spend entry does not record 0 input tokens and 0 output tokens."
+      "then": "The reply does not contain \"usage\" or \"total_cost_usd\" and equals \"answer\". The spend entry does not record 0 input tokens and 0 output tokens.",
+      "test": "hexa-cli/tests/adr_2610281516_spec.rs::s04_envelope_not_reply_and_usage_recorded"
     },
     {
       "id": "S05",
@@ -67,7 +75,8 @@
       "description": "For every prompt, the prompt travels on stdin and never in argv.",
       "given": "Any user prompt p of length 1 byte to 1 MiB containing a unique marker, and a `claude` stub that records argv and stdin.",
       "when": "A completion with p is requested.",
-      "then": "Stdin contains p in full. No argv element contains the marker."
+      "then": "Stdin contains p in full. No argv element contains the marker.",
+      "test": "hexa-cli/tests/adr_2610281516_spec.rs::s05_property_prompt_on_stdin_never_argv"
     },
     {
       "id": "S06",
@@ -78,7 +87,8 @@
       "description": "completion_key is a stable sha256 of model, system and user prompt.",
       "given": "model \"m1\", system \"sys\" and user \"usr\".",
       "when": "`completion_key(\"m1\",\"sys\",\"usr\")` is called twice.",
-      "then": "Both calls return the same string. The string is 64 hexadecimal characters."
+      "then": "Both calls return the same string. The string is 64 hexadecimal characters.",
+      "test": "hexa-cli/tests/adr_2610281516_spec.rs::s06_completion_key_stable_sha256"
     },
     {
       "id": "S07",
@@ -89,7 +99,8 @@
       "description": "A second identical tool-less completion is answered from the cache and recorded as a cache hit.",
       "given": "An empty CompletionCache backed by a temporary directory standing in for `~/.hexa/cache/completions/`, a backend that counts its calls and replies \"R\", and HEXA_NO_CACHE unset.",
       "when": "The same tool-less request (model, system prompt, user prompt) is completed twice.",
-      "then": "The backend is called once. Both replies are \"R\". The cache directory holds exactly one file for that key. The spend log's second entry has source `cache` and 0 input and 0 output tokens."
+      "then": "The backend is called once. Both replies are \"R\". The cache directory holds exactly one file for that key. The spend log's second entry has source `cache` and 0 input and 0 output tokens.",
+      "test": "hexa-cli/tests/adr_2610281516_spec.rs::s07_identical_completion_answered_from_cache"
     },
     {
       "id": "S08",
@@ -100,7 +111,8 @@
       "description": "A request that carries tools is never cached.",
       "given": "An empty CompletionCache and a counting backend.",
       "when": "The same request, with one tool defined, is completed twice.",
-      "then": "The backend is called twice. Nothing is put into the cache. No spend entry has source `cache`."
+      "then": "The backend is called twice. Nothing is put into the cache. No spend entry has source `cache`.",
+      "test": "hexa-cli/tests/adr_2610281516_spec.rs::s08_request_with_tools_never_cached"
     },
     {
       "id": "S09",
@@ -111,7 +123,8 @@
       "description": "The bypasses force a fresh completion: HEXA_NO_CACHE=1 does, and `--fresh` on `hexa design` and `hexa drift` does.",
       "given": "A cache that already holds a reply for a tool-less request, and a counting backend.",
       "when": "The request is completed with HEXA_NO_CACHE=1, and separately under `hexa design --fresh` and under `hexa drift --fresh`.",
-      "then": "In each case the backend is called and no spend entry with source `cache` is recorded for that request."
+      "then": "In each case the backend is called and no spend entry with source `cache` is recorded for that request.",
+      "test": "hexa-cli/tests/adr_2610281516_spec.rs::s09_bypasses_force_fresh_completion"
     },
     {
       "id": "S10",
@@ -122,7 +135,8 @@
       "description": "Different inputs never share a key, including when text moves across the field boundaries.",
       "given": "The keys of (\"m1\",\"s\",\"u\"), (\"m2\",\"s\",\"u\"), (\"m1\",\"s2\",\"u\"), (\"m1\",\"s\",\"u2\"), (\"ab\",\"c\",\"d\") and (\"a\",\"bc\",\"d\").",
       "when": "The keys are compared.",
-      "then": "The first four are pairwise distinct. The key of (\"ab\",\"c\",\"d\") differs from the key of (\"a\",\"bc\",\"d\")."
+      "then": "The first four are pairwise distinct. The key of (\"ab\",\"c\",\"d\") differs from the key of (\"a\",\"bc\",\"d\").",
+      "test": "hexa-cli/tests/adr_2610281516_spec.rs::s10_distinct_inputs_distinct_keys"
     },
     {
       "id": "S11",
@@ -133,7 +147,8 @@
       "description": "The key is a function of exactly the three inputs.",
       "given": "Any strings (m, s, u) and (m', s', u').",
       "when": "`completion_key` is computed for both triples.",
-      "then": "The keys are equal if and only if m=m', s=s' and u=u'. Every key is 64 hexadecimal characters."
+      "then": "The keys are equal if and only if m=m', s=s' and u=u'. Every key is 64 hexadecimal characters.",
+      "test": "hexa-cli/tests/adr_2610281516_spec.rs::s11_property_key_function_of_three_inputs"
     },
     {
       "id": "S12",
@@ -144,7 +159,8 @@
       "description": "goldfish_prompt places framing, then the document, then the sources, then the standard, then the persona.",
       "given": "persona \"PERSONA-P\", standard Some(\"STANDARD-S\"), document \"DOCUMENT-D\", one source (\"src/a.rs\",\"SOURCE-A\") and cap_bytes 1000.",
       "when": "`goldfish_prompt` is called.",
-      "then": "The output contains each marker exactly once. Its first occurrences come in the order DOCUMENT-D < SOURCE-A < STANDARD-S < PERSONA-P. The output starts with hexa's framing text, which precedes DOCUMENT-D."
+      "then": "The output contains each marker exactly once. Its first occurrences come in the order DOCUMENT-D < SOURCE-A < STANDARD-S < PERSONA-P. The output starts with hexa's framing text, which precedes DOCUMENT-D.",
+      "test": "hexa-cli/tests/adr_2610281516_spec.rs::s12_goldfish_prompt_order"
     },
     {
       "id": "S13",
@@ -155,7 +171,8 @@
       "description": "Reordering does not change the content: nothing is added or dropped, and the cut is still stated.",
       "given": "persona \"P\", standard None, document \"D-MARK\", and one source of 50 bytes containing \"SRC-MARK\" with cap_bytes 10.",
       "when": "`goldfish_prompt` is called.",
-      "then": "The persona appears after SRC-MARK. No standard section is present. The source is cut to at most 10 bytes and the cut is stated with 50 as the original length. The text past the cap does not appear."
+      "then": "The persona appears after SRC-MARK. No standard section is present. The source is cut to at most 10 bytes and the cut is stated with 50 as the original length. The text past the cap does not appear.",
+      "test": "hexa-cli/tests/adr_2610281516_spec.rs::s13_reordering_keeps_content_and_cut"
     },
     {
       "id": "S14",
@@ -166,7 +183,8 @@
       "description": "The persona and the standard never come before the document or the sources.",
       "given": "persona \"PERSONA-Q\", standard Some(\"STD-Q\"), document \"DOC-Q\" and a source holding \"SRC-Q\".",
       "when": "`goldfish_prompt` is called.",
-      "then": "Neither PERSONA-Q nor STD-Q occurs before the position of DOC-Q or before the position of SRC-Q."
+      "then": "Neither PERSONA-Q nor STD-Q occurs before the position of DOC-Q or before the position of SRC-Q.",
+      "test": "hexa-cli/tests/adr_2610281516_spec.rs::s14_persona_standard_after_document_sources"
     },
     {
       "id": "S15",
@@ -177,7 +195,8 @@
       "description": "Reviewers of the same review share a prefix that covers the document and every source.",
       "given": "Any document d, any sources, any cap, and any two distinct (persona, standard) pairs.",
       "when": "`goldfish_prompt` is built for each pair with the same d, sources and cap.",
-      "then": "The two outputs share a common prefix that contains all of d and every included (cut) source text."
+      "then": "The two outputs share a common prefix that contains all of d and every included (cut) source text.",
+      "test": "hexa-cli/tests/adr_2610281516_spec.rs::s15_property_shared_prefix_covers_document_and_sources"
     },
     {
       "id": "S16",
@@ -188,7 +207,8 @@
       "description": "Only multi-reviewer stages need synthesis.",
       "given": "Each EGM stage.",
       "when": "`needs_synthesis` is called on each.",
-      "then": "ZoomOut, Comprehension and IntermediateZoomOut give false. Critic and ImplementationReadiness give true."
+      "then": "ZoomOut, Comprehension and IntermediateZoomOut give false. Critic and ImplementationReadiness give true.",
+      "test": "hexa-cli/tests/adr_2610281516_spec.rs::s16_only_multi_reviewer_stages_need_synthesis"
     },
     {
       "id": "S17",
@@ -199,7 +219,8 @@
       "description": "A single reviewer's list items become the stage's findings, numbered as before.",
       "given": "A review of stage 6 (Comprehension), whose one reviewer replies \"- first\\n- second\".",
       "when": "The stage runs.",
-      "then": "No synthesizer completion is requested for stage 6. The stage's findings are S6-1 \"first\" and S6-2 \"second\"."
+      "then": "No synthesizer completion is requested for stage 6. The stage's findings are S6-1 \"first\" and S6-2 \"second\".",
+      "test": "hexa-cli/tests/adr_2610281516_spec.rs::s17_single_reviewer_items_are_findings"
     },
     {
       "id": "S18",
@@ -210,7 +231,8 @@
       "description": "A single-reviewer stage never calls the synthesizer, and \"No findings.\" yields none.",
       "given": "A full review in which stages 5, 6 and 8 each have one reviewer, and the stage-8 reviewer replies \"No findings.\".",
       "when": "The review runs.",
-      "then": "Exactly 11 completions are requested: 9 reviewers and synthesizers only for stages 7 and 9. Stage 8 has zero findings."
+      "then": "Exactly 11 completions are requested: 9 reviewers and synthesizers only for stages 7 and 9. Stage 8 has zero findings.",
+      "test": "hexa-cli/tests/adr_2610281516_spec.rs::s18_full_review_eleven_completions"
     },
     {
       "id": "S19",
@@ -221,7 +243,8 @@
       "description": "needs_synthesis agrees with the reviewer count.",
       "given": "Every Stage s.",
       "when": "`needs_synthesis(s)` is evaluated.",
-      "then": "It equals `stage_reviewers(s).len() > 1`."
+      "then": "It equals `stage_reviewers(s).len() > 1`.",
+      "test": "hexa-cli/tests/adr_2610281516_spec.rs::s19_property_needs_synthesis_matches_reviewer_count"
     },
     {
       "id": "S20",
@@ -232,7 +255,8 @@
       "description": "A compile failure is repaired with one follow-up that carries the writer's reply and the compiler's messages.",
       "given": "`hexa spec tests`, where the first generation's test file fails to compile with error E0502 on the test file, and a writer stub that returns a compiling file covering every scenario on the follow-up.",
       "when": "The generation runs.",
-      "then": "Exactly one follow-up is sent. It contains the writer's first reply and the compiler's E0502 message. No fresh regeneration happens. The repaired file is accepted."
+      "then": "Exactly one follow-up is sent. It contains the writer's first reply and the compiler's E0502 message. No fresh regeneration happens. The repaired file is accepted.",
+      "test": "hexa-cli/tests/adr_2610281516_spec.rs::s20_compile_failure_repaired_by_one_follow_up"
     },
     {
       "id": "S21",
@@ -243,7 +267,8 @@
       "description": "A missing scenario or an unpassable site is repaired with its own error text.",
       "given": "A first generation that names no test for scenario S04, and separately a first generation that holds an unpassable site.",
       "when": "Each generation is rejected.",
-      "then": "The follow-up contains the writer's reply and, respectively, the id \"S04\" or the text identifying the unpassable site."
+      "then": "The follow-up contains the writer's reply and, respectively, the id \"S04\" or the text identifying the unpassable site.",
+      "test": "hexa-cli/tests/adr_2610281516_spec.rs::s21_missing_scenario_or_unpassable_site_repaired"
     },
     {
       "id": "S22",
@@ -254,7 +279,8 @@
       "description": "There are at most two repairs, and every repaired file passes every check again from the start.",
       "given": "A writer stub whose first repair compiles but now omits a scenario, and whose second repair still fails a check.",
       "when": "The generation runs.",
-      "then": "The first repair is rejected for the missing scenario even though it compiles. A second follow-up is sent. No third follow-up is sent. The generation is rejected."
+      "then": "The first repair is rejected for the missing scenario even though it compiles. A second follow-up is sent. No third follow-up is sent. The generation is rejected.",
+      "test": "hexa-cli/tests/adr_2610281516_spec.rs::s22_at_most_two_repairs_each_rechecked"
     },
     {
       "id": "S23",
@@ -265,7 +291,8 @@
       "description": "The follow-up never carries source from outside the test file.",
       "given": "A compile error whose compiler output quotes a line from `src/lib.rs` containing \"IMPL-SECRET\", alongside errors in the test file.",
       "when": "The follow-up is built.",
-      "then": "The follow-up does not contain \"IMPL-SECRET\" or any other text from `src/lib.rs`. It contains the test-file error messages."
+      "then": "The follow-up does not contain \"IMPL-SECRET\" or any other text from `src/lib.rs`. It contains the test-file error messages.",
+      "test": "hexa-cli/tests/adr_2610281516_spec.rs::s23_follow_up_carries_no_outside_source"
     },
     {
       "id": "S24",
@@ -276,7 +303,8 @@
       "description": "Over any sequence of rejections, follow-ups are bounded and confined to the test file.",
       "given": "Any generation, any sequence of rejection reasons, and any project sources.",
       "when": "`hexa spec tests` runs to acceptance or final rejection.",
-      "then": "At most two follow-ups are sent. Each one contains only the writer's own prior reply plus error text about the test file, missing scenario ids or sites. Each one contains no substring of a project source file outside the test file that is absent from the writer's reply. A file is accepted only if it passed every check in full."
+      "then": "At most two follow-ups are sent. Each one contains only the writer's own prior reply plus error text about the test file, missing scenario ids or sites. Each one contains no substring of a project source file outside the test file that is absent from the writer's reply. A file is accepted only if it passed every check in full.",
+      "test": "hexa-cli/tests/adr_2610281516_spec.rs::s24_property_follow_ups_bounded_and_confined"
     }
   ]
 }
