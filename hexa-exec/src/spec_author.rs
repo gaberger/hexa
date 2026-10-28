@@ -746,8 +746,24 @@ pub async fn generate_tests_with(
         .iter()
         .filter_map(|g| module_of(root, g).map(|m| format!("`{g}` is reached as `{m}`.\n")))
         .collect();
+    // Re-proving beside sealed tests: those tests, less the ones being
+    // replaced, show the imports and helpers that build. They were written
+    // without the code too, so they show none of it (ADR-2610281628 §2).
+    let siblings: String = match &options.only {
+        None => String::new(),
+        Some(only) => {
+            let mut out = String::new();
+            for f in spec.test_files() {
+                let Ok(src) = std::fs::read_to_string(root.join(&f)) else { continue };
+                let replaced: Vec<String> = tests_by_scenario(&src, &only.iter().map(String::as_str).collect::<Vec<_>>()).into_values().collect();
+                let kept = hexa_core::domain::spec::without_tests(&src, &replaced);
+                out.push_str(&format!("--- {f} (sealed; the new file sits beside it) ---\n{kept}\n"));
+            }
+            if out.is_empty() { out } else { format!("The tests already sealed for this spec; reuse their imports and helpers, and name no function the same:\n\n{out}\n") }
+        }
+    };
     let user = format!(
-        "The crate is `{lib}`; tests reach it as `{lib}::…`.\n{paths}{sig_paths}{bins}\nThe ADR:\n\n{text}\n\n\
+        "The crate is `{lib}`; tests reach it as `{lib}::…`.\n{paths}{sig_paths}{bins}\n{siblings}The ADR:\n\n{text}\n\n\
          The port and domain signatures:\n\n{}\nThe public API of the other files the ADR names:\n\n{}\n\
          The accepted scenarios:\n\n{scenarios}\n",
         given_block_from(&read, &given),
