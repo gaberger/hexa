@@ -155,3 +155,16 @@ pub fn base_url_with(p: &LocalProvider, env: &dyn Fn(&str) -> Option<String>) ->
         None => p.default_base_url(),
     }
 }
+
+/// Replies to tool-less completions, by the sha256 of model, system and user
+/// prompt (ADR-2610281516 §2).
+pub trait CompletionCache: Send + Sync {
+    fn get(&self, key: &str) -> Option<String>;
+    fn put(&self, key: &str, reply: &str);
+}
+
+/// The cache key of one tool-less completion.
+pub fn completion_key(model: &str, system: &str, user: &str) -> String {
+    let _ = (model, system, user);
+    unimplemented!("ADR-2610281516: built to its sealed spec")
+}

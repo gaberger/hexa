@@ -7,6 +7,7 @@ pub mod gate_ledger;
 pub mod intent;
 pub mod design;
 pub mod messages;
+pub mod project_floor;
 pub mod provenance;
 pub mod spec;
 pub mod tools;

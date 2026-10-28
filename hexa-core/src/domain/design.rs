@@ -127,6 +127,13 @@ pub fn stage_standard(stage: Stage, reviewer: &str) -> Option<&'static str> {
     }
 }
 
+/// Whether a stage's findings go through the synthesizer: only when more
+/// than one reviewer produced them (ADR-2610281516 §4).
+pub fn needs_synthesis(stage: Stage) -> bool {
+    let _ = stage;
+    unimplemented!("ADR-2610281516: built to its sealed spec")
+}
+
 /// The persona that deduplicates a stage's findings.
 pub const SYNTHESIZER: &str = "synthesizer";
 
