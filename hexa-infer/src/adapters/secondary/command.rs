@@ -21,9 +21,12 @@ use super::vec_stream::VecStream;
 /// The environment variable naming the completion executable.
 pub const COMMAND_ENV: &str = "HEXA_COMPLETION_COMMAND";
 
-/// The executable `HEXA_COMPLETION_COMMAND` names, if set.
+/// The same route under the name the spec pipeline's tests give it.
+pub const AGENT_ENV: &str = "HEXA_AGENT";
+
+/// The executable `HEXA_COMPLETION_COMMAND` (or `HEXA_AGENT`) names, if set.
 pub fn configured() -> Option<String> {
-    std::env::var(COMMAND_ENV).ok().filter(|c| !c.trim().is_empty())
+    [COMMAND_ENV, AGENT_ENV].iter().find_map(|k| std::env::var(k).ok().filter(|c| !c.trim().is_empty()))
 }
 
 pub struct CommandCompletionAdapter {

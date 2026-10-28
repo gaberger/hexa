@@ -274,12 +274,300 @@ mod tests {
     }
 }
 
+/// Which bytes of Rust source are code, not a string, char or comment.
+/// Brace matching and macro search read only code bytes.
+fn code_mask(src: &str) -> Vec<bool> {
+    let b = src.as_bytes();
+    let mut mask = vec![true; b.len()];
+    let mut i = 0;
+    while i < b.len() {
+        let start = i;
+        if b[i] == b'/' && b.get(i + 1) == Some(&b'/') {
+            while i < b.len() && b[i] != b'\n' {
+                i += 1;
+            }
+        } else if b[i] == b'/' && b.get(i + 1) == Some(&b'*') {
+            let mut depth = 0;
+            while i < b.len() {
+                if b[i] == b'/' && b.get(i + 1) == Some(&b'*') {
+                    depth += 1;
+                    i += 2;
+                } else if b[i] == b'*' && b.get(i + 1) == Some(&b'/') {
+                    depth -= 1;
+                    i += 2;
+                    if depth == 0 {
+                        break;
+                    }
+                } else {
+                    i += 1;
+                }
+            }
+        } else if b[i] == b'r' && (b.get(i + 1) == Some(&b'"') || b.get(i + 1) == Some(&b'#'))
+            && (i == 0 || !(b[i - 1].is_ascii_alphanumeric() || b[i - 1] == b'_'))
+        {
+            let mut j = i + 1;
+            let mut hashes = 0;
+            while b.get(j) == Some(&b'#') {
+                hashes += 1;
+                j += 1;
+            }
+            if b.get(j) != Some(&b'"') {
+                i += 1;
+                continue;
+            }
+            j += 1;
+            loop {
+                if j >= b.len() {
+                    break;
+                }
+                if b[j] == b'"' && (0..hashes).all(|k| b.get(j + 1 + k) == Some(&b'#')) {
+                    j += 1 + hashes;
+                    break;
+                }
+                j += 1;
+            }
+            i = j;
+        } else if b[i] == b'"' {
+            i += 1;
+            while i < b.len() && b[i] != b'"' {
+                if b[i] == b'\\' {
+                    i += 1;
+                }
+                i += 1;
+            }
+            i += 1;
+        } else if b[i] == b'\'' {
+            // A char literal: 'x', '\n', '\'', '\u{..}'; otherwise a lifetime.
+            let close = if b.get(i + 1) == Some(&b'\\') {
+                (i + 3..b.len().min(i + 12)).find(|&k| b[k] == b'\'')
+            } else {
+                let ch_len = src[i + 1..].chars().next().map(char::len_utf8).unwrap_or(1);
+                (b.get(i + 1 + ch_len) == Some(&b'\'')).then_some(i + 1 + ch_len)
+            };
+            match close {
+                Some(k) => i = k + 1,
+                None => {
+                    i += 1;
+                    continue;
+                }
+            }
+        } else {
+            i += 1;
+            continue;
+        }
+        for m in mask.iter_mut().take(i.min(b.len())).skip(start) {
+            *m = false;
+        }
+    }
+    mask
+}
+
+/// The index just past the bracket matching the one at `open`.
+fn matching(b: &[u8], mask: &[bool], open: usize) -> usize {
+    let (o, c) = (b[open], match b[open] { b'{' => b'}', b'(' => b')', _ => b']' });
+    let mut depth = 0usize;
+    for i in open..b.len() {
+        if !mask[i] {
+            continue;
+        }
+        if b[i] == o {
+            depth += 1;
+        } else if b[i] == c {
+            depth -= 1;
+            if depth == 0 {
+                return i + 1;
+            }
+        }
+    }
+    b.len()
+}
+
+/// One item of a Rust file or block: its leading docs and attributes, its
+/// header (up to its body), and its body's span if it has one.
+struct Item {
+    lead: Vec<String>,
+    header: String,
+    body: Option<(usize, usize)>,
+    text: String,
+    test_only: bool,
+}
+
+/// The items of `src[from..to]`, in order.
+fn items(src: &str, mask: &[bool], from: usize, to: usize) -> Vec<Item> {
+    let b = src.as_bytes();
+    let mut out = Vec::new();
+    let mut i = from;
+    let mut lead: Vec<String> = Vec::new();
+    let mut test_only = false;
+    while i < to {
+        if b[i].is_ascii_whitespace() {
+            i += 1;
+            continue;
+        }
+        if !mask[i] {
+            // A comment: keep `///` docs for the item that follows.
+            let mut j = i;
+            while j < to && !mask[j] {
+                j += 1;
+            }
+            let c = src[i..j].trim();
+            if c.starts_with("///") && !c.starts_with("////") {
+                for l in c.lines() {
+                    lead.push(l.trim().to_string());
+                }
+            }
+            i = j;
+            continue;
+        }
+        if b[i] == b'#' {
+            let inner = b.get(i + 1) == Some(&b'!');
+            let open = if inner { i + 2 } else { i + 1 };
+            if b.get(open) == Some(&b'[') {
+                let end = matching(b, mask, open);
+                let attr = src[i..end].trim().to_string();
+                if !inner {
+                    let compact: String = attr.chars().filter(|c| !c.is_whitespace()).collect();
+                    test_only |= compact == "#[cfg(test)]" || compact == "#[test]";
+                    lead.push(attr);
+                }
+                i = end;
+                continue;
+            }
+        }
+        // The item: up to a `;` or a body `{ … }` at depth 0.
+        let start = i;
+        let mut j = i;
+        let mut body = None;
+        let mut end = to;
+        while j < to {
+            if !mask[j] {
+                j += 1;
+                continue;
+            }
+            match b[j] {
+                b'(' | b'[' => j = matching(b, mask, j),
+                b';' => {
+                    end = j + 1;
+                    break;
+                }
+                b'{' => {
+                    let close = matching(b, mask, j);
+                    body = Some((j, close));
+                    end = close;
+                    // `pub const X: T = T { … };` and `struct S { … }` alike.
+                    let rest = src[close..to].trim_start();
+                    if rest.starts_with(';') {
+                        end = close + (src[close..to].len() - rest.len()) + 1;
+                    }
+                    break;
+                }
+                _ => j += 1,
+            }
+        }
+        let header = match body {
+            Some((open, _)) => src[start..open].trim_end().to_string(),
+            None => src[start..end].trim_end().to_string(),
+        };
+        out.push(Item { lead: std::mem::take(&mut lead), header, body, text: src[start..end].trim().to_string(), test_only });
+        test_only = false;
+        i = end.max(start + 1);
+    }
+    out
+}
+
+/// The words of a header before its signature's punctuation.
+fn header_words(header: &str) -> Vec<String> {
+    header
+        .split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '!'))
+        .filter(|w| !w.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn kind_of(header: &str) -> &'static str {
+    let words = header_words(header);
+    const KINDS: [&str; 12] =
+        ["fn", "impl", "trait", "struct", "enum", "union", "mod", "type", "const", "static", "use", "macro_rules!"];
+    for w in &words {
+        if let Some(k) = KINDS.iter().find(|k| **k == w) {
+            // `const fn` and `unsafe impl` read on to the real kind.
+            if *k == "const" && words.iter().any(|x| x == "fn") {
+                return "fn";
+            }
+            return k;
+        }
+    }
+    ""
+}
+
+fn render(lead: &[String], line: &str, indent: &str) -> String {
+    let mut out = String::new();
+    for l in lead {
+        out.push_str(indent);
+        out.push_str(l);
+        out.push('\n');
+    }
+    out.push_str(indent);
+    out.push_str(line);
+    out.push('\n');
+    out
+}
+
+/// The members of a trait or impl body, signatures only. `all` keeps every
+/// fn (a trait, or an impl of one); otherwise only `pub` ones.
+fn members(src: &str, mask: &[bool], body: (usize, usize), all: bool) -> String {
+    let mut out = String::new();
+    for it in items(src, mask, body.0 + 1, body.1 - 1) {
+        if it.test_only {
+            continue;
+        }
+        let public = it.header.starts_with("pub");
+        if !(all || public) {
+            continue;
+        }
+        match (kind_of(&it.header), it.body) {
+            ("fn", Some(_)) => out.push_str(&render(&it.lead, &format!("{} {{ … }}", it.header), "    ")),
+            ("fn" | "type" | "const", None) => out.push_str(&render(&it.lead, &it.text, "    ")),
+            ("type" | "const", Some(_)) => out.push_str(&render(&it.lead, &it.text, "    ")),
+            _ => {}
+        }
+    }
+    out
+}
+
 /// A Rust file's public API: its `pub` items with every function body
 /// replaced by `{ … }`, private items and `mod tests` removed. What the test
 /// writer is shown of a file that is not a port or the domain.
 pub fn public_signatures(source: &str) -> String {
-    let _ = source;
-    unimplemented!("built to its sealed spec")
+    let mask = code_mask(source);
+    let mut out: Vec<String> = Vec::new();
+    for it in items(source, &mask, 0, source.len()) {
+        if it.test_only {
+            continue;
+        }
+        let public = it.header.starts_with("pub");
+        let rendered = match (kind_of(&it.header), it.body) {
+            ("fn", Some(_)) if public => render(&it.lead, &format!("{} {{ … }}", it.header), ""),
+            ("trait", Some(body)) if public => {
+                render(&it.lead, &format!("{} {{\n{}}}", it.header, members(source, &mask, body, true)), "")
+            }
+            ("impl", Some(body)) => {
+                let of_trait = header_words(&it.header).iter().any(|w| w == "for");
+                let inner = members(source, &mask, body, of_trait);
+                if inner.is_empty() && !of_trait {
+                    continue;
+                }
+                render(&it.lead, &format!("{} {{\n{inner}}}", it.header), "")
+            }
+            ("mod", None) if public => render(&it.lead, &it.text, ""),
+            ("struct" | "enum" | "union" | "type" | "const" | "static" | "use", _) if public => {
+                render(&it.lead, &it.text, "")
+            }
+            _ => continue,
+        };
+        out.push(rendered);
+    }
+    out.join("\n")
 }
 
 /// Sites in a generated test file that make a test unable to pass, as
@@ -287,6 +575,35 @@ pub fn public_signatures(source: &str) -> String {
 /// and every `panic!(` that is the first statement of a function or closure
 /// body.
 pub fn unpassable_sites(test_source: &str) -> Vec<(usize, String)> {
-    let _ = test_source;
-    unimplemented!("built to its sealed spec")
+    let src = test_source;
+    let b = src.as_bytes();
+    let mask = code_mask(src);
+    let line_of = |i: usize| src[..i].matches('\n').count() + 1;
+    let word_start = |i: usize| i == 0 || !(b[i - 1].is_ascii_alphanumeric() || b[i - 1] == b'_');
+    let mut out = Vec::new();
+    for (i, _) in src.char_indices() {
+        if !mask[i] || !word_start(i) {
+            continue;
+        }
+        let rest = &src[i..];
+        for m in ["todo!(", "unimplemented!("] {
+            if rest.starts_with(m) {
+                out.push((line_of(i), m.to_string()));
+            }
+        }
+        if rest.starts_with("panic!(") {
+            // The previous code byte must open a body: `{` of a fn or a closure.
+            let prev = (0..i).rev().find(|&k| mask[k] && !b[k].is_ascii_whitespace());
+            let Some(open) = prev.filter(|&k| b[k] == b'{') else { continue };
+            let seg_start = (0..open).rev().find(|&k| mask[k] && matches!(b[k], b'{' | b'}' | b';')).map(|k| k + 1).unwrap_or(0);
+            let seg: String = (seg_start..open).filter(|&k| mask[k]).map(|k| b[k] as char).collect();
+            let seg = seg.trim();
+            let is_fn = header_words(seg).iter().any(|w| w == "fn");
+            let is_closure = seg.ends_with('|') || seg.rsplit_once('|').is_some_and(|(_, r)| r.trim_start().starts_with("->"));
+            if is_fn || is_closure {
+                out.push((line_of(i), "panic!(".to_string()));
+            }
+        }
+    }
+    out
 }

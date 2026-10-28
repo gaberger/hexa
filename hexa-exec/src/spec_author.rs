@@ -178,15 +178,44 @@ fn tail(out: &str, n: usize) -> String {
 
 /// The ADR's file, by id, under `docs/adrs/`.
 fn adr_text(root: &Path, adr_id: &str) -> Result<String, String> {
-    let dir = root.join("docs/adrs");
-    let entries = std::fs::read_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    for e in entries.flatten() {
+    let dirs = [root.join("docs/adrs"), root.join("docs/adr")];
+    for e in dirs.iter().flat_map(|d| std::fs::read_dir(d).into_iter().flatten().flatten()) {
         let name = e.file_name().to_string_lossy().to_string();
         if name == format!("{adr_id}.md") || name.starts_with(&format!("{adr_id}-")) && name.ends_with(".md") {
             return std::fs::read_to_string(e.path()).map_err(|e| e.to_string());
         }
     }
     Err(format!("{adr_id}: no such ADR in docs/adrs/"))
+}
+
+/// Every other `.rs` file the ADR names in backquotes that exists, in order
+/// of first mention: the writer sees its public signatures, never a body
+/// (ADR-2610281442 §1).
+fn signature_files(root: &Path, adr_text: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let pieces: Vec<&str> = adr_text.split('`').collect();
+    for &span in pieces.iter().take(pieces.len().saturating_sub(1)).skip(1) {
+        let span = span.trim();
+        if span.ends_with(".rs")
+            && !span.contains(char::is_whitespace)
+            && !is_contract(span)
+            && root.join(span).is_file()
+            && !out.iter().any(|o| o == span)
+        {
+            out.push(span.to_string());
+        }
+    }
+    out
+}
+
+fn signature_block(root: &Path, files: &[String]) -> String {
+    files
+        .iter()
+        .map(|f| {
+            let src = std::fs::read_to_string(root.join(f)).unwrap_or_default();
+            format!("--- {f} (public signatures; bodies elided) ---\n{}\n", hexa_core::domain::spec::public_signatures(&src))
+        })
+        .collect()
 }
 
 /// A port or domain file: a path component, or the file's stem, names it.
@@ -431,7 +460,13 @@ async fn red_at(
     let wt = std::env::temp_dir().join(format!("hexa-spec-red-{}-{nanos}", std::process::id()));
     let wt_s = wt.to_string_lossy().to_string();
     git(root, &["worktree", "add", "-q", "--detach", &wt_s, head]).await?;
-    let target = std::env::var_os("CARGO_TARGET_DIR").map(PathBuf::from).unwrap_or_else(|| root.join("target"));
+    // A build of its own: an older tree built into the shared target/ leaves
+    // artifacts newer than HEAD's sources, and cargo then runs HEAD's tests
+    // against the old code.
+    let target = std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root.join("target"))
+        .join("hexa-red");
     let written = std::fs::create_dir_all(wt.join(file).parent().unwrap_or(&wt)).and_then(|_| std::fs::write(wt.join(file), body));
     if let Err(e) = written {
         let _ = git(root, &["worktree", "remove", "--force", &wt_s]).await;
@@ -443,7 +478,7 @@ async fn red_at(
             TestRun::Failed(_) => {}
             TestRun::Broken { tail, .. } => rejected.push(format!("{sid} never ran:\n{tail}")),
             TestRun::Passed | TestRun::Ambiguous(_) => {
-                rejected.push(format!("{sid} passes before the code exists, so it tests nothing"))
+                rejected.push(format!("{sid} ({r}) passes before the code exists, so it tests nothing"))
             }
             TestRun::NotFound(why) => rejected.push(format!("{sid}: {why}")),
             TestRun::Vacuous => rejected.push(format!("{sid} ran 0 tests")),
@@ -463,6 +498,20 @@ pub async fn generate_tests(
     spec: &Spec,
     krate: &Path,
     path_env: &str,
+) -> Result<Generated, String> {
+    generate_tests_with(backends, model, root, spec, krate, path_env, &TestOptions::default()).await
+}
+
+/// [`generate_tests`], with red proved at an earlier commit or a sealed
+/// file replaced (ADR-2610281442 §3–§4).
+pub async fn generate_tests_with(
+    backends: &dyn hexa_infer::ports::Backends,
+    model: &str,
+    root: &Path,
+    spec: &Spec,
+    krate: &Path,
+    path_env: &str,
+    options: &TestOptions,
 ) -> Result<Generated, String> {
     acceptance_holds(spec).map_err(|why| format!("{}: {why}. Tests are generated from an accepted spec", spec.adr))?;
     if spec.specs.is_empty() {
@@ -488,10 +537,17 @@ pub async fn generate_tests(
         .iter()
         .map(|b| format!("The crate's `{b}` binary is `env!(\"CARGO_BIN_EXE_{b}\")`.\n"))
         .collect();
+    let signatures = signature_files(root, &text);
+    let sig_paths: String = signatures
+        .iter()
+        .filter_map(|g| module_of(root, g).map(|m| format!("`{g}` is reached as `{m}`.\n")))
+        .collect();
     let user = format!(
-        "The crate is `{lib}`; tests reach it as `{lib}::…`.\n{paths}{bins}\nThe port and domain signatures:\n\n{}\n\
+        "The crate is `{lib}`; tests reach it as `{lib}::…`.\n{paths}{sig_paths}{bins}\nThe ADR:\n\n{text}\n\n\
+         The port and domain signatures:\n\n{}\nThe public API of the other files the ADR names:\n\n{}\n\
          The accepted scenarios:\n\n{scenarios}\n",
-        given_block(root, &given)
+        given_block(root, &given),
+        signature_block(root, &signatures)
     );
     let reply = hexa_infer::complete::complete_text_with(backends, model, WRITER, &user, 8000).await?;
     let body = block(&reply);
@@ -511,23 +567,52 @@ pub async fn generate_tests(
         ));
     }
 
+    // A test that cannot pass is no gate (ADR-2610281442 §2).
+    let sites = hexa_core::domain::spec::unpassable_sites(&body);
+    if !sites.is_empty() {
+        let named: Vec<String> = sites.iter().map(|(l, t)| format!("line {l}: {t}")).collect();
+        return Err(format!(
+            "generation rejected, nothing kept: a test that cannot pass is no gate; it holds {}",
+            named.join(", ")
+        ));
+    }
+
     let stem = format!("{}_spec", spec.adr.to_lowercase().replace('-', "_"));
     let file = krate.join("tests").join(format!("{stem}.rs"));
     let file = file.strip_prefix(".").unwrap_or(&file).to_string_lossy().to_string();
     let abs = root.join(&file);
-    if abs.exists() {
-        return Err(format!("{file} exists: a regeneration is a new seal, so remove it deliberately first"));
-    }
-    if let Some(parent) = abs.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    match &options.replace {
+        None if abs.exists() => {
+            return Err(format!(
+                "{file} exists: a regeneration is a new seal; replace it with --replace --because \"<reason>\""
+            ))
+        }
+        Some(r) if !root.join(&r.old_file).exists() => return Err(format!("{} is not there to replace", r.old_file)),
+        _ => {}
     }
     let body = body + "\n";
-    std::fs::write(&abs, &body).map_err(|e| e.to_string())?;
-    let unsealed = Unsealed { root: root.to_path_buf(), file: file.clone() };
-
     let refs: BTreeMap<String, String> = names.iter().map(|(sid, f)| (sid.clone(), format!("{file}::{f}"))).collect();
     let head = git(root, &["rev-parse", "HEAD"]).await?;
-    let mut rejected = red_at(root, path_env, &head, &file, &body, &refs).await.unwrap_or_else(|e| vec![e]);
+
+    // Where red is proved: HEAD, or an earlier commit the code postdates (§3).
+    let red_commit = match &options.red_at {
+        None => None,
+        Some(c) => {
+            let c = git(root, &["rev-parse", "--verify", &format!("{c}^{{commit}}")]).await.map_err(|_| format!("{c} is not a commit"))?;
+            let ancestor = tokio::process::Command::new("git")
+                .args(["merge-base", "--is-ancestor", &c, "HEAD"])
+                .current_dir(root)
+                .status()
+                .await
+                .map_err(|e| e.to_string())?;
+            if !ancestor.success() {
+                return Err(format!("{c} is not an ancestor of HEAD: red must be proved at a commit this branch grew from"));
+            }
+            Some(red_commit_at(root, &c, &file, &body, &spec.adr).await?)
+        }
+    };
+    let check_at = red_commit.clone().unwrap_or_else(|| head.clone());
+    let mut rejected = red_at(root, path_env, &check_at, &file, &body, &refs).await.unwrap_or_else(|e| vec![e]);
     if rejected.is_empty() && git(root, &["rev-parse", "HEAD"]).await? != head {
         rejected.push("HEAD moved while the tests ran, so their red is not the commit's".into());
     }
@@ -535,8 +620,97 @@ pub async fn generate_tests(
         return Err(format!("generation rejected, nothing kept:\n  {}", rejected.join("\n  ")));
     }
 
-    let red = seal(unsealed, &body, &spec.adr).await?;
+    if let Some(parent) = abs.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let previous = options.replace.as_ref().and_then(|_| std::fs::read(&abs).ok());
+    std::fs::write(&abs, &body).map_err(|e| e.to_string())?;
+    let unsealed = Unsealed { root: root.to_path_buf(), file: file.clone(), previous };
+    let message = match &options.replace {
+        Some(r) => format!(
+            "test(spec): {} tests replaced: {} regenerated from the accepted spec\n\n\
+             Removed {}: {}\n\nThe acceptance is unchanged; only the tests are new (ADR-2610281442 §4).{}",
+            spec.adr,
+            file,
+            r.old_file,
+            r.because,
+            red_commit.as_deref().map(|c| format!(" Every test fails at {c}.")).unwrap_or_default()
+        ),
+        None => format!(
+            "test(spec): {} scenarios, generated from the accepted spec (failing)\n\n\
+             Written by hexa's test writer from the scenarios and the ports alone (ADR-2610221540 §5).\n\
+             Every test fails {}, before the decision is built.",
+            spec.adr,
+            red_commit.as_deref().map(|c| format!("at {c}")).unwrap_or_else(|| "here".into())
+        ),
+    };
+    let old = options.replace.as_ref().map(|r| r.old_file.clone()).filter(|o| *o != file);
+    let committed = seal(unsealed, &body, &message, old.as_deref()).await?;
+    let red = match red_commit {
+        Some(c) => {
+            git(root, &["update-ref", &format!("refs/hexa/red/{}", spec.adr), &c]).await?;
+            git(root, &["rev-parse", "--short", &c]).await?
+        }
+        None => committed,
+    };
     Ok(Generated { file, refs, red })
+}
+
+/// How `hexa spec tests` proves red and whether it replaces a sealed file.
+#[derive(Debug, Default, Clone)]
+pub struct TestOptions {
+    /// Prove red at this commit, an ancestor of HEAD (ADR-2610281442 §3).
+    pub red_at: Option<String>,
+    /// Replace a sealed file, for a stated reason (§4).
+    pub replace: Option<Replace>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Replace {
+    pub old_file: String,
+    pub because: String,
+}
+
+/// A commit whose tree is `base`'s plus `file` holding `body`, with `base`
+/// as its parent: the tests as they stood before the code. Built in a
+/// private index; HEAD and the working tree are untouched.
+async fn red_commit_at(root: &Path, base: &str, file: &str, body: &str, adr: &str) -> Result<String, String> {
+    let index = std::env::temp_dir().join(format!("hexa-red-index-{}-{}", std::process::id(), adr));
+    let run = |args: Vec<String>, input: Option<String>| {
+        let index = index.clone();
+        async move {
+            let mut cmd = tokio::process::Command::new("git");
+            cmd.args(&args).current_dir(root).env("GIT_INDEX_FILE", &index);
+            cmd.stdin(if input.is_some() { std::process::Stdio::piped() } else { std::process::Stdio::null() });
+            cmd.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+            let mut child = cmd.spawn().map_err(|e| e.to_string())?;
+            if let (Some(text), Some(mut stdin)) = (input, child.stdin.take()) {
+                use tokio::io::AsyncWriteExt;
+                stdin.write_all(text.as_bytes()).await.map_err(|e| e.to_string())?;
+            }
+            let out = child.wait_with_output().await.map_err(|e| e.to_string())?;
+            if !out.status.success() {
+                return Err(format!("git {}: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim()));
+            }
+            Ok::<String, String>(String::from_utf8_lossy(&out.stdout).trim().to_string())
+        }
+    };
+    let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+    let result = async {
+        run(s(&["read-tree", base]), None).await?;
+        let blob = run(s(&["hash-object", "-w", "--stdin"]), Some(body.to_string())).await?;
+        run(s(&["update-index", "--add", "--cacheinfo", &format!("100644,{blob},{file}")]), None).await?;
+        let tree = run(s(&["write-tree"]), None).await?;
+        let msg = format!("test(spec): {adr} tests, red before the code (ADR-2610281442 §3)");
+        run(
+            s(&["-c", "user.name=hexa-spec", "-c", "user.email=spec@hexa.local", "commit-tree", &tree, "-p", base, "-m", &msg]),
+            None,
+        )
+        .await
+    }
+    .await;
+    let _ = std::fs::remove_file(&index);
+    result
 }
 
 /// A generated test file written but not yet in its `red` commit. Dropped
@@ -546,10 +720,20 @@ pub async fn generate_tests(
 struct Unsealed {
     root: PathBuf,
     file: String,
+    /// A replaced file's sealed content, put back if the seal fails.
+    previous: Option<Vec<u8>>,
 }
 
 impl Drop for Unsealed {
     fn drop(&mut self) {
+        if let Some(previous) = &self.previous {
+            let _ = std::fs::write(self.root.join(&self.file), previous);
+            let _ = std::process::Command::new("git")
+                .args(["checkout", "-q", "HEAD", "--", &self.file])
+                .current_dir(&self.root)
+                .output();
+            return;
+        }
         let _ = std::process::Command::new("git")
             .args(["rm", "--cached", "-q", "--ignore-unmatch", "--", &self.file])
             .current_dir(&self.root)
@@ -560,18 +744,19 @@ impl Drop for Unsealed {
 
 /// Commit `body` as the `red` commit of `adr`'s tests, and return its sha.
 /// Until the commit is made, a failure leaves nothing behind.
-async fn seal(unsealed: Unsealed, body: &str, adr: &str) -> Result<String, String> {
+async fn seal(unsealed: Unsealed, body: &str, msg: &str, removed: Option<&str>) -> Result<String, String> {
     let (root, file) = (unsealed.root.clone(), unsealed.file.clone());
     // What was checked red, whatever touched the file while the tests ran.
     std::fs::write(root.join(&file), body).map_err(|e| e.to_string())?;
     git(&root, &["add", "--", &file]).await?;
-    let msg = format!(
-        "test(spec): {adr} scenarios, generated from the accepted spec (failing)\n\n\
-         Written by hexa's test writer from the scenarios and the ports alone (ADR-2610221540 §5).\n\
-         Every test fails here, before the decision is built."
-    );
-    git(&root, &["-c", "user.name=hexa-spec", "-c", "user.email=spec@hexa.local", "commit", "-q", "-m", &msg, "--", &file])
-        .await?;
+    let mut paths = vec![file.clone()];
+    if let Some(old) = removed {
+        git(&root, &["rm", "-q", "--", old]).await?;
+        paths.push(old.to_string());
+    }
+    let mut args = vec!["-c", "user.name=hexa-spec", "-c", "user.email=spec@hexa.local", "commit", "-q", "-m", msg, "--"];
+    args.extend(paths.iter().map(String::as_str));
+    git(&root, &args).await?;
     // Committed: the file is sealed now, and stays whatever follows.
     std::mem::forget(unsealed);
     git(&root, &["rev-parse", "--short", "HEAD"])
@@ -663,8 +848,8 @@ mod tests {
         std::fs::create_dir_all(root.join("tests")).unwrap();
         std::fs::write(root.join(file), "// first\n").unwrap();
 
-        let unsealed = Unsealed { root: root.to_path_buf(), file: file.to_string() };
-        let err = seal(unsealed, "#[test]\nfn t() {}\n", "ADR-X").await.unwrap_err();
+        let unsealed = Unsealed { root: root.to_path_buf(), file: file.to_string(), previous: None };
+        let err = seal(unsealed, "#[test]\nfn t() {}\n", "ADR-X", None).await.unwrap_err();
         assert!(err.contains("commit"), "{err}");
         assert!(!root.join(file).exists(), "an unsealed test file blocks every later run");
         let staged = git(root, &["diff", "--cached", "--name-only"]).await.unwrap();
@@ -672,14 +857,14 @@ mod tests {
 
         // A dropped future drops its guard, and the file with it.
         std::fs::write(root.join(file), "// second\n").unwrap();
-        drop(Unsealed { root: root.to_path_buf(), file: file.to_string() });
+        drop(Unsealed { root: root.to_path_buf(), file: file.to_string(), previous: None });
         assert!(!root.join(file).exists());
 
         // The commit made, the file is sealed and stays.
         std::fs::remove_file(&hook).unwrap();
         std::fs::write(root.join(file), "// third\n").unwrap();
-        let unsealed = Unsealed { root: root.to_path_buf(), file: file.to_string() };
-        let red = seal(unsealed, "#[test]\nfn t() {}\n", "ADR-X").await.unwrap();
+        let unsealed = Unsealed { root: root.to_path_buf(), file: file.to_string(), previous: None };
+        let red = seal(unsealed, "#[test]\nfn t() {}\n", "ADR-X", None).await.unwrap();
         assert_eq!(red, git(root, &["rev-parse", "--short", "HEAD"]).await.unwrap());
         assert_eq!(std::fs::read_to_string(root.join(file)).unwrap(), "#[test]\nfn t() {}\n");
     }
