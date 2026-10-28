@@ -6,6 +6,10 @@
     "§1",
     "§2"
   ],
+  "accepted": {
+    "by": "gary (run by Claude on gary's instruction)",
+    "sha256": "a235cc3cae68b89e56be335c6bb36dced351917c1bc299afe8e254dd1f7c6262"
+  },
   "specs": [
     {
       "id": "S01",
