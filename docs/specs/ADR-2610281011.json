@@ -10,8 +10,8 @@
     "§7"
   ],
   "accepted": {
-    "by": "gary",
-    "sha256": "e9b2ce36cc930b19dcc3154e0d1c002635000b2dcc30c43ad4bc46effc0d8bb6"
+    "by": "gary (run by Claude on gary's instruction)",
+    "sha256": "3733f70a30b53a6baecd89ccaee14094577efe610743dda592ea8c76ccad508f"
   },
   "specs": [
     {
@@ -76,9 +76,9 @@
       ],
       "kind": "negative",
       "description": "hexa loop design refuses a draft that is not a file inside the project",
-      "given": "a project with no file ghost.md, and a file that exists outside the project",
+      "given": "a project with no file ghost.md, a file that exists outside the project, and a file docs/designs/d.md inside it",
       "when": "`hexa loop design ghost.md`, `hexa loop design ../outside.md` and `hexa loop design /etc/hosts` run",
-      "then": "each exits with an error, records no draft, and leaves the loop's stage unchanged"
+      "then": "each of the three exits with an error whose message names the path and says it is not a file inside the project, records no draft, and leaves the loop's stage unchanged; `hexa loop design docs/designs/d.md` then succeeds and records that draft"
     },
     {
       "id": "S07",
@@ -221,7 +221,7 @@
       "description": "hexa design adr refuses a draft that git does not track",
       "given": "an untracked draft",
       "when": "`hexa design adr <draft>` runs",
-      "then": "it exits with an error and writes no ADR"
+      "then": "it exits with an error whose message says the draft is not tracked by git, and writes no ADR"
     },
     {
       "id": "S20",
@@ -254,7 +254,7 @@
       "description": "An ADR whose Design line resolves passes the doctor",
       "given": "an ADR with `**Design:** docs/design/idea.md`, where that file exists in the project",
       "when": "`hexa adr doctor` runs",
-      "then": "it reports no error for that ADR's design line"
+      "then": "it reports no error for that ADR's design line; once docs/design/idea.md is deleted, the same run reports one error naming that ADR and that path"
     },
     {
       "id": "S23",
@@ -274,9 +274,9 @@
       ],
       "kind": "example",
       "description": "An ADR with no Design line is not an error",
-      "given": "an otherwise valid ADR with no `**Design:**` line",
+      "given": "an otherwise valid ADR with no `**Design:**` line, and in the same ledger an ADR whose `**Design:**` line names a file that does not exist",
       "when": "`hexa adr doctor` runs",
-      "then": "it reports no error about a missing design"
+      "then": "it reports an error for the second ADR's design line and no error about the first, which has no design"
     },
     {
       "id": "S25",
@@ -309,7 +309,7 @@
       "description": "hexa go prints no design suggestion when no draft is recorded",
       "given": "a loop with no draft recorded",
       "when": "`hexa go` runs",
-      "then": "its output contains no `hexa design review`, `hexa design adr` or `git commit` suggestion"
+      "then": "its output contains no `hexa design review`, `hexa design adr` or `git commit` suggestion; after `hexa loop design <draft>` records an existing, unreviewed draft, `hexa go` prints `hexa design review <draft>`"
     },
     {
       "id": "S28",
@@ -430,7 +430,7 @@
       "description": "A design review request without a path has no route",
       "given": "the request `review my design`",
       "when": "route(text) is called",
-      "then": "it returns Routed::None"
+      "then": "it returns Routed::None, while `review my design docs/designs/d.md` routes to `design review docs/designs/d.md`"
     },
     {
       "id": "S39",
