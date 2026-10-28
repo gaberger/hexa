@@ -19,6 +19,7 @@ pub mod compress;
 pub mod direct_exec;
 pub mod direct_react;
 pub mod do_task;
+pub mod egm;
 pub mod frontier;
 pub mod git_history;
 pub mod git_worktrees;

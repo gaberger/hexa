@@ -233,6 +233,22 @@ enum Commands {
         #[command(subcommand)]
         action: GateAction,
     },
+    /// Design before the ADR, with the Elephant-Goldfish Model (EGM, Google LLC, Apache-2.0): brainstorm, draft, goldfish review, resolve
+    #[command(long_about = "Design before the ADR, with the Elephant-Goldfish Model (EGM, \
+https://github.com/google/elephant-goldfish-model, Google LLC, Apache-2.0; see docs/ATTRIBUTIONS.md).\n\n\
+The elephant drafts with the project's context; each goldfish reviewer is one tool-less completion that \
+sees only its persona, its standard, the document and the source the document names. A person decides: \
+no command settles a design. Commit it under docs/designs/ and take it into the pipeline as an ADR.")]
+    Design {
+        #[command(subcommand)]
+        action: commands::design::DesignAction,
+    },
+    /// Report where the docs and the code disagree, one EGM goldfish per document (Elephant-Goldfish Model)
+    #[command(long_about = "Report where the docs and the code disagree, one goldfish per document, on the drift \
+prompt of the Elephant-Goldfish Model (EGM, https://github.com/google/elephant-goldfish-model, Google LLC, \
+Apache-2.0; see docs/ATTRIBUTIONS.md). Writes docs/analysis/<YYYY-MM-DD>_DRIFT_REPORT.md and nothing else. \
+ADRs are history and are not checked.")]
+    Drift(commands::design::DriftArgs),
     /// The gate-first pipeline: draft an ADR's spec, a person accepts it, seal tests that fail first, verify them
     Spec {
         #[command(subcommand)]
@@ -463,6 +479,8 @@ async fn run() -> anyhow::Result<()> {
                 commands::gate::run(target, gate, composition_root).await
             }
         },
+        Commands::Design { action } => commands::design::run(action).await,
+        Commands::Drift(args) => commands::design::run_drift(args).await,
         Commands::Spec { action } => commands::spec::run(action).await,
         Commands::Plan { action } => commands::plan::run(action).await,
         Commands::Hook { event } => commands::hook::run(event).await,
