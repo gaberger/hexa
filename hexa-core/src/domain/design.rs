@@ -373,6 +373,34 @@ pub fn is_inside_project(path: &str) -> bool {
     !path.is_empty() && inside_project(path)
 }
 
+/// The draft sha256 a review report records (`Draft sha256: <hex>`), if any
+/// (ADR-2610281011 §2).
+pub fn reviewed_sha(report: &str) -> Option<String> {
+    let _ = report;
+    unimplemented!("ADR-2610281011: built to its sealed spec")
+}
+
+/// The stages a review report holds a section for, in report order.
+pub fn reviewed_stages(report: &str) -> Vec<Stage> {
+    let _ = report;
+    unimplemented!("ADR-2610281011: built to its sealed spec")
+}
+
+/// `Ok` when `report` recorded `draft_sha` and holds sections for stages 5,
+/// 6, 7 and 8; `Err` names what is missing.
+pub fn review_covers(report: &str, draft_sha: &str) -> Result<(), String> {
+    let _ = (report, draft_sha);
+    unimplemented!("ADR-2610281011: built to its sealed spec")
+}
+
+/// The documents to check for drift since a change (ADR-2610281011 §6):
+/// each `(document, paths it names)` that is itself in `changed` or names a
+/// path in `changed`, in `docs` order, each once.
+pub fn docs_touched(docs: &[(String, Vec<String>)], changed: &[String]) -> Vec<String> {
+    let _ = (docs, changed);
+    unimplemented!("ADR-2610281011: built to its sealed spec")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
