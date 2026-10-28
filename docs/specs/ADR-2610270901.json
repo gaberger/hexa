@@ -9,11 +9,8 @@
     "§4"
   ],
   "accepted": {
-    "by": "gary",
-    "sha256": "a34109bd2aee079e08bda863355a5c3a2266fe834e34751557a4200c6fb73b87"
-  },
-  "sealed": {
-    "hexa-infer/tests/adr_2610270901_spec.rs": "49335425fae1498e512e7f34f5ed766b26244b4fdbdad065bebaf6b6fb69d428"
+    "by": "gary (run by Claude on gary's instruction)",
+    "sha256": "6d3c1f96e7254fe605be69a0ea611e11f2ee123b9b949524ffd158b5ad3882ab"
   },
   "red": "aaec0c0",
   "specs": [
@@ -26,8 +23,7 @@
       "description": "The bare `claude-text` model id is served by the Claude CLI adapter in text mode with the isolating flags.",
       "given": "An inference request whose model id is `claude-text`, with a single user message `hello`.",
       "when": "The request is completed.",
-      "then": "The adapter invokes `claude -p` with `--tools \"\"`, `--setting-sources \"\"`, `--strict-mcp-config`, `--disable-slash-commands`, `--no-session-persistence` and `--output-format text`. The completion text returned is the CLI's stdout.",
-      "test": "hexa-infer/tests/adr_2610270901_spec.rs::bare_claude_text_is_served_in_text_mode_with_the_isolating_flags"
+      "then": "The adapter invokes `claude -p` with `--tools \"\"`, `--setting-sources \"\"`, `--strict-mcp-config`, `--disable-slash-commands`, `--no-session-persistence` and `--output-format json` (ADR-2610281516 §1). The completion text returned is the `result` of the CLI's JSON output."
     },
     {
       "id": "S02",
@@ -39,7 +35,8 @@
       "given": "An endpoint registered with provider `claude-text` under some other name.",
       "when": "A request is routed to that endpoint.",
       "then": "It is served by the Claude CLI adapter in text mode, with the same flags as for model id `claude-text`.",
-      "test": "hexa-infer/tests/adr_2610270901_spec.rs::an_endpoint_with_provider_claude_text_is_a_tool_less_completion"
+      "test": "hexa-infer/tests/adr_2610270901_spec.rs::an_endpoint_with_provider_claude_text_is_a_tool_less_completion",
+      "red": "aaec0c0"
     },
     {
       "id": "S03",
@@ -51,7 +48,8 @@
       "given": "A `claude-text` request issued from a caller whose working directory contains files.",
       "when": "The request is completed successfully.",
       "then": "The CLI's working directory is not the caller's directory. It contained no entries when the CLI started. It no longer exists after the call returns.",
-      "test": "hexa-infer/tests/adr_2610270901_spec.rs::the_cli_runs_in_a_new_empty_directory_removed_afterwards"
+      "test": "hexa-infer/tests/adr_2610270901_spec.rs::the_cli_runs_in_a_new_empty_directory_removed_afterwards",
+      "red": "aaec0c0"
     },
     {
       "id": "S04",
@@ -63,7 +61,8 @@
       "given": "Any `claude-text` request.",
       "when": "The adapter builds the CLI invocation.",
       "then": "The argument list does not contain `--dangerously-skip-permissions`.",
-      "test": "hexa-infer/tests/adr_2610270901_spec.rs::text_mode_never_skips_permissions"
+      "test": "hexa-infer/tests/adr_2610270901_spec.rs::text_mode_never_skips_permissions",
+      "red": "aaec0c0"
     },
     {
       "id": "S05",
@@ -75,7 +74,8 @@
       "given": "A `claude-text` request where the CLI exits non-zero or cannot be spawned.",
       "when": "The request is completed.",
       "then": "An error is returned and the temporary directory no longer exists.",
-      "test": "hexa-infer/tests/adr_2610270901_spec.rs::the_directory_is_removed_when_the_cli_fails"
+      "test": "hexa-infer/tests/adr_2610270901_spec.rs::the_directory_is_removed_when_the_cli_fails",
+      "red": "aaec0c0"
     },
     {
       "id": "S06",
@@ -87,7 +87,8 @@
       "given": "A `claude-text` request issued from a repository directory.",
       "when": "The adapter spawns the CLI.",
       "then": "The CLI's working directory is neither the caller's directory nor any ancestor or descendant of it.",
-      "test": "hexa-infer/tests/adr_2610270901_spec.rs::text_mode_does_not_run_in_the_callers_directory"
+      "test": "hexa-infer/tests/adr_2610270901_spec.rs::text_mode_does_not_run_in_the_callers_directory",
+      "red": "aaec0c0"
     },
     {
       "id": "S07",
@@ -99,7 +100,8 @@
       "given": "Any `claude-text` request, with any messages and any `claude-text:<model>` suffix, and any CLI outcome (success, non-zero exit, spawn failure).",
       "when": "The request is completed.",
       "then": "The invocation carries all six isolating flags. It never carries `--dangerously-skip-permissions`. It ran in a directory that was freshly created and empty at start, and that directory does not exist afterwards.",
-      "test": "hexa-infer/tests/adr_2610270901_spec.rs::every_invocation_is_isolated_and_cleaned_up"
+      "test": "hexa-infer/tests/adr_2610270901_spec.rs::every_invocation_is_isolated_and_cleaned_up",
+      "red": "aaec0c0"
     },
     {
       "id": "S08",
@@ -110,8 +112,7 @@
       "description": "The system prompt and the user message are both delivered.",
       "given": "A `claude-text` request with system prompt `You are the spec author.` and user message `Draft ADR-X`.",
       "when": "The adapter builds the CLI invocation.",
-      "then": "`--system-prompt` is passed with value `You are the spec author.`, and the prompt argument contains `Draft ADR-X`.",
-      "test": "hexa-infer/tests/adr_2610270901_spec.rs::the_system_prompt_and_the_user_message_are_both_delivered"
+      "then": "`--system-prompt` is passed with value `You are the spec author.`, and the prompt written to the CLI's stdin contains `Draft ADR-X`."
     },
     {
       "id": "S09",
@@ -122,8 +123,7 @@
       "description": "The system prompt is not dropped or folded into the prompt.",
       "given": "A `claude-text` request with a system prompt and one user message.",
       "when": "The adapter builds the CLI invocation.",
-      "then": "The system prompt text appears as the value of `--system-prompt`, not only inside the prompt argument. The invocation is not built from the last user message alone.",
-      "test": "hexa-infer/tests/adr_2610270901_spec.rs::the_system_prompt_is_not_folded_into_the_prompt"
+      "then": "The system prompt text appears as the value of `--system-prompt`, not only inside the prompt written to the CLI's stdin. The invocation is not built from the last user message alone."
     },
     {
       "id": "S10",
@@ -135,7 +135,8 @@
       "given": "A `claude-text` request with no system prompt and one user message.",
       "when": "The adapter builds the CLI invocation.",
       "then": "The argument list does not contain `--system-prompt`, and the prompt carries the user message.",
-      "test": "hexa-infer/tests/adr_2610270901_spec.rs::no_system_prompt_sends_no_flag"
+      "test": "hexa-infer/tests/adr_2610270901_spec.rs::no_system_prompt_sends_no_flag",
+      "red": "aaec0c0"
     },
     {
       "id": "S11",
@@ -146,8 +147,7 @@
       "description": "A multi-turn conversation is sent as the prompt, not just the last user message.",
       "given": "A `claude-text` request with user message `A`, assistant message `B` and user message `C`.",
       "when": "The adapter builds the CLI invocation.",
-      "then": "The prompt argument contains `A`, `B` and `C`.",
-      "test": "hexa-infer/tests/adr_2610270901_spec.rs::a_multi_turn_conversation_is_sent_whole"
+      "then": "The prompt written to the CLI's stdin contains `A`, `B` and `C`."
     },
     {
       "id": "S12",
@@ -158,8 +158,7 @@
       "description": "Nothing in the request is lost.",
       "given": "Any `claude-text` request with an optional system prompt and one or more conversation messages.",
       "when": "The adapter builds the CLI invocation.",
-      "then": "If a system prompt is present it is the exact value of `--system-prompt`, and every message's content appears in the prompt argument.",
-      "test": "hexa-infer/tests/adr_2610270901_spec.rs::nothing_in_the_request_is_lost"
+      "then": "If a system prompt is present it is the exact value of `--system-prompt`, and every message's content appears in the prompt written to the CLI's stdin."
     },
     {
       "id": "S13",
@@ -171,7 +170,8 @@
       "given": "The model id `claude-text`.",
       "when": "`served_by_frontier_cli` is evaluated for it.",
       "then": "It returns false.",
-      "test": "hexa-infer/tests/adr_2610270901_spec.rs::claude_text_is_not_an_agent"
+      "test": "hexa-infer/tests/adr_2610270901_spec.rs::claude_text_is_not_an_agent",
+      "red": "aaec0c0"
     },
     {
       "id": "S14",
@@ -183,7 +183,8 @@
       "given": "An ADR and the model id `claude-text`.",
       "when": "`hexa spec draft <ADR> --model claude-text` or `hexa spec tests <ADR> --model claude-text --crate <dir>` checks the model.",
       "then": "The model is not refused under ADR-2610221540 §2.",
-      "test": "hexa-infer/tests/adr_2610270901_spec.rs::the_spec_verbs_accept_claude_text"
+      "test": "hexa-infer/tests/adr_2610270901_spec.rs::the_spec_verbs_accept_claude_text",
+      "red": "aaec0c0"
     },
     {
       "id": "S15",
@@ -195,7 +196,8 @@
       "given": "A `claude-text` request that includes one or more tool definitions.",
       "when": "The request is completed.",
       "then": "An error is returned whose message contains `claude-text`. The CLI is not invoked, and no completion with the tools silently dropped is returned.",
-      "test": "hexa-infer/tests/adr_2610270901_spec.rs::a_request_with_tools_is_refused_naming_claude_text"
+      "test": "hexa-infer/tests/adr_2610270901_spec.rs::a_request_with_tools_is_refused_naming_claude_text",
+      "red": "aaec0c0"
     },
     {
       "id": "S16",
@@ -207,7 +209,8 @@
       "given": "The model id `claude-code`.",
       "when": "`served_by_frontier_cli` is evaluated for it.",
       "then": "It returns true. Only `claude-text` and `claude-text:<model>` are excluded.",
-      "test": "hexa-infer/tests/adr_2610270901_spec.rs::other_claude_ids_are_still_agents"
+      "test": "hexa-infer/tests/adr_2610270901_spec.rs::other_claude_ids_are_still_agents",
+      "red": "aaec0c0"
     },
     {
       "id": "S17",
@@ -219,7 +222,8 @@
       "given": "Any model id of the form `claude-text` or `claude-text:<model>`, and any request to it.",
       "when": "`served_by_frontier_cli` is evaluated, and the request is completed.",
       "then": "`served_by_frontier_cli` is false. Any request with a non-empty set of tool definitions yields an error naming `claude-text`, without invoking the CLI.",
-      "test": "hexa-infer/tests/adr_2610270901_spec.rs::no_claude_text_id_is_an_agent_and_none_serves_tools"
+      "test": "hexa-infer/tests/adr_2610270901_spec.rs::no_claude_text_id_is_an_agent_and_none_serves_tools",
+      "red": "aaec0c0"
     },
     {
       "id": "S18",
@@ -231,7 +235,8 @@
       "given": "A request with model id `claude-text:opus`.",
       "when": "The adapter builds the CLI invocation.",
       "then": "The argument list contains `--model opus`, and the other text-mode flags are unchanged.",
-      "test": "hexa-infer/tests/adr_2610270901_spec.rs::the_suffix_selects_the_model"
+      "test": "hexa-infer/tests/adr_2610270901_spec.rs::the_suffix_selects_the_model",
+      "red": "aaec0c0"
     },
     {
       "id": "S19",
@@ -243,7 +248,8 @@
       "given": "A request with model id `claude-text`.",
       "when": "The adapter builds the CLI invocation.",
       "then": "The argument list does not contain `--model`.",
-      "test": "hexa-infer/tests/adr_2610270901_spec.rs::bare_claude_text_passes_no_model"
+      "test": "hexa-infer/tests/adr_2610270901_spec.rs::bare_claude_text_passes_no_model",
+      "red": "aaec0c0"
     },
     {
       "id": "S20",
@@ -255,7 +261,8 @@
       "given": "The workspace source outside the `hexa-infer` crate.",
       "when": "It is searched for `claude-text:` followed by a model name.",
       "then": "No match is found.",
-      "test": "hexa-infer/tests/adr_2610270901_spec.rs::no_claude_model_id_is_hard_coded_outside_hexa_infer"
+      "test": "hexa-infer/tests/adr_2610270901_spec.rs::no_claude_model_id_is_hard_coded_outside_hexa_infer",
+      "red": "aaec0c0"
     },
     {
       "id": "S21",
@@ -267,7 +274,8 @@
       "given": "Any non-empty string `m`.",
       "when": "A request with model id `claude-text:m` is built into a CLI invocation.",
       "then": "`--model` appears exactly once, with value `m`.",
-      "test": "hexa-infer/tests/adr_2610270901_spec.rs::the_model_flag_is_exactly_the_suffix"
+      "test": "hexa-infer/tests/adr_2610270901_spec.rs::the_model_flag_is_exactly_the_suffix",
+      "red": "aaec0c0"
     },
     {
       "id": "S22",
@@ -279,7 +287,8 @@
       "given": "The hand-written tests for ADR-2610270901, committed before text mode is implemented.",
       "when": "They are recorded and `hexa spec seal ADR-2610270901` is run.",
       "then": "Each test was recorded failing against the unbuilt adapter, the seal succeeds, and `hexa spec verify ADR-2610270901` checks those sealed tests.",
-      "test": "hexa-infer/tests/adr_2610270901_spec.rs::this_adrs_tests_were_recorded_red_and_sealed"
+      "test": "hexa-infer/tests/adr_2610270901_spec.rs::this_adrs_tests_were_recorded_red_and_sealed",
+      "red": "aaec0c0"
     },
     {
       "id": "S23",
@@ -291,7 +300,8 @@
       "given": "Any ADR other than ADR-2610270901 whose spec or tests were produced outside `hexa spec draft` or `hexa spec tests`.",
       "when": "`hexa spec verify` is run for that ADR.",
       "then": "The ADR does not pass on the strength of the ADR-2610270901 exception; the normal gate applies.",
-      "test": "hexa-infer/tests/adr_2610270901_spec.rs::the_bootstrap_exception_is_not_available_to_other_adrs"
+      "test": "hexa-infer/tests/adr_2610270901_spec.rs::the_bootstrap_exception_is_not_available_to_other_adrs",
+      "red": "aaec0c0"
     }
   ]
 }
