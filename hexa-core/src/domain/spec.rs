@@ -607,3 +607,17 @@ pub fn unpassable_sites(test_source: &str) -> Vec<(usize, String)> {
     }
     out
 }
+
+/// The accepted spec with each unchanged scenario's `test` and `red` carried
+/// over from `previous` (ADR-2610281628 §1).
+pub fn rebind(previous: &Spec, accepted: &Spec) -> Spec {
+    let _ = (previous, accepted);
+    unimplemented!("built to its sealed spec")
+}
+
+/// `source` without the `#[test]` functions named, each with its doc
+/// comments and attributes (§2).
+pub fn without_tests(source: &str, names: &[String]) -> String {
+    let _ = (source, names);
+    unimplemented!("built to its sealed spec")
+}
