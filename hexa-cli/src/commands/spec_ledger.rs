@@ -189,12 +189,25 @@ pub fn accept(adr: &str, by: Option<&str>) -> anyhow::Result<()> {
     )?;
     let previous = accepted_at_head(&root, &a.id);
     if record_acceptance(&mut spec, by.clone(), previous.as_ref()) {
-        println!(
-            "  {} {} the accepted behaviour changed: its tests, red commit and seal are dropped. Run `hexa spec tests {}`",
-            "!".yellow(),
-            a.id,
-            a.id
-        );
+        let unbound: Vec<&str> = spec.specs.iter().filter(|s| s.test.is_none()).map(|s| s.id.as_str()).collect();
+        if previous.is_some() && !unbound.is_empty() {
+            println!(
+                "  {} {} changed where {} changed: those lose their tests, and the files that held them their seals; \
+                 every other scenario keeps its proof. Run `hexa spec tests {} --only {}`",
+                "!".yellow(),
+                a.id,
+                unbound.join(", "),
+                a.id,
+                unbound.join(",")
+            );
+        } else {
+            println!(
+                "  {} {} the accepted behaviour changed: its tests, red commit and seal are dropped. Run `hexa spec tests {}`",
+                "!".yellow(),
+                a.id,
+                a.id
+            );
+        }
     }
     let sha256 = content_hash(&spec);
     println!("  {} {} accepted by {} at {}", "\u{2713}".green(), a.id, by, &sha256[..12]);
@@ -365,6 +378,26 @@ pub async fn tests(
     Ok(())
 }
 
+/// The `#[test]` function a `/// <id>:` doc line names in `text`, if any.
+fn documented_test(text: &str, id: &str) -> Option<String> {
+    let mut pending = false;
+    for line in text.lines() {
+        let t = line.trim();
+        if let Some(doc) = t.strip_prefix("///") {
+            let first = doc.split_whitespace().next().unwrap_or("").trim_end_matches(':');
+            pending |= first == id;
+            continue;
+        }
+        if !pending || t.is_empty() || t.starts_with("#[") {
+            continue;
+        }
+        let words: Vec<&str> = t.split_whitespace().collect();
+        let name = words.iter().position(|w| *w == "fn").and_then(|i| words.get(i + 1));
+        return name.map(|n| n.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect());
+    }
+    None
+}
+
 /// `hexa spec tests <ADR> --only <ids>` (ADR-2610281628 §2): those scenarios
 /// alone, into a new file, proved red; their old tests removed from the
 /// files that held them; everything rebound, sealed and committed at once.
@@ -415,6 +448,16 @@ pub async fn reprove(
     for s in spec.specs.iter().filter(|s| only.contains(&s.id)) {
         if let Some((file, f)) = s.test.as_deref().and_then(hexa_core::ports::spec::test_ref) {
             by_file.entry(file.to_string()).or_default().push(f.rsplit("::").next().unwrap_or(f).to_string());
+        }
+    }
+    // A scenario re-acceptance left unbound still has its old test in one of
+    // the spec's files, documented with its id: that goes too.
+    for id in only.iter().filter(|id| spec.specs.iter().any(|s| &s.id == *id && s.test.is_none())) {
+        for file in spec.test_files() {
+            let text = std::fs::read_to_string(root.join(&file)).unwrap_or_default();
+            if let Some(f) = documented_test(&text, id) {
+                by_file.entry(file.clone()).or_default().push(f);
+            }
         }
     }
     for (file, names) in &by_file {

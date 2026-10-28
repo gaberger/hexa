@@ -737,7 +737,11 @@ pub async fn generate_tests_with(
         .iter()
         .map(|b| format!("The crate's `{b}` binary is `env!(\"CARGO_BIN_EXE_{b}\")`.\n"))
         .collect();
-    let signatures = signature_files(&exists, &text);
+    // Signatures alone show no code, so they come from the working tree: the
+    // API as it stands, which an amended scenario may rely on. Only what is
+    // shown whole comes from the red commit (ADR-2610281628).
+    let here = |p: &str| std::fs::read_to_string(root.join(p)).ok();
+    let signatures = signature_files(&|p: &str| here(p).is_some(), &text);
     let sig_paths: String = signatures
         .iter()
         .filter_map(|g| module_of(root, g).map(|m| format!("`{g}` is reached as `{m}`.\n")))
@@ -747,7 +751,7 @@ pub async fn generate_tests_with(
          The port and domain signatures:\n\n{}\nThe public API of the other files the ADR names:\n\n{}\n\
          The accepted scenarios:\n\n{scenarios}\n",
         given_block_from(&read, &given),
-        signature_block(&read, &signatures)
+        signature_block(&here, &signatures)
     );
     let ids: Vec<&str> = targets.iter().map(|s| s.id.as_str()).collect();
     let stem = format!("{}_spec", spec.adr.to_lowercase().replace('-', "_"));
