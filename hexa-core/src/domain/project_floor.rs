@@ -11,6 +11,13 @@ pub enum CitedLedger {
     Dangling,
 }
 
+/// The ADR ids a ledger's file names hold: each `ADR-*.md` name's id,
+/// sorted, each once. What the build embeds as hexa's own decisions.
+pub fn adr_ids(file_names: &[String]) -> Vec<String> {
+    let _ = file_names;
+    unimplemented!("built to its sealed spec")
+}
+
 /// The project's ledger first, then hexa's.
 pub fn cited_ledger(id: &str, project_ids: &[String], hexa_ids: &[String]) -> CitedLedger {
     let _ = (id, project_ids, hexa_ids);

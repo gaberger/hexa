@@ -15,7 +15,7 @@ A check that fails on a fresh project teaches its user to ignore it. The citatio
 
 ## Decision
 
-1. **The binary knows hexa's own decisions.** `hexa-cli`'s build reads the ids of `docs/adrs/ADR-*.md` in the hexa source tree and embeds them; a build without that directory embeds none.
+1. **The binary knows hexa's own decisions.** `hexa-cli`'s build reads the file names in `docs/adrs/` of the hexa source tree and embeds the ids `adr_ids(file_names)` in `hexa-core/src/domain/project_floor.rs` returns: for each name matching `ADR-*.md`, the id it starts with (the name up to the first `-` after `ADR-`'s number, or the whole stem), in sorted order without duplicates. A build without that directory embeds none.
 2. **A citation resolves against the project's ledger, then hexa's.** `cited_ledger(id, project_ids, hexa_ids)` in `hexa-core/src/domain/project_floor.rs` returns `Project` when the project's ledger holds the id, else `Hexa` when hexa's does, else `Dangling`. `hexa adr doctor` reports only `Dangling` citations as `DanglingCitation`. In hexa's own repository the two ledgers are the same set, so nothing it checks today goes unchecked.
 3. **A new project ignores its build output.** `gitignore_lines(lang)` in `hexa-core/src/domain/project_floor.rs` gives the lines a language's build output needs: `rust` → `target/`; `ts` → `node_modules/`, `dist/`; `go` → none. Every language adds `.hexa/loop.json` and `.hexa/loop.lock`, which are one checkout's session state. `merged_gitignore(existing, lang)` returns the file to write: the existing text with each missing line appended once, or `None` when nothing is missing. `hexa init` (and so `hexa dev new`) writes it.
 
