@@ -864,7 +864,7 @@ pub fn design_adr(ws: &Workspace, draft: &str, now: chrono::NaiveDateTime, say: 
     };
     let text = String::from_utf8_lossy(&bytes);
     let text = strip_header(&text);
-    let (title, context, decisions) = compile_design(text, &rel);
+    let Compiled { title, context, decisions, files } = compile_design(text, &rel);
     let adr_dir = "docs/adrs";
     let mut stamp = now;
     let id = loop {
@@ -881,11 +881,20 @@ pub fn design_adr(ws: &Workspace, draft: &str, now: chrono::NaiveDateTime, say: 
     let path = format!("{adr_dir}/{id}-{slug}.md");
     let date = now.format("%Y-%m-%d");
     let numbered: String = decisions.iter().enumerate().map(|(i, d)| format!("{}. {d}\n", i + 1)).collect();
+    let implementation = if files.is_empty() {
+        "To be written before acceptance: name the port and domain files each decision changes.".to_string()
+    } else {
+        format!(
+            "The port and domain files the design names, which `hexa spec draft` shows the spec author: {}. \
+             Write their new signatures before drafting the spec.",
+            files.iter().map(|f| format!("`{f}`")).collect::<Vec<_>>().join(", ")
+        )
+    };
     let body = format!(
         "---\nid: {id}\nstatus: proposed\ndate: {date}\n---\n# {id}: {title}\n\n**Status:** Proposed\n**Date:** {date}\n\
          **Drivers:** The design `{rel}`, reviewed by the goldfish at sha256 `{sha}` (`{report}`).\n**Design:** {rel}\n\n\
          ## Context\n\n{context}\n\n## Decision\n\n{numbered}\n## Consequences\n\nTo be written before acceptance.\n\n\
-         ## Implementation\n\nTo be written before acceptance: name the port and domain files each decision changes.\n\n\
+         ## Implementation\n\n{implementation}\n\n\
          ## Gate\n\nTo be written before acceptance: the command that must exit 0.\n\n\
          ## References\n\n- `{rel}`: the reviewed design.\n- `{report}`: its review.\n"
     );
@@ -894,51 +903,168 @@ pub fn design_adr(ws: &Workspace, draft: &str, now: chrono::NaiveDateTime, say: 
     Ok((id, path))
 }
 
-/// The design's title (its first H1), its opening as context, and one
-/// decision per `##` section: the heading in bold, then its first paragraph.
-fn compile_design(text: &str, rel: &str) -> (String, String, Vec<String>) {
+/// What a design compiles to.
+struct Compiled {
+    title: String,
+    context: String,
+    decisions: Vec<String>,
+    /// The `domain/` and `ports/` files the design names, each once.
+    files: Vec<String>,
+}
+
+/// Sections of a design that describe the problem or the plan around a
+/// decision rather than a decision: EGM's draft template names them so.
+const NOT_DECISIONS: &[&str] = &[
+    "overview", "the problem", "problem", "goals", "non-goals", "open questions", "critical user journeys",
+    "alternatives considered", "non-functional requirements", "additional resources", "future improvements",
+    "detailed implementation plan", "references",
+];
+
+/// A design compiled into an ADR's parts. The decisions are the `###`
+/// subsections of its technical plan (a `##` section whose heading starts
+/// `Technical Plan`, `Design` or `Architecture`), each as its heading in
+/// bold and its first paragraph. A design without such a section gives one
+/// decision per `##` section that is not one of [`NOT_DECISIONS`]. Context
+/// is the opening paragraph and the problem's first paragraph.
+fn compile_design(text: &str, rel: &str) -> Compiled {
+    struct Section<'a> {
+        level: usize,
+        heading: String,
+        body: Vec<&'a str>,
+    }
     let mut title = None;
-    let mut context: Vec<&str> = Vec::new();
-    let mut sections: Vec<(String, Vec<&str>)> = Vec::new();
+    let mut opening: Vec<&str> = Vec::new();
+    let mut sections: Vec<Section> = Vec::new();
+    let mut in_fence = false;
     for line in text.lines() {
         let t = line.trim();
-        if title.is_none() && t.starts_with("# ") {
-            title = Some(t.trim_start_matches("# ").trim().trim_start_matches("Design:").trim().to_string());
-        } else if let Some(h) = t.strip_prefix("## ") {
-            sections.push((h.trim().to_string(), Vec::new()));
-        } else if let Some((_, body)) = sections.last_mut() {
-            body.push(line);
+        if t.starts_with("```") {
+            in_fence = !in_fence;
+        }
+        let level = if in_fence { 0 } else { t.chars().take_while(|c| *c == '#').count() };
+        if level == 1 && title.is_none() {
+            title = Some(t.trim_start_matches('#').trim().trim_start_matches("Design:").trim().to_string());
+        } else if (2..=3).contains(&level) && t.chars().nth(level) == Some(' ') {
+            sections.push(Section { level, heading: t[level..].trim().to_string(), body: Vec::new() });
+        } else if let Some(s) = sections.last_mut() {
+            s.body.push(line);
         } else {
-            context.push(line);
+            opening.push(line);
         }
     }
+    // The first run of prose lines: fenced blocks and `**Key:** value`
+    // metadata lines are not prose.
     let first_paragraph = |lines: &[&str]| -> String {
-        lines
-            .iter()
-            .map(|l| l.trim())
-            .skip_while(|l| l.is_empty())
-            .take_while(|l| !l.is_empty())
-            .collect::<Vec<_>>()
-            .join(" ")
+        let mut out: Vec<&str> = Vec::new();
+        let mut fence = false;
+        for l in lines.iter().map(|l| l.trim()) {
+            if l.starts_with("```") || l.starts_with("~~~") {
+                fence = !fence;
+                if !out.is_empty() {
+                    break;
+                }
+                continue;
+            }
+            let item = l.strip_prefix("* ").or_else(|| l.strip_prefix("- ")).unwrap_or(l).trim_start();
+            let metadata = item.starts_with("**") && item.split("**").nth(1).is_some_and(|k| k.ends_with(':'));
+            let rule = l.len() >= 3 && l.chars().all(|c| matches!(c, '-' | '*' | '_' | ' '));
+            if fence || (out.is_empty() && (l.is_empty() || metadata || rule)) {
+                continue;
+            }
+            if l.is_empty() {
+                break;
+            }
+            out.push(l);
+        }
+        out.join(" ")
+    };
+    let decision = |s: &Section| match first_paragraph(&s.body) {
+        p if p.is_empty() => format!("**{}.**", s.heading.trim_end_matches('.')),
+        p => format!("**{}.** {p}", s.heading.trim_end_matches('.')),
+    };
+    let named = |s: &Section, names: &[&str]| {
+        let h = s.heading.to_lowercase();
+        names.iter().any(|n| h == *n || h.starts_with(&format!("{n} ")) || h.starts_with(&format!("{n}(")))
     };
     let title = title.unwrap_or_else(|| {
         Path::new(rel).file_stem().map(|s| s.to_string_lossy().replace(['-', '_'], " ")).unwrap_or_default()
     });
-    let context = match first_paragraph(&context) {
-        c if c.is_empty() => format!("See the design `{rel}`."),
-        c => format!("{c}\n\nThe design is `{rel}`."),
+
+    // The technical plan's subsections, when the design has one.
+    let plan = sections.iter().position(|s| s.level == 2 && named(s, &["technical plan", "design", "architecture"]));
+    let mut decisions: Vec<String> = match plan {
+        Some(i) => sections[i + 1..].iter().take_while(|s| s.level == 3).map(decision).collect(),
+        None => Vec::new(),
     };
-    let mut decisions: Vec<String> = sections
-        .iter()
-        .map(|(h, body)| match first_paragraph(body) {
-            p if p.is_empty() => format!("**{h}.**"),
-            p => format!("**{h}.** {p}"),
-        })
-        .collect();
+    if decisions.is_empty() {
+        decisions = sections.iter().filter(|s| s.level == 2 && !named(s, NOT_DECISIONS)).map(decision).collect();
+    }
     if decisions.is_empty() {
         decisions.push(format!("**Adopt the design.** As `{rel}` describes it."));
     }
-    (title, context, decisions)
+
+    let mut context = first_paragraph(&opening);
+    if context.is_empty() {
+        if let Some(o) = sections.iter().find(|s| named(s, &["overview"])) {
+            context = first_paragraph(&o.body);
+        }
+    }
+    if let Some(p) = sections.iter().find(|s| named(s, &["the problem", "problem"])) {
+        let p = first_paragraph(&p.body);
+        if !p.is_empty() {
+            context = if context.is_empty() { p } else { format!("{context}\n\n{p}") };
+        }
+    }
+    let context = if context.is_empty() {
+        format!("See the design `{rel}`.")
+    } else {
+        format!("{context}\n\nThe design is `{rel}`.")
+    };
+
+    let mut files: Vec<String> = Vec::new();
+    for span in text.split('`').skip(1).step_by(2) {
+        let layer = span.contains("domain/") || span.contains("ports/");
+        if layer && design::is_inside_project(span) && !span.contains(char::is_whitespace) && span.contains('.')
+            && !files.iter().any(|f| f == span)
+        {
+            files.push(span.to_string());
+        }
+    }
+    Compiled { title, context, decisions, files }
+}
+
+#[cfg(test)]
+mod compile_tests {
+    use super::compile_design;
+
+    #[test]
+    fn a_technical_plan_gives_the_decisions_and_the_problem_is_context() {
+        let d = "# Habits\n\n## Overview\n\nA tracker.\n\n## The Problem\n\nStreaks are hard.\n\n## Goals\n\n- g\n\n\
+                 ## Technical Plan (Architecture)\n\n### Composition root\n\n`src/lib.rs` wires it.\n\n### Ports\n\n\
+                 `src/ports/store.rs` holds `HabitStore`.\n\n## Alternatives Considered\n\n### Alt A\n\nNo.\n";
+        let c = compile_design(d, "docs/designs/d.md");
+        assert_eq!(c.title, "Habits");
+        assert_eq!(c.decisions.len(), 2, "{:?}", c.decisions);
+        assert!(c.decisions[0].starts_with("**Composition root.**"));
+        assert!(c.context.contains("A tracker.") && c.context.contains("Streaks are hard."));
+        assert_eq!(c.files, ["src/ports/store.rs"]);
+    }
+
+    #[test]
+    fn without_a_plan_every_section_but_the_framing_ones_is_a_decision() {
+        let d = "# Offline sync\n\nA design.\n\n## Proposal\n\nQueue writes.\n\n## Goals\n\nFast.\n";
+        let c = compile_design(d, "docs/design/idea.md");
+        assert_eq!(c.decisions, ["**Proposal.** Queue writes."]);
+    }
+
+    #[test]
+    fn metadata_and_fenced_blocks_are_not_paragraphs() {
+        let d = "# H\n\n*   **Author:** a\n*   **Date:** d\n\nThe opening.\n\n## Technical Plan\n\n### Layer map\n\n\
+                 ```text\n+--+\n```\n\nThe layers, top down.\n";
+        let c = compile_design(d, "x.md");
+        assert!(c.context.starts_with("The opening."), "{}", c.context);
+        assert_eq!(c.decisions, ["**Layer map.** The layers, top down."]);
+    }
 }
 
 fn slug(title: &str) -> String {
