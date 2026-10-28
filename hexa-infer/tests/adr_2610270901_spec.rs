@@ -111,20 +111,6 @@ fn spec(adr: &str) -> serde_json::Value {
 
 // ── §1 ────────────────────────────────────────────────────────────────────
 
-/// S01: The bare `claude-text` model id is served by the Claude CLI adapter in text mode with the isolating flags
-#[tokio::test]
-async fn bare_claude_text_is_served_in_text_mode_with_the_isolating_flags() {
-    assert_eq!(claude_text_model("claude-text"), Some(None));
-    let ran = run(None, vec![ok("hi")], vec![request("", vec![Message::user("hello")])]).await;
-    assert_eq!(ran.result.as_deref(), Ok("hi"));
-    let args = &ran.args[0];
-    for flag in ISOLATION {
-        assert!(args.iter().any(|a| a == flag), "{flag} missing from {args:?}");
-    }
-    assert_eq!(after(args, "--tools"), Some(""), "no tool is allowed: {args:?}");
-    assert_eq!(after(args, "--setting-sources"), Some(""), "no setting source is read: {args:?}");
-    assert_eq!(after(args, "--output-format"), Some("text"));
-}
 
 /// S02: An endpoint registered with provider `claude-text` is served the same way.
 #[test]
@@ -210,23 +196,7 @@ async fn every_invocation_is_isolated_and_cleaned_up() {
 
 // ── §2 ────────────────────────────────────────────────────────────────────
 
-/// S08: The system prompt and the user message are both delivered.
-#[tokio::test]
-async fn the_system_prompt_and_the_user_message_are_both_delivered() {
-    let ran = run(None, vec![ok("hi")], vec![request("You are the spec author.", vec![Message::user("The ADR")])]).await;
-    let args = &ran.args[0];
-    assert_eq!(after(args, "--system-prompt"), Some("You are the spec author."));
-    assert!(prompt(args).contains("The ADR"), "{args:?}");
-}
 
-/// S09: The system prompt is not dropped or folded into the prompt.
-#[tokio::test]
-async fn the_system_prompt_is_not_folded_into_the_prompt() {
-    let ran = run(None, vec![ok("hi")], vec![request("SYSTEM-MARKER", vec![Message::user("user text")])]).await;
-    let args = &ran.args[0];
-    assert!(args.iter().any(|a| a == "--system-prompt"), "{args:?}");
-    assert!(!prompt(args).contains("SYSTEM-MARKER"), "the prompt carries the conversation only: {args:?}");
-}
 
 /// S10: With no system prompt, no `--system-prompt` flag is sent.
 #[tokio::test]
@@ -236,48 +206,7 @@ async fn no_system_prompt_sends_no_flag() {
     assert!(!ran.args[0].iter().any(|a| a == "--system-prompt"), "{:?}", ran.args[0]);
 }
 
-/// S11: A multi-turn conversation is sent as the prompt, not just the last user message.
-#[tokio::test]
-async fn a_multi_turn_conversation_is_sent_whole() {
-    let ran = run(
-        None,
-        vec![ok("hi")],
-        vec![request("", vec![Message::user("FIRST-Q"), Message::assistant("FIRST-A"), Message::user("SECOND-Q")])],
-    )
-    .await;
-    let p = prompt(&ran.args[0]);
-    let (q1, a1, q2) = (p.find("FIRST-Q"), p.find("FIRST-A"), p.find("SECOND-Q"));
-    assert!(q1.is_some() && a1.is_some() && q2.is_some(), "every turn is sent: {p:?}");
-    assert!(q1 < a1 && a1 < q2, "in order: {p:?}");
-}
 
-/// S12: Nothing in the request is lost.
-#[tokio::test]
-async fn nothing_in_the_request_is_lost() {
-    let convos: Vec<(&str, Vec<Message>)> = vec![
-        ("sys-1", vec![Message::user("u-1")]),
-        ("", vec![Message::user("u-2"), Message::assistant("a-2"), Message::user("u-3")]),
-        ("sys-4 with spaces\nand a line", vec![Message::user("u-4 \"quoted\"")]),
-    ];
-    for (system, messages) in convos {
-        let texts: Vec<String> = messages
-            .iter()
-            .flat_map(|m| m.content.iter())
-            .filter_map(|b| match b {
-                hexa_core::ports::inference::ContentBlock::Text { text } => Some(text.clone()),
-                _ => None,
-            })
-            .collect();
-        let ran = run(None, vec![ok("ok")], vec![request(system, messages)]).await;
-        let args = &ran.args[0];
-        if !system.is_empty() {
-            assert_eq!(after(args, "--system-prompt"), Some(system));
-        }
-        for t in texts {
-            assert!(prompt(args).contains(&t), "{t:?} lost from {args:?}");
-        }
-    }
-}
 
 // ── §3 ────────────────────────────────────────────────────────────────────
 

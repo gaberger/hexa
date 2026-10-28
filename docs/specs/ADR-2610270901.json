@@ -12,6 +12,10 @@
     "by": "gary (run by Claude on gary's instruction)",
     "sha256": "6d3c1f96e7254fe605be69a0ea611e11f2ee123b9b949524ffd158b5ad3882ab"
   },
+  "sealed": {
+    "hexa-infer/tests/adr_2610270901_spec.rs": "3ef8dff27570d2d29fb7609aac94972013d37d54ef7811f9fd5110d80c338023",
+    "hexa-infer/tests/adr_2610270901_spec_2.rs": "7afb06a06853325d5f5ae3fa60a11e8f5eca62fb429bc2020927a88d9faa8646"
+  },
   "red": "aaec0c0",
   "specs": [
     {
@@ -23,7 +27,9 @@
       "description": "The bare `claude-text` model id is served by the Claude CLI adapter in text mode with the isolating flags.",
       "given": "An inference request whose model id is `claude-text`, with a single user message `hello`.",
       "when": "The request is completed.",
-      "then": "The adapter invokes `claude -p` with `--tools \"\"`, `--setting-sources \"\"`, `--strict-mcp-config`, `--disable-slash-commands`, `--no-session-persistence` and `--output-format json` (ADR-2610281516 §1). The completion text returned is the `result` of the CLI's JSON output."
+      "then": "The adapter invokes `claude -p` with `--tools \"\"`, `--setting-sources \"\"`, `--strict-mcp-config`, `--disable-slash-commands`, `--no-session-persistence` and `--output-format json` (ADR-2610281516 §1). The completion text returned is the `result` of the CLI's JSON output.",
+      "test": "hexa-infer/tests/adr_2610270901_spec_2.rs::bare_claude_text_runs_the_cli_with_isolating_flags_and_returns_the_json_result",
+      "red": "fa70032"
     },
     {
       "id": "S02",
@@ -112,7 +118,9 @@
       "description": "The system prompt and the user message are both delivered.",
       "given": "A `claude-text` request with system prompt `You are the spec author.` and user message `Draft ADR-X`.",
       "when": "The adapter builds the CLI invocation.",
-      "then": "`--system-prompt` is passed with value `You are the spec author.`, and the prompt written to the CLI's stdin contains `Draft ADR-X`."
+      "then": "`--system-prompt` is passed with value `You are the spec author.`, and the prompt written to the CLI's stdin contains `Draft ADR-X`.",
+      "test": "hexa-infer/tests/adr_2610270901_spec_2.rs::the_system_prompt_and_user_message_are_both_delivered",
+      "red": "fa70032"
     },
     {
       "id": "S09",
@@ -123,7 +131,9 @@
       "description": "The system prompt is not dropped or folded into the prompt.",
       "given": "A `claude-text` request with a system prompt and one user message.",
       "when": "The adapter builds the CLI invocation.",
-      "then": "The system prompt text appears as the value of `--system-prompt`, not only inside the prompt written to the CLI's stdin. The invocation is not built from the last user message alone."
+      "then": "The system prompt text appears as the value of `--system-prompt`, not only inside the prompt written to the CLI's stdin. The invocation is not built from the last user message alone.",
+      "test": "hexa-infer/tests/adr_2610270901_spec_2.rs::the_system_prompt_is_not_dropped_or_only_folded_into_the_prompt",
+      "red": "fa70032"
     },
     {
       "id": "S10",
@@ -147,7 +157,9 @@
       "description": "A multi-turn conversation is sent as the prompt, not just the last user message.",
       "given": "A `claude-text` request with user message `A`, assistant message `B` and user message `C`.",
       "when": "The adapter builds the CLI invocation.",
-      "then": "The prompt written to the CLI's stdin contains `A`, `B` and `C`."
+      "then": "The prompt written to the CLI's stdin contains `A`, `B` and `C`.",
+      "test": "hexa-infer/tests/adr_2610270901_spec_2.rs::a_multi_turn_conversation_is_sent_whole_on_stdin",
+      "red": "fa70032"
     },
     {
       "id": "S12",
@@ -158,7 +170,9 @@
       "description": "Nothing in the request is lost.",
       "given": "Any `claude-text` request with an optional system prompt and one or more conversation messages.",
       "when": "The adapter builds the CLI invocation.",
-      "then": "If a system prompt is present it is the exact value of `--system-prompt`, and every message's content appears in the prompt written to the CLI's stdin."
+      "then": "If a system prompt is present it is the exact value of `--system-prompt`, and every message's content appears in the prompt written to the CLI's stdin.",
+      "test": "hexa-infer/tests/adr_2610270901_spec_2.rs::nothing_in_a_claude_text_request_is_lost",
+      "red": "fa70032"
     },
     {
       "id": "S13",
