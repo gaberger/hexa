@@ -57,6 +57,31 @@ pub fn record_with(model: &str, input_tokens: u64, output_tokens: u64, cost_usd:
     }
 }
 
+/// [`record_with`], with the cache-read tokens the provider reported
+/// (ADR-2610281516 §1).
+pub fn record_usage(model: &str, input_tokens: u64, output_tokens: u64, cache_read_tokens: u64, cost_usd: Option<f64>) {
+    let path = log_path();
+    if let Some(dir) = path.parent() {
+        if create_dir_all(dir).is_err() {
+            return;
+        }
+    }
+    let mut row = serde_json::json!({
+        "model": model,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cache_read_tokens": cache_read_tokens,
+        "source": "complete",
+        "ts": chrono::Utc::now().to_rfc3339(),
+    });
+    if let Some(c) = cost_usd {
+        row["cost_usd"] = serde_json::json!(c);
+    }
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = f.write_all(format!("{row}\n").as_bytes());
+    }
+}
+
 /// The model that served a frontier (`claude -p`) call, read out of its JSON
 /// answer.
 ///

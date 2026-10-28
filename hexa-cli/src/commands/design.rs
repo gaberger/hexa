@@ -43,6 +43,9 @@ pub enum DesignAction {
         /// Which stages to run when --stage is not given
         #[arg(long, value_enum, default_value = "full")]
         preset: PresetArg,
+        /// Run every stage, 5 to 9 (the same as --preset full)
+        #[arg(long, conflicts_with_all = ["stage", "preset"])]
+        full: bool,
         /// The goldfish's model; defaults to the t2.5 tier, else claude-text
         #[arg(long)]
         model: Option<String>,
@@ -99,6 +102,10 @@ pub struct DriftArgs {
     /// Exit non-zero when drift is found
     #[arg(long)]
     pub fail_on_drift: bool,
+    /// Ask the model afresh instead of answering a repeated prompt from the
+    /// cache (sets HEXA_NO_CACHE=1)
+    #[arg(long)]
+    pub fresh: bool,
 }
 
 pub async fn run(action: DesignAction) -> anyhow::Result<()> {
@@ -122,7 +129,8 @@ pub async fn run(action: DesignAction) -> anyhow::Result<()> {
                 println!("\n  Edit the draft, then `hexa design review {d}`.");
             })
         }
-        DesignAction::Review { draft, stage, preset, model } => {
+        DesignAction::Review { draft, stage, preset, model, full } => {
+            let preset = if full { PresetArg::Full } else { preset };
             let model = egm::goldfish_model(model.as_deref()).map_err(anyhow::Error::msg)?;
             let scope = stage.map(ReviewScope::Stage).unwrap_or(preset.scope());
             title("review");
@@ -161,7 +169,17 @@ pub async fn run(action: DesignAction) -> anyhow::Result<()> {
     r.map_err(anyhow::Error::msg)
 }
 
+/// Every completion this process makes is fresh, not from the cache
+/// (ADR-2610281516 §2).
+pub fn fresh() {
+    // Set before any task is spawned, while the process is single-threaded.
+    std::env::set_var("HEXA_NO_CACHE", "1");
+}
+
 pub async fn run_drift(args: DriftArgs) -> anyhow::Result<()> {
+    if args.fresh {
+        fresh();
+    }
     let egm = vendored()?;
     let model = egm::goldfish_model(args.model.as_deref()).map_err(anyhow::Error::msg)?;
     let today = std::env::var("HEXA_TODAY")

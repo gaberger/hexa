@@ -7,6 +7,7 @@
 pub mod anthropic;
 pub mod claude_code;
 pub mod command;
+pub mod file_cache;
 pub mod ollama_chat;
 pub mod ollama;
 pub mod openai_compat;
@@ -15,5 +16,6 @@ pub mod vec_stream;
 pub use anthropic::AnthropicAdapter;
 pub use claude_code::ClaudeCodeInferenceAdapter;
 pub use command::CommandCompletionAdapter;
+pub use file_cache::FileCompletionCache;
 pub use ollama::OllamaInferenceAdapter;
 pub use openai_compat::OpenAiCompatAdapter;

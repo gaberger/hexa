@@ -6,6 +6,7 @@ license.workspace = true
 description = "Inference for hexa — IInferencePort adapters, with no daemon between the agent and the model"
 
 [dependencies]
+sha2 = "0.10"
 hexa-core = { path = "../hexa-core" }
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }

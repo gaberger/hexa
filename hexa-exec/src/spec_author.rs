@@ -343,14 +343,24 @@ pub async fn draft(
         decisions.join(", ")
     );
     let reply = hexa_infer::complete::complete_text_with(backends, model, AUTHOR, &user, 8000).await?;
-    let mut spec: Spec =
-        serde_json::from_str(&block(&reply)).map_err(|e| format!("the author's reply is not a spec: {e}"))?;
+    let mut spec: Spec = parse_draft(&block(&reply), adr_id).map_err(|e| format!("the author's reply is not a spec: {e}"))?;
     // A draft claims nothing that only happens after it: no acceptance, no
     // seal, no tests, no red commit.
     spec.adr = adr_id.to_string();
     spec = spec.accepted_content();
     let findings = coverage(adr_id, &decisions, &spec);
     Ok(Drafted { spec, findings, given })
+}
+
+/// The author's reply as a spec: a whole spec object, or the bare list of
+/// scenarios it was asked for, which is given the ADR's id as its feature.
+fn parse_draft(text: &str, adr_id: &str) -> Result<Spec, serde_json::Error> {
+    match serde_json::from_str::<serde_json::Value>(text)? {
+        serde_json::Value::Array(specs) => {
+            serde_json::from_value(serde_json::json!({ "adr": adr_id, "feature": adr_id, "specs": specs }))
+        }
+        other => serde_json::from_value(other),
+    }
 }
 
 // ── tests, red before the code (§5) ─────────────────────────────────────────
@@ -468,7 +478,7 @@ async fn red_at(
     file: &str,
     body: &str,
     refs: &BTreeMap<String, String>,
-) -> Result<Vec<String>, String> {
+) -> Result<RedCheck, String> {
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     let wt = std::env::temp_dir().join(format!("hexa-spec-red-{}-{nanos}", std::process::id()));
     let wt_s = wt.to_string_lossy().to_string();
@@ -485,6 +495,12 @@ async fn red_at(
         let _ = git(root, &["worktree", "remove", "--force", &wt_s]).await;
         return Err(format!("{file} could not be checked at {head}: {e}"));
     }
+    // The file must build before any one test is run: one compile, whose
+    // messages a follow-up can carry (ADR-2610281516 §5).
+    if let Some(out) = compile_errors(&wt, path_env, &target, file).await {
+        let _ = git(root, &["worktree", "remove", "--force", &wt_s]).await;
+        return Ok(RedCheck::DoesNotCompile(out));
+    }
     let mut rejected = Vec::new();
     for (sid, r) in refs {
         match run_test_alone(&wt, path_env, r, Some(&target)).await {
@@ -499,7 +515,95 @@ async fn red_at(
         }
     }
     let _ = git(root, &["worktree", "remove", "--force", &wt_s]).await;
-    Ok(rejected)
+    Ok(RedCheck::Rejected(rejected))
+}
+
+/// What the red check found.
+#[derive(Debug)]
+enum RedCheck {
+    /// The test file does not compile; cargo's output.
+    DoesNotCompile(String),
+    /// Why each rejected test is not red; empty when every one is.
+    Rejected(Vec<String>),
+}
+
+impl RedCheck {
+    /// Why each test is not red, a compile failure counting as one reason.
+    #[cfg(test)]
+    fn into_rejected(self) -> Vec<String> {
+        match self {
+            RedCheck::DoesNotCompile(out) => vec![format!("the test file does not compile:\n{out}")],
+            RedCheck::Rejected(r) => r,
+        }
+    }
+}
+
+enum Rejection {
+    /// Something a follow-up can carry back to the writer.
+    Mendable(String),
+    Final(Vec<String>),
+}
+
+/// cargo's output when the test file at `file` does not build, else `None`.
+async fn compile_errors(wt: &Path, path_env: &str, target: &Path, file: &str) -> Option<String> {
+    let abs = wt.join(file);
+    let krate = crate_of(wt, &abs)?;
+    let stem = abs.file_stem()?.to_string_lossy().to_string();
+    let manifest = krate.join("Cargo.toml").display().to_string();
+    let shell = format!(
+        "export PATH={path_env:?} HEXA_NO_SKIP=1 CARGO_TARGET_DIR={:?}; cargo test --manifest-path {manifest:?} --test {stem:?} --no-run",
+        target.display().to_string()
+    );
+    let (ok, out) = crate::direct_exec::run_evidence(&shell, wt).await;
+    (!ok && (out.contains("error[E") || out.contains("could not compile"))).then_some(out)
+}
+
+/// The compiler's messages about the test file alone: every `error` line,
+/// and the source excerpts that point into `file`. An excerpt from any other
+/// file — a project source a type error quotes — is dropped, so a follow-up
+/// never carries code the writer must not see (ADR-2610281516 §5).
+pub(crate) fn test_file_diagnostics(output: &str, file: &str) -> String {
+    let name = Path::new(file).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let mut out: Vec<&str> = Vec::new();
+    let mut excerpt = false;
+    let mut in_warning = false;
+    for line in output.lines() {
+        let t = line.trim_start();
+        if t.starts_with("error") {
+            in_warning = false;
+            excerpt = false;
+            out.push(line);
+            continue;
+        }
+        if t.starts_with("warning") {
+            in_warning = true;
+            excerpt = false;
+            continue;
+        }
+        if in_warning {
+            continue;
+        }
+        if let Some(loc) = t.strip_prefix("--> ").or_else(|| t.strip_prefix("::: ")) {
+            excerpt = loc.contains(file) || (!name.is_empty() && loc.contains(&name));
+            if excerpt {
+                out.push(line);
+            }
+            continue;
+        }
+        let is_excerpt = t.starts_with('|')
+            || t.split_once('|').is_some_and(|(n, _)| !n.trim().is_empty() && n.trim().chars().all(|c| c.is_ascii_digit()))
+            || t == "...";
+        if is_excerpt {
+            if excerpt {
+                out.push(line);
+            }
+            continue;
+        }
+        if t.starts_with("= ") || t.starts_with("note") || t.starts_with("help") {
+            out.push(line);
+        }
+    }
+    out.join("\n")
 }
 
 /// `hexa spec tests` (§5): one test per scenario of an accepted spec, from
@@ -589,34 +693,7 @@ pub async fn generate_tests_with(
         given_block_from(&read, &given),
         signature_block(&read, &signatures)
     );
-    let reply = hexa_infer::complete::complete_text_with(backends, model, WRITER, &user, 8000).await?;
-    let body = block(&reply);
-
     let ids: Vec<&str> = spec.specs.iter().map(|s| s.id.as_str()).collect();
-    let names = tests_by_scenario(&body, &ids);
-    let missing: Vec<&str> = ids.iter().copied().filter(|i| !names.contains_key(*i)).collect();
-    if !missing.is_empty() {
-        // Keep what the writer said, so a short reply can be told from a
-        // misnamed test without paying for another generation.
-        let kept = std::env::temp_dir().join(format!("{}-tests-reply.md", spec.adr));
-        let _ = std::fs::write(&kept, &reply);
-        return Err(format!(
-            "the generated tests name no test for {}: every scenario gets one (the reply is in {})",
-            missing.join(", "),
-            kept.display()
-        ));
-    }
-
-    // A test that cannot pass is no gate (ADR-2610281442 §2).
-    let sites = hexa_core::domain::spec::unpassable_sites(&body);
-    if !sites.is_empty() {
-        let named: Vec<String> = sites.iter().map(|(l, t)| format!("line {l}: {t}")).collect();
-        return Err(format!(
-            "generation rejected, nothing kept: a test that cannot pass is no gate; it holds {}",
-            named.join(", ")
-        ));
-    }
-
     let stem = format!("{}_spec", spec.adr.to_lowercase().replace('-', "_"));
     let file = krate.join("tests").join(format!("{stem}.rs"));
     let file = file.strip_prefix(".").unwrap_or(&file).to_string_lossy().to_string();
@@ -630,22 +707,84 @@ pub async fn generate_tests_with(
         Some(r) if !root.join(&r.old_file).exists() => return Err(format!("{} is not there to replace", r.old_file)),
         _ => {}
     }
-    let body = body + "\n";
-    let refs: BTreeMap<String, String> = names.iter().map(|(sid, f)| (sid.clone(), format!("{file}::{f}"))).collect();
     let head = git(root, &["rev-parse", "HEAD"]).await?;
 
-    let red_commit = match &base {
-        None => None,
-        Some(c) => Some(red_commit_at(root, c, &file, &body, &spec.adr).await?),
+    // One generation, then at most two follow-ups when the file is rejected
+    // for something the writer can mend: a scenario with no test, a site
+    // that cannot pass, or the file not compiling (ADR-2610281516 §5). Each
+    // follow-up is a fresh completion carrying the scenarios, the writer's
+    // last reply and the error about it, never source from outside the test
+    // file; each repaired file passes every check again from the start.
+    const REPAIRS: usize = 2;
+    let mut ask = user.clone();
+    let mut repairs = 0;
+    let (body, names, red_commit) = loop {
+        let reply = hexa_infer::complete::complete_text_with(backends, model, WRITER, &ask, 8000).await?;
+        let body = block(&reply) + "\n";
+        let names = tests_by_scenario(&body, &ids);
+        let missing: Vec<&str> = ids.iter().copied().filter(|i| !names.contains_key(*i)).collect();
+        // A test that cannot pass is no gate (ADR-2610281442 §2).
+        let sites = hexa_core::domain::spec::unpassable_sites(&body);
+        let mendable = if !missing.is_empty() {
+            Some(format!(
+                "The tests name no test for {}: every scenario gets one, under a `/// <id>: <description>` line.",
+                missing.join(", ")
+            ))
+        } else if !sites.is_empty() {
+            let lines: Vec<&str> = body.lines().collect();
+            let named: Vec<String> = sites
+                .iter()
+                .map(|(l, t)| format!("line {l}: {t} — `{}`", lines.get(l - 1).map(|x| x.trim()).unwrap_or("")))
+                .collect();
+            Some(format!("A test that cannot pass is no gate; the file holds {}.", named.join("; ")))
+        } else {
+            None
+        };
+        let outcome = match mendable {
+            Some(why) => Err(Rejection::Mendable(why)),
+            None => {
+                let refs: BTreeMap<String, String> =
+                    names.iter().map(|(sid, f)| (sid.clone(), format!("{file}::{f}"))).collect();
+                let red_commit = match &base {
+                    None => None,
+                    Some(c) => Some(red_commit_at(root, c, &file, &body, &spec.adr).await?),
+                };
+                let check_at = red_commit.clone().unwrap_or_else(|| head.clone());
+                match red_at(root, path_env, &check_at, &file, &body, &refs).await {
+                    Err(e) => Err(Rejection::Final(vec![e])),
+                    Ok(RedCheck::DoesNotCompile(out)) => {
+                        Err(Rejection::Mendable(format!("The test file does not compile:\n\n{}", test_file_diagnostics(&out, &file))))
+                    }
+                    Ok(RedCheck::Rejected(r)) if !r.is_empty() => Err(Rejection::Final(r)),
+                    Ok(RedCheck::Rejected(_)) => Ok(red_commit),
+                }
+            }
+        };
+        match outcome {
+            Ok(red_commit) => break (body, names, red_commit),
+            Err(Rejection::Mendable(why)) if repairs < REPAIRS => {
+                repairs += 1;
+                ask = format!(
+                    "The crate is `{lib}`; tests reach it as `{lib}::…`.\n{bins}\nThe accepted scenarios:\n\n{scenarios}\n\n\
+                     Your previous reply:\n\n{reply}\n\nIt was rejected. {why}\n\n\
+                     Reply with the whole corrected test file, one fenced block."
+                );
+            }
+            Err(Rejection::Mendable(why)) => {
+                let kept = std::env::temp_dir().join(format!("{}-tests-reply.md", spec.adr));
+                let _ = std::fs::write(&kept, &reply);
+                return Err(format!(
+                    "generation rejected after {repairs} repair(s), nothing kept: {why} (the last reply is in {})",
+                    kept.display()
+                ));
+            }
+            Err(Rejection::Final(r)) => return Err(format!("generation rejected, nothing kept:\n  {}", r.join("\n  "))),
+        }
     };
-    let check_at = red_commit.clone().unwrap_or_else(|| head.clone());
-    let mut rejected = red_at(root, path_env, &check_at, &file, &body, &refs).await.unwrap_or_else(|e| vec![e]);
-    if rejected.is_empty() && git(root, &["rev-parse", "HEAD"]).await? != head {
-        rejected.push("HEAD moved while the tests ran, so their red is not the commit's".into());
+    if git(root, &["rev-parse", "HEAD"]).await? != head {
+        return Err("generation rejected, nothing kept: HEAD moved while the tests ran, so their red is not the commit's".into());
     }
-    if !rejected.is_empty() {
-        return Err(format!("generation rejected, nothing kept:\n  {}", rejected.join("\n  ")));
-    }
+    let refs: BTreeMap<String, String> = names.iter().map(|(sid, f)| (sid.clone(), format!("{file}::{f}"))).collect();
 
     if let Some(parent) = abs.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -841,12 +980,12 @@ mod tests {
         let refs = |f: &str| BTreeMap::from([("S1".to_string(), format!("tests/t.rs::{f}"))]);
 
         let body = "#[test]\nfn one() { assert_eq!(redcheck::f(), 1); }\n";
-        let rejected = red_at(root, &path, &head, "tests/t.rs", body, &refs("one")).await.unwrap();
+        let rejected = red_at(root, &path, &head, "tests/t.rs", body, &refs("one")).await.unwrap().into_rejected();
         assert_eq!(rejected.len(), 1, "fails only in the dirty tree, passes at the commit: {rejected:?}");
         assert!(rejected[0].contains("passes before the code exists"), "{rejected:?}");
 
         let body = "#[test]\nfn two() { assert_eq!(redcheck::f(), 2); }\n";
-        let rejected = red_at(root, &path, &head, "tests/t.rs", body, &refs("two")).await.unwrap();
+        let rejected = red_at(root, &path, &head, "tests/t.rs", body, &refs("two")).await.unwrap().into_rejected();
         assert!(rejected.is_empty(), "fails at the commit, so it is red there: {rejected:?}");
 
         assert_eq!(std::fs::read_to_string(root.join("src/lib.rs")).unwrap(), "pub fn f() -> u32 { 2 }\n");

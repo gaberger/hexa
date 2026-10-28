@@ -106,6 +106,20 @@ pub trait ProcessSpawner: Send + Sync {
         self.spawn(program, args).await
     }
 
+    /// [`ProcessSpawner::spawn_in`], with `input` written to the child's
+    /// stdin (ADR-2610281516 §1). The default ignores `input`; a spawner
+    /// that runs real processes must override it.
+    async fn spawn_in_with_input(
+        &self,
+        program: &str,
+        args: &[String],
+        dir: &Path,
+        input: &str,
+    ) -> Result<SpawnedProcess, InferenceError> {
+        let _ = input;
+        self.spawn_in(program, args, dir).await
+    }
+
     /// Spawn `program` with `args` and collect stdout as a `Vec<String>`
     /// of lines in order. The default implementation delegates to
     /// [`ProcessSpawner::spawn`] and splits on `\n`. The real
@@ -197,6 +211,48 @@ impl ProcessSpawner for TokioProcessSpawner {
             exit_code: output.status.code().unwrap_or(-1),
         })
     }
+
+    async fn spawn_in_with_input(
+        &self,
+        program: &str,
+        args: &[String],
+        dir: &Path,
+        input: &str,
+    ) -> Result<SpawnedProcess, InferenceError> {
+        use std::process::Stdio;
+        use tokio::io::AsyncWriteExt;
+        let mut child = tokio::process::Command::new(program)
+            .args(args)
+            .current_dir(dir)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    InferenceError::ProviderUnavailable(format!("claude binary not found: {e}"))
+                } else {
+                    InferenceError::Network(format!("claude spawn error: {e}"))
+                }
+            })?;
+        // Written while the child runs, then closed: a prompt of any size.
+        if let Some(mut stdin) = child.stdin.take() {
+            let input = input.to_string();
+            tokio::spawn(async move {
+                let _ = stdin.write_all(input.as_bytes()).await;
+                let _ = stdin.shutdown().await;
+            });
+        }
+        let output = child
+            .wait_with_output()
+            .await
+            .map_err(|e| InferenceError::Network(format!("claude wait error: {e}")))?;
+        Ok(SpawnedProcess {
+            stdout: output.stdout,
+            stderr: output.stderr,
+            exit_code: output.status.code().unwrap_or(-1),
+        })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -276,7 +332,7 @@ impl ClaudeCodeInferenceAdapter {
         &self,
         request: &InferenceRequest,
         model: Option<&str>,
-    ) -> Result<String, InferenceError> {
+    ) -> Result<TextReply, InferenceError> {
         if !request.tools.is_empty() {
             return Err(InferenceError::ApiError {
                 status: 400,
@@ -286,9 +342,10 @@ impl ClaudeCodeInferenceAdapter {
                 ),
             });
         }
-        let args = args_for_text(&request.system_prompt, &conversation(request), model);
+        let args = args_for_text(&request.system_prompt, model);
         let dir = EmptyDir::new()?;
-        let result = self.spawner.spawn_in(&self.binary_path, &args, dir.path()).await?;
+        // The prompt goes on stdin, never in argv (ADR-2610281516 §1).
+        let result = self.spawner.spawn_in_with_input(&self.binary_path, &args, dir.path(), &conversation(request)).await?;
         if result.exit_code != 0 {
             return Err(InferenceError::ApiError {
                 status: http_like_status(result.exit_code),
@@ -299,7 +356,60 @@ impl ClaudeCodeInferenceAdapter {
                 ),
             });
         }
-        Ok(String::from_utf8_lossy(&result.stdout).to_string())
+        Ok(TextReply::read(&String::from_utf8_lossy(&result.stdout)))
+    }
+}
+
+impl ClaudeCodeInferenceAdapter {
+    /// A `claude-text` completion and the cost the CLI reported for it
+    /// (ADR-2610281516 §1). For agent mode, no cost is known.
+    pub async fn complete_with_cost(&self, request: InferenceRequest) -> Result<(InferenceResponse, Option<f64>), InferenceError> {
+        let Mode::Text { model } = &self.mode else {
+            return Ok((self.complete(request).await?, None));
+        };
+        let start = std::time::Instant::now();
+        let r = self.complete_text(&request, model.as_deref()).await?;
+        let response = InferenceResponse {
+            content: vec![ContentBlock::Text { text: r.text }],
+            model_used: request.model.clone(),
+            stop_reason: StopReason::EndTurn,
+            input_tokens: r.input_tokens,
+            output_tokens: r.output_tokens,
+            cache_read_tokens: r.cache_read_tokens,
+            cache_write_tokens: 0,
+            latency_ms: start.elapsed().as_millis() as u64,
+        };
+        Ok((response, r.cost_usd))
+    }
+}
+
+/// A `claude-text` reply and what it cost, from `--output-format json`.
+struct TextReply {
+    text: String,
+    input_tokens: u64,
+    output_tokens: u64,
+    cache_read_tokens: u64,
+    cost_usd: Option<f64>,
+}
+
+impl TextReply {
+    /// The JSON envelope's `result` and `usage`; output that is not that
+    /// envelope is the reply itself, with no usage known.
+    fn read(stdout: &str) -> TextReply {
+        let parsed = serde_json::from_str::<serde_json::Value>(stdout.trim()).ok();
+        match parsed.as_ref().and_then(|v| v.get("result").and_then(|r| r.as_str()).map(|r| (v, r))) {
+            Some((v, result)) => {
+                let usage = |k: &str| v.get("usage").and_then(|u| u.get(k)).and_then(|n| n.as_u64()).unwrap_or(0);
+                TextReply {
+                    text: result.to_string(),
+                    input_tokens: usage("input_tokens"),
+                    output_tokens: usage("output_tokens"),
+                    cache_read_tokens: usage("cache_read_input_tokens"),
+                    cost_usd: v.get("total_cost_usd").and_then(|c| c.as_f64()),
+                }
+            }
+            None => TextReply { text: stdout.to_string(), input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cost_usd: None },
+        }
     }
 }
 
@@ -362,9 +472,8 @@ fn args_for_prompt(prompt: &str) -> Vec<String> {
 /// Args for one `claude-text` completion (ADR-2610270901 §1, §2, §4): no
 /// tools, no settings, hooks, MCP servers or slash commands, no session
 /// kept, and no `--dangerously-skip-permissions`, since nothing needs one.
-/// The system prompt is the system prompt; the conversation is the prompt,
-/// last.
-fn args_for_text(system: &str, conversation: &str, model: Option<&str>) -> Vec<String> {
+/// The system prompt is the system prompt; the conversation goes on stdin.
+fn args_for_text(system: &str, model: Option<&str>) -> Vec<String> {
     let mut args: Vec<String> = [
         "-p",
         "--tools",
@@ -375,7 +484,7 @@ fn args_for_text(system: &str, conversation: &str, model: Option<&str>) -> Vec<S
         "--disable-slash-commands",
         "--no-session-persistence",
         "--output-format",
-        "text",
+        "json",
     ]
     .iter()
     .map(|a| a.to_string())
@@ -386,7 +495,6 @@ fn args_for_text(system: &str, conversation: &str, model: Option<&str>) -> Vec<S
     if !system.is_empty() {
         args.extend(["--system-prompt".to_string(), system.to_string()]);
     }
-    args.push(conversation.to_string());
     args
 }
 
@@ -453,14 +561,14 @@ impl IInferencePort for ClaudeCodeInferenceAdapter {
     ) -> Result<InferenceResponse, InferenceError> {
         let start = std::time::Instant::now();
         if let Mode::Text { model } = &self.mode {
-            let text = self.complete_text(&request, model.as_deref()).await?;
+            let r = self.complete_text(&request, model.as_deref()).await?;
             return Ok(InferenceResponse {
-                content: vec![ContentBlock::Text { text }],
+                content: vec![ContentBlock::Text { text: r.text }],
                 model_used: request.model.clone(),
                 stop_reason: StopReason::EndTurn,
-                input_tokens: 0,
-                output_tokens: 0,
-                cache_read_tokens: 0,
+                input_tokens: r.input_tokens,
+                output_tokens: r.output_tokens,
+                cache_read_tokens: r.cache_read_tokens,
                 cache_write_tokens: 0,
                 latency_ms: start.elapsed().as_millis() as u64,
             });
@@ -497,7 +605,7 @@ impl IInferencePort for ClaudeCodeInferenceAdapter {
         InferenceError,
     > {
         if let Mode::Text { model } = &self.mode {
-            let text = self.complete_text(&request, model.as_deref()).await?;
+            let text = self.complete_text(&request, model.as_deref()).await?.text;
             let lines = text.lines().map(str::to_string).collect();
             return Ok(Box::new(VecStream::from_lines(lines, StopReason::EndTurn)));
         }
@@ -652,6 +760,7 @@ pub mod testing {
         responses: Mutex<VecDeque<MockResponse>>,
         calls: Mutex<Vec<(String, Vec<String>)>>,
         dirs: Mutex<Vec<DirSeen>>,
+        inputs: Mutex<Vec<String>>,
     }
 
     /// The working directory of one [`ProcessSpawner::spawn_in`] call, as
@@ -669,7 +778,14 @@ pub mod testing {
                 responses: Mutex::new(responses.into_iter().collect()),
                 calls: Mutex::new(Vec::new()),
                 dirs: Mutex::new(Vec::new()),
+                inputs: Mutex::new(Vec::new()),
             }
+        }
+
+        /// What each [`ProcessSpawner::spawn_in_with_input`] call wrote to
+        /// the child's stdin, in call order.
+        pub fn inputs(&self) -> Vec<String> {
+            self.inputs.lock().unwrap().clone()
         }
 
         /// Every directory a `spawn_in` call ran in, in call order.
@@ -730,6 +846,17 @@ pub mod testing {
             let empty = std::fs::read_dir(dir).map(|mut d| d.next().is_none()).unwrap_or(false);
             self.dirs.lock().unwrap().push(DirSeen { path: dir.to_path_buf(), existed: dir.is_dir(), empty });
             self.spawn(program, args).await
+        }
+
+        async fn spawn_in_with_input(
+            &self,
+            program: &str,
+            args: &[String],
+            dir: &Path,
+            input: &str,
+        ) -> Result<SpawnedProcess, InferenceError> {
+            self.inputs.lock().unwrap().push(input.to_string());
+            self.spawn_in(program, args, dir).await
         }
     }
 }

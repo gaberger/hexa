@@ -145,11 +145,12 @@
     },
     "4d3a229d-fefe-44b6-993f-5268fe1070ac": {
       "files": [
-        "hexa-cli/src/commands/mod.rs"
+        "hexa-cli/src/commands/mod.rs",
+        "hexa-cli/Cargo.toml"
       ],
       "pid": 295843,
       "pid_start": 374249,
-      "updated": "2026-11-07T22:37:09.208291092+00:00"
+      "updated": "2026-11-07T23:06:01.838480501+00:00"
     },
     "b9c6ffc9-fa43-5885-8b3b-b05a86188c1c": {
       "adr": "ADR-2610100005",

@@ -130,8 +130,7 @@ pub fn stage_standard(stage: Stage, reviewer: &str) -> Option<&'static str> {
 /// Whether a stage's findings go through the synthesizer: only when more
 /// than one reviewer produced them (ADR-2610281516 §4).
 pub fn needs_synthesis(stage: Stage) -> bool {
-    let _ = stage;
-    unimplemented!("ADR-2610281516: built to its sealed spec")
+    stage_reviewers(stage).len() > 1
 }
 
 /// The persona that deduplicates a stage's findings.
@@ -198,22 +197,17 @@ pub fn goldfish_prompt(
     sources: &[(String, String)],
     cap_bytes: usize,
 ) -> String {
+    // What every reviewer of one review shares comes first, so they share
+    // the longest prefix a provider's cache can reuse; the standard and the
+    // persona, which differ, come last (ADR-2610281516 §3).
     let mut out = String::new();
     out.push_str(
         "You are one reviewer in an Elephant-Goldfish review, run by hexa as a single completion with no \
-         tools. Everything you may use is below: your persona, the standard you apply, the document under \
-         review, and the source files the document names. You cannot open any other file. Report your \
+         tools. Everything you may use is below: the document under review, the source files the document \
+         names, the standard you apply, and, last, your persona. You cannot open any other file. Report your \
          findings as a Markdown list, one `- ` item per finding, citing the passage or file it concerns. \
          If you have none, reply `No findings.`\n\n",
     );
-    out.push_str("# Persona\n\n");
-    out.push_str(persona);
-    out.push_str("\n\n");
-    if let Some(standard) = standard {
-        out.push_str("# Standard\n\n");
-        out.push_str(standard);
-        out.push_str("\n\n");
-    }
     out.push_str("# Document under review\n\n");
     out.push_str(document);
     out.push_str("\n\n");
@@ -236,6 +230,13 @@ pub fn goldfish_prompt(
             out.push_str(&format!("{fence}\n{cut}\n{fence}\n\n"));
         }
     }
+    if let Some(standard) = standard {
+        out.push_str("# Standard\n\n");
+        out.push_str(standard);
+        out.push_str("\n\n");
+    }
+    out.push_str("# Persona\n\n");
+    out.push_str(persona);
     out
 }
 

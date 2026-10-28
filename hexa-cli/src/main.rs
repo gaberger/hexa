@@ -115,7 +115,8 @@ enum DevGroupAction {
     Refresh(RefreshArgs),
     /// Structured project intake — create, init, register, seed trust
     New {
-        /// Target directory path
+        /// Target directory path (default: the current directory)
+        #[arg(default_value = ".")]
         path: String,
         #[arg(long)]
         name: Option<String>,
@@ -240,6 +241,10 @@ The elephant drafts with the project's context; each goldfish reviewer is one to
 sees only its persona, its standard, the document and the source the document names. A person decides: \
 no command settles a design. Commit it under docs/designs/ and take it into the pipeline as an ADR.")]
     Design {
+        /// Ask every model afresh instead of answering a repeated prompt from
+        /// the cache (sets HEXA_NO_CACHE=1)
+        #[arg(long, global = true)]
+        fresh: bool,
         #[command(subcommand)]
         action: commands::design::DesignAction,
     },
@@ -373,6 +378,8 @@ ADRs are history and are not checked.")]
     /// (hidden) New project — use `hexa dev new` instead
     #[command(hide = true)]
     New {
+        /// Target directory path (default: the current directory)
+        #[arg(default_value = ".")]
         path: String,
         #[arg(long)]
         name: Option<String>,
@@ -479,7 +486,12 @@ async fn run() -> anyhow::Result<()> {
                 commands::gate::run(target, gate, composition_root).await
             }
         },
-        Commands::Design { action } => commands::design::run(action).await,
+        Commands::Design { fresh, action } => {
+            if fresh {
+                commands::design::fresh();
+            }
+            commands::design::run(action).await
+        }
         Commands::Drift(args) => commands::design::run_drift(args).await,
         Commands::Spec { action } => commands::spec::run(action).await,
         Commands::Plan { action } => commands::plan::run(action).await,

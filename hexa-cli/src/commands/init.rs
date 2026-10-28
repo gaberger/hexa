@@ -115,6 +115,16 @@ pub async fn run(args: InitArgs) -> Result<()> {
         create_scaffold(&target, &args.lang, &project_name)?;  // count reported inside
     }
 
+    // ── 6b. .gitignore, before the first commit (ADR-2610281552 §3) ─
+    // A new project's first commit holds its source, not its build output
+    // or one checkout's session state. Lines already there are kept.
+    let ignore = target.join(".gitignore");
+    let existing = std::fs::read_to_string(&ignore).ok();
+    if let Some(text) = hexa_core::ports::project_floor::merged_gitignore(existing.as_deref(), &args.lang) {
+        std::fs::write(&ignore, text)?;
+        println!("  {} .gitignore", "\u{2713}".green());
+    }
+
     // ── 6a. git init + initial commit ─────────────────────────────
     // Every example under hexa/examples/ is its own git repo; scaffolded projects
     // weren't, so `hexa swarm build`'s post-gate auto-commit (adversarial.rs) and
