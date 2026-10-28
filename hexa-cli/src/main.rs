@@ -216,7 +216,7 @@ enum Commands {
         #[command(subcommand)]
         action: commands::api::ApiAction,
     },
-    /// Where this project's work stands: Decide → Gate → Build → Harden
+    /// Where this project's work stands: Design → Decide → Gate → Build → Harden
     Loop {
         #[command(subcommand)]
         action: Option<commands::loop_cmd::LoopAction>,
