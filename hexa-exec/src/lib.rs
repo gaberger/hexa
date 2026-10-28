@@ -113,8 +113,9 @@ pub async fn generate_spec_tests(
     spec: &hexa_core::ports::spec::Spec,
     krate: &std::path::Path,
     path_env: &str,
+    options: &spec_author::TestOptions,
 ) -> Result<spec_author::Generated, String> {
-    spec_author::generate_tests(&hexa_infer::wiring::RegistryBackends, model, root, spec, krate, path_env).await
+    spec_author::generate_tests_with(&hexa_infer::wiring::RegistryBackends, model, root, spec, krate, path_env, options).await
 }
 
 /// The memory store, wired: `memory.jsonl` files under the project or `~/.hexa`.

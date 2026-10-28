@@ -45,6 +45,16 @@ pub enum SpecAction {
         /// Model id; defaults to the t2 tier
         #[arg(long)]
         model: Option<String>,
+        /// Prove red at this earlier commit, an ancestor of HEAD, instead of
+        /// at HEAD: for tests written after the code (ADR-2610281442 §3)
+        #[arg(long = "red-at")]
+        red_at: Option<String>,
+        /// Replace the sealed test file with a new generation (§4); needs --because
+        #[arg(long)]
+        replace: bool,
+        /// Why the sealed file is replaced; recorded in the commit
+        #[arg(long)]
+        because: Option<String>,
     },
     /// Every numbered decision has an example and a negative scenario; no
     /// model involved (ADR-2610221540 §3). All ADRs when none is named
@@ -81,7 +91,9 @@ pub async fn run(action: SpecAction) -> anyhow::Result<()> {
         SpecAction::Show { feature, check } => show(&feature, check).await,
         SpecAction::Workplan { feature } => workplan(&feature).await,
         SpecAction::Draft { adr, model, force } => super::spec_ledger::draft(&adr, model.as_deref(), force).await,
-        SpecAction::Tests { adr, krate, model } => super::spec_ledger::tests(&adr, &krate, model.as_deref()).await,
+        SpecAction::Tests { adr, krate, model, red_at, replace, because } => {
+            super::spec_ledger::tests(&adr, &krate, model.as_deref(), red_at, replace, because).await
+        }
         SpecAction::Check { adr } => super::spec_ledger::check(adr.as_deref()),
         SpecAction::Accept { adr, by } => super::spec_ledger::accept(&adr, by.as_deref()),
         SpecAction::Seal { adr } => super::spec_ledger::seal(&adr),

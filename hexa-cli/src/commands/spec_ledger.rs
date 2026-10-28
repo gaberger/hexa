@@ -61,9 +61,14 @@ fn status_of(text: &str) -> String {
 }
 
 fn ledger(root: &Path) -> anyhow::Result<Vec<Adr>> {
-    let mut out: Vec<Adr> = std::fs::read_dir(root.join(ADRS))
-        .map_err(|e| anyhow::anyhow!("no {ADRS}/: {e}"))?
-        .flatten()
+    // `docs/adrs/`, or the singular `docs/adr/` some projects use.
+    let dirs: Vec<PathBuf> = [ADRS, "docs/adr"].iter().map(|d| root.join(d)).filter(|d| d.is_dir()).collect();
+    if dirs.is_empty() {
+        anyhow::bail!("no {ADRS}/");
+    }
+    let mut out: Vec<Adr> = dirs
+        .iter()
+        .flat_map(|d| std::fs::read_dir(d).into_iter().flatten().flatten())
         .map(|e| e.path())
         .filter(|p| p.extension().is_some_and(|x| x == "md"))
         .filter_map(|p| {
@@ -236,10 +241,8 @@ fn acceptor(
 /// The model for a role: the one named, else the tier's. No model id is
 /// written here (founding goal G1).
 fn model_for(named: Option<&str>, tier: &str) -> anyhow::Result<String> {
-    named
-        .map(str::to_string)
-        .or_else(|| hexa_infer::tier_model(tier))
-        .ok_or_else(|| anyhow::anyhow!("no model: pass --model, or set inference.tier_models.{tier} in .hexa/project.json"))
+    // No tier: the tool-less route, which can read nothing but its prompt.
+    Ok(named.map(str::to_string).or_else(|| hexa_infer::tier_model(tier)).unwrap_or_else(hexa_infer::tool_less_default))
 }
 
 /// `hexa spec draft <ADR>` (§2).
@@ -274,10 +277,38 @@ pub async fn draft(adr: &str, model: Option<&str>, force: bool) -> anyhow::Resul
 }
 
 /// `hexa spec tests <ADR>` (§5): generate, require red, commit, record, seal.
-pub async fn tests(adr: &str, krate: &str, model: Option<&str>) -> anyhow::Result<()> {
+pub async fn tests(
+    adr: &str,
+    krate: &str,
+    model: Option<&str>,
+    red_at: Option<String>,
+    replace: bool,
+    because: Option<String>,
+) -> anyhow::Result<()> {
     let root = std::env::current_dir()?;
     let a = find(&root, adr)?;
     let (read, mut spec) = load_text(&root, &a.id)?.ok_or_else(|| anyhow::anyhow!("{} has no spec", a.id))?;
+    // A sealed file is replaced only through the verb, and only for a stated
+    // reason (ADR-2610281442 §4).
+    let replace = if replace {
+        let because = because
+            .filter(|b| !b.trim().is_empty())
+            .ok_or_else(|| anyhow::anyhow!("--replace needs --because \"<reason>\": a sealed test is replaced only for a stated reason"))?;
+        let old_file = spec
+            .sealed
+            .keys()
+            .next()
+            .cloned()
+            .or_else(|| spec.test_files().into_iter().next())
+            .ok_or_else(|| anyhow::anyhow!("{} has no sealed test file to replace", a.id))?;
+        Some(hexa_exec::spec_author::Replace { old_file, because })
+    } else {
+        if because.is_some() {
+            anyhow::bail!("--because goes with --replace");
+        }
+        None
+    };
+    let options = hexa_exec::spec_author::TestOptions { red_at, replace: replace.clone() };
     let model = model_for(model, "t2")?;
     let path_env = gate_path(
         std::env::var_os("HOME").map(PathBuf::from).as_deref(),
@@ -285,9 +316,12 @@ pub async fn tests(adr: &str, krate: &str, model: Option<&str>) -> anyhow::Resul
         &|p| p.is_dir(),
     );
     println!("{} {} on {}", "\u{2b21} spec tests".cyan().bold(), a.id, model);
-    let g = hexa_exec::generate_spec_tests(&model, &root, &spec, Path::new(krate), &path_env)
+    let g = hexa_exec::generate_spec_tests(&model, &root, &spec, Path::new(krate), &path_env, &options)
         .await
         .map_err(|e| anyhow::anyhow!(e))?;
+    if let Some(r) = &replace {
+        spec.sealed.remove(&r.old_file);
+    }
     record_generated(&mut spec, &g.refs, &g.red, &g.file);
     save_unchanged(&root, &spec, &read)?;
     println!("  {} {} tests in {}, every one red at {}", "\u{2713}".green(), g.refs.len(), g.file, g.red);
