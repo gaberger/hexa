@@ -10,6 +10,10 @@
     "by": "Gary Berger",
     "sha256": "1b7e044e73730af0d9b768dce01138a29d4010e4fdd3308f0ef87226f5533eb7"
   },
+  "sealed": {
+    "hexa-cli/tests/adr_2610301129_spec.rs": "29b56248db7734af993f8c3ad13b9bf49845f6add0d21b686d902dc07446c62d"
+  },
+  "red": "c6e14b8",
   "specs": [
     {
       "id": "S01",
@@ -20,7 +24,8 @@
       "description": "The embedded marketplace is named hexa and lists question-alert by relative source",
       "given": "the embedded asset folder hexa-cli/assets/claude-mods/",
       "when": ".claude-plugin/marketplace.json is read",
-      "then": "its name is \"hexa\" and its plugins include an entry named \"question-alert\" with \"source\": \"./question-alert\""
+      "then": "its name is \"hexa\" and its plugins include an entry named \"question-alert\" with \"source\": \"./question-alert\"",
+      "test": "hexa-cli/tests/adr_2610301129_spec.rs::s01_marketplace_named_hexa_lists_question_alert"
     },
     {
       "id": "S02",
@@ -31,7 +36,8 @@
       "description": "The question-alert plugin folder is a complete Claude Code plugin",
       "given": "the embedded asset folder hexa-cli/assets/claude-mods/",
       "when": "the question-alert/ folder is inspected",
-      "then": "it contains .claude-plugin/plugin.json and hooks/hooks.json, and plugin.json names the plugin \"question-alert\""
+      "then": "it contains .claude-plugin/plugin.json and hooks/hooks.json, and plugin.json names the plugin \"question-alert\"",
+      "test": "hexa-cli/tests/adr_2610301129_spec.rs::s02_question_alert_is_complete_plugin"
     },
     {
       "id": "S03",
@@ -42,7 +48,8 @@
       "description": "No marketplace entry points outside the marketplace folder or at a missing folder",
       "given": "the embedded .claude-plugin/marketplace.json",
       "when": "every plugin entry's source is checked",
-      "then": "each source has the form \"./<mod>\", where <mod> is the entry's name and a folder of that name exists beside .claude-plugin/. No source is absolute, remote, or points to a folder that does not exist."
+      "then": "each source has the form \"./<mod>\", where <mod> is the entry's name and a folder of that name exists beside .claude-plugin/. No source is absolute, remote, or points to a folder that does not exist.",
+      "test": "hexa-cli/tests/adr_2610301129_spec.rs::s03_marketplace_sources_are_local_existing_folders"
     },
     {
       "id": "S04",
@@ -53,7 +60,8 @@
       "description": "Claude unavailable yields exactly one Skip naming claude",
       "given": "available = false, installed = [], marketplace = /home/u/.hexa/claude-mods, mods = [\"question-alert\"]",
       "when": "install_steps is called",
-      "then": "the result is exactly one Step::Skip(reason), and reason contains \"claude\""
+      "then": "the result is exactly one Step::Skip(reason), and reason contains \"claude\"",
+      "test": "hexa-cli/tests/adr_2610301129_spec.rs::s04_unavailable_yields_single_skip"
     },
     {
       "id": "S05",
@@ -64,7 +72,8 @@
       "description": "Nothing installed yields AddMarketplace then Install",
       "given": "available = true, installed = [], marketplace = /m, mods = [\"question-alert\"]",
       "when": "install_steps is called",
-      "then": "the result is [AddMarketplace(/m), Install(\"question-alert@hexa\")]"
+      "then": "the result is [AddMarketplace(/m), Install(\"question-alert@hexa\")]",
+      "test": "hexa-cli/tests/adr_2610301129_spec.rs::s05_nothing_installed_yields_add_then_install"
     },
     {
       "id": "S06",
@@ -75,7 +84,8 @@
       "description": "Everything already installed yields no steps",
       "given": "available = true, installed = [\"question-alert@hexa\", \"other@elsewhere\"], marketplace = /m, mods = [\"question-alert\"]",
       "when": "install_steps is called",
-      "then": "the result is empty"
+      "then": "the result is empty",
+      "test": "hexa-cli/tests/adr_2610301129_spec.rs::s06_everything_installed_yields_nothing"
     },
     {
       "id": "S07",
@@ -86,7 +96,8 @@
       "description": "Only missing mods are installed, in the order of mods",
       "given": "available = true, installed = [\"b@hexa\"], marketplace = /m, mods = [\"c\", \"b\", \"a\"]",
       "when": "install_steps is called",
-      "then": "the result is [AddMarketplace(/m), Install(\"c@hexa\"), Install(\"a@hexa\")]"
+      "then": "the result is [AddMarketplace(/m), Install(\"c@hexa\"), Install(\"a@hexa\")]",
+      "test": "hexa-cli/tests/adr_2610301129_spec.rs::s07_only_missing_in_mods_order"
     },
     {
       "id": "S08",
@@ -97,7 +108,8 @@
       "description": "A mod installed from another marketplace does not count as installed",
       "given": "available = true, installed = [\"question-alert@other\", \"question-alert\"], marketplace = /m, mods = [\"question-alert\"]",
       "when": "install_steps is called",
-      "then": "the result is [AddMarketplace(/m), Install(\"question-alert@hexa\")]. It is not empty."
+      "then": "the result is [AddMarketplace(/m), Install(\"question-alert@hexa\")]. It is not empty.",
+      "test": "hexa-cli/tests/adr_2610301129_spec.rs::s08_other_marketplace_does_not_count"
     },
     {
       "id": "S09",
@@ -108,7 +120,8 @@
       "description": "Unavailable claude never yields AddMarketplace or Install, even when mods are missing or already installed",
       "given": "available = false, with installed = [] or installed = [\"question-alert@hexa\"], marketplace = /m, mods = [\"question-alert\"]",
       "when": "install_steps is called",
-      "then": "in both cases the result is exactly one Skip, with no AddMarketplace and no Install step"
+      "then": "in both cases the result is exactly one Skip, with no AddMarketplace and no Install step",
+      "test": "hexa-cli/tests/adr_2610301129_spec.rs::s09_unavailable_never_adds_or_installs"
     },
     {
       "id": "S10",
@@ -119,7 +132,8 @@
       "description": "Shape of the steps for every input",
       "given": "any available, any installed list, any marketplace path, any mods list",
       "when": "install_steps is called",
-      "then": "if available is false, the result is exactly [Skip(r)] with r containing \"claude\". Otherwise, let missing be the mods m, in mods order, for which \"m@hexa\" is not in installed. If missing is empty, the result is empty. If it is not, the result is [AddMarketplace(marketplace)] followed by Install(\"m@hexa\") for each m in missing, in order."
+      "then": "if available is false, the result is exactly [Skip(r)] with r containing \"claude\". Otherwise, let missing be the mods m, in mods order, for which \"m@hexa\" is not in installed. If missing is empty, the result is empty. If it is not, the result is [AddMarketplace(marketplace)] followed by Install(\"m@hexa\") for each m in missing, in order.",
+      "test": "hexa-cli/tests/adr_2610301129_spec.rs::s10_shape_of_steps_property"
     },
     {
       "id": "S11",
@@ -130,7 +144,8 @@
       "description": "Idempotence: running the steps once leaves nothing to do",
       "given": "available = true, any installed list, any marketplace, any mods",
       "when": "install_steps is called, the ids of its Install steps are added to installed, and install_steps is called again with the same marketplace and mods",
-      "then": "the second result is empty"
+      "then": "the second result is empty",
+      "test": "hexa-cli/tests/adr_2610301129_spec.rs::s11_idempotence_property"
     },
     {
       "id": "S12",
@@ -141,7 +156,8 @@
       "description": "apply runs the steps through the port and reports each outcome",
       "given": "a fake ClaudePlugins with available = true, installed = Ok([]), and add_marketplace and install succeeding",
       "when": "apply(fake, /m, [\"question-alert\"]) is called",
-      "then": "the fake receives add_marketplace(/m) and then install(\"question-alert@hexa\"). The result is [(AddMarketplace(/m), Ok(())), (Install(\"question-alert@hexa\"), Ok(()))]."
+      "then": "the fake receives add_marketplace(/m) and then install(\"question-alert@hexa\"). The result is [(AddMarketplace(/m), Ok(())), (Install(\"question-alert@hexa\"), Ok(()))].",
+      "test": "hexa-cli/tests/adr_2610301129_spec.rs::s12_apply_runs_steps_and_reports"
     },
     {
       "id": "S13",
@@ -152,7 +168,8 @@
       "description": "Nothing to do means no port mutations",
       "given": "a fake ClaudePlugins with available = true and installed = Ok([\"question-alert@hexa\"])",
       "when": "apply(fake, /m, [\"question-alert\"]) is called",
-      "then": "the result is empty, and add_marketplace and install are never called"
+      "then": "the result is empty, and add_marketplace and install are never called",
+      "test": "hexa-cli/tests/adr_2610301129_spec.rs::s13_nothing_to_do_no_mutations"
     },
     {
       "id": "S14",
@@ -163,7 +180,8 @@
       "description": "A failed step does not stop the later steps",
       "given": "a fake ClaudePlugins with available = true and installed = Ok([]), where add_marketplace returns Err(\"boom\") and install(\"a@hexa\") returns Err(\"nope\")",
       "when": "apply(fake, /m, [\"a\", \"b\"]) is called",
-      "then": "install is still called for \"a@hexa\" and for \"b@hexa\". The result is [(AddMarketplace(/m), Err(\"boom\")), (Install(\"a@hexa\"), Err(\"nope\")), (Install(\"b@hexa\"), Ok(()))]."
+      "then": "install is still called for \"a@hexa\" and for \"b@hexa\". The result is [(AddMarketplace(/m), Err(\"boom\")), (Install(\"a@hexa\"), Err(\"nope\")), (Install(\"b@hexa\"), Ok(()))].",
+      "test": "hexa-cli/tests/adr_2610301129_spec.rs::s14_failed_step_does_not_stop_later"
     },
     {
       "id": "S15",
@@ -174,7 +192,8 @@
       "description": "A failing installed() is treated as nothing installed, not as a fatal error",
       "given": "a fake ClaudePlugins with available = true, installed() returning Err(\"cli broke\"), and add_marketplace and install succeeding",
       "when": "apply(fake, /m, [\"question-alert\"]) is called",
-      "then": "apply does not panic. The result is [(AddMarketplace(/m), Ok(())), (Install(\"question-alert@hexa\"), Ok(()))]."
+      "then": "apply does not panic. The result is [(AddMarketplace(/m), Ok(())), (Install(\"question-alert@hexa\"), Ok(()))].",
+      "test": "hexa-cli/tests/adr_2610301129_spec.rs::s15_failing_installed_treated_as_empty"
     },
     {
       "id": "S16",
@@ -185,7 +204,8 @@
       "description": "Unavailable claude: the Skip is reported and nothing is attempted",
       "given": "a fake ClaudePlugins with available = false",
       "when": "apply(fake, /m, [\"question-alert\"]) is called",
-      "then": "the result has exactly one entry, whose step is Skip(reason) with reason containing \"claude\". add_marketplace and install are never called."
+      "then": "the result has exactly one entry, whose step is Skip(reason) with reason containing \"claude\". add_marketplace and install are never called.",
+      "test": "hexa-cli/tests/adr_2610301129_spec.rs::s16_unavailable_reports_skip_only"
     },
     {
       "id": "S17",
@@ -196,7 +216,8 @@
       "description": "apply reports exactly install_steps' steps, each run once, and never panics",
       "given": "any fake ClaudePlugins (any available, installed() returning Ok(any list) or Err, and add_marketplace and install each returning any mix of Ok and Err), any marketplace, any mods",
       "when": "apply is called",
-      "then": "it returns without panicking. The steps in the result, in order, equal install_steps(available, installed-or-empty-on-Err, marketplace, mods). Each AddMarketplace step corresponds to exactly one add_marketplace call and each Install(id) step to exactly one install(id) call. Each reported outcome is the outcome the port returned for that call."
+      "then": "it returns without panicking. The steps in the result, in order, equal install_steps(available, installed-or-empty-on-Err, marketplace, mods). Each AddMarketplace step corresponds to exactly one add_marketplace call and each Install(id) step to exactly one install(id) call. Each reported outcome is the outcome the port returned for that call.",
+      "test": "hexa-cli/tests/adr_2610301129_spec.rs::s17_apply_matches_install_steps_property"
     },
     {
       "id": "S18",
@@ -207,7 +228,8 @@
       "description": "hexa bootstrap extracts the mods and installs question-alert",
       "given": "a machine where claude is available and question-alert@hexa is not installed",
       "when": "hexa bootstrap runs",
-      "then": "~/.hexa/claude-mods/ contains .claude-plugin/marketplace.json and question-alert/. apply is called with that folder and [\"question-alert\"]. One line is printed per step (add marketplace, install question-alert@hexa). The command exits 0."
+      "then": "~/.hexa/claude-mods/ contains .claude-plugin/marketplace.json and question-alert/. apply is called with that folder and [\"question-alert\"]. One line is printed per step (add marketplace, install question-alert@hexa). The command exits 0.",
+      "test": "hexa-cli/tests/adr_2610301129_spec.rs::s18_bootstrap_extracts_and_installs"
     },
     {
       "id": "S19",
@@ -218,7 +240,8 @@
       "description": "hexa dev init does the same extraction and install",
       "given": "a project directory and a machine where claude is available",
       "when": "hexa dev init runs",
-      "then": "~/.hexa/claude-mods/ is extracted, apply is called with that folder and [\"question-alert\"], and one line is printed per step"
+      "then": "~/.hexa/claude-mods/ is extracted, apply is called with that folder and [\"question-alert\"], and one line is printed per step",
+      "test": "hexa-cli/tests/adr_2610301129_spec.rs::s19_dev_init_extracts_and_installs"
     },
     {
       "id": "S20",
@@ -229,7 +252,8 @@
       "description": "Extraction overwrites stale files hexa owns",
       "given": "~/.hexa/claude-mods/question-alert/hooks/hooks.json exists with content that differs from the embedded asset",
       "when": "hexa bootstrap or hexa dev init runs",
-      "then": "that file's content equals the embedded asset afterwards"
+      "then": "that file's content equals the embedded asset afterwards",
+      "test": "hexa-cli/tests/adr_2610301129_spec.rs::s20_extraction_overwrites_stale_files"
     },
     {
       "id": "S21",
@@ -240,7 +264,8 @@
       "description": "Missing claude produces a warning and does not fail setup",
       "given": "a machine where the claude binary cannot be run",
       "when": "hexa bootstrap or hexa dev init runs",
-      "then": "a warning line naming claude is printed for the Skip step, and the command's exit status is the same as it would be with claude present"
+      "then": "a warning line naming claude is printed for the Skip step, and the command's exit status is the same as it would be with claude present",
+      "test": "hexa-cli/tests/adr_2610301129_spec.rs::s21_missing_claude_warns_without_failing"
     },
     {
       "id": "S22",
@@ -251,7 +276,8 @@
       "description": "A failed install produces a warning and does not fail setup",
       "given": "a machine where claude is available but claude plugin install fails",
       "when": "hexa bootstrap or hexa dev init runs",
-      "then": "the failed step is printed as a warning carrying the error, and the command does not exit non-zero because of it"
+      "then": "the failed step is printed as a warning carrying the error, and the command does not exit non-zero because of it",
+      "test": "hexa-cli/tests/adr_2610301129_spec.rs::s22_failed_install_warns_without_failing"
     }
   ]
 }
