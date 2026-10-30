@@ -25,6 +25,8 @@ use std::path::{Path, PathBuf};
 pub enum LoopAction {
     /// Show where the work stands (the default)
     Show,
+    /// One line of state for a status bar: no commands, no advice (ADR-2610301330)
+    Line,
     /// Record the ADR this work is under; it must exist in docs/adrs/
     Adr {
         /// ADR id, e.g. ADR-2609121400
@@ -576,6 +578,66 @@ pub fn status_line(dir: &Path) -> String {
 
 const STAGES: &[&str] = &["decide", "gate", "build", "harden", "done"];
 
+/// One line for a status bar (ADR-2610301330): the stage as a position on the
+/// track, or a harness run in its place, then the ADR and the checklist count.
+/// Never text a person recorded; that is `hexa loop`'s.
+pub fn glance_line(dir: &Path) -> String {
+    glance_line_at(read_loop(dir).as_ref(), chrono::Utc::now())
+}
+
+fn glance_line_at(state: Option<&serde_json::Value>, now: chrono::DateTime<chrono::Utc>) -> String {
+    let Some(st) = state else {
+        return "\u{25b8} loop \u{b7} idle".to_string();
+    };
+    let stage = st.get("stage").and_then(|v| v.as_str()).unwrap_or("decide");
+    let mut parts = vec![match glance_run(st, now) {
+        Some(run) => run,
+        None if stage == "done" => "done".to_string(),
+        None => STAGES[..4]
+            .iter()
+            .map(|s| if *s == stage { s.to_uppercase() } else { s.to_string() })
+            .collect::<Vec<_>>()
+            .join(" \u{203a} "),
+    }];
+    if let Some(adr) = st.get("adr").and_then(|v| v.as_str()).filter(|a| !a.is_empty()) {
+        parts.push(adr.to_string());
+    }
+    let tasks = task_list(st);
+    if !tasks.is_empty() {
+        parts.push(format!("{}/{}", tasks.iter().filter(|t| t.status == "done").count(), tasks.len()));
+    }
+    format!("\u{25b8} loop \u{b7} {}", parts.join(" \u{b7} "))
+}
+
+/// `running harden/verify 2m03s`, or `stalled harden/verify` once it stops
+/// reporting: `running_line_at` without the message, which a person wrote.
+fn glance_run(state: &serde_json::Value, now: chrono::DateTime<chrono::Utc>) -> Option<String> {
+    let r = state.get("running")?.as_object()?;
+    let get = |k: &str| r.get(k).and_then(|v| v.as_str()).unwrap_or("?");
+    let at = |k: &str| {
+        r.get(k)
+            .and_then(|v| v.as_str())
+            .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+            .map(|t| t.with_timezone(&chrono::Utc))
+    };
+    let where_ = format!("{}/{}", get("verb"), get("phase"));
+    if at("updated").is_some_and(|u| (now - u).num_seconds() > STALE_AFTER_SECS) {
+        return Some(format!("stalled {where_}"));
+    }
+    let elapsed = at("started").map_or_else(
+        || "?".to_string(),
+        |t| {
+            let secs = (now - t).num_seconds().max(0);
+            if secs < 3600 {
+                format!("{}m{:02}s", secs / 60, secs % 60)
+            } else {
+                format!("{}h{:02}m", secs / 3600, secs % 3600 / 60)
+            }
+        },
+    );
+    Some(format!("running {where_} {elapsed}"))
+}
+
 /// What running the gate established (ADR-2609132059).
 ///
 /// Three states because two would have to lie about one of them: a gate
@@ -791,6 +853,7 @@ fn run_task(dir: &Path, action: TaskAction) -> anyhow::Result<()> {
 pub async fn run(action: Option<LoopAction>) -> anyhow::Result<()> {
     let cwd = std::env::current_dir()?;
     match action.unwrap_or(LoopAction::Show) {
+        LoopAction::Line => println!("{}", glance_line(&cwd)),
         LoopAction::Show => {
             println!("{} {}", "\u{2b21}".cyan(), status_line(&cwd));
             if let Some(st) = read_loop(&cwd) {

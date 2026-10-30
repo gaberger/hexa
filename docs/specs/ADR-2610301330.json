@@ -9,6 +9,10 @@
     "by": "Gary Berger",
     "sha256": "57c55c0a518d808cf1f5509deba2eb70881c3574cb08d2f580c482a7993e8142"
   },
+  "sealed": {
+    "hexa-cli/tests/adr_2610301330_spec.rs": "1befc937a7736b60857b1579314643402a4da4b3782220c7f7777e7d541d659c"
+  },
+  "red": "852d9ae",
   "specs": [
     {
       "id": "S01",
