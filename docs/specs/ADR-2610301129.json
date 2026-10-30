@@ -1,0 +1,236 @@
+{
+  "adr": "ADR-2610301129",
+  "feature": "question-alert Claude Code mod installed on setup",
+  "description": "hexa embeds its Claude Code mods as a local `hexa` marketplace and installs them at user scope through a ClaudePlugins port during `hexa bootstrap` and `hexa dev init`. The install is idempotent and never fails setup.",
+  "universal": [
+    "§3",
+    "§4",
+    "§5"
+  ],
+  "accepted": {
+    "by": "Gary Berger",
+    "sha256": "c932e0c9cf1dc07e16568bfae3765633e488d7fb3519a637cd3ac3a9edd4668a"
+  },
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "The embedded claude-mods asset holds a marketplace named hexa that lists question-alert by a relative source.",
+      "given": "The embedded asset folder hexa-cli/assets/claude-mods/",
+      "when": ".claude-plugin/marketplace.json is read from it",
+      "then": "The JSON parses. Its marketplace name is \"hexa\". Its plugins list has an entry for question-alert with \"source\": \"./question-alert\". The folder question-alert/ exists beside .claude-plugin/ and holds .claude-plugin/plugin.json and hooks/hooks.json."
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "No marketplace entry points outside the bundle, and every listed mod has its folder.",
+      "given": "The embedded marketplace.json",
+      "when": "Every plugin entry's source is checked",
+      "then": "No source is an absolute path, a URL, or a path that starts with \"..\". Each one has the form \"./<mod>\", and the folder <mod>/ exists inside the embedded claude-mods asset. No entry names a mod that has no folder."
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "A test double that implements ClaudePlugins can stand in for the Claude CLI.",
+      "given": "A fake ClaudePlugins whose available() returns true, whose installed() returns Ok([\"other@x\"]), and which records every add_marketplace and install call",
+      "when": "The fake is used as &dyn ClaudePlugins",
+      "then": "available() returns true. installed() returns Ok with the ids in <plugin>@<marketplace> form. add_marketplace(&path) and install(\"question-alert@hexa\") each return Ok(()) and are recorded with their exact arguments."
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "Port failures come back as values, not panics.",
+      "given": "A fake ClaudePlugins whose installed(), add_marketplace() and install() each return Err(\"boom\")",
+      "when": "Each method is called",
+      "then": "Each call returns Err(\"boom\") as a Result, and the caller can inspect it. No method signals failure by panicking."
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "Nothing installed yet: add the marketplace, then install each mod in order.",
+      "given": "available = true, installed = [], marketplace = /home/u/.hexa/claude-mods, mods = [\"question-alert\"]",
+      "when": "install_steps is called",
+      "then": "It returns exactly [AddMarketplace(/home/u/.hexa/claude-mods), Install(\"question-alert@hexa\")]."
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "Already installed: no steps.",
+      "given": "available = true, installed = [\"question-alert@hexa\", \"foo@bar\"], mods = [\"question-alert\"]",
+      "when": "install_steps is called",
+      "then": "It returns an empty Vec."
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "Partly installed: only the missing mods are installed, in the order of mods.",
+      "given": "available = true, installed = [\"b@hexa\"], mods = [\"a\", \"b\", \"c\"], marketplace = /m",
+      "when": "install_steps is called",
+      "then": "It returns exactly [AddMarketplace(/m), Install(\"a@hexa\"), Install(\"c@hexa\")]."
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "Without claude, nothing but a single Skip.",
+      "given": "available = false, installed = [], mods = [\"question-alert\"]",
+      "when": "install_steps is called",
+      "then": "It returns exactly one step, a Skip whose reason contains \"claude\". The result has no AddMarketplace and no Install step."
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "A mod installed from another marketplace does not count as installed.",
+      "given": "available = true, installed = [\"question-alert@other\", \"question-alert\"], mods = [\"question-alert\"], marketplace = /m",
+      "when": "install_steps is called",
+      "then": "It returns [AddMarketplace(/m), Install(\"question-alert@hexa\")]. A mod with the same name from another marketplace, or with no marketplace suffix, does not suppress the install."
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§3"
+      ],
+      "kind": "property",
+      "description": "The shape of the steps holds over all inputs, and the function is idempotent.",
+      "given": "Any available flag, any installed list, any marketplace path and any list of distinct mod names",
+      "when": "install_steps is called",
+      "then": "If available is false, the result is exactly one Skip whose reason names claude. If available is true and every mod has <mod>@hexa in installed, the result is empty. Otherwise the result is AddMarketplace(marketplace) followed by Install(\"<m>@hexa\") for exactly the mods m without <m>@hexa in installed, in the order of mods. Running install_steps again, with installed extended by every Install id from the first result, gives an empty result. The function is deterministic."
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "apply runs the computed steps through the port and reports each one with its outcome.",
+      "given": "A fake ClaudePlugins with available() = true, installed() = Ok([]), and add_marketplace and install that return Ok and record their calls; marketplace = /m; mods = [\"question-alert\"]",
+      "when": "apply is called",
+      "then": "It returns [(AddMarketplace(/m), Ok(())), (Install(\"question-alert@hexa\"), Ok(()))]. The fake records add_marketplace(/m) and then install(\"question-alert@hexa\"), in that order."
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "A failing step does not stop the later ones.",
+      "given": "A fake with available() = true and installed() = Ok([]), whose add_marketplace returns Err(\"no net\") and whose install returns Ok; mods = [\"a\", \"b\"]",
+      "when": "apply is called",
+      "then": "It returns three entries: (AddMarketplace, Err(\"no net\")), then (Install(\"a@hexa\"), Ok(())), then (Install(\"b@hexa\"), Ok(())). install was called for both a and b. apply does not panic."
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "If installed() fails, apply treats it as nothing installed.",
+      "given": "A fake with available() = true and installed() = Err(\"parse error\"), whose add_marketplace and install return Ok; mods = [\"question-alert\"]",
+      "when": "apply is called",
+      "then": "It returns [(AddMarketplace(/m), Ok(())), (Install(\"question-alert@hexa\"), Ok(()))]. apply does not panic and does not return early with an empty Vec."
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "When claude is unavailable, apply reports the Skip and changes nothing.",
+      "given": "A fake with available() = false that records every call",
+      "when": "apply is called",
+      "then": "It returns exactly one entry, a Skip naming claude. add_marketplace and install are never called."
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§4"
+      ],
+      "kind": "property",
+      "description": "For every fake port, apply never panics and reports exactly the steps the domain computes.",
+      "given": "Any fake ClaudePlugins with any available value, an installed() that returns any Ok list or any Err, and add_marketplace and install that each return Ok or Err in any pattern; any marketplace; any mods",
+      "when": "apply is called",
+      "then": "It does not panic. The steps it returns equal install_steps(available, installed-or-empty-on-Err, marketplace, mods), in order. Every AddMarketplace and Install step was sent to the port exactly once, and each step's reported Result is the one the port returned for it."
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§5"
+      ],
+      "kind": "example",
+      "description": "Setup extracts the mods and installs question-alert.",
+      "given": "A machine with claude available and no hexa plugins installed",
+      "when": "hexa bootstrap or hexa dev init is run",
+      "then": "~/.hexa/claude-mods/ holds the embedded .claude-plugin/marketplace.json and question-alert/. apply is called with that folder and [\"question-alert\"]. The output has one line for adding the marketplace and one for installing question-alert@hexa. The command exits 0."
+    },
+    {
+      "id": "S17",
+      "decision": [
+        "§5"
+      ],
+      "kind": "example",
+      "description": "Setup overwrites files hexa owns that were changed.",
+      "given": "~/.hexa/claude-mods/question-alert/hooks/hooks.json exists with content that differs from the embedded asset",
+      "when": "hexa dev init is run",
+      "then": "After the run, that file is byte-identical to the embedded hexa-cli/assets/claude-mods/question-alert/hooks/hooks.json."
+    },
+    {
+      "id": "S18",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "A missing claude does not fail setup.",
+      "given": "A machine where the claude binary cannot be run",
+      "when": "hexa bootstrap or hexa dev init is run",
+      "then": "The output has one warning line saying claude is unavailable. The command's exit status is the same as when the mods succeed. No error is raised because of the mods."
+    },
+    {
+      "id": "S19",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "A failed plugin install does not fail setup.",
+      "given": "claude is available, but `claude plugin install question-alert@hexa` fails",
+      "when": "hexa dev init is run",
+      "then": "The failed step is printed as a warning line. The command still completes its other setup work, and its exit status does not change because of the failure."
+    },
+    {
+      "id": "S20",
+      "decision": [
+        "§5"
+      ],
+      "kind": "property",
+      "description": "For every outcome of the mod steps, setup prints one line per step and keeps its exit status.",
+      "given": "Any combination of claude availability, installed() result, and add_marketplace and install results",
+      "when": "hexa bootstrap or hexa dev init is run with everything else held equal",
+      "then": "The command prints exactly one line per step that apply returns. Every Skip and every Err step is printed as a warning. The exit status is the same in every combination."
+    }
+  ]
+}
