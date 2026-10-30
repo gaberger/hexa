@@ -14,6 +14,7 @@ pub mod insight;
 pub mod inference;
 pub mod init;
 pub mod memory;
+pub mod gap;
 pub mod loop_cmd;
 pub mod spend_cmd;
 pub mod plan;

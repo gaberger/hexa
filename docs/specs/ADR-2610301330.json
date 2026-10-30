@@ -7,7 +7,7 @@
   ],
   "accepted": {
     "by": "Gary Berger",
-    "sha256": "57c55c0a518d808cf1f5509deba2eb70881c3574cb08d2f580c482a7993e8142"
+    "sha256": "87deb6964e415c69c26f9fd53e611b3f29d1247fed203d8f1720c7c07d3ecad5"
   },
   "sealed": {
     "hexa-cli/tests/adr_2610301330_spec.rs": "1befc937a7736b60857b1579314643402a4da4b3782220c7f7777e7d541d659c"
@@ -21,7 +21,7 @@
       ],
       "kind": "example",
       "description": "With a loop recorded, `hexa loop line` prints exactly one line and exits 0.",
-      "given": "A project with docs/adrs/ADR-0001-first.md, and in session HEXA_SESSION_ID=s1 `hexa loop adr ADR-0001`, `hexa loop gate 'cargo test'` and two `hexa loop task add` steps recorded.",
+      "given": "A project with one fixture ADR file under docs/adrs/, and in session HEXA_SESSION_ID=s1 `hexa loop adr <fixture ADR id>`, `hexa loop gate 'cargo test'` and two `hexa loop task add` steps recorded.",
       "when": "`hexa loop line` is run in the project in session s1.",
       "then": "It exits 0 and its stdout is one line ending in a single newline, with no other newline in it.",
       "test": "hexa-cli/tests/adr_2610301330_spec.rs::s01_a_recorded_loop_is_one_line"
@@ -69,9 +69,9 @@
       ],
       "kind": "example",
       "description": "The stage is a position on the track, the current one in capitals, then the ADR and the checklist count.",
-      "given": "In session s1: `hexa loop adr ADR-0001`, `hexa loop gate 'cargo test'` (stage gate), five `hexa loop task add` steps and `hexa loop task done 1`, `hexa loop task done 2`.",
+      "given": "In session s1: `hexa loop adr <fixture ADR id>`, `hexa loop gate 'cargo test'` (stage gate), five `hexa loop task add` steps and `hexa loop task done 1`, `hexa loop task done 2`.",
       "when": "`hexa loop line` is run; then `hexa loop stage build` and `hexa loop line` again.",
-      "then": "The first line is exactly \"▸ loop · decide › GATE › build › harden · ADR-0001 · 2/5\". The second is exactly \"▸ loop · decide › gate › BUILD › harden · ADR-0001 · 2/5\".",
+      "then": "The first line is exactly \"▸ loop · decide › GATE › build › harden · <fixture ADR id> · 2/5\". The second is exactly \"▸ loop · decide › gate › BUILD › harden · <fixture ADR id> · 2/5\".",
       "test": "hexa-cli/tests/adr_2610301330_spec.rs::s05_stage_is_a_position_then_adr_and_count"
     },
     {
@@ -81,9 +81,9 @@
       ],
       "kind": "example",
       "description": "Done replaces the track; a live or stalled harness run replaces it too, named by verb and phase, with the ADR and count after it.",
-      "given": "A loop.json entry for session s1 with stage \"done\" and adr \"ADR-0001\"; then one with stage \"harden\", adr \"ADR-0001\", tasks [done, todo], and running {verb: harden, phase: verify, message: \"3 claims\"} started 2 minutes ago and updated now; then the same running record updated 10 minutes ago; then one started 65 minutes ago and updated now.",
+      "given": "A loop.json entry for session s1 with stage \"done\" and adr \"<fixture ADR id>\"; then one with stage \"harden\", adr \"<fixture ADR id>\", tasks [done, todo], and running {verb: harden, phase: verify, message: \"3 claims\"} started 2 minutes ago and updated now; then the same running record updated 10 minutes ago; then one started 65 minutes ago and updated now.",
       "when": "`hexa loop line` is run in session s1 against each.",
-      "then": "The first is exactly \"▸ loop · done · ADR-0001\". The second matches \"▸ loop · running harden/verify 2mNNs · ADR-0001 · 1/2\" and has no \"›\". The third is exactly \"▸ loop · stalled harden/verify · ADR-0001 · 1/2\". The fourth contains \"running harden/verify 1h05m\".",
+      "then": "The first is exactly \"▸ loop · done · <fixture ADR id>\". The second matches \"▸ loop · running harden/verify 2mNNs · <fixture ADR id> · 1/2\" and has no \"›\". The third is exactly \"▸ loop · stalled harden/verify · <fixture ADR id> · 1/2\". The fourth contains \"running harden/verify 1h05m\".",
       "test": "hexa-cli/tests/adr_2610301330_spec.rs::s06_done_and_a_harness_run"
     },
     {
