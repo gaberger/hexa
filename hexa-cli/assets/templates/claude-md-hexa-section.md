@@ -21,6 +21,11 @@ needs to be started. Every verb below runs in this process and exits.
 
 If the verb you want is missing, **build the verb**. That is how the tool grows.
 
+If hexa's own path does not work and you have to route around it, hexa may
+print a guide: follow it. Where it prints none, record the route you took —
+`hexa gap add <id> --what "<…>" --around "<step>"… --fix "<path> — <change>"` —
+so the gap is counted and `hexa gap pr <id>` can turn it into a pull request.
+
 ### Autonomous operation (HARD RULES)
 
 1. **Trace consumers before you delete.** `hexa graph consumers <path>` over the

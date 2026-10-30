@@ -3,7 +3,7 @@
   "description": "Claude Code settings template installed by `hexa init`. Configures hooks, permissions, statusline, and announcements for hexa-aware projects.",
   "statusLine": {
     "type": "command",
-    "command": "hexa loop 2>/dev/null | head -1"
+    "command": "hexa loop line 2>/dev/null"
   },
   "hooks": {
     "SessionStart": [
