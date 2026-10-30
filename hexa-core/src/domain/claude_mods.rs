@@ -1,4 +1,4 @@
-//! Which steps install hexa's Claude Code mods (ADR-2610301129 §3).
+//! Which steps install hexa's Claude Code mods (ADR-2610301129 §2).
 //!
 //! The domain decides the steps and is idempotent; running them goes through
 //! the `ClaudePlugins` port.
@@ -23,5 +23,5 @@ pub fn install_steps(
     mods: &[&str],
 ) -> Vec<Step> {
     let _ = (available, installed, marketplace, mods);
-    todo!("ADR-2610301129 §3")
+    todo!("ADR-2610301129 §2")
 }
