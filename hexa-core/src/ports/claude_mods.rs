@@ -15,3 +15,18 @@ pub trait ClaudePlugins: Send + Sync {
     /// Install the plugin `id`, at user scope.
     fn install(&self, id: &str) -> Result<(), String>;
 }
+
+/// Run the install steps through the port (ADR-2610301129 §4).
+///
+/// Computes `install_steps` from `plugins.available()` and
+/// `plugins.installed()`, runs each step through the port, and reports every
+/// step with its outcome. A step that fails does not stop the ones after it.
+/// If `installed()` fails, it is treated as nothing installed. It never panics.
+#[allow(unused_variables)] // stub until §4 is built
+pub fn apply(
+    plugins: &dyn ClaudePlugins,
+    marketplace: &std::path::Path,
+    mods: &[&str],
+) -> Vec<(crate::domain::claude_mods::Step, Result<(), String>)> {
+    todo!("ADR-2610301129 §4")
+}
