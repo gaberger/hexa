@@ -1,0 +1,158 @@
+{
+  "adr": "ADR-2610301330",
+  "feature": "hexa loop line: one line of loop state for a status bar",
+  "description": "`hexa loop line` prints one short line of where the work stands, for a status bar redrawn every turn: idle, or the stage as a position on the decide › gate › build › harden track, then the ADR id, the checklist count and a harness run, never text a person recorded. The settings template runs it; `hexa loop` and the hooks are unchanged.",
+  "universal": [
+    "§4"
+  ],
+  "accepted": {
+    "by": "Gary Berger",
+    "sha256": "f58d2c5277a13adc585ad58f49f317cec8f36cceb358256856eadf38ebc4b7c5"
+  },
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "With a loop recorded, `hexa loop line` prints exactly one line and exits 0.",
+      "given": "A project with docs/adrs/ADR-0001-first.md, and in session HEXA_SESSION_ID=s1 `hexa loop adr ADR-0001`, `hexa loop gate 'cargo test'` and two `hexa loop task add` steps recorded.",
+      "when": "`hexa loop line` is run in the project in session s1.",
+      "then": "It exits 0 and its stdout is one line ending in a single newline, with no other newline in it.",
+      "test": "hexa-cli/tests/adr_2610301330_spec.rs::s01_a_recorded_loop_is_one_line"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "`hexa loop line` writes nothing and does not fail, even with nothing to read.",
+      "given": "A directory with no .hexa/ at all, and separately a project whose .hexa/loop.json has an entry for session s1.",
+      "when": "`hexa loop line` is run in each, in session s1.",
+      "then": "Both runs exit 0 and print one line. The directory still has no .hexa/, and the project's .hexa/loop.json is byte-for-byte what it was before the run.",
+      "test": "hexa-cli/tests/adr_2610301330_spec.rs::s02_the_line_writes_nothing_and_never_fails"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "Nothing recorded is `▸ loop · idle`.",
+      "given": "A project with .hexa/ and no loop entry for session s1.",
+      "when": "`hexa loop line` is run in session s1.",
+      "then": "Its stdout is exactly \"▸ loop · idle\\n\".",
+      "test": "hexa-cli/tests/adr_2610301330_spec.rs::s03_nothing_recorded_is_idle"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "The idle line carries no advice and no command, though `hexa loop` still does.",
+      "given": "A project with .hexa/ and no loop entry for session s1.",
+      "when": "`hexa loop line` and `hexa loop` are run in session s1.",
+      "then": "The line contains none of \"hexa loop\", \"Record\", \"nothing recorded\" or a backtick. The output of `hexa loop` still contains \"nothing recorded\" and \"hexa loop gate\".",
+      "test": "hexa-cli/tests/adr_2610301330_spec.rs::s04_idle_carries_no_advice"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "The stage is a position on the track, the current one in capitals, then the ADR and the checklist count.",
+      "given": "In session s1: `hexa loop adr ADR-0001`, `hexa loop gate 'cargo test'` (stage gate), five `hexa loop task add` steps and `hexa loop task done 1`, `hexa loop task done 2`.",
+      "when": "`hexa loop line` is run; then `hexa loop stage build` and `hexa loop line` again.",
+      "then": "The first line is exactly \"▸ loop · decide › GATE › build › harden · ADR-0001 · 2/5\". The second is exactly \"▸ loop · decide › gate › BUILD › harden · ADR-0001 · 2/5\".",
+      "test": "hexa-cli/tests/adr_2610301330_spec.rs::s05_stage_is_a_position_then_adr_and_count"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "Done replaces the track, and a live or stalled harness run is named by verb and phase.",
+      "given": "A loop.json entry for session s1 with stage \"done\" and adr \"ADR-0001\"; then one with stage \"harden\", no adr, no tasks, and running {verb: harden, phase: verify, message: \"3 claims\"} started 2 minutes ago and updated now; then the same running record updated 10 minutes ago.",
+      "when": "`hexa loop line` is run in session s1 against each.",
+      "then": "The first is exactly \"▸ loop · done · ADR-0001\". The second starts with \"▸ loop · decide › gate › build › HARDEN · running harden/verify 2m\". The third is exactly \"▸ loop · decide › gate › build › HARDEN · stalled harden/verify\".",
+      "test": "hexa-cli/tests/adr_2610301330_spec.rs::s06_done_and_a_harness_run"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "What was not recorded is not shown: no ADR, no count, no run means none of their parts.",
+      "given": "In session s1 only `hexa loop gate 'cargo test'` recorded: no ADR, no tasks, no running record.",
+      "when": "`hexa loop line` is run.",
+      "then": "Its stdout is exactly \"▸ loop · decide › GATE › build › harden\\n\": no \"ADR\", no \"none\", no \"/\" count, no \"running\".",
+      "test": "hexa-cli/tests/adr_2610301330_spec.rs::s07_what_is_not_recorded_is_not_shown"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "The gate command, the evidence command, task titles and the run's message do not appear.",
+      "given": "In session s1: gate `cargo test --test domain compose_status 2>&1 | grep -E \"test result: ok. [1-9]\"`, evidence `echo EVIDENCE-MARK`, a task titled \"TITLE-MARK wire the parser\" marked doing, and a running record with message \"MESSAGE-MARK\".",
+      "when": "`hexa loop line` is run.",
+      "then": "The line contains none of \"cargo\", \"grep\", \"EVIDENCE-MARK\", \"TITLE-MARK\", \"MESSAGE-MARK\" and is at most 80 characters.",
+      "test": "hexa-cli/tests/adr_2610301330_spec.rs::s08_recorded_text_does_not_appear"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "`hexa loop` itself still shows the gate command in full.",
+      "given": "The state of S08.",
+      "when": "`hexa loop` is run.",
+      "then": "Its output contains the gate command `cargo test --test domain compose_status` and the task title \"TITLE-MARK wire the parser\".",
+      "test": "hexa-cli/tests/adr_2610301330_spec.rs::s09_the_full_report_keeps_the_detail"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§4"
+      ],
+      "kind": "property",
+      "description": "For any recorded gate, evidence, task titles and run message, the line contains none of them and its length does not depend on them.",
+      "given": "Generated loop.json entries for session s1: a random stage from decide, gate, build, harden, done; an ADR id of the form ADR-NNNNNNNNNN or none; 0 to 30 tasks with random statuses; and a gate, evidence, task titles and running message each a random string of 12 to 400 characters containing a 12-character random marker.",
+      "when": "`hexa loop line` is run against each of at least 40 such entries.",
+      "then": "No line contains any marker, and every line is at most 80 characters.",
+      "test": "hexa-cli/tests/adr_2610301330_spec.rs::s10_any_recorded_text_stays_out_and_short"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§5"
+      ],
+      "kind": "example",
+      "description": "The settings template's status bar runs `hexa loop line`.",
+      "given": "hexa-cli/assets/templates/hexa-claude-settings.json.",
+      "when": "Its statusLine.command is read.",
+      "then": "It is exactly \"hexa loop line 2>/dev/null\".",
+      "test": "hexa-cli/tests/adr_2610301330_spec.rs::s11_the_template_runs_loop_line"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "The template no longer cuts the full report with head.",
+      "given": "hexa-cli/assets/templates/hexa-claude-settings.json.",
+      "when": "Its statusLine.command is read.",
+      "then": "It does not contain \"head\" and does not end in \"hexa loop\" or \"hexa loop show\".",
+      "test": "hexa-cli/tests/adr_2610301330_spec.rs::s12_the_template_does_not_cut_the_report"
+    }
+  ]
+}
