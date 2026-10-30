@@ -1,0 +1,1 @@
+{ "name": "question-alert", "version": "0.1.0", "description": "Highlights, in yellow, when Claude ends a reply asking you something or opens a question dialog", "author": { "name": "Gary Berger" }, "types": "./types/index.d.ts" }

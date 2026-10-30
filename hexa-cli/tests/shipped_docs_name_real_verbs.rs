@@ -184,6 +184,7 @@ fn a_freshly_initialised_claude_md_is_refreshable() {
     let target = dir.path().join("demo-app");
     std::fs::create_dir_all(&target).expect("mkdir");
     let out = Command::new(hexa_bin())
+        .env("HEXA_NO_CLAUDE_MODS", "1")
         .args(["init", target.to_str().unwrap()])
         .output()
         .expect("run hexa init");

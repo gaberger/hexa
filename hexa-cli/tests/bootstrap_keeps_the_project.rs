@@ -17,6 +17,7 @@ fn bootstrap_keeps_project_json_and_names_no_model() {
     let path = dir.path().join(".hexa/project.json");
     std::fs::write(&path, before).unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_hexa"))
+        .env("HEXA_NO_CLAUDE_MODS", "1")
         .args(["bootstrap", "--skip-prereq", "--skip-models"])
         .current_dir(dir.path())
         .output()
@@ -33,6 +34,7 @@ fn bootstrap_keeps_project_json_and_names_no_model() {
 fn bootstrap_creates_a_config_without_models_when_none_exists() {
     let dir = tempfile::tempdir().unwrap();
     let _ = Command::new(env!("CARGO_BIN_EXE_hexa"))
+        .env("HEXA_NO_CLAUDE_MODS", "1")
         .args(["bootstrap", "--skip-prereq", "--skip-models"])
         .current_dir(dir.path())
         .output()

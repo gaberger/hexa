@@ -50,6 +50,7 @@ fn sized_session() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf
     let project = dir.path().join("p");
     std::fs::create_dir_all(&home).unwrap();
     let init = Command::new(env!("CARGO_BIN_EXE_hexa"))
+        .env("HEXA_NO_CLAUDE_MODS", "1")
         .args(["init", project.to_str().unwrap(), "--scaffold", "--lang", "rust"])
         .env("HOME", &home)
         .output()

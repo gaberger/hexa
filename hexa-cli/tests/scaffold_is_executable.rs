@@ -35,6 +35,7 @@ fn scaffold(lang: &str) -> tempfile::TempDir {
     let target = dir.path().join("demo-app");
     std::fs::create_dir_all(&target).expect("mkdir");
     let out = Command::new(hexa_bin())
+        .env("HEXA_NO_CLAUDE_MODS", "1")
         .args([
             "init",
             target.to_str().unwrap(),

@@ -22,6 +22,23 @@ pub fn install_steps(
     marketplace: &std::path::Path,
     mods: &[&str],
 ) -> Vec<Step> {
-    let _ = (available, installed, marketplace, mods);
-    todo!("ADR-2610301129 §2")
+    if !available {
+        return vec![Step::Skip(
+            "claude CLI not available (not on PATH, or `claude --version` failed); \
+             Claude Code mods not installed"
+                .into(),
+        )];
+    }
+    // Exact match on `<mod>@hexa`: a copy from another marketplace is not ours.
+    let missing: Vec<String> = mods
+        .iter()
+        .map(|m| format!("{m}@hexa"))
+        .filter(|id| !installed.iter().any(|i| i == id))
+        .collect();
+    if missing.is_empty() {
+        return Vec::new();
+    }
+    std::iter::once(Step::AddMarketplace(marketplace.to_path_buf()))
+        .chain(missing.into_iter().map(Step::Install))
+        .collect()
 }
