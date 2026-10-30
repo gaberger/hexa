@@ -7,7 +7,7 @@
   ],
   "accepted": {
     "by": "Gary Berger",
-    "sha256": "f58d2c5277a13adc585ad58f49f317cec8f36cceb358256856eadf38ebc4b7c5"
+    "sha256": "57c55c0a518d808cf1f5509deba2eb70881c3574cb08d2f580c482a7993e8142"
   },
   "specs": [
     {
@@ -76,10 +76,10 @@
         "§3"
       ],
       "kind": "example",
-      "description": "Done replaces the track, and a live or stalled harness run is named by verb and phase.",
-      "given": "A loop.json entry for session s1 with stage \"done\" and adr \"ADR-0001\"; then one with stage \"harden\", no adr, no tasks, and running {verb: harden, phase: verify, message: \"3 claims\"} started 2 minutes ago and updated now; then the same running record updated 10 minutes ago.",
+      "description": "Done replaces the track; a live or stalled harness run replaces it too, named by verb and phase, with the ADR and count after it.",
+      "given": "A loop.json entry for session s1 with stage \"done\" and adr \"ADR-0001\"; then one with stage \"harden\", adr \"ADR-0001\", tasks [done, todo], and running {verb: harden, phase: verify, message: \"3 claims\"} started 2 minutes ago and updated now; then the same running record updated 10 minutes ago; then one started 65 minutes ago and updated now.",
       "when": "`hexa loop line` is run in session s1 against each.",
-      "then": "The first is exactly \"▸ loop · done · ADR-0001\". The second starts with \"▸ loop · decide › gate › build › HARDEN · running harden/verify 2m\". The third is exactly \"▸ loop · decide › gate › build › HARDEN · stalled harden/verify\".",
+      "then": "The first is exactly \"▸ loop · done · ADR-0001\". The second matches \"▸ loop · running harden/verify 2mNNs · ADR-0001 · 1/2\" and has no \"›\". The third is exactly \"▸ loop · stalled harden/verify · ADR-0001 · 1/2\". The fourth contains \"running harden/verify 1h05m\".",
       "test": "hexa-cli/tests/adr_2610301330_spec.rs::s06_done_and_a_harness_run"
     },
     {
