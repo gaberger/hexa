@@ -6,7 +6,7 @@
 > [`ARCHITECTURE.md`](../../ARCHITECTURE.md); for *why* a decision was made,
 > read the ADR itself.
 
-**45 ADRs** across 1 epochs.
+**55 ADRs** across 1 epochs.
 
 ## Epoch: `single-agent` — **current**
 
@@ -14,6 +14,16 @@ _One gateway-mediated agent loop; code-graph context as the differentiator_
 
 | ADR | Status | Title | Superseded-By |
 |-----|--------|-------|---------------|
+| ADR-2610301129 | accepted | ADR-2610301129: hexa installs the question-alert Claude Code mod on setup |  |
+| ADR-2610270853 | accepted | ADR-2610270853: hexa knows which build it is and says when it is behind |  |
+| ADR-2610270901 | accepted | ADR-2610270901: `claude-text` serves Claude as a tool-less completion |  |
+| ADR-2610271110 | proposed | ADR-2610271110: A decision not yet built is declared, and the declaration may only shrink |  |
+| ADR-2610271308 | accepted | ADR-2610271308: `hexa hey` routes only to verbs hexa has |  |
+| ADR-2610271649 | accepted | ADR-2610271649: An adapter importing another adapter in its own layer is a violation |  |
+| ADR-2610261356 | accepted | ADR-2610261356: A primary adapter may drive a use case; the docs say so |  |
+| ADR-2610261420 | accepted | ADR-2610261420: A grade floor names what it let through; the scaffold fails on any violation |  |
+| ADR-2610221540 | accepted | ADR-2610221540: An ADR is compiled to a spec, the spec to sealed tests that fail, and only then is code generated |  |
+| ADR-2610221834 | proposed | ADR-2610221834: Harden fixes in parallel worktrees, lands each fix serially, and proves each regression test red |  |
 | ADR-2610160756 | accepted | ADR-2610160756: Harden gates each fix fast and each batch in full, and finds a breaking fix by bisection |  |
 | ADR-2610161730 | accepted | ADR-2610161730: The delegate runs on an allowlist scoped to its run, not with permissions skipped |  |
 | ADR-2610141733 | accepted | ADR-2610141733: A claude model id is delegated, a missing model says how to set one, and every gated harden fix commits |  |

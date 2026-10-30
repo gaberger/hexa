@@ -97,6 +97,10 @@ pub async fn run(args: BootstrapArgs) -> anyhow::Result<()> {
         println!();
     }
 
+    // Phase 0: Claude Code mods (ADR-2610301129 §4). First, because every
+    // phase after it can return early, and the mods must not depend on them.
+    crate::commands::claude_mods::install_mods(config.dry_run);
+
     // Phase 1: Check prerequisites
     if !config.skip_prereq {
         println!("{}", "⬡ Checking prerequisites...".cyan());

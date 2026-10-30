@@ -32,6 +32,7 @@
   "analyze": {
     "exclude": [
       "hexa-cli/assets/scaffold",
+      "hexa-cli/assets/claude-mods",
       "bench/fixtures"
     ],
     "adapters": {
@@ -63,6 +64,7 @@
       "hexa-analysis/src/treesitter_api.rs": "adapters/secondary",
       "hexa-cli/build.rs": "infrastructure",
       "hexa-cli/src/assets.rs": "adapters/primary",
+      "hexa-cli/src/claude_plugins.rs": "adapters/secondary",
       "hexa-cli/src/commands": "adapters/primary",
       "hexa-cli/src/fmt.rs": "adapters/primary",
       "hexa-cli/src/http_probe.rs": "adapters/secondary",

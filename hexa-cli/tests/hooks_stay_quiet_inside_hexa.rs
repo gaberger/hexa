@@ -37,7 +37,7 @@ fn route(project: &std::path::Path, internal: bool) -> String {
 fn inside_hexa_the_route_hook_says_nothing_and_drafts_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let project = dir.path().join("p");
-    assert!(hexa().args(["init", project.to_str().unwrap(), "--scaffold", "--lang", "rust"]).output().unwrap().status.success());
+    assert!(hexa().env("HEXA_NO_CLAUDE_MODS", "1").args(["init", project.to_str().unwrap(), "--scaffold", "--lang", "rust"]).output().unwrap().status.success());
     let drafts = project.join("docs/workplans/drafts");
 
     let quiet = route(&project, true);

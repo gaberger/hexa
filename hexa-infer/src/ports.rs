@@ -57,6 +57,13 @@ pub const fn local_provider() -> LocalProvider {
     }
 }
 
+/// The frontier CLI's executable on `PATH`. hexa-cli asks for it here, as it
+/// asks for [`local_provider`], so no file outside hexa-infer names it
+/// (founding goal G1).
+pub const fn frontier_cli() -> &'static str {
+    "claude"
+}
+
 impl LocalProvider {
     /// `http://127.0.0.1:<port>` — the base URL for a default install.
     pub fn default_base_url(&self) -> String {

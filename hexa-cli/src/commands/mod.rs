@@ -3,6 +3,7 @@ pub mod api;
 pub mod assets_cmd;
 pub mod bootstrap;
 pub mod ci;
+pub mod claude_mods;
 pub mod doctor;
 pub mod spec;
 pub mod spec_ledger;

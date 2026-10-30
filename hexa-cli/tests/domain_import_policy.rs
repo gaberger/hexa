@@ -319,6 +319,7 @@ fn every_scaffolded_language_passes_the_policy_it_ships_with() {
         let target = d.path().join("demo-app");
         std::fs::create_dir_all(&target).unwrap();
         let out = Command::new(hexa())
+            .env("HEXA_NO_CLAUDE_MODS", "1")
             .args([
                 "init",
                 target.to_str().unwrap(),

@@ -73,6 +73,11 @@ pub async fn run(args: InitArgs) -> Result<()> {
                 .unwrap_or_else(|| "hexa-project".to_string())
         });
 
+    // ── 0. Claude Code mods (ADR-2610301129 §4) ────────────────────
+    // User-global, so before the guard: re-running init on a project that
+    // is already initialized still installs them.
+    crate::commands::claude_mods::install_mods(false);
+
     // ── Guard: already initialized? ───────────────────────────────
     let hexa_dir = target.join(".hexa");
     if hexa_dir.exists() && !args.force {

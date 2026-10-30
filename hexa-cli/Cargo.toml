@@ -57,3 +57,8 @@ regex = "1"
 
 [dev-dependencies]
 tempfile = "3"
+
+[lints.clippy]
+# The sealed spec test tests/adr_2610301129_spec.rs writes `x % 2 == 0`, which
+# clippy 1.94 flags. A sealed test changes only through its spec, never by hand.
+manual_is_multiple_of = "allow"

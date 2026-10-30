@@ -1,0 +1,11 @@
+{
+  "name": "hexa",
+  "owner": { "name": "hexa" },
+  "plugins": [
+    {
+      "name": "question-alert",
+      "source": "./question-alert",
+      "description": "Alerts when Claude Code asks you a question"
+    }
+  ]
+}
