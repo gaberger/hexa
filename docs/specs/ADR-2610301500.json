@@ -1,0 +1,186 @@
+{
+  "adr": "ADR-2610301500",
+  "feature": "Guides at dead ends, and the gaps they record",
+  "description": "Where hexa's path does not work, hexa prints a guide: what is inconsistent, the route around it that keeps the pipeline's guarantees, and where the fix in hexa belongs. Each guide printed records a hit; `hexa gap pr` turns a gap into a pull request body.",
+  "universal": [
+    "§6"
+  ],
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "Every guide in the table has an id, a what, at least one step around, and a fix naming a hexa path.",
+      "given": "guides() from hexa-core.",
+      "when": "Each guide is read.",
+      "then": "Every id is unique kebab-case; what is non-empty; around has at least one step; fix names at least one path that exists in the hexa workspace."
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A guide is not a free-form message: an entry without a route around or a fix is refused.",
+      "given": "A Guide built with an empty around, and one with an empty fix.",
+      "when": "Each is validated.",
+      "then": "Both are rejected, each naming the missing field."
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "`hexa spec draft` with no completion model reachable prints the no-completion-model guide.",
+      "given": "A project with an ADR, HOME pointing at an empty directory (no inference registered), no provider environment variables.",
+      "when": "`hexa spec draft <ADR>` is run.",
+      "then": "It exits non-zero. Its output says no completion model is reachable before any transport error, and contains the guide's numbered steps and `hexa gap pr no-completion-model`."
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "A guide never turns a failure into a success, and an ordinary error prints no guide.",
+      "given": "The state of S03; and separately `hexa spec draft ADR-9999` for an ADR that does not exist.",
+      "when": "Each is run.",
+      "then": "S03's run still exits non-zero. The missing-ADR run exits non-zero and prints no `hexa gap pr`."
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "Printing a guide appends one hit; `hexa gap list` ranks by hits.",
+      "given": "HOME at an empty directory; the S03 dead end reached twice from project A and once from project B.",
+      "when": "`hexa gap list` is run.",
+      "then": "~/.hexa/gaps.jsonl has three lines with id no-completion-model. The list shows no-completion-model with count 3 and last project B."
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "Recording a gap reaches no network and writes nothing in the project.",
+      "given": "The S05 runs, with the network unreachable (HTTPS_PROXY and HTTP_PROXY at a closed local port).",
+      "when": "The project trees are compared before and after.",
+      "then": "No file under either project changed; the runs behaved as with the network up."
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "`hexa gap add` records an unlisted guide that `hexa gap list` shows.",
+      "given": "HOME at an empty directory.",
+      "when": "`hexa gap add guard-x --what \"w\" --around \"step one\" --fix hexa-cli/src/commands/spec_ledger.rs` then `hexa gap list` are run.",
+      "then": "The add exits 0; the list shows guard-x marked unlisted with its what."
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "An unlisted guide needs a route and a fix, and may not reuse a listed id.",
+      "given": "HOME at an empty directory.",
+      "when": "`hexa gap add` is run without --around, without --fix, and with the id no-completion-model.",
+      "then": "All three exit non-zero, each naming why; gaps.jsonl has no new line."
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "The CLAUDE.md template tells an agent to add a guide when it routes around hexa.",
+      "given": "hexa-cli/assets/templates/claude-md-hexa-section.md.",
+      "when": "It is read.",
+      "then": "It contains `hexa gap add` in the same section as \"build the verb\"."
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§5"
+      ],
+      "kind": "example",
+      "description": "`hexa gap pr` prints a title and a body with the hits, the route and the files.",
+      "given": "The S05 state.",
+      "when": "`hexa gap pr no-completion-model` is run.",
+      "then": "Stdout has a first line title, then a body containing the what, \"3\" hits, both project names, the around steps and every fix path."
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "`hexa gap pr` opens nothing and changes nothing; an unknown id fails.",
+      "given": "The S05 state, inside a git repository.",
+      "when": "`hexa gap pr no-completion-model` and `hexa gap pr nope` are run.",
+      "then": "The first exits 0 with git status and gaps.jsonl unchanged. The second exits non-zero naming the unknown id."
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§6"
+      ],
+      "kind": "property",
+      "description": "Every `hexa ` step in every guide is a real command.",
+      "given": "guides() and the built binary.",
+      "when": "For each around step beginning `hexa `, the words before the first argument are run with --help.",
+      "then": "Each exits 0. The check counts at least one such step, so an empty table does not pass."
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§6"
+      ],
+      "kind": "example",
+      "description": "The no-completion-model guide's `hexa spec accept` step passes the check.",
+      "given": "The no-completion-model guide and the built binary.",
+      "when": "The §6 check runs over its steps.",
+      "then": "`hexa spec accept --help` is run and exits 0, and the check reports that guide as passing."
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§6"
+      ],
+      "kind": "negative",
+      "description": "A guide naming a verb hexa lacks fails the check.",
+      "given": "A guide whose around step is `hexa no-such-verb`.",
+      "when": "The §6 check runs over it.",
+      "then": "It fails, naming the guide id and the step."
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§7"
+      ],
+      "kind": "example",
+      "description": "The table starts with the three guides found building ADR-2610301330.",
+      "given": "guides().",
+      "when": "The ids are read.",
+      "then": "They include no-completion-model, link-hand-written-tests and guard-test-is-a-mirror; link-hand-written-tests' steps end with `hexa spec seal`."
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§7"
+      ],
+      "kind": "negative",
+      "description": "A first guide's route keeps the pipeline's guarantee: the red commit is set only after the tests are committed failing.",
+      "given": "The link-hand-written-tests guide.",
+      "when": "Its steps are read in order.",
+      "then": "The step committing the red tests comes before the step setting `red`, which comes before `hexa spec seal`; no step sets `red` to a commit named before the tests are run."
+    }
+  ]
+}
