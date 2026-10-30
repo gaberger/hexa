@@ -121,18 +121,28 @@ fn s06_done_and_a_harness_run() {
     write_entry(d.path(), serde_json::json!({ "stage": "done", "adr": "ADR-0001" }));
     assert_eq!(line(d.path()), "▸ loop · done · ADR-0001\n");
 
-    let running = |updated: String| {
+    let running = |started: String, updated: String| {
         serde_json::json!({
             "stage": "harden",
-            "running": { "verb": "harden", "phase": "verify", "message": "3 claims", "started": ago(2), "updated": updated }
+            "adr": "ADR-0001",
+            "tasks": [{ "title": "a", "status": "done" }, { "title": "b", "status": "todo" }],
+            "running": { "verb": "harden", "phase": "verify", "message": "3 claims", "started": started, "updated": updated }
         })
     };
-    write_entry(d.path(), running(ago(0)));
+    write_entry(d.path(), running(ago(2), ago(0)));
     let out = line(d.path());
-    assert!(out.starts_with("▸ loop · decide › gate › build › HARDEN · running harden/verify 2m"), "{out:?}");
+    let rest = out.strip_prefix("▸ loop · running harden/verify 2m").unwrap_or_else(|| panic!("{out:?}"));
+    let (secs, tail) = rest.split_at(2);
+    assert!(secs.chars().all(|c| c.is_ascii_digit()), "2mNNs: {out:?}");
+    assert_eq!(tail, "s · ADR-0001 · 1/2\n", "{out:?}");
+    assert!(!out.contains('›'), "the run takes the track's place: {out:?}");
 
-    write_entry(d.path(), running(ago(10)));
-    assert_eq!(line(d.path()), "▸ loop · decide › gate › build › HARDEN · stalled harden/verify\n");
+    write_entry(d.path(), running(ago(2), ago(10)));
+    assert_eq!(line(d.path()), "▸ loop · stalled harden/verify · ADR-0001 · 1/2\n");
+
+    write_entry(d.path(), running(ago(65), ago(0)));
+    let out = line(d.path());
+    assert!(out.contains("running harden/verify 1h05m"), "{out:?}");
 }
 
 #[test]

@@ -19,12 +19,13 @@ date: 2026-10-30
 
 1. **`hexa loop line` prints one line of state for a status bar.** It reads the same `.hexa/loop.json` entry `hexa loop` reads, prints exactly one line, writes nothing, and exits 0, including when no loop is recorded.
 2. **Nothing recorded is `▸ loop · idle`.** No advice and no command names. The hooks still print the advice.
-3. **A recorded loop shows its stage as a position.** `▸ loop · decide › gate › build › harden`, the current stage in capitals (`decide › GATE › build › harden`). Stage `done` prints `▸ loop · done` instead of the track. After it, each only when present: the ADR id, the checklist as `done/total` (`2/5`), and a harness run as `running <verb>/<phase> <elapsed>` or `stalled <verb>/<phase>` (no message).
+3. **A recorded loop shows its stage as a position.** `▸ loop · decide › gate › build › harden`, the current stage in capitals (`decide › GATE › build › harden`). Stage `done` prints `▸ loop · done` instead of the track. While a harness run is recorded it takes the track's place, since its verb names the stage: `running <verb>/<phase> <elapsed>`, or `stalled <verb>/<phase>` once it stops reporting (no message). Elapsed is `2m03s` under an hour and `1h05m` from an hour on. After the track or the run, each only when present: the ADR id, and the checklist as `done/total` (`2/5`).
 4. **The line never carries text a person wrote.** Not the gate command, not the evidence command, not a task title, not the run's message. Those are in `hexa loop`. The line stays short whatever was recorded.
 5. **The template's status bar runs `hexa loop line`.** `hexa-claude-settings.json` sets `statusLine.command` to `hexa loop line 2>/dev/null`, with no `head`. `hexa init` and the asset refresh already overwrite `statusLine` as hexa-managed, so existing projects pick it up on refresh. `hexa loop` and the hook output do not change.
 
 ## Consequences
 
+- Amended before the code, 2026-10-30: the first accepted form put the run after the track, which reaches about 99 characters with an ADR, a checklist and a long phase (`build/synthesize`), against §4's cap of 80. S10 generates that case.
 - The bar is one short line in every hexa project; the agent still gets the full line from the hooks.
 - A pass/fail mark for the gate is not shown. Showing one needs the gate's last result written to `loop.json`, which is a separate decision.
 - A status bar that wraps `hexa loop line` (ccs's `statusline --auto`) gets the short line unchanged.
