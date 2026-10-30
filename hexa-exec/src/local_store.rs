@@ -137,6 +137,24 @@ pub fn recent_runs(limit: usize) -> Vec<Value> {
     read_tail(RUNS, limit)
 }
 
+// ── gaps (ADR-2610301500) ─────────────────────────────────────────────────────
+
+const GAPS: &str = "gaps.jsonl";
+
+/// Append one gap record: a guide printed (`{"id","project","at"}`) or a guide
+/// added by hand (`{"kind":"guide",…}`). The error is returned, not logged:
+/// `hexa gap add` must not say it recorded what it did not.
+fn record_gap(record: &Value) -> Result<(), String> {
+    append(GAPS, record)
+}
+
+/// Every gap record, oldest first.
+fn gap_records() -> Vec<Value> {
+    let mut all = read_tail(GAPS, usize::MAX);
+    all.reverse();
+    all
+}
+
 // ── token spend ───────────────────────────────────────────────────────────────
 
 const SPEND: &str = "inference-log.jsonl";
@@ -386,6 +404,18 @@ impl crate::ports::RunLog for LocalRuns {
     }
     fn recent(&self, limit: usize) -> Vec<Value> {
         recent_runs(limit)
+    }
+}
+
+/// [`GapLog`](crate::ports::GapLog) on `~/.hexa/gaps.jsonl`.
+pub struct LocalGaps;
+
+impl crate::ports::GapLog for LocalGaps {
+    fn record(&self, record: &Value) -> Result<(), String> {
+        record_gap(record)
+    }
+    fn all(&self) -> Vec<Value> {
+        gap_records()
     }
 }
 

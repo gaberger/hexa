@@ -2,6 +2,7 @@
 
 pub mod api_optimization;
 pub mod gate_ledger;
+pub mod guide;
 pub mod intent;
 pub mod messages;
 pub mod provenance;

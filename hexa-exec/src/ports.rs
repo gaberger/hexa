@@ -146,6 +146,16 @@ pub trait Frontier: Send + Sync {
     }
 }
 
+/// Where the dead ends hexa hit are recorded (ADR-2610301500): one record
+/// per guide printed, and one per guide added by hand.
+pub trait GapLog: Send + Sync {
+    /// Append one record. The error is returned: `hexa gap add` must not say
+    /// it recorded what it did not.
+    fn record(&self, record: &Value) -> Result<(), String>;
+    /// Every record, oldest first.
+    fn all(&self) -> Vec<Value>;
+}
+
 /// Where finished runs are kept — the feed `hexa do runs` reads.
 pub trait RunLog: Send + Sync {
     /// Keep one run. Never fails a run: losing a feed entry must not lose an edit.

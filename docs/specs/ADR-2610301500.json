@@ -7,8 +7,12 @@
   ],
   "accepted": {
     "by": "Gary Berger",
-    "sha256": "5c9b671d9de47f66f4b7e93be66629a541b2d406bff0c5bd19fd3103ec0c15ec"
+    "sha256": "2dc1c12684f82f88a1a65619eac69f17f3239482e8383ffc43ef08e52502105c"
   },
+  "sealed": {
+    "hexa-cli/tests/adr_2610301500_spec.rs": "b339742ebe3be91d667e14848ead785e477b21bca11b0bb8d1e50640f4a00c09"
+  },
+  "red": "fb8f670",
   "specs": [
     {
       "id": "S01",
@@ -53,7 +57,7 @@
       ],
       "kind": "negative",
       "description": "A guide never turns a failure into a success, and an ordinary error prints no guide.",
-      "given": "The state of S03; and separately `hexa spec draft ADR-9999` for an ADR that does not exist.",
+      "given": "The state of S03; and separately `hexa spec draft <an id with no ADR file>` for an ADR that does not exist.",
       "when": "Each is run.",
       "then": "S03's run still exits non-zero. The missing-ADR run exits non-zero and prints no `hexa gap pr`.",
       "test": "hexa-cli/tests/adr_2610301500_spec.rs::s04_a_guide_keeps_the_failure_and_ordinary_errors_have_none"
