@@ -890,20 +890,27 @@ fn s20_extraction_overwrites_stale_files() {
 }
 
 /// S21: Missing claude produces a warning and does not fail setup
+///
+/// Runs `hexa dev init` rather than `hexa bootstrap`: bootstrap also needs
+/// claude or Ollama as its model path, so it cannot isolate the mods.
 #[test]
 fn s21_missing_claude_warns_without_failing() {
     // Reference run with claude present.
     let root_ok = temp_root("s21-ok");
     let home_ok = root_ok.join("home");
+    let project_ok = root_ok.join("project");
     fs::create_dir_all(&home_ok).unwrap();
+    fs::create_dir_all(&project_ok).unwrap();
     let (bin, _log) = fake_claude(&root_ok, false);
-    let with_claude = run_hexa(&["bootstrap"], &home_ok, Some(&bin), &home_ok);
+    let with_claude = run_hexa(&["dev", "init"], &home_ok, Some(&bin), &project_ok);
 
     // Run with no claude on PATH.
     let root = temp_root("s21-missing");
     let home = root.join("home");
+    let project = root.join("project");
     fs::create_dir_all(&home).unwrap();
-    let without = run_hexa(&["bootstrap"], &home, None, &home);
+    fs::create_dir_all(&project).unwrap();
+    let without = run_hexa(&["dev", "init"], &home, None, &project);
     let text = combined_output(&without);
 
     assert!(
