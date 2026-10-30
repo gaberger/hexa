@@ -14,7 +14,7 @@ _One gateway-mediated agent loop; code-graph context as the differentiator_
 
 | ADR | Status | Title | Superseded-By |
 |-----|--------|-------|---------------|
-| ADR-2610301129 | proposed | ADR-2610301129: hexa installs the question-alert Claude Code mod on setup |  |
+| ADR-2610301129 | accepted | ADR-2610301129: hexa installs the question-alert Claude Code mod on setup |  |
 | ADR-2610270853 | accepted | ADR-2610270853: hexa knows which build it is and says when it is behind |  |
 | ADR-2610270901 | accepted | ADR-2610270901: `claude-text` serves Claude as a tool-less completion |  |
 | ADR-2610271110 | proposed | ADR-2610271110: A decision not yet built is declared, and the declaration may only shrink |  |

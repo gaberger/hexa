@@ -1,11 +1,11 @@
 ---
 id: ADR-2610301129
-status: proposed
+status: accepted
 date: 2026-10-30
 ---
 # ADR-2610301129: hexa installs the question-alert Claude Code mod on setup
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-10-30
 **Drivers:** On 2026-10-30, while building strata through hexa, the operator lost track of questions the agent asked at the end of long status replies. They asked for questions to stand out "in another color with background highlights", and for hexa to set that up itself. A Claude Code mod, `question-alert`, was written and validated in the strata session. It shows a yellow band above the prompt when the agent's reply ends with a question, and a "DECISION NEEDED" bar over the question dialog. It exists only in that session's mods folder. Every new hexa user and machine would have to rebuild it by hand.
 
