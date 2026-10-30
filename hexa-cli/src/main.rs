@@ -216,6 +216,11 @@ enum Commands {
         #[command(subcommand)]
         action: commands::api::ApiAction,
     },
+    /// The dead ends hexa knows: how often each is hit, and the pull request that closes one
+    Gap {
+        #[command(subcommand)]
+        action: commands::gap::GapAction,
+    },
     /// Where this project's work stands: Decide → Gate → Build → Harden
     Loop {
         #[command(subcommand)]
@@ -455,6 +460,7 @@ async fn run() -> anyhow::Result<()> {
             commands::memory::run(action, scope).await
         }
         Commands::Api { action } => commands::api::run(action).await,
+        Commands::Gap { action } => commands::gap::run(action).await,
         Commands::Loop { action } => commands::loop_cmd::run(action).await,
         Commands::Spend(args) => commands::spend_cmd::run(args).await,
         Commands::Adr { action } => commands::adr::run(action).await,

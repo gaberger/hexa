@@ -242,6 +242,25 @@ fn model_for(named: Option<&str>, tier: &str) -> anyhow::Result<String> {
         .ok_or_else(|| anyhow::anyhow!("no model: pass --model, or set inference.tier_models.{tier} in .hexa/project.json"))
 }
 
+/// Stop before the first inference call when no completion model is
+/// reachable: the frontier CLI does not count, the spec author and the test
+/// writer refuse it (ADR-2610221540 §2). The dead end prints its guide
+/// (ADR-2610301500 §2); the command still fails.
+fn require_a_completion_path(root: &Path, verb: &str) -> anyhow::Result<()> {
+    use hexa_infer::ports::Discovery;
+    let found = hexa_infer::discovery().discover();
+    if found.iter().any(|f| f.open() && f.kind != "frontier") {
+        return Ok(());
+    }
+    if let Some(g) = hexa_core::ports::guide::find("no-completion-model") {
+        super::gap::hit(&g, root);
+    }
+    anyhow::bail!(
+        "no completion model is reachable, so {verb} cannot run. Open paths: {}. `hexa doctor` shows what was probed",
+        hexa_infer::reach::path_words(&found)
+    )
+}
+
 /// `hexa spec draft <ADR>` (§2).
 pub async fn draft(adr: &str, model: Option<&str>, force: bool) -> anyhow::Result<()> {
     let root = std::env::current_dir()?;
@@ -255,6 +274,7 @@ pub async fn draft(adr: &str, model: Option<&str>, force: bool) -> anyhow::Resul
         }
     }
     let model = model_for(model, "t2.5")?;
+    require_a_completion_path(&root, "`hexa spec draft`")?;
     println!("{} {} from the ADR and its ports, on {}", "\u{2b21} spec draft".cyan().bold(), a.id, model);
     let d = hexa_exec::draft_spec(&model, &root, &a.id).await.map_err(|e| anyhow::anyhow!(e))?;
     for g in &d.given {
@@ -279,6 +299,7 @@ pub async fn tests(adr: &str, krate: &str, model: Option<&str>) -> anyhow::Resul
     let a = find(&root, adr)?;
     let (read, mut spec) = load_text(&root, &a.id)?.ok_or_else(|| anyhow::anyhow!("{} has no spec", a.id))?;
     let model = model_for(model, "t2")?;
+    require_a_completion_path(&root, "`hexa spec tests`")?;
     let path_env = gate_path(
         std::env::var_os("HOME").map(PathBuf::from).as_deref(),
         &std::env::var("PATH").unwrap_or_default(),

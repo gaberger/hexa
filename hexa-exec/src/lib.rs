@@ -141,6 +141,11 @@ pub fn frontier_agent() -> std::sync::Arc<dyn ports::Frontier> {
     std::sync::Arc::new(frontier::ClaudeCli::new(std::sync::Arc::new(InferSpend)))
 }
 
+/// The gap log, wired: `~/.hexa/gaps.jsonl` (ADR-2610301500).
+pub fn gap_log() -> impl ports::GapLog {
+    local_store::LocalGaps
+}
+
 /// The run log, wired: the local runs file.
 pub fn run_log() -> impl ports::RunLog {
     local_store::LocalRuns
