@@ -5,6 +5,10 @@
   "universal": [
     "§6"
   ],
+  "accepted": {
+    "by": "Gary Berger",
+    "sha256": "5c9b671d9de47f66f4b7e93be66629a541b2d406bff0c5bd19fd3103ec0c15ec"
+  },
   "specs": [
     {
       "id": "S01",
