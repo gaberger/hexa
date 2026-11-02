@@ -234,18 +234,41 @@ fn refuse_an_agent(model: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// The fenced block in a reply, or the reply.
+/// The largest fenced block in a reply, or the reply when it has none. The
+/// largest, not the first: a short note in its own fence before the code was
+/// taken for the code.
 fn block(reply: &str) -> String {
     let t = reply.trim();
-    let Some(start) = t.find("```") else { return t.to_string() };
-    let body = &t[start + 3..];
-    let fenced = body.split("```").next().unwrap_or(body);
-    let body = match fenced.split_once('\n') {
-        Some(_) => body.split_once('\n').map(|(_, rest)| rest).unwrap_or(body),
-        // One line, like ```json {...}```: the language tag is the word before the body.
-        None => fenced.trim_start_matches(|c: char| c.is_ascii_alphanumeric() || "_+-".contains(c)),
-    };
-    body.split("```").next().unwrap_or(body).trim().to_string()
+    if !t.contains("```") {
+        return t.to_string();
+    }
+    // Segments alternate outside, inside, outside, ...; an unclosed last
+    // fence runs to the end of the reply.
+    t.split("```")
+        .skip(1)
+        .step_by(2)
+        .map(|inside| match inside.split_once('\n') {
+            Some((_tag, rest)) => rest.trim().to_string(),
+            // One line, like ```json {...}```: the language tag is the word before the body.
+            None => inside.trim_start_matches(|c: char| c.is_ascii_alphanumeric() || "_+-".contains(c)).trim().to_string(),
+        })
+        .max_by_key(String::len)
+        .unwrap_or_default()
+}
+
+/// Scenarios per test-writer call. One answer for 29 concrete scenarios kept
+/// only the last four (strata's SQLite storage spec, 2026-11-02), so a larger spec is written in
+/// batches, each a module of the one file.
+const TESTS_PER_CALL: usize = 10;
+
+/// Where a test writer's raw answer is kept, so a rejected one can be read.
+fn keep_answer(adr: &str, part: usize, answer: &str) -> Option<PathBuf> {
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let dir = std::env::temp_dir().join("hexa-spec-tests");
+    std::fs::create_dir_all(&dir).ok()?;
+    let path = dir.join(format!("{adr}-{nanos}-part{part}.txt"));
+    std::fs::write(&path, answer).ok()?;
+    Some(path)
 }
 
 const AUTHOR: &str = "You are the spec author. Turn an architecture decision record into behaviour: \
@@ -466,7 +489,7 @@ pub async fn generate_tests(
     let lib = lib_name(&manifest).ok_or("the crate's manifest names no package")?;
     let text = adr_text(root, &spec.adr)?;
     let given = given_files(root, &text);
-    let scenarios = serde_json::to_string_pretty(&spec.accepted_content().specs).map_err(|e| e.to_string())?;
+    let all = spec.accepted_content().specs;
     let paths: String = given
         .iter()
         .filter_map(|g| module_of(root, g).map(|m| format!("`{g}` is reached as `{m}`.\n")))
@@ -475,20 +498,59 @@ pub async fn generate_tests(
         .iter()
         .map(|b| format!("The crate's `{b}` binary is `env!(\"CARGO_BIN_EXE_{b}\")`.\n"))
         .collect();
-    let user = format!(
-        "The crate is `{lib}`; tests reach it as `{lib}::…`.\n{paths}{bins}\nThe port and domain signatures:\n\n{}\n\
-         The accepted scenarios:\n\n{scenarios}\n",
-        given_block(root, &given)
-    );
-    let reply = hexa_infer::complete::complete_text_with(backends, model, WRITER, &user, 8000).await?;
-    let body = block(&reply);
-
-    let ids: Vec<&str> = spec.specs.iter().map(|s| s.id.as_str()).collect();
-    let names = tests_by_scenario(&body, &ids);
-    let missing: Vec<&str> = ids.iter().copied().filter(|i| !names.contains_key(*i)).collect();
-    if !missing.is_empty() {
-        return Err(format!("the generated tests name no test for {}: every scenario gets one", missing.join(", ")));
+    let signatures = given_block(root, &given);
+    let parts: Vec<&[_]> = all.chunks(TESTS_PER_CALL).collect();
+    let batched = parts.len() > 1;
+    // Each batch is written alone, with the ADR (whose Decision names the API
+    // the tests call) and the port and domain signatures, never the code.
+    let mut bodies = Vec::new();
+    let mut names: BTreeMap<String, String> = BTreeMap::new();
+    for (i, part) in parts.iter().enumerate() {
+        let n = i + 1;
+        let scenarios = serde_json::to_string_pretty(part).map_err(|e| e.to_string())?;
+        let batch = if batched {
+            format!(
+                "These are batch {n} of {} of the scenarios. Write a self-contained file for them only: it becomes \
+                 `mod part_{n}` of the test file, so reach the crate by absolute paths and use no `#![...]` attribute \
+                 other than `allow`.\n\n",
+                parts.len()
+            )
+        } else {
+            String::new()
+        };
+        let user = format!(
+            "The crate is `{lib}`; tests reach it as `{lib}::…`.\n{paths}{bins}\nThe decision record:\n\n{text}\n\n\
+             The port and domain signatures:\n\n{signatures}\n{batch}The accepted scenarios:\n\n{scenarios}\n"
+        );
+        let reply = hexa_infer::complete::complete_text_with(backends, model, WRITER, &user, 16000).await?;
+        let kept = keep_answer(&spec.adr, n, &reply)
+            .map(|p| format!("\n  raw answer: {}", p.display()))
+            .unwrap_or_default();
+        let body = block(&reply);
+        let ids: Vec<&str> = part.iter().map(|s| s.id.as_str()).collect();
+        let found = tests_by_scenario(&body, &ids);
+        let missing: Vec<&str> = ids.iter().copied().filter(|i| !found.contains_key(*i)).collect();
+        if !missing.is_empty() {
+            return Err(format!(
+                "the generated tests name no test for {}: every scenario gets one{kept}",
+                missing.join(", ")
+            ));
+        }
+        for (sid, f) in found {
+            names.insert(sid, if batched { format!("part_{n}::{f}") } else { f });
+        }
+        bodies.push(body);
     }
+    let body = if batched {
+        bodies
+            .iter()
+            .enumerate()
+            .map(|(i, b)| format!("mod part_{} {{\n{b}\n}}\n", i + 1))
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        bodies.remove(0)
+    };
 
     let stem = format!("{}_spec", spec.adr.to_lowercase().replace('-', "_"));
     let file = krate.join("tests").join(format!("{stem}.rs"));
