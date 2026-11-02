@@ -380,3 +380,35 @@ async fn an_empty_module_scenario_is_rejected() {
         .unwrap_err();
     assert!(err.contains("S1") && err.contains("0 tests"), "an empty module tests nothing: {err}");
 }
+
+/// The writer is told which crates the tests may use, so it does not guess
+/// at one the test crate does not have (strata: serde_json, then duckdb).
+#[tokio::test]
+async fn the_test_writer_is_told_the_crates_it_may_use() {
+    let (_t, r) = repo();
+    let manifest = std::fs::read_to_string(r.join("Cargo.toml")).unwrap();
+    std::fs::write(
+        r.join("Cargo.toml"),
+        manifest.replace("[workspace]", "[dependencies]\n\n[dev-dependencies]\n\n[workspace]"),
+    )
+    .unwrap();
+    std::fs::write(
+        r.join("Cargo.toml"),
+        std::fs::read_to_string(r.join("Cargo.toml"))
+            .unwrap()
+            .replace("[dev-dependencies]\n", "[dev-dependencies]\n# a comment\n"),
+    )
+    .unwrap();
+    git(&r, &["commit", "-qam", "deps"]);
+    let spec = accepted(&r);
+    let (double, seen) = Double::new(&[TESTS_RED.to_string()]);
+    let path_env = std::env::var("PATH").unwrap_or_default();
+    hexa_exec::spec_author::generate_tests(&double, "a-local-model", &r, &spec, Path::new("."), &path_env)
+        .await
+        .expect("generated");
+    let seen = seen.lock().unwrap().join("\n");
+    assert!(
+        seen.contains("The tests may use only these crates: `fx`, std."),
+        "the writer is told the crates it may use: {seen}"
+    );
+}
