@@ -343,3 +343,40 @@ async fn the_test_writer_sees_the_adr_and_not_the_code() {
     assert!(seen.contains("`double` returns twice its input"), "the ADR's decision text reaches the writer");
     assert!(!seen.contains(MARKER), "the implementation does not");
 }
+
+/// A scenario that is a whole suite is a module of tests (strata's SQLite
+/// storage spec: "passes the conformance suite" expands a macro of 26 tests).
+/// The module is red when any of its tests fails, and an empty one proves
+/// nothing.
+#[tokio::test]
+async fn a_scenario_can_be_a_module_of_tests() {
+    let (_t, r) = repo();
+    let spec = accepted(&r);
+    let answer = TESTS_RED.replace(
+        "/// S1: two doubles to four\n#[test]\nfn two_doubles_to_four() { assert_eq!(fx::double(2), 4); }\n",
+        "/// S1: small numbers double\nmod small_numbers_double {\n    #[test]\n    fn two() { assert_eq!(fx::double(2), 4); }\n    #[test]\n    fn three() { assert_eq!(fx::double(3), 6); }\n}\n",
+    );
+    let (double, _) = Double::new(&[answer]);
+    let path_env = std::env::var("PATH").unwrap_or_default();
+    let g = hexa_exec::spec_author::generate_tests(&double, "a-local-model", &r, &spec, Path::new("."), &path_env)
+        .await
+        .expect("a module scenario is generated");
+    assert_eq!(g.refs.get("S1").map(String::as_str), Some("tests/adr_2701010000_spec.rs::small_numbers_double::"));
+    assert_eq!(g.refs.len(), 4);
+}
+
+#[tokio::test]
+async fn an_empty_module_scenario_is_rejected() {
+    let (_t, r) = repo();
+    let spec = accepted(&r);
+    let answer = TESTS_RED.replace(
+        "/// S1: two doubles to four\n#[test]\nfn two_doubles_to_four() { assert_eq!(fx::double(2), 4); }\n",
+        "/// S1: small numbers double\nmod small_numbers_double {\n}\n",
+    );
+    let (double, _) = Double::new(&[answer]);
+    let path_env = std::env::var("PATH").unwrap_or_default();
+    let err = hexa_exec::spec_author::generate_tests(&double, "a-local-model", &r, &spec, Path::new("."), &path_env)
+        .await
+        .unwrap_err();
+    assert!(err.contains("S1") && err.contains("0 tests"), "an empty module tests nothing: {err}");
+}

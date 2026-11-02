@@ -125,7 +125,12 @@ fn cargo_args(krate: &Path, file: &Path, f: &str) -> Option<Vec<String>> {
     };
     let mut args = vec!["test".to_string(), "--manifest-path".to_string(), manifest];
     args.extend(target);
-    args.extend(["--".to_string(), name, "--exact".to_string()]);
+    // A module ref (`…::`) selects every test under it; a fn ref exactly one.
+    let module = name.ends_with("::");
+    args.extend(["--".to_string(), name]);
+    if !module {
+        args.push("--exact".to_string());
+    }
     Some(args)
 }
 
@@ -134,9 +139,11 @@ fn cargo_args(krate: &Path, file: &Path, f: &str) -> Option<Vec<String>> {
 pub async fn run_test_alone(root: &Path, path_env: &str, r: &str, target_dir: Option<&Path>) -> TestRun {
     let Some((file, f)) = test_ref(r) else { return TestRun::NotFound(format!("{r} is not `<path>.rs::<test_fn>`")) };
     let abs = root.join(file);
-    let leaf = f.rsplit("::").next().unwrap_or(f);
+    let module = f.ends_with("::");
+    let leaf = f.trim_end_matches("::").rsplit("::").next().unwrap_or(f);
     let text = std::fs::read_to_string(&abs).unwrap_or_default();
-    if !text.contains(&format!("fn {leaf}(")) {
+    let declared = if module { format!("mod {leaf} ") } else { format!("fn {leaf}(") };
+    if !text.contains(&declared) {
         return TestRun::NotFound(format!("{leaf} not found in {file}"));
     }
     let Some(args) = crate_of(root, &abs).and_then(|k| cargo_args(&k, &abs, f)) else {
@@ -165,6 +172,8 @@ pub async fn run_test_alone(root: &Path, path_env: &str, r: &str, target_dir: Op
     match passed {
         0 => TestRun::Vacuous,
         1 => TestRun::Passed,
+        // A module scenario passes when every test in it ran and passed.
+        _ if module => TestRun::Passed,
         n => TestRun::Ambiguous(n),
     }
 }
@@ -405,6 +414,14 @@ fn tests_by_scenario(body: &str, ids: &[&str]) -> BTreeMap<String, String> {
             let name: String = rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
             if *is_test && !name.is_empty() {
                 out.insert(sid.clone(), name);
+            }
+        } else if let Some(at) = words.iter().position(|w| *w == "mod").filter(|&at| words[..at].iter().all(qualifier)) {
+            // A scenario that is a suite: every test in the module is its
+            // test. The trailing `::` marks the ref as a module.
+            let rest = words.get(at + 1).copied().unwrap_or("");
+            let name: String = rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+            if !name.is_empty() {
+                out.insert(sid.clone(), format!("{name}::"));
             }
         }
         pending = None;
