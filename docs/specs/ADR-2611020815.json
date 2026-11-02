@@ -9,6 +9,10 @@
     "§4",
     "§5"
   ],
+  "accepted": {
+    "by": "Gary Berger",
+    "sha256": "8a76a661cb4a492979941526c2d01cffc689fb3a1d50afcfa38eef2afee81b6b"
+  },
   "specs": [
     {
       "id": "S01",

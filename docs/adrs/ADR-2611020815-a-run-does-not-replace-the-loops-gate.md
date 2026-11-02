@@ -1,6 +1,6 @@
 # ADR-2611020815: A run does not replace the loop's gate
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-11-02
 **Drivers:** In strata on 2026-11-02, the loop held strata's storage-spike ADR with a gate that runs the bench smoke and checks the steady-stall attribution. A `hexa do run` fixed an unrelated flaky server spec with `--evidence "/tmp/s28-gate.sh && cargo test -p strata-server …"`. `direct.rs` wrote that evidence into the loop as its gate. The loop then said "spike work, gated on a /tmp script that tests the HTTP server", and `hexa loop stage done` (ADR-2609132059) would have closed the spike on a green server test. It was caught only because someone read `hexa loop` by eye.
 
