@@ -356,6 +356,26 @@ fn lib_name(manifest: &str) -> Option<String> {
     name("lib").or_else(|| name("package")).map(|v| v.replace('-', "_"))
 }
 
+/// The crates a test in this crate can name: its own library, its normal and
+/// dev dependencies (as `use` paths spell them, `-` as `_`, renames by their
+/// key), in order, without repeats.
+fn test_crates(lib: &str, manifest: &str) -> Vec<String> {
+    let mut out = vec![lib.to_string()];
+    if let Ok(toml) = toml::from_str::<toml::Value>(manifest) {
+        for table in ["dependencies", "dev-dependencies"] {
+            if let Some(deps) = toml.get(table).and_then(|t| t.as_table()) {
+                for name in deps.keys() {
+                    let n = name.replace('-', "_");
+                    if !out.contains(&n) {
+                        out.push(n);
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 /// The crate's `[[bin]]` names, from its manifest.
 fn bin_names(manifest: &str) -> Vec<String> {
     let Ok(toml) = toml::from_str::<toml::Value>(manifest) else { return Vec::new() };
@@ -516,6 +536,8 @@ pub async fn generate_tests(
         .map(|b| format!("The crate's `{b}` binary is `env!(\"CARGO_BIN_EXE_{b}\")`.\n"))
         .collect();
     let signatures = given_block(root, &given);
+    let crates: Vec<String> = test_crates(&lib, &manifest).iter().map(|c| format!("`{c}`")).collect();
+    let crates = format!("The tests may use only these crates: {}, std.\n", crates.join(", "));
     let parts: Vec<&[_]> = all.chunks(TESTS_PER_CALL).collect();
     let batched = parts.len() > 1;
     // Each batch is written alone, with the ADR (whose Decision names the API
@@ -536,7 +558,7 @@ pub async fn generate_tests(
             String::new()
         };
         let user = format!(
-            "The crate is `{lib}`; tests reach it as `{lib}::…`.\n{paths}{bins}\nThe decision record:\n\n{text}\n\n\
+            "The crate is `{lib}`; tests reach it as `{lib}::…`.\n{crates}{paths}{bins}\nThe decision record:\n\n{text}\n\n\
              The port and domain signatures:\n\n{signatures}\n{batch}The accepted scenarios:\n\n{scenarios}\n"
         );
         let reply = hexa_infer::complete::complete_text_with(backends, model, WRITER, &user, 16000).await?;
