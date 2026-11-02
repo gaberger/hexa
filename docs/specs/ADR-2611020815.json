@@ -1,0 +1,223 @@
+{
+  "adr": "ADR-2611020815",
+  "feature": "run-does-not-replace-loop-gate",
+  "description": "A run's evidence becomes the session loop's gate only when no gate (or the same gate) is recorded. Otherwise the gate and stage are kept, the run is recorded as last_run, and the command says so. `hexa loop gate` alone replaces the gate.",
+  "universal": [
+    "§1",
+    "§2",
+    "§3",
+    "§4",
+    "§5"
+  ],
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A loop with no gate picks up the run's evidence and stage",
+      "given": "a session entry with no `gate` key and stage `plan`",
+      "when": "a run calls record_run_gate with evidence `cargo test -p strata-bench` and stage `build`",
+      "then": "the entry's gate is `cargo test -p strata-bench` and its stage is `build`"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "Both null and empty string count as no gate",
+      "given": "one session entry whose gate is null and another whose gate is the empty string \"\"",
+      "when": "a run records evidence `make check` with stage `build` against each entry",
+      "then": "each entry's gate becomes `make check` and its stage becomes `build`"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "With the same gate recorded, the stage moves",
+      "given": "a session entry with gate `cargo test -p strata-bench` and stage `build`",
+      "when": "a run records evidence `cargo test -p strata-bench` with stage `harden`",
+      "then": "the gate is still `cargo test -p strata-bench` and the stage is `harden`"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A whitespace-only or otherwise non-empty gate is not treated as none",
+      "given": "a session entry with gate `scripts/spike-gate.sh`",
+      "when": "a run records evidence `cargo test -p strata-server`",
+      "then": "the gate is not overwritten. A non-empty gate does not count as none."
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§1"
+      ],
+      "kind": "property",
+      "description": "The gate is written exactly when it was none or equal",
+      "given": "any recorded gate G (absent, null, \"\", or any non-empty string) and any non-empty run evidence E with stage T",
+      "when": "record_run_gate(E, T) is applied",
+      "then": "the resulting gate is E and the stage is T exactly when G is none or G == E. In every other case the gate stays G and the stage is unchanged."
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "A different gate is kept and the run goes to last_run (the strata incident)",
+      "given": "a session entry with gate `scripts/spike-gate.sh` and stage `build`",
+      "when": "a `hexa do` run records evidence `/tmp/s28-gate.sh && cargo test -p strata-server` with stage `done`",
+      "then": "the gate is `scripts/spike-gate.sh`, the stage is `build`, and last_run is {gate: `/tmp/s28-gate.sh && cargo test -p strata-server`, stage: `done`, at: <time of the run>}"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "A side run must not move the loop's stage",
+      "given": "a session entry with gate `A` and stage `build`",
+      "when": "a run records evidence `B` with stage `done`",
+      "then": "the stage is not `done`, and a later `hexa loop stage done` runs `A`, not `B`"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "A run never writes last_run into another session's entry",
+      "given": "two sessions S1 (gate `A`) and S2 (gate `C`)",
+      "when": "a run in S1 records evidence `B`",
+      "then": "S1 gains last_run with gate `B`, and S2's gate, stage and last_run are unchanged"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§2"
+      ],
+      "kind": "property",
+      "description": "On a mismatch only last_run changes",
+      "given": "any entry with non-empty gate G, stage T0 and any other fields, and any run evidence E != G with stage T",
+      "when": "record_run_gate(E, T) is applied",
+      "then": "gate == G, stage == T0, last_run == {gate: E, stage: T, at: <run time>}, and every other field is unchanged"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "Keeping the gate prints one line",
+      "given": "a session entry with gate `scripts/spike-gate.sh`",
+      "when": "note_run_gate is called with evidence `cargo test -p strata-server`",
+      "then": "exactly one line is printed. It names `scripts/spike-gate.sh` as the kept gate and says the run's evidence was recorded as last_run."
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "No 'kept' line when nothing was kept",
+      "given": "a session entry with no gate, and another with the same gate as the run",
+      "when": "note_run_gate is called for each",
+      "then": "no line about a kept gate or last_run is printed"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§3"
+      ],
+      "kind": "property",
+      "description": "The line is printed exactly when the gate was kept",
+      "given": "any recorded gate G and any run evidence E",
+      "when": "note_run_gate(E, T) runs",
+      "then": "the kept-gate line, naming G, is printed exactly once when G is non-empty and G != E, and is never printed otherwise"
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "The operator command still replaces the gate",
+      "given": "a session entry with gate `scripts/spike-gate.sh`",
+      "when": "the operator runs `hexa loop gate 'cargo test -p strata-server'`",
+      "then": "the gate is `cargo test -p strata-server`"
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "`hexa loop gate` does not go through the keep rule",
+      "given": "a session entry with a different, non-empty gate",
+      "when": "the operator runs `hexa loop gate 'X'`",
+      "then": "the gate is not kept, no last_run is written, and no kept-gate line is printed"
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§4"
+      ],
+      "kind": "property",
+      "description": "The operator command always wins",
+      "given": "any recorded gate G (including none) and any command X",
+      "when": "`hexa loop gate 'X'` runs",
+      "then": "the resulting gate is X"
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§5"
+      ],
+      "kind": "example",
+      "description": "harden writes fast_gate only when the gate was written",
+      "given": "one entry with no gate and another with gate `A`",
+      "when": "`hexa harden` records evidence `B` with a fast_gate `F` against each entry",
+      "then": "the entry with no gate gets gate `B` and fast_gate `F`. The entry with gate `A` keeps gate `A`, its fast_gate is not set to `F`, and its last_run records `B`."
+    },
+    {
+      "id": "S17",
+      "decision": [
+        "§5"
+      ],
+      "kind": "example",
+      "description": "do, build and harden all apply the rule",
+      "given": "a session entry with gate `A` and stage `build`",
+      "when": "each of `hexa do`, `hexa build` and `hexa harden` runs once with evidence `B`",
+      "then": "after each run the gate is `A` and the stage is `build`, and the kept-gate line is printed each time"
+    },
+    {
+      "id": "S18",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "No caller writes gate through update_loop",
+      "given": "the source files hexa-cli/src/commands/direct.rs and hexa-cli/src/commands/build.rs, and the harden command source",
+      "when": "they are searched for update_loop calls",
+      "then": "no update_loop call writes a `\"gate\"` key"
+    },
+    {
+      "id": "S19",
+      "decision": [
+        "§5"
+      ],
+      "kind": "property",
+      "description": "Every run-path gate write goes through record_run_gate",
+      "given": "any of `hexa do`, `hexa build` or `hexa harden`, and any recorded entry state",
+      "when": "the command finishes",
+      "then": "the resulting gate, stage, fast_gate and last_run equal what record_run_gate would produce for that entry, evidence and stage"
+    }
+  ]
+}
