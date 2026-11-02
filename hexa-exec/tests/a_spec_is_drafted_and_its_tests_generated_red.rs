@@ -252,3 +252,94 @@ async fn generation_refuses_an_accepted_spec_with_no_scenarios() {
     assert!(!r.join("tests/adr_2701010000_spec.rs").exists(), "nothing is left in the tree");
     assert_eq!(git(&r, &["rev-parse", "HEAD"]), head, "nothing is committed");
 }
+
+/// An accepted spec of `n` scenarios, S1..Sn, over the ADR's two decisions.
+fn accepted_n(n: usize) -> Spec {
+    let s: Vec<String> = (1..=n)
+        .map(|i| scenario(&format!("S{i}"), if i % 2 == 0 { "§2" } else { "§1" }, if i % 3 == 0 { "negative" } else { "example" }))
+        .collect();
+    let json = format!(r#"{{"adr":"{}","feature":"doubling","description":"x","specs":[{}]}}"#, id(), s.join(","));
+    let spec: Spec = serde_json::from_str(&json).unwrap();
+    hexa_exec::spec_author::accept(spec, "a reviewer")
+}
+
+/// A rust block with one red test for each of `ids`.
+fn red_tests(ids: std::ops::RangeInclusive<usize>) -> String {
+    let tests: String = ids
+        .map(|i| format!("/// S{i}: {i} doubles\n#[test]\nfn doubles_{i}() {{ assert_eq!(fx::double({i}), {}); }}\n\n", 2 * i))
+        .collect();
+    format!("```rust\nuse fx::double as _d;\n\n{tests}```")
+}
+
+/// A spec too large for one answer is written in batches, each its own module
+/// in the one file, and every scenario still gets its test (strata's
+/// SQLite storage spec: one call for 29 scenarios kept only the last four).
+#[tokio::test]
+async fn a_large_spec_is_generated_in_batches_one_module_each() {
+    let (_t, r) = repo();
+    let spec = accepted_n(12);
+    let (double, seen) = Double::new(&[red_tests(1..=10), red_tests(11..=12)]);
+    let path_env = std::env::var("PATH").unwrap_or_default();
+    let g = hexa_exec::spec_author::generate_tests(&double, "a-local-model", &r, &spec, Path::new("."), &path_env)
+        .await
+        .expect("generated in batches");
+    assert_eq!(g.refs.len(), 12, "one test per scenario: {:?}", g.refs);
+    assert_eq!(g.refs.get("S11").map(String::as_str), Some("tests/adr_2701010000_spec.rs::part_2::doubles_11"));
+    assert_eq!(g.refs.get("S1").map(String::as_str), Some("tests/adr_2701010000_spec.rs::part_1::doubles_1"));
+    let file = std::fs::read_to_string(r.join(&g.file)).unwrap();
+    assert!(file.contains("mod part_1 {") && file.contains("mod part_2 {"), "{file}");
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 2, "one call per batch");
+    assert!(seen[0].contains("\"S10\"") && !seen[0].contains("\"S11\""), "the first batch holds S1..S10 only");
+    assert!(seen[1].contains("\"S11\"") && !seen[1].contains("\"S10\""), "the second batch holds S11..S12 only");
+}
+
+/// A note in its own fence before the code is not taken for the code.
+#[tokio::test]
+async fn the_largest_fenced_block_is_the_test_file() {
+    let (_t, r) = repo();
+    let spec = accepted(&r);
+    let answer = format!("```text\nThese tests use fx::double.\n```\n\n{TESTS_RED}");
+    let (double, _) = Double::new(&[answer]);
+    let path_env = std::env::var("PATH").unwrap_or_default();
+    let g = hexa_exec::spec_author::generate_tests(&double, "a-local-model", &r, &spec, Path::new("."), &path_env)
+        .await
+        .expect("the rust block is found");
+    assert_eq!(g.refs.len(), 4, "{:?}", g.refs);
+}
+
+/// A rejected generation says where its raw answer is, so a short or
+/// malformed answer can be read rather than guessed at.
+#[tokio::test]
+async fn a_rejected_generation_keeps_the_raw_answer() {
+    let (_t, r) = repo();
+    let spec = accepted(&r);
+    let missing = TESTS_RED.replace("/// S4: five does not stay five\n", "");
+    let (double, _) = Double::new(std::slice::from_ref(&missing));
+    let path_env = std::env::var("PATH").unwrap_or_default();
+    let err = hexa_exec::spec_author::generate_tests(&double, "a-local-model", &r, &spec, Path::new("."), &path_env)
+        .await
+        .unwrap_err();
+    let path = err
+        .split("raw answer: ")
+        .nth(1)
+        .map(|p| p.lines().next().unwrap_or("").trim().to_string())
+        .unwrap_or_else(|| panic!("the error names the raw answer: {err}"));
+    assert_eq!(std::fs::read_to_string(&path).expect("the raw answer is kept"), missing);
+}
+
+/// The writer sees the ADR, whose Decision names the API the tests call, and
+/// still not the implementation (ADR-2610221540 §2: the ADR and its ports).
+#[tokio::test]
+async fn the_test_writer_sees_the_adr_and_not_the_code() {
+    let (_t, r) = repo();
+    let spec = accepted(&r);
+    let (double, seen) = Double::new(&[TESTS_RED.to_string()]);
+    let path_env = std::env::var("PATH").unwrap_or_default();
+    hexa_exec::spec_author::generate_tests(&double, "a-local-model", &r, &spec, Path::new("."), &path_env)
+        .await
+        .expect("generated");
+    let seen = seen.lock().unwrap().join("\n");
+    assert!(seen.contains("`double` returns twice its input"), "the ADR's decision text reaches the writer");
+    assert!(!seen.contains(MARKER), "the implementation does not");
+}
