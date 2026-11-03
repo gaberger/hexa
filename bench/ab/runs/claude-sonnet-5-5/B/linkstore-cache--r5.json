@@ -1,0 +1,56 @@
+{
+  "task": "linkstore-cache",
+  "family": "shape",
+  "arm": "B",
+  "model": "claude-sonnet-5-5",
+  "run": 5,
+  "started": 1793740296.6277492,
+  "timed_out": false,
+  "agent_exit": 0,
+  "accuracy": {
+    "oracle_pass": true,
+    "oracle_tests_passed": 31,
+    "oracle_tests_failed": 0,
+    "own_gate_pass": true,
+    "false_green_correctness": false,
+    "false_green_shape": false,
+    "accepted_correct": true
+  },
+  "shape": {
+    "grade": "A+",
+    "score": 100,
+    "violations": 0,
+    "cycles": 0,
+    "gradeable": true
+  },
+  "loc": {
+    "src_nloc": 851,
+    "test_nloc": 510,
+    "test_to_src": 0.6,
+    "lines_added": 52,
+    "lines_removed": 5,
+    "files_changed": 3
+  },
+  "complexity": {
+    "functions": 62,
+    "ccn_mean": 2.15,
+    "ccn_max": 8,
+    "fn_len_max": 33
+  },
+  "cost": {
+    "calls": 1,
+    "unmetered_calls": 0,
+    "input_tokens": 18,
+    "output_tokens": 4406,
+    "cache_read_tokens": 365008,
+    "cache_write_tokens": 18222,
+    "usd": 0.1535,
+    "wall_s": 65.6,
+    "permission_denials": 4
+  },
+  "models_used": [
+    "claude-sonnet-5-5"
+  ],
+  "void": [],
+  "workspace": "/tmp/hexa-ab-linkstore-cache-B-y1f7tn40"
+}

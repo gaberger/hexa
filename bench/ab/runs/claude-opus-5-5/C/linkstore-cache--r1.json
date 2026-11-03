@@ -1,0 +1,56 @@
+{
+  "task": "linkstore-cache",
+  "family": "shape",
+  "arm": "C",
+  "model": "claude-opus-5-5",
+  "run": 1,
+  "started": 1793740352.6684768,
+  "timed_out": false,
+  "agent_exit": 0,
+  "accuracy": {
+    "oracle_pass": true,
+    "oracle_tests_passed": 31,
+    "oracle_tests_failed": 0,
+    "own_gate_pass": true,
+    "false_green_correctness": false,
+    "false_green_shape": false,
+    "accepted_correct": true
+  },
+  "shape": {
+    "grade": "A+",
+    "score": 100,
+    "violations": 0,
+    "cycles": 0,
+    "gradeable": true
+  },
+  "loc": {
+    "src_nloc": 861,
+    "test_nloc": 640,
+    "test_to_src": 0.74,
+    "lines_added": 229,
+    "lines_removed": 6,
+    "files_changed": 2
+  },
+  "complexity": {
+    "functions": 62,
+    "ccn_mean": 2.18,
+    "ccn_max": 8,
+    "fn_len_max": 33
+  },
+  "cost": {
+    "calls": 1,
+    "unmetered_calls": 0,
+    "input_tokens": 28,
+    "output_tokens": 9954,
+    "cache_read_tokens": 703452,
+    "cache_write_tokens": 28473,
+    "usd": 0.5677,
+    "wall_s": 94.4,
+    "permission_denials": 3
+  },
+  "models_used": [
+    "claude-opus-5-5"
+  ],
+  "void": [],
+  "workspace": "/tmp/hexa-ab-linkstore-cache-C-ygouzbp9"
+}
