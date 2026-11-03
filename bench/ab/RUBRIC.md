@@ -108,12 +108,12 @@ A run is **void** (listed in the report, left out of the rates, never deleted) i
 
 ## Found while building the self-test
 
-- **`header-safe-url`'s oracle contradicts its own test name.** The test "a code
-  point above U+00FF cannot ride in a header" expects `café` to be rejected, but
-  `é` is U+00E9, below U+00FF. The oracle actually requires rejecting all raw
-  non-ASCII. An agent that follows the stated rule fails. Fix the test name or
-  the case before running, because this fixture penalizes reading the spec
-  correctly.
+- **`header-safe-url`'s oracle contradicted its own test name (fixed).** The
+  test "a code point above U+00FF cannot ride in a header" expected `café` to be
+  rejected, but `é` is U+00E9, below U+00FF, so an agent that followed the
+  stated rule failed. The case now uses U+0101, which matches the test name and
+  the fixture's provenance (non-Latin-1 URLs breaking the header). The first
+  A/B run (`runs/`) used the old oracle; every arm passed it anyway.
 - **Single-file fixtures always grade F 0** (see §1).
 
 ## Not covered yet
