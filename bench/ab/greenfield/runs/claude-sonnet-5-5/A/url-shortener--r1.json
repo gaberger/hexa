@@ -1,0 +1,118 @@
+{
+  "task": "url-shortener",
+  "family": "greenfield",
+  "arm": "A",
+  "model": "claude-sonnet-5-5",
+  "run": 1,
+  "build": {
+    "agent_exit": 0,
+    "timed_out": false,
+    "cost": {
+      "calls": 1,
+      "unmetered_calls": 0,
+      "input_tokens": 16,
+      "output_tokens": 4105,
+      "cache_read_tokens": 307046,
+      "cache_write_tokens": 15090,
+      "usd": 0.1321,
+      "wall_s": 74.0,
+      "permission_denials": 3
+    },
+    "gate_pass": true,
+    "gate_failures": [],
+    "probes": {
+      "p1-wide-codepoint-url": "defect",
+      "p2-chunked-body-cap": "defect",
+      "p4-malformed-escape": "pass",
+      "p5-partial-corruption": "pass",
+      "p6-empty-store-dir": "pass",
+      "p7-stale-store-handle": "pass"
+    },
+    "defects": 2,
+    "own_tests": {
+      "present": false,
+      "pass": null
+    },
+    "src_files": 2,
+    "src_nloc": 104,
+    "test_files": 0,
+    "test_nloc": 0,
+    "complexity": {
+      "functions": 8,
+      "ccn_mean": 3.5,
+      "ccn_max": 7,
+      "fn_len_max": 14
+    },
+    "hexa_grade_info_only": {
+      "grade": "F",
+      "score": 50,
+      "violations": 0
+    }
+  },
+  "change": {
+    "agent_exit": 0,
+    "timed_out": false,
+    "cost": {
+      "calls": 1,
+      "unmetered_calls": 0,
+      "input_tokens": 12,
+      "output_tokens": 2634,
+      "cache_read_tokens": 225897,
+      "cache_write_tokens": 15884,
+      "usd": 0.1125,
+      "wall_s": 26.5,
+      "permission_denials": 2
+    },
+    "gate_pass": true,
+    "gate_failures": [],
+    "probes": {
+      "p1-wide-codepoint-url": "defect",
+      "p2-chunked-body-cap": "defect",
+      "p4-malformed-escape": "pass",
+      "p5-partial-corruption": "pass",
+      "p6-empty-store-dir": "pass",
+      "p7-stale-store-handle": "defect"
+    },
+    "defects": 3,
+    "own_tests": {
+      "present": false,
+      "pass": null
+    },
+    "src_files": 2,
+    "src_nloc": 99,
+    "test_files": 0,
+    "test_nloc": 0,
+    "complexity": {
+      "functions": 7,
+      "ccn_mean": 3.29,
+      "ccn_max": 7,
+      "fn_len_max": 12
+    },
+    "hexa_grade_info_only": {
+      "grade": "F",
+      "score": 50,
+      "violations": 0
+    },
+    "uses_bun_sqlite": true,
+    "blast_radius": {
+      "lines_added": 25,
+      "lines_removed": 31,
+      "files_touched": 1,
+      "src_files_touched": 1,
+      "files": [
+        "app/src/store.ts"
+      ]
+    },
+    "share_of_src_changed": 0.54
+  },
+  "accepted": {
+    "build": true,
+    "change": true,
+    "both": true
+  },
+  "models_used": [
+    "claude-sonnet-5-5"
+  ],
+  "void": [],
+  "workspace": "/tmp/hexa-ab-greenfield-A-5fw3a74y"
+}
