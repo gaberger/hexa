@@ -39,8 +39,8 @@ with `HEXA_AB_FIXTURES`, `HEXA_AB_RULES`, `HEXA_AB_HEXA` and
 `HEXA_AB_REAL_CLAUDE`. `HEXA_AB_HELPER_MODELS` lists any model, besides the
 pinned one, that may serve calls without voiding the run.
 
-**Status:** the self-test passes. No model runs have been made yet, so `runs/`
-holds no evidence.
+**Status:** 360 runs on three models across three task families. Results and
+what they mean: [RESULTS.md](RESULTS.md).
 
 **Before a real run:** run it where the agent can't reach this checkout. The
 oracles live in `docs/benchmarks/fixtures`, and the examples in `examples/` are

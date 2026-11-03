@@ -118,10 +118,10 @@ A run is **void** (listed in the report, left out of the rates, never deleted) i
 
 ## Not covered yet
 
-- Only the **change** family (5 fixtures) has oracles today. The 8 greenfield
-  tasks, the 8 shape traps and the 3 `linkstore-svc` features each need an
-  oracle and a pass condition written and frozen before any run. `run_one.py`
-  takes new tasks through `load_task`.
-- Arm B for greenfield should use `hexa scaffold … --grade A` (`hexa build` has
-  no `--grade` and no `--model`).
-- The blinded reviewer-model defect count is not implemented.
+- **Task families.** Three families have tasks: change (5 fixtures), shape
+  traps (`sokoban-untangle`, `linkstore-cache`) and refactor
+  (`linkstore-untangle`). There is no greenfield family yet; arm B for it
+  should use `hexa scaffold … --grade A` (`hexa build` has no `--grade`).
+- **More refactors.** The refactor family has one task, which is too few for
+  the confidence intervals to exclude zero.
+- **The blinded reviewer-model defect count** is not implemented.

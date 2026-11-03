@@ -232,10 +232,34 @@ footer { padding: 32px 0 48px; color: var(--text-muted); font-size: 13px; border
     </div>
   </section>
 
+  <section id="headline">
+    <div class="wrap">
+      <h2>What 360 runs show</h2>
+      <p class="sub">Three models, three task families. Written from the same data the charts below are drawn from. <a href="https://github.com/gaberger/hexa/blob/main/bench/ab/RESULTS.md">The full write-up</a> has every number and every caveat.</p>
+      <div class="grid g3">
+        <div class="card">
+          <div class="big">60% → 100%</div>
+          <div class="label">Haiku on an entangled refactor, without hexa and with it. Sonnet: 80% → 100%.</div>
+          <p style="margin-top:10px">Every miss without hexa had green tests and one boundary violation left behind. Through hexa, all 15 runs reached A+.</p>
+        </div>
+        <div class="card">
+          <div class="big">Ceiling</div>
+          <div class="label">on small, well-specified tasks</div>
+          <p style="margin-top:10px">Every arm passes nearly every fixture and shape trap. There, hexa’s effect is on cost and diff size: about the same or lower spend, and often half the lines changed.</p>
+        </div>
+        <div class="card">
+          <div class="big">1 task</div>
+          <div class="label">behind the refactor result, 5 runs per arm</div>
+          <p style="margin-top:10px">The point estimates clear the protocol’s bar; the confidence intervals still reach zero. A signal to scale up, not a settled result.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <section id="results">
     <div class="wrap">
-      <h2>Results by model</h2>
-      <p class="sub">Read from <a href="runs/evidence.json"><code>runs/evidence.json</code></a>, which <code>report.py</code> writes from the raw per-run records. Nothing on this page is typed in by hand.</p>
+      <h2>Results by family and model</h2>
+      <p class="sub">Read from <a href="runs/evidence.json"><code>runs/evidence.json</code></a>, which <code>report.py</code> writes from the raw per-run records. The charts and tables are drawn from it, not typed in.</p>
       <div id="resultsBody">
         <div class="card empty">
           <div class="big">No model runs yet</div>
@@ -293,8 +317,8 @@ footer { padding: 32px 0 48px; color: var(--text-muted); font-size: 13px; border
       <h2>Self-test</h2>
       <p class="sub">Before any model run, the rubric has to show it can tell right from wrong. It makes no model calls and costs nothing.</p>
       <div class="card">
-        <div class="check"><span class="mark ok">✓</span><div><b>5 of 5 oracles fail the untouched starting code.</b> A test that passes before any work proves nothing.</div></div>
-        <div class="check"><span class="mark ok">✓</span><div><b>A known-correct answer passes its oracle</b> (<code>header-safe-url</code>, 5 of 5 tests).</div></div>
+        <div class="check"><span class="mark ok">✓</span><div><b>Every task fails on its untouched start.</b> All 5 fixture oracles fail the starting code, and none of the 3 project tasks is accepted as it ships. A test that passes before any work proves nothing.</div></div>
+        <div class="check"><span class="mark ok">✓</span><div><b>Known-correct answers are accepted</b> (<code>header-safe-url</code>, and a correct cache for <code>linkstore-cache</code>).</div></div>
         <div class="check"><span class="mark ok">✓</span><div><b>The runner refuses to start</b> unless both checks hold.</div></div>
       </div>
     </div>
@@ -302,12 +326,12 @@ footer { padding: 32px 0 48px; color: var(--text-muted); font-size: 13px; border
 
   <section>
     <div class="wrap">
-      <h2>Found before the first run</h2>
-      <p class="sub">Problems that would have skewed the comparison, found while reviewing the protocol and building the harness.</p>
+      <h2>Found along the way</h2>
+      <p class="sub">Problems that would have skewed the comparison, found while reviewing the protocol, building the harness and reading the runs.</p>
       <div class="grid g2">
         <div class="card finding">
-          <h3><span class="sev">Fixture</span> An oracle contradicts its own test name</h3>
-          <p><code>header-safe-url</code> says code points “above U+00FF” are rejected, but it also rejects <code>é</code> (U+00E9). An agent that follows the stated rule fails.</p>
+          <h3><span class="sev">Fixture</span> An oracle contradicted its own test name</h3>
+          <p><code>header-safe-url</code> said code points “above U+00FF” are rejected, but it also rejected <code>é</code> (U+00E9). Fixed: the case now uses U+0101.</p>
         </div>
         <div class="card finding">
           <h3><span class="sev">Grading</span> Single-file fixtures always grade F 0</h3>
@@ -320,6 +344,14 @@ footer { padding: 32px 0 48px; color: var(--text-muted); font-size: 13px; border
         <div class="card finding">
           <h3><span class="sev">Model</span> “Same model” has to be enforced</h3>
           <p>hexa tries local models before Claude by default, and its text-mode path passes no <code>--model</code>. The wrapper pins every call and voids runs that drift.</p>
+        </div>
+        <div class="card finding">
+          <h3><span class="sev">Example</span> A showcase example graded B</h3>
+          <p><code>linkstore-svc</code> never declared its two split adapters, so hexa graded it B 80. Declared as hexa’s ADR-2610271649 says, it is A+ 100.</p>
+        </div>
+        <div class="card finding">
+          <h3><span class="sev">hexa</span> One attempt, then revert</h3>
+          <p>With a Claude delegate, <code>hexa do run</code> makes one attempt. When the grade gate fails it reverts rather than handing the verdict back for a retry.</p>
         </div>
       </div>
     </div>
@@ -417,11 +449,13 @@ python3 -I bench/ab/report.py bench/ab/runs</code></pre>
         head.appendChild(p);
       }
       body.appendChild(head);
-      renderModels(fam.models, body);
+      renderModels(fam.models, body, f);
     });
   }
 
-  function renderModels(models, body) {
+  function renderModels(models, body, family) {
+    // Where the grade is part of acceptance, the false-green that matters is a broken shape.
+    var shaped = family !== "change";
     Object.keys(models).forEach(function (model) {
       var m = models[model], arms = Object.keys(m.arms).sort();
       var block = document.createElement("div"); block.className = "model-block";
@@ -445,9 +479,13 @@ python3 -I bench/ab/report.py bench/ab/runs</code></pre>
       charts.appendChild(barChart("Accepted-correct", "Higher is better", arms, function (a) {
         var s = m.arms[a]; return { arm: a, value: s.accuracy.accepted_correct, extra: (s.runs_launched - s.runs_void) + " counted runs, " + s.runs_void + " void" };
       }, pct, 1));
-      charts.appendChild(barChart("False-green (correctness)", "Own tests pass, oracle fails · lower is better", arms, function (a) {
-        return { arm: a, value: m.arms[a].accuracy.false_green_correctness };
-      }, pct, 1));
+      charts.appendChild(shaped
+        ? barChart("False-green (shape)", "Tests pass, architecture broken · lower is better", arms, function (a) {
+            return { arm: a, value: m.arms[a].accuracy.false_green_shape };
+          }, pct, 1)
+        : barChart("False-green (correctness)", "Own tests pass, oracle fails · lower is better", arms, function (a) {
+            return { arm: a, value: m.arms[a].accuracy.false_green_correctness };
+          }, pct, 1));
       charts.appendChild(barChart("Cost per accepted-correct", "Dollars per good result · lower is better", arms, function (a) {
         var c = m.arms[a].cost; return { arm: a, value: c.usd_per_accepted_correct, extra: n(c.tokens_per_accepted_correct) + " tokens per good result" };
       }, usd));

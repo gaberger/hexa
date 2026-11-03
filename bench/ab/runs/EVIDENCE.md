@@ -175,3 +175,91 @@ Tasks: linkstore-cache, sokoban-untangle.
 
 - **B−A** accepted-correct: -10.0 points, 95% CI [-40.0, +0.0], over 2 tasks
 - **C−A** accepted-correct: +0.0 points, 95% CI [+0.0, +0.0], over 2 tasks
+
+# Refactoring entangled dependencies
+
+Tasks: linkstore-untangle.
+
+## claude-haiku-5-5
+
+| metric | A | B | C |
+|---|---:|---:|---:|
+| runs launched / void | 5 / 0 | 5 / 0 | 5 / 0 |
+| **accepted-correct** | 60% | 100% | 60% |
+| oracle pass | 100% | 100% | 100% |
+| own gate pass | 100% | 100% | 100% |
+| false-green (correctness) | 0% | 0% | 0% |
+| false-green (shape) | 40% | 0% | 40% |
+| no change delivered | 0% | 0% | 0% |
+| timeouts | 0% | 0% | 0% |
+| violations, median | 0 | 0 | 0 |
+| $ per run, median | 0.041 | 0.044 | 0.045 |
+| tokens per run, median | 1658638 | 1043578 | 1622480 |
+| wall s per run, median | 117 | 115 | 123 |
+| $ per accepted-correct | 0.081 | 0.049 | 0.084 |
+| tokens per accepted-correct | 2792103 | 1115244 | 2990440 |
+| src NLOC, median | 829 | 829 | 836 |
+| test NLOC, median | 510 | 510 | 510 |
+| lines changed, median | 136 | 155 | 153 |
+| CCN mean, median | 2.1 | 2.1 | 2.1 |
+| CCN max, median | 8 | 8 | 8 |
+| longest function, median | 33 | 33 | 33 |
+
+- **B−A** accepted-correct: +40.0 points, 95% CI [+0.0, +80.0], over 1 tasks
+- **C−A** accepted-correct: +0.0 points, 95% CI [-60.0, +60.0], over 1 tasks
+
+## claude-opus-5-5
+
+| metric | A | B | C |
+|---|---:|---:|---:|
+| runs launched / void | 5 / 0 | 5 / 0 | 5 / 0 |
+| **accepted-correct** | 100% | 100% | 100% |
+| oracle pass | 100% | 100% | 100% |
+| own gate pass | 100% | 100% | 100% |
+| false-green (correctness) | 0% | 0% | 0% |
+| false-green (shape) | 0% | 0% | 0% |
+| no change delivered | 0% | 0% | 0% |
+| timeouts | 0% | 0% | 0% |
+| violations, median | 0 | 0 | 0 |
+| $ per run, median | 0.735 | 0.970 | 0.912 |
+| tokens per run, median | 801493 | 1135667 | 1039880 |
+| wall s per run, median | 132 | 136 | 126 |
+| $ per accepted-correct | 0.802 | 0.971 | 0.916 |
+| tokens per accepted-correct | 881050 | 1159466 | 1040276 |
+| src NLOC, median | 828 | 827 | 828 |
+| test NLOC, median | 510 | 510 | 510 |
+| lines changed, median | 137 | 148 | 131 |
+| CCN mean, median | 2.1 | 2.1 | 2.1 |
+| CCN max, median | 8 | 8 | 8 |
+| longest function, median | 33 | 33 | 33 |
+
+- **B−A** accepted-correct: +0.0 points, 95% CI [+0.0, +0.0], over 1 tasks
+- **C−A** accepted-correct: +0.0 points, 95% CI [+0.0, +0.0], over 1 tasks
+
+## claude-sonnet-5-5
+
+| metric | A | B | C |
+|---|---:|---:|---:|
+| runs launched / void | 5 / 0 | 5 / 0 | 5 / 0 |
+| **accepted-correct** | 80% | 100% | 100% |
+| oracle pass | 100% | 100% | 100% |
+| own gate pass | 100% | 100% | 100% |
+| false-green (correctness) | 0% | 0% | 0% |
+| false-green (shape) | 20% | 0% | 0% |
+| no change delivered | 0% | 0% | 0% |
+| timeouts | 0% | 0% | 0% |
+| violations, median | 0 | 0 | 0 |
+| $ per run, median | 0.333 | 0.345 | 0.359 |
+| tokens per run, median | 652097 | 677325 | 650590 |
+| wall s per run, median | 102 | 116 | 99 |
+| $ per accepted-correct | 0.417 | 0.335 | 0.371 |
+| tokens per accepted-correct | 771056 | 697738 | 763871 |
+| src NLOC, median | 827 | 834 | 819 |
+| test NLOC, median | 510 | 510 | 510 |
+| lines changed, median | 133 | 130 | 132 |
+| CCN mean, median | 2.1 | 2.1 | 2.1 |
+| CCN max, median | 8 | 8 | 8 |
+| longest function, median | 33 | 33 | 33 |
+
+- **B−A** accepted-correct: +20.0 points, 95% CI [+0.0, +60.0], over 1 tasks
+- **C−A** accepted-correct: +20.0 points, 95% CI [+0.0, +60.0], over 1 tasks
