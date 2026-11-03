@@ -41,7 +41,8 @@ LEAK_MARKERS = ["benchmarks/fixtures", "oracle.test", "setup_files"]
 def sh(cmd, cwd, timeout=None, env=None):
     t0 = time.time()
     try:
-        p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, env=env)
+        p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, env=env,
+                           stdin=subprocess.DEVNULL)
         return p.returncode, p.stdout, p.stderr, time.time() - t0, False
     except subprocess.TimeoutExpired as e:
         out = e.stdout.decode() if isinstance(e.stdout, bytes) else (e.stdout or "")
@@ -156,7 +157,8 @@ def main():
 
     log = root / "claude-calls.jsonl"
     env = dict(os.environ)
-    env.update({"PATH": f"{SHIM_DIR}:{env['PATH']}", "HEXA_AB_LOG": str(log), "HEXA_AB_MODEL": a.model})
+    env.update({"PATH": f"{SHIM_DIR}:{env['PATH']}", "HEXA_AB_LOG": str(log), "HEXA_AB_MODEL": a.model,
+                "HEXA_CLAUDE_BINARY": str(SHIM_DIR / "claude")})  # hexa's frontier path, too
     prompt = prompt_for(task, a.arm, rules_text)
 
     t0 = time.time()
@@ -165,7 +167,7 @@ def main():
             shutil.copy(a.apply, ws / task["target"])
         cmd = ["true"]
     elif a.arm in ("A", "C"):
-        cmd = ["claude", "-p", "--dangerously-skip-permissions", "--model", a.model, prompt]
+        cmd = ["claude", "-p", "--model", a.model, prompt]  # bin/claude adds the sandbox
     else:
         cmd = [HEXA, "do", "run", prompt, "--file", task["target"], "--evidence", task["gate"],
                "--model", a.model, "--also", task["test_file"]]
@@ -210,12 +212,13 @@ def main():
         "cache_write_tokens": sum(c["cache_write_tokens"] for c in calls),
         "usd": round(sum(c["cost_usd"] or 0 for c in calls), 4),
         "wall_s": round(wall, 1),
+        "permission_denials": sum(c.get("permission_denials", 0) for c in calls),
     }
 
     leaks = []
     for t in transcripts_since(t0):
         body = t.read_text(errors="replace")
-        if str(ws) in body or str(root) in body or (a.arm == "B" and "bench-tmp" in body):
+        if str(ws) in body or str(root) in body or (a.arm == "B" and f"bench-tmp/{task['id']}" in body and t0 <= t.stat().st_mtime):
             leaks += [m for m in LEAK_MARKERS if m in body]
 
     void = []
@@ -226,6 +229,8 @@ def main():
         void.append(f"other models served calls: {others}")
     if leaks:
         void.append(f"transcript touched oracle material: {sorted(set(leaks))}")
+    if any(not c.get("sandboxed") for c in calls):
+        void.append("a call ran outside the sandbox")
     if calls and cost["unmetered_calls"]:
         void.append("unmetered calls")
     if not calls and a.arm != "0":

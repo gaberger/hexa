@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Metering shim for the `claude` CLI, put first on PATH for every run in every arm.
 
-It does three things and nothing else:
+It does four things and nothing else:
   1. Pins the model. If HEXA_AB_MODEL is set and the caller passed no --model,
      it adds one. If the caller passed a different --model, the call still runs
      with the caller's model, but it is logged as a model mismatch, which voids
@@ -12,6 +12,12 @@ It does three things and nothing else:
      for the baseline agent and for every call hexa makes.
   3. Answers in the format the caller asked for: text gets `.result`, json gets
      the JSON unchanged.
+  4. Applies one sandbox to every arm. `--dangerously-skip-permissions` (which
+     hexa always passes) is removed, and every call runs with
+     `--permission-mode acceptEdits` and only the tools in HEXA_AB_ALLOWED_TOOLS.
+     Edits are accepted inside the working directory; reads outside it are not
+     granted, which keeps the oracles out of reach. Set HEXA_AB_SANDBOX=0 to
+     pass the caller's permissions through unchanged.
 
 Each call appends one line to $HEXA_AB_LOG (JSONL).
 """
@@ -24,6 +30,8 @@ import time
 REAL = os.environ.get("HEXA_AB_REAL_CLAUDE", "/opt/node22/bin/claude")
 LOG = os.environ.get("HEXA_AB_LOG")
 PIN = os.environ.get("HEXA_AB_MODEL")
+SANDBOX = os.environ.get("HEXA_AB_SANDBOX", "1") != "0"
+ALLOWED = os.environ.get("HEXA_AB_ALLOWED_TOOLS", "Edit,Write,Bash(bun test:*)")
 
 
 def flag_value(args, name):
@@ -40,6 +48,12 @@ def main():
     is_prompt = "-p" in args or "--print" in args
     if not is_prompt:  # --version and friends: no inference, nothing to meter
         os.execv(REAL, [REAL] + args)
+
+    sandboxed = False
+    if SANDBOX:
+        args = [a for a in args if a != "--dangerously-skip-permissions"]
+        args = ["--permission-mode", "acceptEdits", "--allowedTools", ALLOWED] + args
+        sandboxed = True
 
     _, asked_model = flag_value(args, "--model")
     mismatch = False
@@ -105,6 +119,8 @@ def main():
             "cache_read_tokens": usage.get("cache_read_input_tokens", 0),
             "cache_write_tokens": usage.get("cache_creation_input_tokens", 0),
             "metered": result_obj is not None,
+            "sandboxed": sandboxed,
+            "permission_denials": len((result_obj or {}).get("permission_denials") or []),
         }
         with open(LOG, "a") as f:
             f.write(json.dumps(rec) + "\n")
