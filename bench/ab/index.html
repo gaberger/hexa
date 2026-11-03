@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hexa A/B Evidence</title>
+<meta name="description" content="With the model, prompt and budget held the same, does hexa change how often AI-written code is both correct and the right shape? Pre-registered protocol, rubric and per-model results.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  color-scheme: light;
+  --bg: #f7f7f5;
+  --surface-1: #fcfcfb;
+  --surface-2: #f0efeb;
+  --border: #e2e1dc;
+  --grid: #e9e8e3;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #7a7974;
+  --accent: #2a78d6;
+  --arm-a: #2a78d6;
+  --arm-b: #eb6834;
+  --arm-c: #1baf7a;
+  --good: #0f7b3f;
+  --good-bg: #e5f3ea;
+  --warn: #8a5a00;
+  --warn-bg: #fbf0d9;
+  --bad: #b42323;
+  --bad-bg: #fbe7e6;
+  --code-bg: #efeee9;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #121211;
+    --surface-1: #1a1a19;
+    --surface-2: #222220;
+    --border: #2f2f2c;
+    --grid: #2a2a28;
+    --text-primary: #f0efec;
+    --text-secondary: #c3c2b7;
+    --text-muted: #8d8c84;
+    --accent: #3987e5;
+    --arm-a: #3987e5;
+    --arm-b: #d95926;
+    --arm-c: #199e70;
+    --good: #5cc98a;
+    --good-bg: #16291e;
+    --warn: #e6b24c;
+    --warn-bg: #2c2414;
+    --bad: #f08080;
+    --bad-bg: #2e1919;
+    --code-bg: #242422;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #121211;
+  --surface-1: #1a1a19;
+  --surface-2: #222220;
+  --border: #2f2f2c;
+  --grid: #2a2a28;
+  --text-primary: #f0efec;
+  --text-secondary: #c3c2b7;
+  --text-muted: #8d8c84;
+  --accent: #3987e5;
+  --arm-a: #3987e5;
+  --arm-b: #d95926;
+  --arm-c: #199e70;
+  --good: #5cc98a;
+  --good-bg: #16291e;
+  --warn: #e6b24c;
+  --warn-bg: #2c2414;
+  --bad: #f08080;
+  --bad-bg: #2e1919;
+  --code-bg: #242422;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--text-primary);
+  font: 16px/1.6 Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+a { color: var(--accent); }
+code, pre, .mono { font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; font-size: .86em; }
+code { background: var(--code-bg); padding: .1em .35em; border-radius: 4px; }
+pre { background: var(--code-bg); padding: 14px 16px; border-radius: 8px; overflow-x: auto; line-height: 1.5; margin: 0; }
+pre code { background: none; padding: 0; }
+.wrap { max-width: 1040px; margin: 0 auto; padding: 0 16px; }
+header.top { border-bottom: 1px solid var(--border); background: var(--surface-1); }
+header.top .wrap { display: flex; align-items: center; justify-content: space-between; height: 56px; gap: 12px; }
+.brand { font-weight: 700; letter-spacing: -.01em; }
+.brand span { color: var(--text-muted); font-weight: 500; }
+.theme-btn {
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text-secondary);
+  border-radius: 999px; padding: 4px 12px; font: inherit; font-size: 13px; cursor: pointer;
+}
+.hero { padding-top: 56px; padding-bottom: 32px; }
+.eyebrow { font-size: 13px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); margin: 0 0 12px; }
+h1 { font-size: clamp(28px, 5vw, 44px); line-height: 1.15; letter-spacing: -.02em; margin: 0 0 16px; max-width: 22ch; }
+.lede { font-size: 18px; color: var(--text-secondary); max-width: 62ch; margin: 0 0 24px; }
+.pills { display: flex; flex-wrap: wrap; gap: 8px; }
+.pill { font-size: 13px; font-weight: 500; border-radius: 999px; padding: 4px 12px; border: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary); }
+.pill.status { background: var(--warn-bg); color: var(--warn); border-color: transparent; }
+.pill.status.live { background: var(--good-bg); color: var(--good); }
+section { padding: 32px 0; border-top: 1px solid var(--border); }
+h2 { font-size: 24px; letter-spacing: -.01em; margin: 0 0 8px; }
+.sub { color: var(--text-secondary); margin: 0 0 24px; max-width: 68ch; }
+h3 { font-size: 16px; margin: 0 0 6px; }
+.grid { display: grid; gap: 16px; }
+.g3 { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.g2 { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 20px; min-width: 0; }
+.card p { margin: 0; color: var(--text-secondary); font-size: 15px; }
+.arm-tag { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; margin-bottom: 8px; }
+.sw { width: 12px; height: 12px; border-radius: 3px; display: inline-block; flex: none; }
+.criteria { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; }
+.big { font-size: 36px; font-weight: 700; letter-spacing: -.02em; line-height: 1.1; }
+.big small { font-size: 15px; font-weight: 500; color: var(--text-secondary); letter-spacing: 0; }
+.label { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
+/* results */
+.empty { text-align: center; padding: 40px 20px; }
+.empty .big { font-size: 22px; margin-bottom: 8px; }
+.empty p { max-width: 52ch; margin: 0 auto 16px; }
+.model-block { margin-bottom: 28px; }
+.model-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+.model-head h3 { font-size: 18px; margin: 0; }
+.verdict { font-size: 13px; font-weight: 600; border-radius: 999px; padding: 3px 10px; }
+.verdict.win { background: var(--good-bg); color: var(--good); }
+.verdict.no { background: var(--bad-bg); color: var(--bad); }
+.verdict.unk { background: var(--warn-bg); color: var(--warn); }
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+.chart-title { font-size: 14px; font-weight: 600; margin: 0 0 2px; }
+.chart-note { font-size: 12px; color: var(--text-muted); margin: 0 0 10px; }
+.bar-row { display: grid; grid-template-columns: 22px 1fr 64px; align-items: center; gap: 8px; height: 30px; position: relative; }
+.bar-row .arm { font-weight: 600; font-size: 13px; color: var(--text-secondary); }
+.track { position: relative; height: 14px; }
+.track::before { content: ""; position: absolute; inset: 6px 0; background: var(--grid); border-radius: 2px; }
+.bar { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 0 4px 4px 0; min-width: 2px; }
+.bar-row .val { font-size: 13px; font-variant-numeric: tabular-nums; text-align: right; color: var(--text-primary); }
+.bar-row:hover .track::before { background: var(--border); }
+.diff { margin-top: 10px; font-size: 13px; color: var(--text-secondary); }
+.legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px; color: var(--text-secondary); margin-bottom: 16px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.tip {
+  position: fixed; pointer-events: none; z-index: 10; background: var(--surface-1); color: var(--text-primary);
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 13px;
+  box-shadow: 0 6px 24px rgba(0,0,0,.12); opacity: 0; transition: opacity .1s; max-width: 260px;
+}
+.tip b { display: block; margin-bottom: 2px; }
+details.table-view { margin-top: 12px; }
+details.table-view summary { cursor: pointer; font-size: 14px; color: var(--text-secondary); }
+.tbl-wrap { overflow-x: auto; margin-top: 10px; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; font-variant-numeric: tabular-nums; }
+th, td { padding: 6px 10px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
+th { color: var(--text-muted); font-weight: 600; }
+/* rubric */
+.rubric dt { font-weight: 600; font-size: 14px; margin-top: 10px; }
+.rubric dd { margin: 2px 0 0; color: var(--text-secondary); font-size: 14px; }
+.check { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 15px; }
+.check:last-child { border-bottom: 0; }
+.mark { flex: none; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 700; margin-top: 2px; }
+.mark.ok { background: var(--good-bg); color: var(--good); }
+.mark.flag { background: var(--warn-bg); color: var(--warn); }
+.finding { border-left: 3px solid var(--warn); }
+.finding h3 { display: flex; gap: 8px; align-items: center; }
+.sev { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--warn); }
+footer { padding: 32px 0 48px; color: var(--text-muted); font-size: 13px; border-top: 1px solid var(--border); }
+@media (max-width: 520px) {
+  .hero { padding-top: 36px; }
+  .lede { font-size: 16px; }
+  .big { font-size: 30px; }
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <div class="brand">hexa <span>/ A/B evidence</span></div>
+    <button class="theme-btn" id="themeBtn" type="button" aria-label="Toggle colour theme">Theme</button>
+  </div>
+</header>
+
+<main>
+  <div class="wrap hero">
+    <p class="eyebrow">Pre-registered experiment</p>
+    <h1>Does hexa make AI-written code correct <em>and</em> the right shape?</h1>
+    <p class="lede">The same model, prompt and budget, run with and without hexa. Each run is judged by a hidden oracle the agent never saw and by the architecture grade, and each result is recorded against the model that produced it.</p>
+    <div class="pills">
+      <span class="pill status" id="statusPill">No runs yet: protocol and harness ready</span>
+      <span class="pill">Rubric: accuracy · tokens · cost · LOC · complexity</span>
+      <span class="pill" id="modelsPill">Models: to be run</span>
+    </div>
+  </div>
+
+  <section>
+    <div class="wrap">
+      <h2>The comparison</h2>
+      <p class="sub">Every arm gets the same prompt text, including the gate command that defines “done”. The only difference is what happens between the prompt and the result.</p>
+      <div class="grid g3">
+        <div class="card">
+          <div class="arm-tag"><span class="sw" style="background:var(--arm-a)"></span>A · Without hexa</div>
+          <p>The agent alone in a fresh workspace. It may run tests and decides for itself when it is done. Nothing checks its work.</p>
+        </div>
+        <div class="card">
+          <div class="arm-tag"><span class="sw" style="background:var(--arm-b)"></span>B · With hexa</div>
+          <p>The same model driven through hexa. A result counts only when the gate command exits 0 <em>and</em> the architecture grade holds at A.</p>
+        </div>
+        <div class="card">
+          <div class="arm-tag"><span class="sw" style="background:var(--arm-c)"></span>C · Rules only</div>
+          <p>Arm A, with hexa’s architecture rules pasted into the prompt and no gates. This separates telling the model the rules from enforcing them.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <h2>What counts as a win</h2>
+      <p class="sub">Declared before any run. A result that misses this is reported as a miss.</p>
+      <div class="criteria">
+        <div class="card"><div class="big">≥ 20 <small>points</small></div><div class="label">B over A on accepted-correct</div></div>
+        <div class="card"><div class="big">≤ 1.5× <small>tokens</small></div><div class="label">B’s token spend relative to A</div></div>
+        <div class="card"><div class="big">Every run</div><div class="label">reported, including failures, timeouts and voided runs</div></div>
+      </div>
+      <p class="sub" style="margin-top:16px;margin-bottom:0"><b>Accepted-correct</b> means the hidden oracle passes, and where shape applies, the grade is ≥ A with 0 violations. A model counts as a win only when the 95% CI for B−A also excludes zero.</p>
+    </div>
+  </section>
+
+  <section id="results">
+    <div class="wrap">
+      <h2>Results by model</h2>
+      <p class="sub">Read from <a href="runs/evidence.json"><code>runs/evidence.json</code></a>, which <code>report.py</code> writes from the raw per-run records. Nothing on this page is typed in by hand.</p>
+      <div id="resultsBody">
+        <div class="card empty">
+          <div class="big">No model runs yet</div>
+          <p>The protocol, rubric and harness are in place, and the self-test passes. This section fills in automatically once <code>run_matrix.sh</code> has written results.</p>
+          <a href="#reproduce">How to run it →</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <h2>The rubric</h2>
+      <p class="sub">Every run writes one JSON record with all of these fields. Proportions are reported for pass/fail measures, and medians for size, cost and complexity.</p>
+      <div class="grid g2">
+        <div class="card rubric">
+          <h3>Accuracy</h3>
+          <dl>
+            <dt>Oracle pass</dt><dd>The hidden oracle passes. It runs on a copy of the workspace after the agent finishes.</dd>
+            <dt>False-green</dt><dd>The agent’s own tests pass but the oracle fails, or the shape is broken. These are counted separately.</dd>
+            <dt>Accepted-correct (primary)</dt><dd>The oracle passes, and where shape applies, the grade is ≥ A with 0 violations.</dd>
+          </dl>
+        </div>
+        <div class="card rubric">
+          <h3>Tokens &amp; cost</h3>
+          <dl>
+            <dt>Metered the same way in every arm</dt><dd>A <code>claude</code> wrapper first on PATH logs usage and dollars for every call, whether the agent makes it or hexa does.</dd>
+            <dt>Per good result</dt><dd>$ and tokens per accepted-correct result, not just per run.</dd>
+          </dl>
+        </div>
+        <div class="card rubric">
+          <h3>Lines of code</h3>
+          <dl>
+            <dt>Size</dt><dd>Non-blank, non-comment lines, for source and tests separately, and the test-to-source ratio.</dd>
+            <dt>Change</dt><dd>Lines added and removed, and files changed, against the starting commit.</dd>
+          </dl>
+        </div>
+        <div class="card rubric">
+          <h3>Complexity</h3>
+          <dl>
+            <dt>Cyclomatic complexity</dt><dd>Mean and max per function, from <code>lizard</code> 1.17.13, which reads Rust, Go and TypeScript the same way.</dd>
+            <dt>Longest function</dt><dd>Shows whether passing the gates made the code larger or more tangled.</dd>
+          </dl>
+        </div>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <h3>Same model, or the run is void</h3>
+        <p>A run is voided if any call asked for a different model, another model served calls, a call went unmetered, or the transcript touched oracle material. Voided runs are listed, never deleted.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <h2>Self-test</h2>
+      <p class="sub">Before any model run, the rubric has to show it can tell right from wrong. It makes no model calls and costs nothing.</p>
+      <div class="card">
+        <div class="check"><span class="mark ok">✓</span><div><b>5 of 5 oracles fail the untouched starting code.</b> A test that passes before any work proves nothing.</div></div>
+        <div class="check"><span class="mark ok">✓</span><div><b>A known-correct answer passes its oracle</b> (<code>header-safe-url</code>, 5 of 5 tests).</div></div>
+        <div class="check"><span class="mark ok">✓</span><div><b>The runner refuses to start</b> unless both checks hold.</div></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <h2>Found before the first run</h2>
+      <p class="sub">Problems that would have skewed the comparison, found while reviewing the protocol and building the harness.</p>
+      <div class="grid g2">
+        <div class="card finding">
+          <h3><span class="sev">Fixture</span> An oracle contradicts its own test name</h3>
+          <p><code>header-safe-url</code> says code points “above U+00FF” are rejected, but it also rejects <code>é</code> (U+00E9). An agent that follows the stated rule fails.</p>
+        </div>
+        <div class="card finding">
+          <h3><span class="sev">Grading</span> Single-file fixtures always grade F 0</h3>
+          <p>The five change fixtures have no layers to grade. That family is scored on the oracle alone. Otherwise accepted-correct would be 0 in every arm.</p>
+        </div>
+        <div class="card finding">
+          <h3><span class="sev">Leakage</span> The hidden oracles live in the repo</h3>
+          <p>Every fixture’s oracle test is in <code>docs/benchmarks/fixtures</code>, so tasks run in a separate workspace and transcripts are checked for oracle access.</p>
+        </div>
+        <div class="card finding">
+          <h3><span class="sev">Model</span> “Same model” has to be enforced</h3>
+          <p>hexa tries local models before Claude by default, and its text-mode path passes no <code>--model</code>. The wrapper pins every call and voids runs that drift.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="reproduce">
+    <div class="wrap">
+      <h2>Reproduce it</h2>
+      <p class="sub">The runner, the rubric and the raw run JSON are published together.</p>
+<pre><code>pip install lizard==1.17.13          # plus bun, jq, the claude CLI and a built hexa
+bench/ab/selftest.sh                 # no model calls
+MODELS="&lt;model id&gt; &lt;model id&gt;" ARMS="A B C" RUNS=5 bench/ab/run_matrix.sh
+python3 -I bench/ab/report.py bench/ab/runs</code></pre>
+      <p class="sub" style="margin-top:16px;margin-bottom:0">
+        <a href="https://github.com/gaberger/hexa/blob/main/bench/ab/RUBRIC.md">Full rubric</a> ·
+        <a href="https://github.com/gaberger/hexa/blob/main/bench/ab/README.md">Harness README</a> ·
+        <a href="https://github.com/gaberger/hexa/tree/main/bench/ab/runs">Raw runs</a> ·
+        <a href="https://github.com/gaberger/hexa">hexa</a>
+      </p>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">The results section renders only from published run data. When there is no data, it says so.</div>
+</footer>
+
+<div class="tip" id="tip" role="tooltip"></div>
+
+<script>
+(function () {
+  // Theme toggle. The stored choice is a per-viewer convenience; the page works without it.
+  var root = document.documentElement, btn = document.getElementById("themeBtn");
+  try { var saved = localStorage.getItem("hexa-ab-theme"); if (saved) root.setAttribute("data-theme", saved); } catch (e) {}
+  btn.addEventListener("click", function () {
+    var dark = root.getAttribute("data-theme") ? root.getAttribute("data-theme") === "dark"
+      : window.matchMedia("(prefers-color-scheme: dark)").matches;
+    var next = dark ? "light" : "dark";
+    root.setAttribute("data-theme", next);
+    try { localStorage.setItem("hexa-ab-theme", next); } catch (e) {}
+  });
+
+  var ARMS = { A: { name: "Without hexa", color: "var(--arm-a)" },
+               B: { name: "With hexa", color: "var(--arm-b)" },
+               C: { name: "Rules only", color: "var(--arm-c)" } };
+  var tip = document.getElementById("tip");
+  function showTip(e, html) { tip.innerHTML = html; tip.style.opacity = 1; moveTip(e); }
+  function moveTip(e) {
+    var x = e.clientX + 14, y = e.clientY + 14, w = tip.offsetWidth, h = tip.offsetHeight;
+    if (x + w > innerWidth - 8) x = e.clientX - w - 14;
+    if (y + h > innerHeight - 8) y = e.clientY - h - 14;
+    tip.style.left = x + "px"; tip.style.top = y + "px";
+  }
+  function hideTip() { tip.style.opacity = 0; }
+  function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+  function pct(x) { return x == null ? "—" : Math.round(100 * x) + "%"; }
+  function usd(x) { return x == null ? "—" : "$" + x.toFixed(x < 1 ? 3 : 2); }
+  function n(x, d) { return x == null ? "—" : (typeof x === "number" ? x.toLocaleString(undefined, { maximumFractionDigits: d || 0 }) : x); }
+
+  function barChart(title, note, arms, get, fmt, max) {
+    var el = document.createElement("div"); el.className = "card";
+    el.innerHTML = '<p class="chart-title">' + esc(title) + '</p><p class="chart-note">' + esc(note) + "</p>";
+    var vals = arms.map(function (a) { return get(a); });
+    var top = max || Math.max.apply(null, vals.map(function (v) { return v.value || 0; }).concat([1e-9]));
+    vals.forEach(function (v) {
+      var row = document.createElement("div"); row.className = "bar-row";
+      var w = v.value == null ? 0 : Math.max(0, Math.min(1, v.value / top)) * 100;
+      row.innerHTML = '<span class="arm">' + v.arm + '</span><div class="track"><div class="bar" style="width:' + w +
+        "%;background:" + ARMS[v.arm].color + '"></div></div><span class="val">' + fmt(v.value) + "</span>";
+      row.addEventListener("mouseenter", function (e) { showTip(e, "<b>" + v.arm + " · " + ARMS[v.arm].name + "</b>" + esc(title) + ": " + fmt(v.value) + (v.extra ? "<br>" + v.extra : "")); });
+      row.addEventListener("mousemove", moveTip);
+      row.addEventListener("mouseleave", hideTip);
+      el.appendChild(row);
+    });
+    return el;
+  }
+
+  function render(ev) {
+    var models = Object.keys(ev.models || {});
+    if (!models.length) return;
+    var pill = document.getElementById("statusPill");
+    pill.textContent = "Results published"; pill.classList.add("live");
+    document.getElementById("modelsPill").textContent = "Models: " + models.join(", ");
+    var body = document.getElementById("resultsBody"); body.innerHTML = "";
+    var legend = document.createElement("div"); legend.className = "legend";
+    Object.keys(ARMS).forEach(function (k) { legend.innerHTML += '<span><span class="sw" style="background:' + ARMS[k].color + '"></span>' + k + " · " + ARMS[k].name + "</span>"; });
+    body.appendChild(legend);
+
+    models.forEach(function (model) {
+      var m = ev.models[model], arms = Object.keys(m.arms).sort();
+      var block = document.createElement("div"); block.className = "model-block";
+      var ba = m.paired && m.paired["B−A"], verdict = '<span class="verdict unk">B vs A: needs both arms</span>';
+      if (ba && m.arms.A && m.arms.B) {
+        var tokA = m.arms.A.cost.tokens_median_per_run, tokB = m.arms.B.cost.tokens_median_per_run;
+        var ratio = tokA ? tokB / tokA : null;
+        var meets = ba.diff_points >= 20 && ratio != null && ratio <= 1.5;
+        // A point estimate past the bar is not a win while the CI still includes zero.
+        var sure = ba.ci95_points[0] > 0;
+        var cls = meets && sure ? "win" : (meets ? "unk" : "no");
+        var word = meets && sure ? "Meets the win condition" : (meets ? "Inconclusive: CI includes 0" : "Misses the win condition");
+        verdict = '<span class="verdict ' + cls + '">' + word + ": B−A " + (ba.diff_points >= 0 ? "+" : "") + ba.diff_points + " pts" +
+          (ratio != null ? " at " + ratio.toFixed(2) + "× tokens" : "") + "</span>";
+      }
+      block.innerHTML = '<div class="model-head"><h3 class="mono">' + esc(model) + "</h3>" + verdict + "</div>";
+      var charts = document.createElement("div"); charts.className = "charts";
+      charts.appendChild(barChart("Accepted-correct", "Higher is better", arms, function (a) {
+        var s = m.arms[a]; return { arm: a, value: s.accuracy.accepted_correct, extra: (s.runs_launched - s.runs_void) + " counted runs, " + s.runs_void + " void" };
+      }, pct, 1));
+      charts.appendChild(barChart("False-green (correctness)", "Own tests pass, oracle fails · lower is better", arms, function (a) {
+        return { arm: a, value: m.arms[a].accuracy.false_green_correctness };
+      }, pct, 1));
+      charts.appendChild(barChart("Cost per accepted-correct", "Dollars per good result · lower is better", arms, function (a) {
+        var c = m.arms[a].cost; return { arm: a, value: c.usd_per_accepted_correct, extra: n(c.tokens_per_accepted_correct) + " tokens per good result" };
+      }, usd));
+      block.appendChild(charts);
+
+      var diffs = [];
+      ["B−A", "C−A"].forEach(function (k) {
+        var d = m.paired && m.paired[k];
+        if (d) diffs.push("<b>" + k + "</b> " + (d.diff_points >= 0 ? "+" : "") + d.diff_points + " pts, 95% CI [" + d.ci95_points[0] + ", " + d.ci95_points[1] + "] over " + d.tasks + " tasks");
+      });
+      if (diffs.length) { var dd = document.createElement("p"); dd.className = "diff"; dd.innerHTML = diffs.join(" · "); block.appendChild(dd); }
+
+      var rows = [
+        ["Runs launched / void", function (s) { return s.runs_launched + " / " + s.runs_void; }],
+        ["Accepted-correct", function (s) { return pct(s.accuracy.accepted_correct); }],
+        ["Oracle pass", function (s) { return pct(s.accuracy.oracle_pass); }],
+        ["Own gate pass", function (s) { return pct(s.accuracy.own_gate_pass); }],
+        ["False-green (correctness)", function (s) { return pct(s.accuracy.false_green_correctness); }],
+        ["False-green (shape)", function (s) { return pct(s.accuracy.false_green_shape); }],
+        ["Timeouts", function (s) { return pct(s.accuracy.timeouts); }],
+        ["Violations, median", function (s) { return n(s.shape.violations_median); }],
+        ["$ per run, median", function (s) { return usd(s.cost.usd_median_per_run); }],
+        ["Tokens per run, median", function (s) { return n(s.cost.tokens_median_per_run); }],
+        ["Wall s per run, median", function (s) { return n(s.cost.wall_s_median_per_run); }],
+        ["$ per accepted-correct", function (s) { return usd(s.cost.usd_per_accepted_correct); }],
+        ["Tokens per accepted-correct", function (s) { return n(s.cost.tokens_per_accepted_correct); }],
+        ["Source NLOC, median", function (s) { return n(s.loc.src_nloc_median); }],
+        ["Test NLOC, median", function (s) { return n(s.loc.test_nloc_median); }],
+        ["Lines changed, median", function (s) { return n(s.loc.lines_changed_median); }],
+        ["CCN mean, median", function (s) { return n(s.complexity.ccn_mean_median, 1); }],
+        ["CCN max, median", function (s) { return n(s.complexity.ccn_max_median); }],
+        ["Longest function, median", function (s) { return n(s.complexity.fn_len_max_median); }]
+      ];
+      var t = '<details class="table-view"><summary>All metrics for ' + esc(model) + '</summary><div class="tbl-wrap"><table><thead><tr><th>Metric</th>' +
+        arms.map(function (a) { return "<th>" + a + "</th>"; }).join("") + "</tr></thead><tbody>";
+      rows.forEach(function (r) { t += "<tr><td>" + r[0] + "</td>" + arms.map(function (a) { return "<td>" + r[1](m.arms[a]) + "</td>"; }).join("") + "</tr>"; });
+      t += "</tbody></table></div></details>";
+      block.insertAdjacentHTML("beforeend", t);
+      body.appendChild(block);
+    });
+  }
+
+  // ?data=<relative path> previews another evidence file; the default is the published one.
+  var src = "runs/evidence.json";
+  try { var q = new URLSearchParams(location.search).get("data"); if (q && /^[\w./-]+\.json$/.test(q) && q.indexOf("..") < 0) src = q; } catch (e) {}
+  fetch(src, { cache: "no-store" }).then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (ev) { if (ev) render(ev); }).catch(function () {});
+})();
+</script>
+</body>
+</html>

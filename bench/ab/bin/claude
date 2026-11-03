@@ -1,0 +1,118 @@
+#!/usr/bin/env python3
+"""Metering shim for the `claude` CLI, put first on PATH for every run in every arm.
+
+It does three things and nothing else:
+  1. Pins the model. If HEXA_AB_MODEL is set and the caller passed no --model,
+     it adds one. If the caller passed a different --model, the call still runs
+     with the caller's model, but it is logged as a model mismatch, which voids
+     the run in the report.
+  2. Meters the call. It always asks the real CLI for `--output-format json`
+     (unless the caller asked for stream-json, which is passed through and
+     parsed from the stream), so tokens and dollars are recorded the same way
+     for the baseline agent and for every call hexa makes.
+  3. Answers in the format the caller asked for: text gets `.result`, json gets
+     the JSON unchanged.
+
+Each call appends one line to $HEXA_AB_LOG (JSONL).
+"""
+import json
+import os
+import subprocess
+import sys
+import time
+
+REAL = os.environ.get("HEXA_AB_REAL_CLAUDE", "/opt/node22/bin/claude")
+LOG = os.environ.get("HEXA_AB_LOG")
+PIN = os.environ.get("HEXA_AB_MODEL")
+
+
+def flag_value(args, name):
+    for i, a in enumerate(args):
+        if a == name and i + 1 < len(args):
+            return i, args[i + 1]
+        if a.startswith(name + "="):
+            return i, a.split("=", 1)[1]
+    return None, None
+
+
+def main():
+    args = sys.argv[1:]
+    is_prompt = "-p" in args or "--print" in args
+    if not is_prompt:  # --version and friends: no inference, nothing to meter
+        os.execv(REAL, [REAL] + args)
+
+    _, asked_model = flag_value(args, "--model")
+    mismatch = False
+    if PIN:
+        if asked_model is None:
+            args = ["--model", PIN] + args
+        elif asked_model != PIN:
+            mismatch = True
+
+    fi, fmt = flag_value(args, "--output-format")
+    fmt = fmt or "text"
+    run_args = list(args)
+    if fmt != "stream-json":
+        if fi is None:
+            run_args += ["--output-format", "json"]
+        elif run_args[fi] == "--output-format":
+            run_args[fi + 1] = "json"
+        else:
+            run_args[fi] = "--output-format=json"
+
+    t0 = time.time()
+    p = subprocess.run([REAL] + run_args, stdin=sys.stdin if not sys.stdin.isatty() else None,
+                       capture_output=True, text=True)
+    wall = time.time() - t0
+
+    result_obj = None
+    if fmt == "stream-json":
+        for line in p.stdout.splitlines():
+            try:
+                o = json.loads(line)
+            except ValueError:
+                continue
+            if o.get("type") == "result":
+                result_obj = o
+        out = p.stdout
+    else:
+        try:
+            result_obj = json.loads(p.stdout)
+        except ValueError:
+            result_obj = None
+        if fmt == "json" or result_obj is None:
+            out = p.stdout
+        else:
+            out = result_obj.get("result", "") or ""
+            if out and not out.endswith("\n"):
+                out += "\n"
+
+    if LOG:
+        usage = (result_obj or {}).get("usage", {}) or {}
+        rec = {
+            "ts": t0,
+            "wall_s": round(wall, 3),
+            "exit": p.returncode,
+            "caller_format": fmt,
+            "pinned_model": PIN,
+            "asked_model": asked_model,
+            "model_mismatch": mismatch,
+            "models_used": sorted(((result_obj or {}).get("modelUsage") or {}).keys()),
+            "cost_usd": (result_obj or {}).get("total_cost_usd"),
+            "num_turns": (result_obj or {}).get("num_turns"),
+            "input_tokens": usage.get("input_tokens", 0),
+            "output_tokens": usage.get("output_tokens", 0),
+            "cache_read_tokens": usage.get("cache_read_input_tokens", 0),
+            "cache_write_tokens": usage.get("cache_creation_input_tokens", 0),
+            "metered": result_obj is not None,
+        }
+        with open(LOG, "a") as f:
+            f.write(json.dumps(rec) + "\n")
+
+    sys.stdout.write(out)
+    sys.stderr.write(p.stderr)
+    sys.exit(p.returncode)
+
+
+if __name__ == "__main__":
+    main()

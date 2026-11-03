@@ -32,7 +32,8 @@
   "analyze": {
     "exclude": [
       "hexa-cli/assets/scaffold",
-      "bench/fixtures"
+      "bench/fixtures",
+      "bench/ab/selftest"
     ],
     "adapters": {
       "cli": ["hexa-cli/src/commands", "hexa-cli/src/fmt.rs", "hexa-cli/src/assets.rs"],
