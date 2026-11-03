@@ -1,0 +1,57 @@
+{
+  "task": "linkstore-untangle",
+  "family": "refactor",
+  "arm": "A",
+  "model": "claude-opus-5-5",
+  "run": 2,
+  "started": 1793742185.9408028,
+  "timed_out": false,
+  "agent_exit": 0,
+  "accuracy": {
+    "oracle_pass": true,
+    "oracle_tests_passed": 27,
+    "oracle_tests_failed": 0,
+    "own_gate_pass": true,
+    "delivered": true,
+    "false_green_correctness": false,
+    "false_green_shape": false,
+    "accepted_correct": true
+  },
+  "shape": {
+    "grade": "A+",
+    "score": 98,
+    "violations": 0,
+    "cycles": 0,
+    "gradeable": true
+  },
+  "loc": {
+    "src_nloc": 828,
+    "test_nloc": 510,
+    "test_to_src": 0.62,
+    "lines_added": 52,
+    "lines_removed": 85,
+    "files_changed": 9
+  },
+  "complexity": {
+    "functions": 60,
+    "ccn_mean": 2.13,
+    "ccn_max": 8,
+    "fn_len_max": 33
+  },
+  "cost": {
+    "calls": 1,
+    "unmetered_calls": 0,
+    "input_tokens": 28,
+    "output_tokens": 14635,
+    "cache_read_tokens": 871573,
+    "cache_write_tokens": 57380,
+    "usd": 0.9262,
+    "wall_s": 151.5,
+    "permission_denials": 5
+  },
+  "models_used": [
+    "claude-opus-5-5"
+  ],
+  "void": [],
+  "workspace": "/tmp/hexa-ab-linkstore-untangle-A-cecjgryy"
+}
