@@ -25,16 +25,28 @@ for f in "$FIX"/*.json; do
     echo "FAIL  $t: oracle PASSES the untouched start, so it proves nothing"; fail=1
   fi
 done
-for g in selftest/*.good.ts; do
-  t=$(basename "$g" .good.ts)
+for spec in tasks/*.json; do
+  t=$(basename "$spec" .json)
+  python3 -I run_one.py --task "$t" --arm 0 --model selftest-neg --out "$OUT" >/dev/null
+  r="$OUT/selftest-neg/0/$t--r1.json"
+  if [ ! -f "$r" ]; then
+    echo "FAIL  $t: the run wrote no record"; fail=1
+  elif jq -e '.accuracy.accepted_correct == false' "$r" >/dev/null; then
+    echo "ok    $t: the untouched start is not accepted ($(jq -r '"oracle " + (if .accuracy.oracle_pass then "pass" else "fail" end) + ", grade " + (.shape.grade // "none")' "$r"))"
+  else
+    echo "FAIL  $t: the untouched start is accepted, so the task proves nothing"; fail=1
+  fi
+done
+for g in selftest/*.good.*; do
+  t=$(basename "$g"); t="${t%%.good.*}"
   python3 -I run_one.py --task "$t" --arm 0 --model selftest-pos --apply "$g" --out "$OUT" >/dev/null
   if [ ! -f "$OUT/selftest-pos/0/$t--r1.json" ]; then
     echo "FAIL  $t: the run wrote no record"; fail=1
-  elif jq -e '.accuracy.oracle_pass == true' "$OUT/selftest-pos/0/$t--r1.json" >/dev/null; then
-    echo "ok    $t: a correct answer passes the oracle"
+  elif jq -e '.accuracy.accepted_correct == true' "$OUT/selftest-pos/0/$t--r1.json" >/dev/null; then
+    echo "ok    $t: a correct answer is accepted"
   else
     echo "FAIL  $t: a correct answer FAILS the oracle"; fail=1
   fi
 done
-rm -rf "$OUT" /tmp/hexa-ab-*-0-*
+rm -rf "$OUT" /tmp/hexa-ab-*-0-*  # the shared cargo cache stays
 [ $fail -eq 0 ] && echo "selftest: pass" || { echo "selftest: FAIL"; exit 1; }

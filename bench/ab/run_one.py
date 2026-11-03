@@ -49,7 +49,15 @@ def sh(cmd, cwd, timeout=None, env=None):
         return 124, out, "timeout", time.time() - t0, True
 
 
+TASKS = HERE / "tasks"
+CARGO_SHARED = Path(os.environ.get("HEXA_AB_CARGO_TARGET", str(Path(tempfile.gettempdir()) / "hexa-ab-cargo")))
+
+
 def load_task(fixtures, task_id):
+    """A project task from tasks/<id>.json, else a fixture from the hexa corpus."""
+    spec = TASKS / f"{task_id}.json"
+    if spec.exists():
+        return load_project_task(json.loads(spec.read_text()))
     fx = json.loads((Path(fixtures) / f"{task_id}.json").read_text())
     target = fx["target_file"]
     oracle_files = {k: v for k, v in fx["oracle"]["setup_files"].items() if k != target}
@@ -67,13 +75,46 @@ def load_task(fixtures, task_id):
         "gate": f"bun test {test_file}",
         "oracle_files": oracle_files,
         "oracle_cmd": fx["oracle"]["command"],
+        "kind": "fixture",
+        "allowed_tools": "Edit,Write,Bash(bun test:*)",
+        "shape_rule": None,
     }
 
 
+def load_project_task(t):
+    """A copy of an example project: real tests as the gate, the originals restored
+    before the oracle runs, hidden oracle tests added, and a shape target."""
+    src = REPO / t["source"]
+    return {
+        "id": t["id"], "family": t["family"], "shape_applies": True, "kind": "project",
+        "instruction": t["instruction"], "source": src,
+        "target": t["edit_file"], "also_glob": t["also_glob"],
+        "gate": t["gate"], "allowed_tools": t["allowed_tools"],
+        "restore": t["restore"],
+        "oracle_files": {k: (TASKS / v).read_text() for k, v in t["oracle_files"].items()},
+        "oracle_cmd": t["oracle_cmd"], "shape_rule": t["shape"], "b_grade": t["b_grade"],
+        "src_glob": t["src_glob"], "test_glob": t["test_glob"],
+    }
+
+
+def setup_workspace(task, ws):
+    if task["kind"] == "fixture":
+        (ws / task["target"]).parent.mkdir(parents=True, exist_ok=True)
+        (ws / task["target"]).write_text(task["start"])
+        return
+    shutil.copytree(task["source"], ws, dirs_exist_ok=True,
+                    ignore=shutil.ignore_patterns("target", ".git"))
+    (ws / ".gitignore").write_text("target/\n")
+
+
 def prompt_for(task, arm, rules_text):
-    p = (f"{task['instruction']}\n\n"
-         f"Edit {task['target']}. You may add or change tests in {task['test_file']}.\n"
-         f"You are done when this command exits 0: {task['gate']}\n")
+    if task["kind"] == "fixture":
+        p = (f"{task['instruction']}\n\n"
+             f"Edit {task['target']}. You may add or change tests in {task['test_file']}.\n"
+             f"You are done when this command exits 0: {task['gate']}\n")
+    else:
+        p = (f"{task['instruction']}\n\n"
+             f"You are done when this command exits 0: {task['gate']}\n")
     if arm == "C":
         p += ("\nFollow these architecture rules:\n```toml\n" + rules_text + "\n```\n")
     return p
@@ -83,6 +124,15 @@ def bun_counts(text):
     pa = re.search(r"(\d+) pass", text)
     fa = re.search(r"(\d+) fail", text)
     return (int(pa.group(1)) if pa else 0), (int(fa.group(1)) if fa else 0)
+
+
+def cargo_counts(text):
+    """Summed over every test binary; a build that fails counts as one failure."""
+    passed = sum(int(m) for m in re.findall(r"test result: \w+\. (\d+) passed", text))
+    failed = sum(int(m) for m in re.findall(r"(\d+) failed;", text))
+    if re.search(r"^error(\[E\d+\])?:", text, re.M) and failed == 0:
+        failed = 1
+    return passed, failed
 
 
 def lizard_metrics(ws, paths):
@@ -119,8 +169,22 @@ def grade_of(ws):
         return {"grade": None, "score": None, "violations": None, "gradeable": False}
     v = j.get("violations")
     nviol = len(v) if isinstance(v, list) else v
-    return {"grade": j.get("grade"), "score": j.get("score"), "violations": nviol,
+    c = j.get("circular_deps")
+    ncyc = len(c) if isinstance(c, list) else c
+    return {"grade": j.get("grade"), "score": j.get("score"), "violations": nviol, "cycles": ncyc,
             "gradeable": bool(j.get("layer_inventory"))}
+
+
+def shape_ok_for(rule, shape):
+    """The task's shape target; for fixtures (no rule), grade >= A and 0 violations."""
+    rule = rule or {"min_grade": "A", "max_violations": 0}
+    if shape["grade"] not in GRADES:
+        return False
+    ok = GRADES.index(shape["grade"]) >= GRADES.index(rule["min_grade"])
+    ok = ok and (shape["violations"] or 0) <= rule["max_violations"]
+    if "max_cycles" in rule:
+        ok = ok and (shape["cycles"] or 0) <= rule["max_cycles"]
+    return ok
 
 
 def run_transcripts(run_root):
@@ -162,8 +226,7 @@ def main():
     root = Path(tempfile.mkdtemp(prefix=f"hexa-ab-{a.task}-{a.arm}-"))
     ws = root / "ws"
     ws.mkdir()
-    (ws / task["target"]).parent.mkdir(parents=True, exist_ok=True)
-    (ws / task["target"]).write_text(task["start"])
+    setup_workspace(task, ws)
     for c in (["git", "init", "-q"], ["git", "add", "-A"],
               ["git", "-c", "user.name=ab", "-c", "user.email=ab@local", "commit", "-qm", "base"]):
         sh(c, cwd=ws)
@@ -172,7 +235,10 @@ def main():
     log = root / "claude-calls.jsonl"
     env = dict(os.environ)
     env.update({"PATH": f"{SHIM_DIR}:{env['PATH']}", "HEXA_AB_LOG": str(log), "HEXA_AB_MODEL": a.model,
-                "HEXA_CLAUDE_BINARY": str(SHIM_DIR / "claude")})  # hexa's frontier path, too
+                "HEXA_CLAUDE_BINARY": str(SHIM_DIR / "claude"),  # hexa's frontier path, too
+                "HEXA_AB_ALLOWED_TOOLS": task["allowed_tools"],
+                # Dependencies build once per task; each run's own crate still builds fresh.
+                "CARGO_TARGET_DIR": str(CARGO_SHARED / task["id"])})
     prompt = prompt_for(task, a.arm, rules_text)
 
     t0 = time.time()
@@ -182,23 +248,37 @@ def main():
         cmd = ["true"]
     elif a.arm in ("A", "C"):
         cmd = ["claude", "-p", "--model", a.model, prompt]  # bin/claude adds the sandbox
-    else:
+    elif task["kind"] == "fixture":
         cmd = [HEXA, "do", "run", prompt, "--file", task["target"], "--evidence", task["gate"],
                "--model", a.model, "--also", task["test_file"]]
+    else:
+        # hexa's own two gates: the command, and the architecture grade.
+        evidence = f"{task['gate']} && {HEXA} analyze . --grade {task['b_grade']}"
+        also = sorted(str(p.relative_to(ws)) for p in ws.glob(task["also_glob"]) if p.is_file())
+        cmd = [HEXA, "do", "run", prompt, "--file", task["target"], "--evidence", evidence,
+               "--model", a.model]
+        for f in also:
+            if f != task["target"]:
+                cmd += ["--also", f]
     code, out, err, wall, timed_out = sh(cmd, cwd=ws, timeout=a.timeout, env=env)
 
     # Own gate, as the agent left it.
-    g_code, g_out, g_err, _, _ = sh(["bash", "-lc", task["gate"]], cwd=ws, timeout=120)
+    g_code, g_out, g_err, _, _ = sh(["bash", "-lc", task["gate"]], cwd=ws, timeout=600, env=env)
     own_pass = g_code == 0
 
     # Oracle, on a copy the agent never touched.
     oc = root / "oracle"
-    shutil.copytree(ws, oc, ignore=shutil.ignore_patterns(".git"))
+    shutil.copytree(ws, oc, ignore=shutil.ignore_patterns(".git", "target"))
+    for rel in task.get("restore", []):  # the agent's edits to the tests do not count
+        shutil.rmtree(oc / rel, ignore_errors=True)
+        shutil.copytree(task["source"] / rel, oc / rel)
     for rel, body in task["oracle_files"].items():
         (oc / rel).parent.mkdir(parents=True, exist_ok=True)
         (oc / rel).write_text(body)
-    o_code, o_out, o_err, _, _ = sh(["bash", "-lc", task["oracle_cmd"]], cwd=oc, timeout=120)
-    o_pass, o_fail = bun_counts(o_out + o_err)
+    o_code, o_out, o_err, _, _ = sh(["bash", "-lc", task["oracle_cmd"]], cwd=oc, timeout=600, env=env)
+    counts = bun_counts if task["kind"] == "fixture" else cargo_counts
+    o_pass, o_fail = counts(o_out + o_err)
+    (root / "oracle-output.txt").write_text(o_out + o_err)
 
     # Size and complexity of what was left behind.
     sh(["git", "add", "-A"], cwd=ws)
@@ -208,8 +288,13 @@ def main():
         parts = line.split("\t")
         if len(parts) == 3 and parts[0].isdigit():
             added += int(parts[0]); removed += int(parts[1]); files_changed += 1
-    src = lizard_metrics(ws, [task["target"]])
-    tests = lizard_metrics(ws, [task["test_file"]])
+    if task["kind"] == "fixture":
+        src_paths, test_paths = [task["target"]], [task["test_file"]]
+    else:
+        src_paths = sorted(str(p.relative_to(ws)) for p in ws.glob(task["src_glob"]) if p.is_file())
+        test_paths = sorted(str(p.relative_to(ws)) for p in ws.glob(task["test_glob"]) if p.is_file())
+    src = lizard_metrics(ws, src_paths)
+    tests = lizard_metrics(ws, test_paths)
     shape = grade_of(ws)
     if not task["shape_applies"]:
         shape["gradeable"] = False
@@ -247,9 +332,7 @@ def main():
         void.append("no model call was recorded")
 
     oracle_ok = o_code == 0 and o_fail == 0 and o_pass > 0
-    grade_ok = (shape["grade"] in GRADES and GRADES.index(shape["grade"]) >= GRADES.index("A")) if shape["gradeable"] else None
-    viol_ok = (shape["violations"] == 0) if shape["gradeable"] else None
-    shape_ok = None if not shape["gradeable"] else (grade_ok and viol_ok)
+    shape_ok = shape_ok_for(task["shape_rule"], shape) if shape["gradeable"] else None
     rec = {
         "task": task["id"], "family": task["family"], "arm": a.arm, "model": a.model, "run": a.run,
         "started": t0, "timed_out": timed_out, "agent_exit": code,

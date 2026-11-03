@@ -1,0 +1,17 @@
+{
+  "id": "linkstore-cache",
+  "family": "shape",
+  "source": "examples/linkstore-svc",
+  "instruction": "Reading a bookmark is slow because every read goes to the store. Make BookmarkService::get serve a bookmark it has already returned without calling the store again. A bookmark that has since been saved again or deleted must never be served stale. Keep BookmarkService::new(store, clock) exactly as it is.",
+  "edit_file": "src/usecases/bookmarks.rs",
+  "also_glob": "src/**/*.rs",
+  "gate": "cargo test",
+  "allowed_tools": "Edit,Write,Bash(cargo test:*),Bash(cargo build:*),Bash(cargo check:*)",
+  "restore": ["tests"],
+  "oracle_files": {"tests/oracle_cache.rs": "linkstore-cache/oracle_cache.rs"},
+  "oracle_cmd": "cargo test",
+  "shape": {"min_grade": "A", "max_violations": 0, "max_cycles": 0},
+  "b_grade": "A",
+  "src_glob": "src/**/*.rs",
+  "test_glob": "tests/**/*.rs"
+}

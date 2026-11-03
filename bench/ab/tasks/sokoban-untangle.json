@@ -1,0 +1,17 @@
+{
+  "id": "sokoban-untangle",
+  "family": "shape",
+  "source": "examples/stress/game-sokoban-rs-tangled",
+  "instruction": "This Sokoban works and its tests pass, but its architecture is tangled: some modules import across the hexagonal layers they should not, and two domain modules import each other. Refactor it so the layering is clean and the module cycle is gone, without changing what the game does. Keep the public API that the tests in tests/ use, and do not edit anything under tests/.",
+  "edit_file": "src/lib.rs",
+  "also_glob": "src/**/*.rs",
+  "gate": "cargo test",
+  "allowed_tools": "Edit,Write,Bash(cargo test:*),Bash(cargo build:*),Bash(cargo check:*)",
+  "restore": ["tests"],
+  "oracle_files": {},
+  "oracle_cmd": "cargo test",
+  "shape": {"min_grade": "A", "max_violations": 0, "max_cycles": 0},
+  "b_grade": "A",
+  "src_glob": "src/**/*.rs",
+  "test_glob": "tests/**/*.rs"
+}
