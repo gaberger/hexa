@@ -97,6 +97,44 @@ def load_project_task(t):
     }
 
 
+def crate_name(src):
+    m = re.search(r'^name\s*=\s*"([^"]+)"', (src / "Cargo.toml").read_text(), re.M)
+    return m.group(1)
+
+
+def deps_template(task):
+    """A target directory holding the task's built dependencies and nothing of the
+    task's own crate. Built once per task, under a lock, from a pristine copy.
+
+    Never share one target directory between runs: cargo tracks a crate by the
+    absolute source paths it was last built from, so a fresh workspace copied
+    with its timestamps can reuse a binary built from another run's code."""
+    import fcntl
+    tpl = CARGO_SHARED / f"{task['id']}-deps"
+    CARGO_SHARED.mkdir(parents=True, exist_ok=True)
+    with open(CARGO_SHARED / f"{task['id']}.lock", "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if (tpl / ".ready").exists():
+            return tpl
+        shutil.rmtree(tpl, ignore_errors=True)
+        src = CARGO_SHARED / f"{task['id']}-src"
+        shutil.rmtree(src, ignore_errors=True)
+        shutil.copytree(task["source"], src, ignore=shutil.ignore_patterns("target", ".git"))
+        env = dict(os.environ, CARGO_TARGET_DIR=str(tpl))
+        sh(["cargo", "build", "--tests", "-q"], cwd=src, timeout=1800, env=env)
+        sh(["cargo", "clean", "-q", "-p", crate_name(src)], cwd=src, timeout=300, env=env)
+        (tpl / ".ready").write_text("dependencies only\n")
+        return tpl
+
+
+def private_target(task, dest):
+    """A run's own target directory, seeded with the task's built dependencies."""
+    if task["kind"] != "project":
+        return None
+    shutil.copytree(deps_template(task), dest, symlinks=True)
+    return dest
+
+
 def setup_workspace(task, ws):
     if task["kind"] == "fixture":
         (ws / task["target"]).parent.mkdir(parents=True, exist_ok=True)
@@ -236,9 +274,10 @@ def main():
     env = dict(os.environ)
     env.update({"PATH": f"{SHIM_DIR}:{env['PATH']}", "HEXA_AB_LOG": str(log), "HEXA_AB_MODEL": a.model,
                 "HEXA_CLAUDE_BINARY": str(SHIM_DIR / "claude"),  # hexa's frontier path, too
-                "HEXA_AB_ALLOWED_TOOLS": task["allowed_tools"],
-                # Dependencies build once per task; each run's own crate still builds fresh.
-                "CARGO_TARGET_DIR": str(CARGO_SHARED / task["id"])})
+                "HEXA_AB_ALLOWED_TOOLS": task["allowed_tools"]})
+    agent_target = private_target(task, root / "target-agent")
+    if agent_target:
+        env["CARGO_TARGET_DIR"] = str(agent_target)
     prompt = prompt_for(task, a.arm, rules_text)
 
     t0 = time.time()
@@ -275,7 +314,11 @@ def main():
     for rel, body in task["oracle_files"].items():
         (oc / rel).parent.mkdir(parents=True, exist_ok=True)
         (oc / rel).write_text(body)
-    o_code, o_out, o_err, _, _ = sh(["bash", "-lc", task["oracle_cmd"]], cwd=oc, timeout=600, env=env)
+    oenv = dict(env)
+    oracle_target = private_target(task, root / "target-oracle")
+    if oracle_target:  # never the agent's: it holds binaries built from the agent's tests
+        oenv["CARGO_TARGET_DIR"] = str(oracle_target)
+    o_code, o_out, o_err, _, _ = sh(["bash", "-lc", task["oracle_cmd"]], cwd=oc, timeout=600, env=oenv)
     counts = bun_counts if task["kind"] == "fixture" else cargo_counts
     o_pass, o_fail = counts(o_out + o_err)
     (root / "oracle-output.txt").write_text(o_out + o_err)
@@ -356,6 +399,9 @@ def main():
     }
     if HELPER_MODELS:
         rec["helper_models_allowed"] = HELPER_MODELS
+    for t in (agent_target, oracle_target):  # build output only; sources and logs stay
+        if t:
+            shutil.rmtree(t, ignore_errors=True)
     out_dir = Path(a.out) / a.model / a.arm
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{task['id']}--r{a.run}.json"

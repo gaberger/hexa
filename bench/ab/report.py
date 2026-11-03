@@ -123,8 +123,23 @@ def num(x, d=0):
     return "—" if x is None else (f"{x:.{d}f}" if isinstance(x, float) else str(x))
 
 
+FAMILY_TITLES = {
+    "change": "Change existing code (the hexa fixtures)",
+    "shape": "Shape traps (hexa's own examples)",
+}
+
+
 def markdown(ev):
-    out = ["# hexa A/B evidence, by model", ""]
+    out = ["# hexa A/B evidence, by family and model", ""]
+    for fam, block in ev["families"].items():
+        out += [f"# {FAMILY_TITLES.get(fam, fam)}", "",
+                f"Tasks: {', '.join(block['tasks'])}.", ""]
+        out += markdown_models(block["models"])
+    return "\n".join(out)
+
+
+def markdown_models(models):
+    out = []
     rows = [("runs launched / void", lambda s: f"{s['runs_launched']} / {s['runs_void']}"),
             ("**accepted-correct**", lambda s: pct(s["accuracy"]["accepted_correct"])),
             ("oracle pass", lambda s: pct(s["accuracy"]["oracle_pass"])),
@@ -144,7 +159,7 @@ def markdown(ev):
             ("CCN mean, median", lambda s: num(s["complexity"]["ccn_mean_median"], 1)),
             ("CCN max, median", lambda s: num(s["complexity"]["ccn_max_median"])),
             ("longest function, median", lambda s: num(s["complexity"]["fn_len_max_median"]))]
-    for model, m in ev["models"].items():
+    for model, m in models.items():
         arms = sorted(m["arms"])
         out += [f"## {model}", "", "| metric | " + " | ".join(arms) + " |", "|---|" + "---:|" * len(arms)]
         for label, f in rows:
@@ -158,7 +173,18 @@ def markdown(ev):
         if voids:
             out.append("- void reasons: " + "; ".join(voids))
         out.append("")
-    return "\n".join(out)
+    return out
+
+
+def by_model(recs, rng):
+    models = {}
+    for model in sorted({r["model"] for r in recs}):
+        rs = [r for r in recs if r["model"] == model]
+        models[model] = {
+            "arms": {arm: summarize([r for r in rs if r["arm"] == arm]) for arm in sorted({r["arm"] for r in rs})},
+            "paired": {"B−A": paired_diff(rs, "B", "A", rng), "C−A": paired_diff(rs, "C", "A", rng)},
+        }
+    return models
 
 
 def main():
@@ -166,13 +192,14 @@ def main():
     runs_dir = args[0] if args and not args[0].startswith("--") else str(Path(__file__).parent / "runs")
     recs = load(runs_dir)
     rng = random.Random(SEED)
-    ev = {"runs_dir": runs_dir, "models": {}}
-    for model in sorted({r["model"] for r in recs}):
-        rs = [r for r in recs if r["model"] == model]
-        ev["models"][model] = {
-            "arms": {arm: summarize([r for r in rs if r["arm"] == arm]) for arm in sorted({r["arm"] for r in rs})},
-            "paired": {"B−A": paired_diff(rs, "B", "A", rng), "C−A": paired_diff(rs, "C", "A", rng)},
-        }
+    order = [f for f in FAMILY_TITLES if any(r["family"] == f for r in recs)]
+    order += sorted({r["family"] for r in recs} - set(order))
+    ev = {"runs_dir": runs_dir, "families": {}, "models": by_model(recs, rng)}
+    for fam in order:
+        fr = [r for r in recs if r["family"] == fam]
+        ev["families"][fam] = {"title": FAMILY_TITLES.get(fam, fam),
+                               "tasks": sorted({r["task"] for r in fr}),
+                               "models": by_model(fr, rng)}
     md = markdown(ev)
     if "--json" in args:
         Path(args[args.index("--json") + 1]).write_text(json.dumps(ev, indent=2))
