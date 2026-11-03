@@ -1,4 +1,11 @@
-# hexa A/B: results
+# hexa A/B: results, part 1 (an existing hexagonal codebase)
+
+> **What this part measures, and what it does not.** In every task here, the
+> code each arm starts from is already laid out in hexa's layers (`domain/`,
+> `ports/`, `usecases/`, `adapters/`) and is graded by hexa's rules. Arm A is
+> "the same architecture, without hexa's tooling", not a model designing
+> freely. The blank-slate comparison, where arm A gets a behaviour-only spec
+> and an empty folder and chooses its own design, is in `greenfield/`.
 
 **Question (from the protocol):** with the model, prompt and budget held the
 same, does hexa change how often AI-written code is both correct and the right
