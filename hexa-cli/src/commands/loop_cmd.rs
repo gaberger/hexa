@@ -292,6 +292,78 @@ pub fn update_loop(dir: &Path, patch: serde_json::Value) -> Result<serde_json::V
     update_entry(dir, &session_id(), session_pid(), patch)
 }
 
+/// What `record_run_gate` did with a run's evidence (ADR-2611020815).
+#[derive(Debug, Clone, PartialEq)]
+pub enum RunGate {
+    /// The loop had no gate, or this one: the gate and stage were written.
+    Recorded,
+    /// The loop has a different gate, which was kept with its stage; the run
+    /// was noted under `last_run`.
+    Kept { loop_gate: String },
+}
+
+/// Record a run's evidence command against this session's loop. A run is not
+/// the loop's work: it becomes the gate only when none (or the same one) is
+/// recorded. `hexa loop gate` is how the operator replaces a gate.
+pub fn record_run_gate(dir: &Path, gate: &str, stage: &str, fast_gate: Option<&str>) -> Result<RunGate, String> {
+    record_run_gate_in(dir, &session_id(), session_pid(), gate, stage, fast_gate)
+}
+
+fn record_run_gate_in(
+    dir: &Path,
+    session: &str,
+    pid: u64,
+    gate: &str,
+    stage: &str,
+    fast_gate: Option<&str>,
+) -> Result<RunGate, String> {
+    let mut outcome = RunGate::Recorded;
+    // Read and decide under the writer's hold, so a concurrent `hexa loop
+    // gate` cannot land between the check and the write.
+    edit_entry(dir, session, pid, |obj| {
+        let recorded = obj.get("gate").and_then(|v| v.as_str()).filter(|g| !g.is_empty());
+        match recorded {
+            Some(g) if g != gate => {
+                outcome = RunGate::Kept { loop_gate: g.to_string() };
+                obj.insert(
+                    "last_run".to_string(),
+                    serde_json::json!({ "gate": gate, "stage": stage, "at": chrono::Utc::now().to_rfc3339() }),
+                );
+            }
+            _ => {
+                obj.insert("gate".to_string(), serde_json::json!(gate));
+                obj.insert("stage".to_string(), serde_json::json!(stage));
+                if let Some(f) = fast_gate {
+                    obj.insert("fast_gate".to_string(), serde_json::json!(f));
+                }
+            }
+        }
+    })?;
+    Ok(outcome)
+}
+
+/// The line a command prints when its run's evidence did not replace the
+/// loop's gate (ADR-2611020815 §3).
+pub fn kept_gate_line(r: &RunGate) -> Option<String> {
+    match r {
+        RunGate::Recorded => None,
+        RunGate::Kept { loop_gate } => Some(format!(
+            "loop gate kept: {loop_gate} — this run's evidence is recorded as last_run; `hexa loop gate '<cmd>'` replaces the gate"
+        )),
+    }
+}
+
+/// Record a run's gate and print the kept-gate line if there is one. Errors
+/// are not the run's concern: outside a hexa project there is no loop.
+pub fn note_run_gate(gate: &str, stage: &str, fast_gate: Option<&str>) {
+    let Ok(cwd) = std::env::current_dir() else { return };
+    if let Ok(r) = record_run_gate(&cwd, gate, stage, fast_gate) {
+        if let Some(line) = kept_gate_line(&r) {
+            eprintln!("⬡ {line}");
+        }
+    }
+}
+
 /// Remove one session's entry; the file goes with the last one. Returns
 /// whether there was an entry.
 fn clear_entry(dir: &Path, session: &str) -> Result<bool, String> {
@@ -1528,5 +1600,94 @@ test result: ok. 0 passed; 0 failed";
         assert!(!GateOutcome::Vacuous.closes());
         assert!(GateOutcome::Vacuous.line().contains("0 passed is not a pass"));
         assert!(GateOutcome::Failed("boom".into()).line().contains("FAILED"));
+    }
+}
+
+/// ADR-2611020815: a run records its evidence as the loop's gate only when
+/// the loop has none or the same one; a different gate, and the stage, are
+/// kept, and the run is noted under `last_run`.
+#[cfg(test)]
+mod run_gate {
+    use super::*;
+
+    fn project(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("hexa-run-gate-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".hexa")).unwrap();
+        dir
+    }
+
+    #[test]
+    fn run_gate_is_recorded_when_the_loop_has_none() {
+        let dir = project("none");
+        update_entry(&dir, "aaaa", 1, serde_json::json!({"adr": "ADR-A", "stage": "decide"})).unwrap();
+        let r = record_run_gate_in(&dir, "aaaa", 1, "cargo test a", "build", None).unwrap();
+        assert_eq!(r, RunGate::Recorded);
+        let e = read_entry(&dir, "aaaa").unwrap();
+        assert_eq!(e["gate"], "cargo test a");
+        assert_eq!(e["stage"], "build");
+        assert_eq!(e["adr"], "ADR-A", "nothing else moves");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn run_gate_with_no_entry_at_all_is_recorded() {
+        let dir = project("noentry");
+        assert_eq!(record_run_gate_in(&dir, "aaaa", 1, "cargo test a", "build", None).unwrap(), RunGate::Recorded);
+        assert_eq!(read_entry(&dir, "aaaa").unwrap()["gate"], "cargo test a");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn run_gate_empty_or_null_counts_as_none() {
+        for (tag, gate) in [("empty", serde_json::json!("")), ("null", serde_json::Value::Null)] {
+            let dir = project(tag);
+            update_entry(&dir, "aaaa", 1, serde_json::json!({"gate": gate, "stage": "gate"})).unwrap();
+            assert_eq!(record_run_gate_in(&dir, "aaaa", 1, "cargo test a", "build", None).unwrap(), RunGate::Recorded, "{tag}");
+            let e = read_entry(&dir, "aaaa").unwrap();
+            assert_eq!(e["gate"], "cargo test a", "{tag}");
+            assert_eq!(e["stage"], "build", "{tag}");
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    #[test]
+    fn run_gate_the_same_gate_moves_the_stage() {
+        let dir = project("same");
+        update_entry(&dir, "aaaa", 1, serde_json::json!({"gate": "cargo test a", "stage": "build"})).unwrap();
+        let r = record_run_gate_in(&dir, "aaaa", 1, "cargo test a", "harden", Some("cargo test -q a")).unwrap();
+        assert_eq!(r, RunGate::Recorded);
+        let e = read_entry(&dir, "aaaa").unwrap();
+        assert_eq!(e["stage"], "harden");
+        assert_eq!(e["fast_gate"], "cargo test -q a", "fast_gate follows a recorded gate");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The strata incident: side work's evidence must not become the spike's gate.
+    #[test]
+    fn run_gate_a_different_gate_is_kept_with_its_stage_and_the_run_is_noted() {
+        let dir = project("different");
+        update_entry(&dir, "aaaa", 1, serde_json::json!({"adr": "ADR-SPIKE", "gate": "ci/check-bench-smoke.sh", "stage": "gate"})).unwrap();
+        let r = record_run_gate_in(&dir, "aaaa", 1, "/tmp/s28-gate.sh", "build", Some("fast")).unwrap();
+        assert_eq!(r, RunGate::Kept { loop_gate: "ci/check-bench-smoke.sh".to_string() });
+        let e = read_entry(&dir, "aaaa").unwrap();
+        assert_eq!(e["gate"], "ci/check-bench-smoke.sh", "the loop's gate is kept: {e}");
+        assert_eq!(e["stage"], "gate", "the loop's stage is kept: {e}");
+        assert_eq!(e["adr"], "ADR-SPIKE");
+        assert!(e.get("fast_gate").is_none_or(|v| v.is_null()), "fast_gate is written only with the gate: {e}");
+        assert_eq!(e["last_run"]["gate"], "/tmp/s28-gate.sh", "{e}");
+        assert_eq!(e["last_run"]["stage"], "build", "{e}");
+        assert!(e["last_run"]["at"].as_str().is_some_and(|s| !s.is_empty()), "{e}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn run_gate_operator_gate_still_replaces() {
+        let dir = project("operator");
+        update_entry(&dir, "aaaa", 1, serde_json::json!({"gate": "old", "stage": "build"})).unwrap();
+        // `hexa loop gate` is the operator's decision and writes through update_entry.
+        update_entry(&dir, "aaaa", 1, serde_json::json!({"gate": "new", "stage": "gate"})).unwrap();
+        assert_eq!(read_entry(&dir, "aaaa").unwrap()["gate"], "new");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

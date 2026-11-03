@@ -60,10 +60,9 @@ pub async fn run(action: DoAction) -> anyhow::Result<()> {
             // Interactive operator run: commit on the operator's own branch
             // (ADR-2606071323 scopes `hexa do` out of worktree isolation — the
             // human owns their tree). Unset/autonomous callers isolate by default.
-            // The evidence command is the gate; record it so the loop shows it.
-            if let Ok(cwd) = std::env::current_dir() {
-                let _ = crate::commands::loop_cmd::update_loop(&cwd, json!({ "gate": evidence, "stage": "build" }));
-            }
+            // The evidence command becomes the loop's gate only if it has none
+            // (ADR-2611020815): side work must not replace the work's gate.
+            crate::commands::loop_cmd::note_run_gate(&evidence, "build", None);
             let mut body = json!({ "instruction": instruction, "file": file, "evidence": evidence, "fast": fast, "isolate": false, "also": also });
             if let Some(m) = model {
                 body["model"] = json!(m);
