@@ -123,11 +123,25 @@ def grade_of(ws):
             "gradeable": bool(j.get("layer_inventory"))}
 
 
-def transcripts_since(t0):
-    root = Path.home() / ".claude" / "projects"
-    if not root.exists():
+def run_transcripts(run_root):
+    """This run's own agent transcripts: the CLI files each session under a folder
+    named for its working directory, and every agent here works under run_root.
+    Other sessions' transcripts (including whoever launched the bench) are not read."""
+    projects = Path.home() / ".claude" / "projects"
+    slug = re.sub(r"[^A-Za-z0-9]", "-", str(run_root))
+    if not projects.exists():
         return []
-    return [p for p in root.rglob("*.jsonl") if p.stat().st_mtime >= t0]
+    return [p for d in projects.iterdir() if d.is_dir() and d.name.startswith(slug)
+            for p in d.rglob("*.jsonl")]
+
+
+def leak_markers(run_root):
+    """Oracle material named in this run's transcripts, outside the prompt."""
+    found = set()
+    for t in run_transcripts(run_root):
+        body = t.read_text(errors="replace")
+        found |= {m for m in LEAK_MARKERS if m in body}
+    return sorted(found)
 
 
 def main():
@@ -215,11 +229,7 @@ def main():
         "permission_denials": sum(c.get("permission_denials", 0) for c in calls),
     }
 
-    leaks = []
-    for t in transcripts_since(t0):
-        body = t.read_text(errors="replace")
-        if str(ws) in body or str(root) in body or (a.arm == "B" and f"bench-tmp/{task['id']}" in body and t0 <= t.stat().st_mtime):
-            leaks += [m for m in LEAK_MARKERS if m in body]
+    leaks = leak_markers(root)
 
     void = []
     if any(c["model_mismatch"] for c in calls):
@@ -228,7 +238,7 @@ def main():
     if others:
         void.append(f"other models served calls: {others}")
     if leaks:
-        void.append(f"transcript touched oracle material: {sorted(set(leaks))}")
+        void.append(f"transcript touched oracle material: {leaks}")
     if any(not c.get("sandboxed") for c in calls):
         void.append("a call ran outside the sandbox")
     if calls and cost["unmetered_calls"]:
