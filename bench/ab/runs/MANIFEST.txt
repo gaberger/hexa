@@ -1,0 +1,6 @@
+hexa_commit=a3c43112d6cc91fe6a8839f86545a551c234c3f0
+claude_cli=2.1.317 (Claude Code)
+lizard=1.17.13
+bun=1.4.4
+models=claude-opus-5-5 claude-sonnet-5-5 claude-haiku-5-5 arms=A B C runs=5 timeout=1200 jobs=6
+started=2026-11-03T21:04:07Z
