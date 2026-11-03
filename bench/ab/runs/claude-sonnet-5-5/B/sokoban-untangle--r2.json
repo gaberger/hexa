@@ -1,0 +1,56 @@
+{
+  "task": "sokoban-untangle",
+  "family": "shape",
+  "arm": "B",
+  "model": "claude-sonnet-5-5",
+  "run": 2,
+  "started": 1793740237.130704,
+  "timed_out": false,
+  "agent_exit": 0,
+  "accuracy": {
+    "oracle_pass": true,
+    "oracle_tests_passed": 19,
+    "oracle_tests_failed": 0,
+    "own_gate_pass": true,
+    "false_green_correctness": false,
+    "false_green_shape": false,
+    "accepted_correct": true
+  },
+  "shape": {
+    "grade": "A+",
+    "score": 100,
+    "violations": 0,
+    "cycles": 0,
+    "gradeable": true
+  },
+  "loc": {
+    "src_nloc": 398,
+    "test_nloc": 200,
+    "test_to_src": 0.5,
+    "lines_added": 30,
+    "lines_removed": 63,
+    "files_changed": 9
+  },
+  "complexity": {
+    "functions": 27,
+    "ccn_mean": 2.41,
+    "ccn_max": 10,
+    "fn_len_max": 33
+  },
+  "cost": {
+    "calls": 1,
+    "unmetered_calls": 0,
+    "input_tokens": 24,
+    "output_tokens": 9447,
+    "cache_read_tokens": 564185,
+    "cache_write_tokens": 32876,
+    "usd": 0.2824,
+    "wall_s": 77.6,
+    "permission_denials": 7
+  },
+  "models_used": [
+    "claude-sonnet-5-5"
+  ],
+  "void": [],
+  "workspace": "/tmp/hexa-ab-sokoban-untangle-B-p3s6wwly"
+}
