@@ -124,6 +124,9 @@ h3 { font-size: 16px; margin: 0 0 6px; }
 .empty .big { font-size: 22px; margin-bottom: 8px; }
 .empty p { max-width: 52ch; margin: 0 auto 16px; }
 .model-block { margin-bottom: 28px; }
+.family-head { margin: 8px 0 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+.family-head:first-of-type { border-top: 0; padding-top: 0; }
+.family-head h3 { font-size: 20px; margin: 0 0 2px; }
 .model-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
 .model-head h3 { font-size: 18px; margin: 0; }
 .verdict { font-size: 13px; font-weight: 600; border-radius: 999px; padding: 3px 10px; }
@@ -404,9 +407,23 @@ python3 -I bench/ab/report.py bench/ab/runs</code></pre>
     var legend = document.createElement("div"); legend.className = "legend";
     Object.keys(ARMS).forEach(function (k) { legend.innerHTML += '<span><span class="sw" style="background:' + ARMS[k].color + '"></span>' + k + " · " + ARMS[k].name + "</span>"; });
     body.appendChild(legend);
+    // One section per task family: a ceiling in one must not hide a difference in another.
+    var fams = ev.families || { all: { title: "All tasks", tasks: [], models: ev.models } };
+    Object.keys(fams).forEach(function (f) {
+      var fam = fams[f], head = document.createElement("div"); head.className = "family-head";
+      var h = document.createElement("h3"); h.textContent = fam.title; head.appendChild(h);
+      if (fam.tasks && fam.tasks.length) {
+        var p = document.createElement("p"); p.className = "chart-note"; p.textContent = "Tasks: " + fam.tasks.join(", ");
+        head.appendChild(p);
+      }
+      body.appendChild(head);
+      renderModels(fam.models, body);
+    });
+  }
 
-    models.forEach(function (model) {
-      var m = ev.models[model], arms = Object.keys(m.arms).sort();
+  function renderModels(models, body) {
+    Object.keys(models).forEach(function (model) {
+      var m = models[model], arms = Object.keys(m.arms).sort();
       var block = document.createElement("div"); block.className = "model-block";
       var ba = m.paired && m.paired["B−A"], verdict = '<span class="verdict unk">B vs A: needs both arms</span>';
       if (ba && m.arms.A && m.arms.B) {
@@ -415,8 +432,11 @@ python3 -I bench/ab/report.py bench/ab/runs</code></pre>
         var meets = ba.diff_points >= 20 && ratio != null && ratio <= 1.5;
         // A point estimate past the bar is not a win while the CI still includes zero.
         var sure = ba.ci95_points[0] > 0;
-        var cls = meets && sure ? "win" : (meets ? "unk" : "no");
-        var word = meets && sure ? "Meets the win condition" : (meets ? "Inconclusive: CI includes 0" : "Misses the win condition");
+        // When A already scores above 80%, B cannot gain 20 points: the task has no headroom.
+        var ceiling = !meets && m.arms.A.accuracy.accepted_correct != null && m.arms.A.accuracy.accepted_correct > 0.8;
+        var cls = meets && sure ? "win" : (meets || ceiling ? "unk" : "no");
+        var word = meets && sure ? "Meets the win condition" : (meets ? "Inconclusive: CI includes 0"
+          : (ceiling ? "No headroom: A already at " + pct(m.arms.A.accuracy.accepted_correct) : "Misses the win condition"));
         verdict = '<span class="verdict ' + cls + '">' + word + ": B−A " + (ba.diff_points >= 0 ? "+" : "") + ba.diff_points + " pts" +
           (ratio != null ? " at " + ratio.toFixed(2) + "× tokens" : "") + "</span>";
       }
