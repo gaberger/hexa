@@ -1,0 +1,61 @@
+{
+  "task": "store-identity",
+  "family": "change",
+  "arm": "A",
+  "model": "claude-opus-5-5",
+  "run": 3,
+  "started": 1793738049.0277305,
+  "timed_out": false,
+  "agent_exit": 0,
+  "accuracy": {
+    "oracle_pass": true,
+    "oracle_tests_passed": 3,
+    "oracle_tests_failed": 0,
+    "own_gate_pass": true,
+    "false_green_correctness": false,
+    "false_green_shape": false,
+    "accepted_correct": true
+  },
+  "shape": {
+    "grade": "F",
+    "score": 0,
+    "violations": 0,
+    "gradeable": false
+  },
+  "loc": {
+    "src_nloc": 13,
+    "test_nloc": 59,
+    "test_to_src": 4.54,
+    "lines_added": 74,
+    "lines_removed": 3,
+    "files_changed": 2
+  },
+  "complexity": {
+    "functions": 1,
+    "ccn_mean": 1.0,
+    "ccn_max": 1,
+    "fn_len_max": 1
+  },
+  "cost": {
+    "calls": 1,
+    "unmetered_calls": 0,
+    "input_tokens": 14,
+    "output_tokens": 3340,
+    "cache_read_tokens": 250132,
+    "cache_write_tokens": 12949,
+    "usd": 0.2205,
+    "wall_s": 45.4,
+    "permission_denials": 2
+  },
+  "models_used": [
+    "claude-opus-5-5"
+  ],
+  "void": [],
+  "workspace": "/tmp/hexa-ab-store-identity-A-j3vfaml7",
+  "void_lifted": {
+    "reason": [
+      "transcript touched oracle material: ['benchmarks/fixtures', 'oracle.test', 'setup_files']"
+    ],
+    "why": "the run's own 1 transcript(s) hold no oracle material; the old check also read other sessions' transcripts"
+  }
+}

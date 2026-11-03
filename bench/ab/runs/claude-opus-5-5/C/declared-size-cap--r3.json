@@ -1,0 +1,55 @@
+{
+  "task": "declared-size-cap",
+  "family": "change",
+  "arm": "C",
+  "model": "claude-opus-5-5",
+  "run": 3,
+  "started": 1793738808.0032907,
+  "timed_out": false,
+  "agent_exit": 0,
+  "accuracy": {
+    "oracle_pass": true,
+    "oracle_tests_passed": 4,
+    "oracle_tests_failed": 0,
+    "own_gate_pass": true,
+    "false_green_correctness": false,
+    "false_green_shape": false,
+    "accepted_correct": true
+  },
+  "shape": {
+    "grade": "F",
+    "score": 0,
+    "violations": 0,
+    "gradeable": false
+  },
+  "loc": {
+    "src_nloc": 6,
+    "test_nloc": 23,
+    "test_to_src": 3.83,
+    "lines_added": 37,
+    "lines_removed": 1,
+    "files_changed": 2
+  },
+  "complexity": {
+    "functions": 1,
+    "ccn_mean": 3.0,
+    "ccn_max": 3,
+    "fn_len_max": 5
+  },
+  "cost": {
+    "calls": 1,
+    "unmetered_calls": 0,
+    "input_tokens": 8,
+    "output_tokens": 2381,
+    "cache_read_tokens": 148855,
+    "cache_write_tokens": 10178,
+    "usd": 0.1588,
+    "wall_s": 36.7,
+    "permission_denials": 1
+  },
+  "models_used": [
+    "claude-opus-5-5"
+  ],
+  "void": [],
+  "workspace": "/tmp/hexa-ab-declared-size-cap-C-2wn_3hrz"
+}

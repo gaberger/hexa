@@ -1,0 +1,55 @@
+{
+  "task": "header-safe-url",
+  "family": "change",
+  "arm": "C",
+  "model": "claude-sonnet-5-5",
+  "run": 4,
+  "started": 1793738446.6029413,
+  "timed_out": false,
+  "agent_exit": 0,
+  "accuracy": {
+    "oracle_pass": true,
+    "oracle_tests_passed": 5,
+    "oracle_tests_failed": 0,
+    "own_gate_pass": true,
+    "false_green_correctness": false,
+    "false_green_shape": false,
+    "accepted_correct": true
+  },
+  "shape": {
+    "grade": "F",
+    "score": 0,
+    "violations": 0,
+    "gradeable": false
+  },
+  "loc": {
+    "src_nloc": 13,
+    "test_nloc": 26,
+    "test_to_src": 2.0,
+    "lines_added": 29,
+    "lines_removed": 0,
+    "files_changed": 2
+  },
+  "complexity": {
+    "functions": 1,
+    "ccn_mean": 7.0,
+    "ccn_max": 7,
+    "fn_len_max": 13
+  },
+  "cost": {
+    "calls": 1,
+    "unmetered_calls": 0,
+    "input_tokens": 10,
+    "output_tokens": 2880,
+    "cache_read_tokens": 189255,
+    "cache_write_tokens": 10847,
+    "usd": 0.0911,
+    "wall_s": 24.6,
+    "permission_denials": 2
+  },
+  "models_used": [
+    "claude-sonnet-5-5"
+  ],
+  "void": [],
+  "workspace": "/tmp/hexa-ab-header-safe-url-C-b1nw3u2i"
+}

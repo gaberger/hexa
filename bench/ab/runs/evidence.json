@@ -1,0 +1,395 @@
+{
+  "runs_dir": "runs",
+  "models": {
+    "claude-haiku-5-5": {
+      "arms": {
+        "A": {
+          "runs_launched": 25,
+          "runs_void": 0,
+          "accuracy": {
+            "accepted_correct": 1.0,
+            "oracle_pass": 1.0,
+            "own_gate_pass": 1.0,
+            "false_green_correctness": 0.0,
+            "false_green_shape": 0.0,
+            "timeouts": 0.0
+          },
+          "shape": {
+            "grade_distribution": null,
+            "violations_median": null
+          },
+          "cost": {
+            "usd_total": 0.1499,
+            "usd_median_per_run": 0.0057,
+            "tokens_median_per_run": 196997,
+            "wall_s_median_per_run": 20.1,
+            "usd_per_accepted_correct": 0.006,
+            "tokens_per_accepted_correct": 219584
+          },
+          "loc": {
+            "src_nloc_median": 13,
+            "test_nloc_median": 47,
+            "test_to_src_median": 3.0,
+            "lines_changed_median": 69
+          },
+          "complexity": {
+            "ccn_mean_median": 4.0,
+            "ccn_max_median": 4,
+            "fn_len_max_median": 6
+          },
+          "void_reasons": []
+        },
+        "B": {
+          "runs_launched": 25,
+          "runs_void": 0,
+          "accuracy": {
+            "accepted_correct": 1.0,
+            "oracle_pass": 1.0,
+            "own_gate_pass": 1.0,
+            "false_green_correctness": 0.0,
+            "false_green_shape": 0.0,
+            "timeouts": 0.0
+          },
+          "shape": {
+            "grade_distribution": null,
+            "violations_median": null
+          },
+          "cost": {
+            "usd_total": 0.1382,
+            "usd_median_per_run": 0.0053,
+            "tokens_median_per_run": 193508,
+            "wall_s_median_per_run": 18.8,
+            "usd_per_accepted_correct": 0.0055,
+            "tokens_per_accepted_correct": 201660
+          },
+          "loc": {
+            "src_nloc_median": 13,
+            "test_nloc_median": 26,
+            "test_to_src_median": 2.46,
+            "lines_changed_median": 45
+          },
+          "complexity": {
+            "ccn_mean_median": 4.0,
+            "ccn_max_median": 4,
+            "fn_len_max_median": 6
+          },
+          "void_reasons": []
+        },
+        "C": {
+          "runs_launched": 25,
+          "runs_void": 0,
+          "accuracy": {
+            "accepted_correct": 0.96,
+            "oracle_pass": 0.96,
+            "own_gate_pass": 0.96,
+            "false_green_correctness": 0.0,
+            "false_green_shape": 0.0,
+            "timeouts": 0.0
+          },
+          "shape": {
+            "grade_distribution": null,
+            "violations_median": null
+          },
+          "cost": {
+            "usd_total": 0.1642,
+            "usd_median_per_run": 0.0064,
+            "tokens_median_per_run": 249952,
+            "wall_s_median_per_run": 20.6,
+            "usd_per_accepted_correct": 0.0068,
+            "tokens_per_accepted_correct": 263377
+          },
+          "loc": {
+            "src_nloc_median": 14,
+            "test_nloc_median": 44,
+            "test_to_src_median": 3.29,
+            "lines_changed_median": 57
+          },
+          "complexity": {
+            "ccn_mean_median": 3.0,
+            "ccn_max_median": 4,
+            "fn_len_max_median": 6
+          },
+          "void_reasons": []
+        }
+      },
+      "paired": {
+        "B\u2212A": {
+          "tasks": 5,
+          "diff_points": 0,
+          "ci95_points": [
+            0,
+            0
+          ]
+        },
+        "C\u2212A": {
+          "tasks": 5,
+          "diff_points": -4.0,
+          "ci95_points": [
+            -16.0,
+            0
+          ]
+        }
+      }
+    },
+    "claude-opus-5-5": {
+      "arms": {
+        "A": {
+          "runs_launched": 25,
+          "runs_void": 0,
+          "accuracy": {
+            "accepted_correct": 1.0,
+            "oracle_pass": 1.0,
+            "own_gate_pass": 1.0,
+            "false_green_correctness": 0.0,
+            "false_green_shape": 0.0,
+            "timeouts": 0.0
+          },
+          "shape": {
+            "grade_distribution": null,
+            "violations_median": null
+          },
+          "cost": {
+            "usd_total": 4.4868,
+            "usd_median_per_run": 0.1764,
+            "tokens_median_per_run": 152375,
+            "wall_s_median_per_run": 31.6,
+            "usd_per_accepted_correct": 0.1795,
+            "tokens_per_accepted_correct": 185794
+          },
+          "loc": {
+            "src_nloc_median": 13,
+            "test_nloc_median": 42,
+            "test_to_src_median": 3.29,
+            "lines_changed_median": 67
+          },
+          "complexity": {
+            "ccn_mean_median": 4.0,
+            "ccn_max_median": 4,
+            "fn_len_max_median": 6
+          },
+          "void_reasons": []
+        },
+        "B": {
+          "runs_launched": 25,
+          "runs_void": 0,
+          "accuracy": {
+            "accepted_correct": 1.0,
+            "oracle_pass": 1.0,
+            "own_gate_pass": 1.0,
+            "false_green_correctness": 0.0,
+            "false_green_shape": 0.0,
+            "timeouts": 0.0
+          },
+          "shape": {
+            "grade_distribution": null,
+            "violations_median": null
+          },
+          "cost": {
+            "usd_total": 4.1702,
+            "usd_median_per_run": 0.1608,
+            "tokens_median_per_run": 152266,
+            "wall_s_median_per_run": 26.6,
+            "usd_per_accepted_correct": 0.1668,
+            "tokens_per_accepted_correct": 177907
+          },
+          "loc": {
+            "src_nloc_median": 13,
+            "test_nloc_median": 26,
+            "test_to_src_median": 2.57,
+            "lines_changed_median": 44
+          },
+          "complexity": {
+            "ccn_mean_median": 4.0,
+            "ccn_max_median": 4,
+            "fn_len_max_median": 6
+          },
+          "void_reasons": []
+        },
+        "C": {
+          "runs_launched": 25,
+          "runs_void": 0,
+          "accuracy": {
+            "accepted_correct": 1.0,
+            "oracle_pass": 1.0,
+            "own_gate_pass": 1.0,
+            "false_green_correctness": 0.0,
+            "false_green_shape": 0.0,
+            "timeouts": 0.0
+          },
+          "shape": {
+            "grade_distribution": null,
+            "violations_median": null
+          },
+          "cost": {
+            "usd_total": 4.7174,
+            "usd_median_per_run": 0.1788,
+            "tokens_median_per_run": 201669,
+            "wall_s_median_per_run": 33.5,
+            "usd_per_accepted_correct": 0.1887,
+            "tokens_per_accepted_correct": 201272
+          },
+          "loc": {
+            "src_nloc_median": 14,
+            "test_nloc_median": 47,
+            "test_to_src_median": 3.83,
+            "lines_changed_median": 73
+          },
+          "complexity": {
+            "ccn_mean_median": 4.0,
+            "ccn_max_median": 4,
+            "fn_len_max_median": 6
+          },
+          "void_reasons": []
+        }
+      },
+      "paired": {
+        "B\u2212A": {
+          "tasks": 5,
+          "diff_points": 0,
+          "ci95_points": [
+            0,
+            0
+          ]
+        },
+        "C\u2212A": {
+          "tasks": 5,
+          "diff_points": 0,
+          "ci95_points": [
+            0,
+            0
+          ]
+        }
+      }
+    },
+    "claude-sonnet-5-5": {
+      "arms": {
+        "A": {
+          "runs_launched": 25,
+          "runs_void": 0,
+          "accuracy": {
+            "accepted_correct": 1.0,
+            "oracle_pass": 1.0,
+            "own_gate_pass": 1.0,
+            "false_green_correctness": 0.0,
+            "false_green_shape": 0.0,
+            "timeouts": 0.0
+          },
+          "shape": {
+            "grade_distribution": null,
+            "violations_median": null
+          },
+          "cost": {
+            "usd_total": 1.9667,
+            "usd_median_per_run": 0.0733,
+            "tokens_median_per_run": 148675,
+            "wall_s_median_per_run": 20.8,
+            "usd_per_accepted_correct": 0.0787,
+            "tokens_per_accepted_correct": 175560
+          },
+          "loc": {
+            "src_nloc_median": 12,
+            "test_nloc_median": 20,
+            "test_to_src_median": 2.17,
+            "lines_changed_median": 31
+          },
+          "complexity": {
+            "ccn_mean_median": 4.0,
+            "ccn_max_median": 4,
+            "fn_len_max_median": 6
+          },
+          "void_reasons": []
+        },
+        "B": {
+          "runs_launched": 25,
+          "runs_void": 0,
+          "accuracy": {
+            "accepted_correct": 1.0,
+            "oracle_pass": 1.0,
+            "own_gate_pass": 1.0,
+            "false_green_correctness": 0.0,
+            "false_green_shape": 0.0,
+            "timeouts": 0.0
+          },
+          "shape": {
+            "grade_distribution": null,
+            "violations_median": null
+          },
+          "cost": {
+            "usd_total": 1.6418,
+            "usd_median_per_run": 0.0612,
+            "tokens_median_per_run": 111112,
+            "wall_s_median_per_run": 18.4,
+            "usd_per_accepted_correct": 0.0657,
+            "tokens_per_accepted_correct": 127872
+          },
+          "loc": {
+            "src_nloc_median": 13,
+            "test_nloc_median": 20,
+            "test_to_src_median": 1.75,
+            "lines_changed_median": 26
+          },
+          "complexity": {
+            "ccn_mean_median": 4.0,
+            "ccn_max_median": 4,
+            "fn_len_max_median": 6
+          },
+          "void_reasons": []
+        },
+        "C": {
+          "runs_launched": 25,
+          "runs_void": 0,
+          "accuracy": {
+            "accepted_correct": 1.0,
+            "oracle_pass": 1.0,
+            "own_gate_pass": 1.0,
+            "false_green_correctness": 0.0,
+            "false_green_shape": 0.0,
+            "timeouts": 0.0
+          },
+          "shape": {
+            "grade_distribution": null,
+            "violations_median": null
+          },
+          "cost": {
+            "usd_total": 2.0087,
+            "usd_median_per_run": 0.0771,
+            "tokens_median_per_run": 160926,
+            "wall_s_median_per_run": 23.8,
+            "usd_per_accepted_correct": 0.0803,
+            "tokens_per_accepted_correct": 179548
+          },
+          "loc": {
+            "src_nloc_median": 12,
+            "test_nloc_median": 21,
+            "test_to_src_median": 2.0,
+            "lines_changed_median": 32
+          },
+          "complexity": {
+            "ccn_mean_median": 4.0,
+            "ccn_max_median": 4,
+            "fn_len_max_median": 6
+          },
+          "void_reasons": []
+        }
+      },
+      "paired": {
+        "B\u2212A": {
+          "tasks": 5,
+          "diff_points": 0,
+          "ci95_points": [
+            0,
+            0
+          ]
+        },
+        "C\u2212A": {
+          "tasks": 5,
+          "diff_points": 0,
+          "ci95_points": [
+            0,
+            0
+          ]
+        }
+      }
+    }
+  }
+}

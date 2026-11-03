@@ -1,0 +1,55 @@
+{
+  "task": "header-safe-url",
+  "family": "change",
+  "arm": "B",
+  "model": "claude-haiku-5-5",
+  "run": 2,
+  "started": 1793738335.792509,
+  "timed_out": false,
+  "agent_exit": 0,
+  "accuracy": {
+    "oracle_pass": true,
+    "oracle_tests_passed": 5,
+    "oracle_tests_failed": 0,
+    "own_gate_pass": true,
+    "false_green_correctness": false,
+    "false_green_shape": false,
+    "accepted_correct": true
+  },
+  "shape": {
+    "grade": "F",
+    "score": 0,
+    "violations": 0,
+    "gradeable": false
+  },
+  "loc": {
+    "src_nloc": 17,
+    "test_nloc": 39,
+    "test_to_src": 2.29,
+    "lines_added": 57,
+    "lines_removed": 0,
+    "files_changed": 2
+  },
+  "complexity": {
+    "functions": 1,
+    "ccn_mean": 11.0,
+    "ccn_max": 11,
+    "fn_len_max": 17
+  },
+  "cost": {
+    "calls": 1,
+    "unmetered_calls": 0,
+    "input_tokens": 14,
+    "output_tokens": 4541,
+    "cache_read_tokens": 265254,
+    "cache_write_tokens": 13340,
+    "usd": 0.0076,
+    "wall_s": 24.3,
+    "permission_denials": 3
+  },
+  "models_used": [
+    "claude-haiku-5-5"
+  ],
+  "void": [],
+  "workspace": "/tmp/hexa-ab-header-safe-url-B-jfr1g50_"
+}

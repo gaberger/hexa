@@ -1,0 +1,55 @@
+{
+  "task": "highest-version",
+  "family": "change",
+  "arm": "C",
+  "model": "claude-haiku-5-5",
+  "run": 3,
+  "started": 1793738107.8200176,
+  "timed_out": false,
+  "agent_exit": 0,
+  "accuracy": {
+    "oracle_pass": false,
+    "oracle_tests_passed": 0,
+    "oracle_tests_failed": 4,
+    "own_gate_pass": false,
+    "false_green_correctness": false,
+    "false_green_shape": false,
+    "accepted_correct": false
+  },
+  "shape": {
+    "grade": "F",
+    "score": 0,
+    "violations": 0,
+    "gradeable": false
+  },
+  "loc": {
+    "src_nloc": 5,
+    "test_nloc": 0,
+    "test_to_src": 0.0,
+    "lines_added": 0,
+    "lines_removed": 0,
+    "files_changed": 0
+  },
+  "complexity": {
+    "functions": 2,
+    "ccn_mean": 1.5,
+    "ccn_max": 2,
+    "fn_len_max": 4
+  },
+  "cost": {
+    "calls": 1,
+    "unmetered_calls": 0,
+    "input_tokens": 8,
+    "output_tokens": 1385,
+    "cache_read_tokens": 151639,
+    "cache_write_tokens": 9065,
+    "usd": 0.004,
+    "wall_s": 10.9,
+    "permission_denials": 4
+  },
+  "models_used": [
+    "claude-haiku-5-5"
+  ],
+  "void": [],
+  "workspace": "/tmp/hexa-ab-highest-version-C-mu2l0l_l"
+}

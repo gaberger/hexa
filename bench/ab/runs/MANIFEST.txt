@@ -1,0 +1,14 @@
+hexa_commit=fada766e58f9f4a72d77fe116496316f1800b512
+claude_cli=2.1.317 (Claude Code)
+lizard=1.17.13
+bun=1.4.4
+models=claude-opus-5-5 claude-sonnet-5-5 claude-haiku-5-5 arms=A B C runs=5 timeout=600 jobs=6
+started=2026-11-03T20:33:36Z
+finished=2026-11-03T20:50:03Z, 225 runs
+note: the harness that ran is commit 23fbded (sandbox + first-run fixes); it was committed
+      just after this manifest was written, which is why hexa_commit reads fada766. The
+      product code (everything outside bench/ab) is identical at both.
+note: the leak-check fix (commit "bench/ab: leak check reads only the run's own transcripts")
+      landed mid-run. Runs started before it that were voided for leakage were rechecked
+      with recheck_leaks.py against their own transcripts: 7 lifted, 0 kept. Each keeps the
+      old reason under void_lifted.

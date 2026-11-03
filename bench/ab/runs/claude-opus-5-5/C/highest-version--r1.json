@@ -1,0 +1,55 @@
+{
+  "task": "highest-version",
+  "family": "change",
+  "arm": "C",
+  "model": "claude-opus-5-5",
+  "run": 1,
+  "started": 1793738563.4418628,
+  "timed_out": false,
+  "agent_exit": 0,
+  "accuracy": {
+    "oracle_pass": true,
+    "oracle_tests_passed": 4,
+    "oracle_tests_failed": 0,
+    "own_gate_pass": true,
+    "false_green_correctness": false,
+    "false_green_shape": false,
+    "accepted_correct": true
+  },
+  "shape": {
+    "grade": "F",
+    "score": 0,
+    "violations": 0,
+    "gradeable": false
+  },
+  "loc": {
+    "src_nloc": 28,
+    "test_nloc": 53,
+    "test_to_src": 1.89,
+    "lines_added": 98,
+    "lines_removed": 2,
+    "files_changed": 2
+  },
+  "complexity": {
+    "functions": 3,
+    "ccn_mean": 5.0,
+    "ccn_max": 8,
+    "fn_len_max": 13
+  },
+  "cost": {
+    "calls": 1,
+    "unmetered_calls": 0,
+    "input_tokens": 6,
+    "output_tokens": 2692,
+    "cache_read_tokens": 108978,
+    "cache_write_tokens": 10447,
+    "usd": 0.1592,
+    "wall_s": 24.3,
+    "permission_denials": 0
+  },
+  "models_used": [
+    "claude-opus-5-5"
+  ],
+  "void": [],
+  "workspace": "/tmp/hexa-ab-highest-version-C-rnxkzngy"
+}
