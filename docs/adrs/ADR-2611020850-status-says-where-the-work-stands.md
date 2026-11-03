@@ -40,8 +40,8 @@ could not tell.
 
 ## Gate
 
-`cargo test -p hexa-cli --test status_says_where_the_work_stands`: in a temp repo with a bare
-upstream, a commit ahead shows `ahead 1`; a modified and an untracked file show in the dirty
-counts with their paths; with no upstream the line says so; `--remote` against an unreachable URL
-prints unreachable and exits 0; without `--remote` the line says reachability was not checked; a
-loop entry with a gate, tasks and `last_run` shows all three; and `--json` carries the same fields.
+Not recorded yet: this decision is proposed and not built, and hexa's unbuilt list may only shrink (ADR-2610271110 §6), so it records no runnable gate until the work starts. The gate will be an integration test, status_says_where_the_work_stands in hexa-cli, that proves: in a temp repo with a bare
+upstream, a commit ahead shows ahead 1; a modified and an untracked file show in the dirty
+counts with their paths; with no upstream the line says so; --remote against an unreachable URL
+prints unreachable and exits 0; without --remote the line says reachability was not checked; a
+loop entry with a gate, tasks and last_run shows all three; and --json carries the same fields.
