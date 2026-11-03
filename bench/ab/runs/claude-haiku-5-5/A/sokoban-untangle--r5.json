@@ -1,0 +1,56 @@
+{
+  "task": "sokoban-untangle",
+  "family": "shape",
+  "arm": "A",
+  "model": "claude-haiku-5-5",
+  "run": 5,
+  "started": 1793739847.7381148,
+  "timed_out": false,
+  "agent_exit": 0,
+  "accuracy": {
+    "oracle_pass": true,
+    "oracle_tests_passed": 19,
+    "oracle_tests_failed": 0,
+    "own_gate_pass": true,
+    "false_green_correctness": false,
+    "false_green_shape": false,
+    "accepted_correct": true
+  },
+  "shape": {
+    "grade": "A+",
+    "score": 100,
+    "violations": 0,
+    "cycles": 0,
+    "gradeable": true
+  },
+  "loc": {
+    "src_nloc": 401,
+    "test_nloc": 200,
+    "test_to_src": 0.5,
+    "lines_added": 84,
+    "lines_removed": 102,
+    "files_changed": 13
+  },
+  "complexity": {
+    "functions": 27,
+    "ccn_mean": 2.41,
+    "ccn_max": 10,
+    "fn_len_max": 33
+  },
+  "cost": {
+    "calls": 1,
+    "unmetered_calls": 0,
+    "input_tokens": 32,
+    "output_tokens": 18335,
+    "cache_read_tokens": 878867,
+    "cache_write_tokens": 46619,
+    "usd": 0.0273,
+    "wall_s": 101.0,
+    "permission_denials": 4
+  },
+  "models_used": [
+    "claude-haiku-5-5"
+  ],
+  "void": [],
+  "workspace": "/tmp/hexa-ab-sokoban-untangle-A-i6sbyns2"
+}
