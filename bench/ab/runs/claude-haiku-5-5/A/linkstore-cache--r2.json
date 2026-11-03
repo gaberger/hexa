@@ -1,0 +1,56 @@
+{
+  "task": "linkstore-cache",
+  "family": "shape",
+  "arm": "A",
+  "model": "claude-haiku-5-5",
+  "run": 2,
+  "started": 1793741033.9877667,
+  "timed_out": false,
+  "agent_exit": 0,
+  "accuracy": {
+    "oracle_pass": true,
+    "oracle_tests_passed": 31,
+    "oracle_tests_failed": 0,
+    "own_gate_pass": true,
+    "false_green_correctness": false,
+    "false_green_shape": false,
+    "accepted_correct": true
+  },
+  "shape": {
+    "grade": "A+",
+    "score": 100,
+    "violations": 0,
+    "cycles": 0,
+    "gradeable": true
+  },
+  "loc": {
+    "src_nloc": 881,
+    "test_nloc": 601,
+    "test_to_src": 0.68,
+    "lines_added": 213,
+    "lines_removed": 7,
+    "files_changed": 2
+  },
+  "complexity": {
+    "functions": 66,
+    "ccn_mean": 2.09,
+    "ccn_max": 8,
+    "fn_len_max": 33
+  },
+  "cost": {
+    "calls": 1,
+    "unmetered_calls": 0,
+    "input_tokens": 30,
+    "output_tokens": 14882,
+    "cache_read_tokens": 767028,
+    "cache_write_tokens": 36171,
+    "usd": 0.0223,
+    "wall_s": 112.8,
+    "permission_denials": 3
+  },
+  "models_used": [
+    "claude-haiku-5-5"
+  ],
+  "void": [],
+  "workspace": "/tmp/hexa-ab-linkstore-cache-A-7et1t786"
+}

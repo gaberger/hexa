@@ -274,7 +274,9 @@ def main():
     env = dict(os.environ)
     env.update({"PATH": f"{SHIM_DIR}:{env['PATH']}", "HEXA_AB_LOG": str(log), "HEXA_AB_MODEL": a.model,
                 "HEXA_CLAUDE_BINARY": str(SHIM_DIR / "claude"),  # hexa's frontier path, too
-                "HEXA_AB_ALLOWED_TOOLS": task["allowed_tools"]})
+                # Arm B may also run hexa's own grade: the gate it is told to pass names
+                # `hexa analyze`, and seeing that gate's verdict is what hexa adds.
+                "HEXA_AB_ALLOWED_TOOLS": task["allowed_tools"] + (f",Bash({HEXA} analyze:*)" if a.arm == "B" else "")})
     agent_target = private_target(task, root / "target-agent")
     if agent_target:
         env["CARGO_TARGET_DIR"] = str(agent_target)
@@ -382,8 +384,11 @@ def main():
         "accuracy": {
             "oracle_pass": oracle_ok, "oracle_tests_passed": o_pass, "oracle_tests_failed": o_fail,
             "own_gate_pass": own_pass,
-            "false_green_correctness": own_pass and not oracle_ok,
-            "false_green_shape": own_pass and shape_ok is False,
+            # A run that left the code untouched (gave up, or hexa reverted it) is not a
+            # false green: nothing was claimed. It is counted as no change instead.
+            "delivered": (added + removed) > 0,
+            "false_green_correctness": own_pass and not oracle_ok and (added + removed) > 0,
+            "false_green_shape": own_pass and shape_ok is False and (added + removed) > 0,
             "accepted_correct": oracle_ok and shape_ok is not False,
         },
         "shape": shape,

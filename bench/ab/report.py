@@ -41,6 +41,12 @@ def med(xs):
 
 def summarize(rs):
     ok = [r for r in rs if not r["void"]]
+    for r in ok:  # older records: a run that changed nothing claimed nothing
+        a = r["accuracy"]
+        changed = (r["loc"]["lines_added"] + r["loc"]["lines_removed"]) > 0
+        a.setdefault("delivered", changed)
+        if not a["delivered"]:
+            a["false_green_correctness"] = a["false_green_shape"] = False
     acc = [r["accuracy"] for r in ok]
     accepted = [r for r in ok if r["accuracy"]["accepted_correct"]]
     usd = sum(r["cost"]["usd"] for r in ok)
@@ -57,6 +63,7 @@ def summarize(rs):
             "accepted_correct": rate([a["accepted_correct"] for a in acc]),
             "oracle_pass": rate([a["oracle_pass"] for a in acc]),
             "own_gate_pass": rate([a["own_gate_pass"] for a in acc]),
+            "no_change": rate([not a["delivered"] for a in acc]),
             "false_green_correctness": rate([a["false_green_correctness"] for a in acc]),
             "false_green_shape": rate([a["false_green_shape"] for a in acc]),
             "timeouts": rate([r["timed_out"] for r in ok]),
@@ -126,6 +133,7 @@ def num(x, d=0):
 FAMILY_TITLES = {
     "change": "Change existing code (the hexa fixtures)",
     "shape": "Shape traps (hexa's own examples)",
+    "refactor": "Refactoring entangled dependencies",
 }
 
 
@@ -146,6 +154,7 @@ def markdown_models(models):
             ("own gate pass", lambda s: pct(s["accuracy"]["own_gate_pass"])),
             ("false-green (correctness)", lambda s: pct(s["accuracy"]["false_green_correctness"])),
             ("false-green (shape)", lambda s: pct(s["accuracy"]["false_green_shape"])),
+            ("no change delivered", lambda s: pct(s["accuracy"].get("no_change"))),
             ("timeouts", lambda s: pct(s["accuracy"]["timeouts"])),
             ("violations, median", lambda s: num(s["shape"]["violations_median"])),
             ("$ per run, median", lambda s: num(s["cost"]["usd_median_per_run"], 3)),
