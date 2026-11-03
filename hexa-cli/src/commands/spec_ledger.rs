@@ -246,10 +246,10 @@ fn model_for(named: Option<&str>, tier: &str) -> anyhow::Result<String> {
 /// reachable: the frontier CLI does not count, the spec author and the test
 /// writer refuse it (ADR-2610221540 §2). The dead end prints its guide
 /// (ADR-2610301500 §2); the command still fails.
-fn require_a_completion_path(root: &Path, verb: &str) -> anyhow::Result<()> {
+fn require_a_completion_path(root: &Path, verb: &str, model: &str) -> anyhow::Result<()> {
     use hexa_infer::ports::Discovery;
     let found = hexa_infer::discovery().discover();
-    if found.iter().any(|f| f.open() && f.kind != "frontier") {
+    if completion_path_open(&found, model) {
         return Ok(());
     }
     if let Some(g) = hexa_core::ports::guide::find("no-completion-model") {
@@ -259,6 +259,15 @@ fn require_a_completion_path(root: &Path, verb: &str) -> anyhow::Result<()> {
         "no completion model is reachable, so {verb} cannot run. Open paths: {}. `hexa doctor` shows what was probed",
         hexa_infer::reach::path_words(&found)
     )
+}
+
+/// Whether `model` can be answered as a completion over `found`. Any open
+/// non-frontier path is one. The frontier CLI is one only for `claude-text`,
+/// which runs it tool-less (ADR-2610270901); for an agent model it is the
+/// author that reads the code (ADR-2610221540 §2).
+fn completion_path_open(found: &[hexa_infer::ports::Found], model: &str) -> bool {
+    let text = hexa_infer::wiring::claude_text_model(model).is_some();
+    found.iter().any(|f| f.open() && (f.kind != "frontier" || text))
 }
 
 /// `hexa spec draft <ADR>` (§2).
@@ -274,7 +283,7 @@ pub async fn draft(adr: &str, model: Option<&str>, force: bool) -> anyhow::Resul
         }
     }
     let model = model_for(model, "t2.5")?;
-    require_a_completion_path(&root, "`hexa spec draft`")?;
+    require_a_completion_path(&root, "`hexa spec draft`", &model)?;
     println!("{} {} from the ADR and its ports, on {}", "\u{2b21} spec draft".cyan().bold(), a.id, model);
     let d = hexa_exec::draft_spec(&model, &root, &a.id).await.map_err(|e| anyhow::anyhow!(e))?;
     for g in &d.given {
@@ -299,7 +308,7 @@ pub async fn tests(adr: &str, krate: &str, model: Option<&str>) -> anyhow::Resul
     let a = find(&root, adr)?;
     let (read, mut spec) = load_text(&root, &a.id)?.ok_or_else(|| anyhow::anyhow!("{} has no spec", a.id))?;
     let model = model_for(model, "t2")?;
-    require_a_completion_path(&root, "`hexa spec tests`")?;
+    require_a_completion_path(&root, "`hexa spec tests`", &model)?;
     let path_env = gate_path(
         std::env::var_os("HOME").map(PathBuf::from).as_deref(),
         &std::env::var("PATH").unwrap_or_default(),
@@ -571,6 +580,31 @@ fn prove_worktree(target: &Path, sha: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn found(kind: &'static str, reachable: Option<bool>) -> hexa_infer::ports::Found {
+        hexa_infer::ports::Found {
+            kind,
+            name: kind.to_string(),
+            detail: String::new(),
+            via: String::new(),
+            reachable,
+            models: Vec::new(),
+        }
+    }
+
+    /// `claude-text` is a tool-less completion served through the frontier
+    /// CLI (ADR-2610270901), so an open frontier is a completion path for it;
+    /// for an agent model it is not (ADR-2610221540 §2).
+    #[test]
+    fn claude_text_through_an_open_frontier_is_a_completion_path() {
+        let frontier = [found("frontier", Some(true))];
+        assert!(completion_path_open(&frontier, "claude-text:opus"));
+        assert!(completion_path_open(&frontier, "claude-text"));
+        assert!(!completion_path_open(&frontier, "claude-code/opus"), "an agent CLI is not a completion");
+        assert!(!completion_path_open(&[found("frontier", Some(false))], "claude-text:opus"), "a closed frontier serves nothing");
+        assert!(completion_path_open(&[found("local", None)], "qwen3:32b"), "an open non-frontier path still counts");
+        assert!(!completion_path_open(&[], "claude-text:opus"));
+    }
 
     #[test]
     fn an_id_is_the_timestamp_or_the_stem() {
