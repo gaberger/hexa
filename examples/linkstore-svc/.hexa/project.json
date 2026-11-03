@@ -1,0 +1,8 @@
+{
+  "analyze": {
+    "adapters": {
+      "http": ["src/adapters/primary/http.rs", "src/adapters/primary/wire.rs"],
+      "sqlite": ["src/adapters/secondary/sqlite_store.rs", "src/adapters/secondary/sqlite_pool.rs"]
+    }
+  }
+}
