@@ -26,7 +26,7 @@ _spec = importlib.util.spec_from_file_location(
     "runner", Path(__file__).with_name("run_handsoff.py"))
 runner = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(runner)
-sh, hash_locked = runner.sh, runner.hash_locked
+sh, hash_locked, HEXA = runner.sh, runner.hash_locked, runner.HEXA
 
 
 def grade_run(task_dir, t, run_dir, r):
@@ -53,7 +53,7 @@ def grade_run(task_dir, t, run_dir, r):
     checks["gate"], _ = sh(t["gate"], g, timeout=1800)
     checks["holdout"], hold_log = sh(t.get("holdout_cmd", t["gate"]), g, timeout=1800)
     checks["suite"], _ = sh(t.get("suite_cmd", t["gate"]), g, timeout=1800)
-    checks["grade"], grade_log = sh("hexa analyze . --grade A", g, timeout=600)
+    checks["grade"], grade_log = sh(f"{HEXA} analyze . --grade A", g, timeout=600)
     (run_dir / "holdout.log").write_text(hold_log)
     (run_dir / "grade.log").write_text(grade_log)
 
@@ -72,7 +72,7 @@ def pct(n, d):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--bench", default="bench/handsoff")
+    ap.add_argument("--bench", default="bench/handsoff/tasks")
     ap.add_argument("--runs", default="runs")
     ap.add_argument("--csv", default="results.csv")
     a = ap.parse_args()
@@ -81,7 +81,7 @@ def main():
     rows = []
     for res in sorted(runs.glob("*/run*/result.json")):
         r = json.loads(res.read_text())
-        task_dir = bench / r["task"]
+        task_dir = Path(r["task_dir"]) if "task_dir" in r else bench / r["task"]
         t = tomllib.loads((task_dir / "task.toml").read_text())
         t.setdefault("id", r["task"])
         outcome, checks = grade_run(task_dir, t, res.parent, r)

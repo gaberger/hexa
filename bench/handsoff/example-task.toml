@@ -1,4 +1,4 @@
-# bench/handsoff/<task-id>/task.toml
+# bench/handsoff/tasks/<task-id>/task.toml
 # Folder layout per task:
 #   task.toml   this file (written by a human before the run)
 #   repo/       starting tree, hexa-scaffolded, must pass `hexa analyze . --grade A`
@@ -14,6 +14,8 @@ mode        = "build"            # "do" = one file (hexa do run), "build" = mult
 prompt      = "Add tag search: GET /links?tag=<t> returns links carrying that tag"
 target      = "src"              # for mode = "build"
 # file      = "src/lib.rs"       # for mode = "do"
+# also      = ["src/ports/tags.rs"]  # mode = "do": other files the run may create or edit;
+#                                    # `hexa do run` commits only --file and each --also
 
 # The gate: visible to the agent, must exit 0 to commit.
 gate        = "cargo test --test tag_search"
@@ -27,5 +29,6 @@ locked      = ["tests/tag_search.rs", "src/ports/**/*.rs", ".hexa/ADR-rules.toml
 
 # Caps. Hitting any of them counts as an escalation.
 max_rounds    = 3
-spend_cap_usd = 2.0
+spend_cap_usd = 2.0              # from `hexa spend --json`; local models report no cost
+# token_cap   = 2000000          # optional; the cap that bites on a local ladder
 timeout_min   = 30

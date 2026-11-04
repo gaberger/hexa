@@ -7,7 +7,7 @@ review. A person is involved only when a task escalates.
 
 ```bash
 python3 bench/handsoff/run_handsoff.py --bench bench/handsoff/tasks --out runs --runs 3
-python3 bench/handsoff/grade_handsoff.py --bench bench/handsoff/tasks --runs runs
+python3 bench/handsoff/grade_handsoff.py --runs runs
 ```
 
 Each task is a folder holding `task.toml` (see `example-task.toml`), `repo/`
@@ -19,3 +19,7 @@ The grader runs in its own process after the agent is done and gives every run
 one outcome: correct, wrong-but-green, misshapen, tampered, escalated, or
 silent failure. The deciding number is **wrong-but-green**: a change that
 passed the gate the agent saw but fails the holdouts it did not.
+
+Point `HEXA_BIN` at another hexa binary to run against it. Escalations call
+`HANDSOFF_NOTIFY` with the path of a JSON payload (task, gate, last failing
+output, rounds, spend) when the rounds, spend or time cap runs out.
