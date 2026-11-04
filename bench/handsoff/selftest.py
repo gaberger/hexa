@@ -2,8 +2,10 @@
 """Is the hands-off rubric fit to judge anything?
 
 Builds a throwaway bench of toy tasks, runs them sequentially and in a
-parallel batch against fake_hexa.py (no model, no network), grades both, and
-checks that every outcome and every multi-agent metric comes out as designed.
+parallel batch, grades both, and checks that every outcome and every
+multi-agent metric comes out as designed. The whole suite runs twice: once
+with the hexa agent against fake_hexa.py, once with agent = "claude-code"
+against fake_claude.py (no model, no network either way).
 A grader that cannot report wrong-but-green, tampering, a conflict or a failed
 re-gate on tasks built to produce them is not fit to grade real runs.
 
@@ -11,11 +13,13 @@ Exits 0 when every expectation holds, 1 otherwise.
 
   python3 bench/handsoff/selftest.py
 """
-import csv, os, subprocess, sys, tempfile
+import csv, json, os, subprocess, sys, tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 FAKE = HERE / "selftest" / "fake_hexa.py"
+FAKE_CLAUDE = HERE / "selftest" / "fake_claude.py"
+AGENTS = ("hexa", "claude-code")
 
 # id: (prompt directives, gate, holdout, locked, solvable)
 TASKS = {
@@ -46,7 +50,7 @@ EXPECT = {
 }
 
 
-def build_bench(root):
+def build_bench(root, agent):
     repo = root / "_repo"
     repo.mkdir(parents=True)
     (repo / "shared.txt").write_text("base\n")
@@ -55,6 +59,7 @@ def build_bench(root):
         d = root / tid
         d.mkdir()
         lines = [f'id = "{tid}"', 'category = "selftest"', f"solvable = {str(solvable).lower()}",
+                 f'agent = "{agent}"', "max_turns = 5",
                  'mode = "do"', 'file = "a.txt"', 'repo = "../_repo"',
                  f"prompt = {prompt!r}".replace("'", '"'), f"gate = {gate!r}".replace("'", '"'),
                  f"locked = {locked!r}".replace("'", '"'),
@@ -73,50 +78,74 @@ def run(args, env, cwd):
     return p.stdout
 
 
+def suite(agent, tmp):
+    """Run one agent through both modes, grade, and return the failures."""
+    print(f"\n=== agent = {agent} ===")
+    bench, runs = tmp / agent / "tasks", tmp / agent / "runs"
+    build_bench(bench, agent)
+    env = {**os.environ, "HEXA_BIN": f"{sys.executable} {FAKE}",
+           "CLAUDE_BIN": f"{sys.executable} {FAKE_CLAUDE}", "HANDSOFF_NOTIFY": "true"}
+    run([str(HERE / "run_handsoff.py"), "--bench", str(bench),
+         "--out", str(runs / "seq"), "--runs", "1"], env, tmp)
+    run([str(HERE / "run_handsoff.py"), "--bench", str(bench),
+         "--out", str(runs / "par"), "--runs", "1", "--parallel", "4"], env, tmp)
+    csv_path = tmp / agent / "results.csv"
+    report = run([str(HERE / "grade_handsoff.py"), "--runs", str(runs),
+                  "--csv", str(csv_path)], env, tmp)
+
+    got = {(r["mode"], r["task"]): r for r in csv.DictReader(open(csv_path))}
+    failures = []
+    for mode, want in EXPECT.items():
+        for tid, outcome in want.items():
+            o = got.get((mode, tid), {}).get("outcome")
+            if o != outcome:
+                failures.append(f"{agent}/{mode}/{tid}: want {outcome}, got {o}")
+            print(f"{'ok  ' if o == outcome else 'FAIL'} {mode:10s} {tid:7s} {outcome:16s} got {o}")
+
+    checks = [
+        ("c2 hit a rebase conflict", int(got[("parallel", "c2")]["conflicts"]) >= 1),
+        ("r1 failed a re-gate after rebase", int(got[("parallel", "r1")]["regate_failures"]) >= 1),
+        ("shape was refused by the queue's grade", int(got[("parallel", "shape")]["regate_failures"]) >= 1),
+        ("report shows a positive wrong-but-green delta", "wrong-but-green delta:   +" in report),
+        ("report shows both throughputs", "throughput, landed/hour: sequential" in report),
+    ]
+    if agent == "claude-code":
+        results = [json.loads(p.read_text()) for p in runs.glob("**/result.json")]
+        tamper = [r for r in results if r["task"] == "tamper"]
+        ok_seq = next(r for r in results if r["task"] == "ok" and r["mode"] == "sequential")
+        checks += [
+            ("session cost read from claude's JSON", ok_seq.get("spend_usd") == 0.01),
+            ("session tokens read from claude's JSON", ok_seq.get("tokens") == 150),
+            ("locked path denied to the session",
+             all("Edit(/lock.txt)" in r.get("denied", []) for r in tamper) and len(tamper) == 2),
+            ("settings.local.json never committed",
+             all(".claude/settings.local.json" not in
+                 subprocess.run(["git", "ls-files", ".claude"], cwd=r["grade_dir"],
+                                capture_output=True, text=True).stdout
+                 for r in results if r.get("grade_dir"))),
+            ("session left its edit uncommitted and the runner committed it",
+             "bench: work the session left uncommitted" in
+             subprocess.run(["git", "log", "--format=%s"], cwd=ok_seq["grade_dir"],
+                            capture_output=True, text=True).stdout),
+        ]
+    for name, ok in checks:
+        print(f"{'ok  ' if ok else 'FAIL'} {name}")
+        if not ok:
+            failures.append(f"{agent}: {name}")
+    if failures:
+        print("\n" + report)
+    return failures
+
+
 def main():
     with tempfile.TemporaryDirectory() as tmp:
-        tmp = Path(tmp)
-        bench, runs = tmp / "tasks", tmp / "runs"
-        build_bench(bench)
-        env = {**os.environ, "HEXA_BIN": f"{sys.executable} {FAKE}",
-               "HANDSOFF_NOTIFY": "true"}
-        run([str(HERE / "run_handsoff.py"), "--bench", str(bench),
-             "--out", str(runs / "seq"), "--runs", "1"], env, tmp)
-        run([str(HERE / "run_handsoff.py"), "--bench", str(bench),
-             "--out", str(runs / "par"), "--runs", "1", "--parallel", "4"], env, tmp)
-        report = run([str(HERE / "grade_handsoff.py"), "--runs", str(runs),
-                      "--csv", str(tmp / "results.csv")], env, tmp)
-
-        got = {(r["mode"], r["task"]): r for r in csv.DictReader(open(tmp / "results.csv"))}
         failures = []
-        for mode, want in EXPECT.items():
-            for tid, outcome in want.items():
-                o = got.get((mode, tid), {}).get("outcome")
-                mark = "ok  " if o == outcome else "FAIL"
-                if o != outcome:
-                    failures.append(f"{mode}/{tid}: want {outcome}, got {o}")
-                print(f"{mark} {mode:10s} {tid:7s} {outcome:16s} got {o}")
-
-        par = [r for (m, _), r in got.items() if m == "parallel"]
-        conflicts = sum(int(r["conflicts"]) for r in par)
-        regates = sum(int(r["regate_failures"]) for r in par)
-        checks = [
-            ("c2 hit a rebase conflict", int(got[("parallel", "c2")]["conflicts"]) >= 1),
-            ("r1 failed a re-gate after rebase", int(got[("parallel", "r1")]["regate_failures"]) >= 1),
-            ("shape was refused by the queue's grade", int(got[("parallel", "shape")]["regate_failures"]) >= 1),
-            ("report shows a positive wrong-but-green delta", "wrong-but-green delta:   +" in report),
-            ("report shows both throughputs", "throughput, landed/hour: sequential" in report),
-        ]
-        for name, ok in checks:
-            print(f"{'ok  ' if ok else 'FAIL'} {name}")
-            if not ok:
-                failures.append(name)
-        print(f"\nconflicts={conflicts} regate_failures={regates}")
+        for agent in AGENTS:
+            failures += suite(agent, Path(tmp))
         if failures:
-            print("\n" + report)
-            print("selftest FAILED:\n  " + "\n  ".join(failures))
+            print("\nselftest FAILED:\n  " + "\n  ".join(failures))
             return 1
-        print("selftest passed: the rubric discriminates every outcome")
+        print("\nselftest passed: the rubric discriminates every outcome, for both agents")
         return 0
 
 

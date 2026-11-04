@@ -13,6 +13,7 @@ Verbs it imitates, with the flags the runner uses:
   do run "<prompt>" --file <f> --evidence "<cmd>" [--also <f>]...
   build "<prompt>" --target <dir> --gate "<cmd>"
   spend --json                               zero totals, in the real JSON shape
+  init . --no-claude-md                      .hexa/ and a settings.json with a hexa hook
 
 `do run` and `build` behave like the real verbs' contract: apply the edit, run
 the gate, commit only if it exits 0, otherwise revert and exit non-zero.
@@ -53,6 +54,13 @@ def main(a):
         bad = Path("BAD_SHAPE").exists()
         print("architecture grade: " + ("D" if bad else "A"))
         return 1 if bad and "--grade" in a else 0
+    if a[:1] == ["init"]:
+        Path(".hexa").mkdir(exist_ok=True)
+        Path(".hexa/project.json").write_text("{}\n")
+        Path(".claude").mkdir(exist_ok=True)
+        Path(".claude/settings.json").write_text(json.dumps({"hooks": {"SessionStart": [
+            {"hooks": [{"type": "command", "command": "hexa hook session-start"}]}]}}) + "\n")
+        return 0
     if a[:1] == ["spend"]:
         zero = {"calls": 0, "input_tokens": 0, "output_tokens": 0,
                 "cost_usd": 0.0, "priced_calls": 0}
