@@ -1,0 +1,140 @@
+{
+  "task": "url-shortener",
+  "family": "greenfield",
+  "arm": "B",
+  "model": "claude-haiku-5-5",
+  "run": 5,
+  "build": {
+    "agent_exit": 1,
+    "timed_out": false,
+    "cost": {
+      "calls": 6,
+      "unmetered_calls": 0,
+      "input_tokens": 156,
+      "output_tokens": 289600,
+      "cache_read_tokens": 9681039,
+      "cache_write_tokens": 367760,
+      "usd": 1.0247,
+      "wall_s": 1458.7,
+      "permission_denials": 17
+    },
+    "gate_pass": true,
+    "gate_failures": [],
+    "probes": {
+      "p1-wide-codepoint-url": "pass",
+      "p2-chunked-body-cap": "pass",
+      "p4-malformed-escape": "pass",
+      "p5-partial-corruption": "pass",
+      "p6-empty-store-dir": "pass",
+      "p7-stale-store-handle": "pass"
+    },
+    "defects": 0,
+    "own_tests": {
+      "present": true,
+      "pass": true
+    },
+    "src_files": 38,
+    "src_nloc": 1405,
+    "test_files": 15,
+    "test_nloc": 1129,
+    "complexity": {
+      "functions": 168,
+      "ccn_mean": 1.87,
+      "ccn_max": 14,
+      "fn_len_max": 23
+    },
+    "hexa_grade_info_only": {
+      "grade": "B",
+      "score": 86,
+      "violations": 0
+    }
+  },
+  "change": {
+    "agent_exit": 0,
+    "timed_out": false,
+    "cost": {
+      "calls": 1,
+      "unmetered_calls": 0,
+      "input_tokens": 94,
+      "output_tokens": 74683,
+      "cache_read_tokens": 5895167,
+      "cache_write_tokens": 144170,
+      "usd": 0.4863,
+      "wall_s": 387.4,
+      "permission_denials": 15
+    },
+    "gate_pass": true,
+    "gate_failures": [],
+    "probes": {
+      "p1-wide-codepoint-url": "pass",
+      "p2-chunked-body-cap": "pass",
+      "p4-malformed-escape": "pass",
+      "p5-partial-corruption": "pass",
+      "p6-empty-store-dir": "pass",
+      "p7-stale-store-handle": "defect"
+    },
+    "defects": 1,
+    "own_tests": {
+      "present": true,
+      "pass": true
+    },
+    "src_files": 34,
+    "src_nloc": 915,
+    "test_files": 11,
+    "test_nloc": 731,
+    "complexity": {
+      "functions": 99,
+      "ccn_mean": 1.84,
+      "ccn_max": 10,
+      "fn_len_max": 19
+    },
+    "hexa_grade_info_only": {
+      "grade": "B",
+      "score": 82,
+      "violations": 0
+    },
+    "uses_bun_sqlite": true,
+    "blast_radius": {
+      "lines_added": 110,
+      "lines_removed": 1485,
+      "files_touched": 23,
+      "src_files_touched": 14,
+      "files": [
+        "app/package.json",
+        "app/src/adapters/primary/cli.ts",
+        "app/src/adapters/secondary/log-file/codec.test.ts",
+        "app/src/adapters/secondary/log-file/crc32.ts",
+        "app/src/adapters/secondary/log-file/file-ops.ts",
+        "app/src/adapters/secondary/log-file/file-url-store.ts",
+        "app/src/adapters/secondary/log-file/log-format.ts",
+        "app/src/adapters/secondary/log-file/log-reader.ts",
+        "app/src/adapters/secondary/log-file/log-writer.ts",
+        "app/src/adapters/secondary/log-file/op-queue.test.ts",
+        "app/src/adapters/secondary/log-file/op-queue.ts",
+        "app/src/adapters/secondary/log-file/write-lock.ts",
+        "app/src/composition-root.ts",
+        "app/src/config.ts",
+        "app/src/core/domain/errors.ts",
+        "app/src/core/ports/url-store.ts",
+        "app/src/integration/cli.test.ts",
+        "app/src/integration/http.test.ts",
+        "app/src/integration/store-basic.test.ts",
+        "app/src/integration/store-faults.test.ts",
+        "app/src/integration/store-lock.test.ts",
+        "app/src/integration/store-torn.test.ts",
+        "app/src/test-support/fault-ops.ts"
+      ]
+    },
+    "share_of_src_changed": 1.14
+  },
+  "accepted": {
+    "build": true,
+    "change": true,
+    "both": true
+  },
+  "models_used": [
+    "claude-haiku-5-5"
+  ],
+  "void": [],
+  "workspace": "/tmp/hexa-ab-greenfield-B-g0mh9mu8"
+}

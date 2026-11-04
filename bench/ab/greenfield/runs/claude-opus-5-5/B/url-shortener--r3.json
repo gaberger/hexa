@@ -1,0 +1,126 @@
+{
+  "task": "url-shortener",
+  "family": "greenfield",
+  "arm": "B",
+  "model": "claude-opus-5-5",
+  "run": 3,
+  "build": {
+    "agent_exit": 0,
+    "timed_out": false,
+    "cost": {
+      "calls": 6,
+      "unmetered_calls": 0,
+      "input_tokens": 138,
+      "output_tokens": 116996,
+      "cache_read_tokens": 4155154,
+      "cache_write_tokens": 234177,
+      "usd": 5.0449,
+      "wall_s": 948.9,
+      "permission_denials": 22
+    },
+    "gate_pass": true,
+    "gate_failures": [],
+    "probes": {
+      "p1-wide-codepoint-url": "pass",
+      "p2-chunked-body-cap": "pass",
+      "p4-malformed-escape": "pass",
+      "p5-partial-corruption": "pass",
+      "p6-empty-store-dir": "pass",
+      "p7-stale-store-handle": "defect"
+    },
+    "defects": 1,
+    "own_tests": {
+      "present": true,
+      "pass": true
+    },
+    "src_files": 22,
+    "src_nloc": 597,
+    "test_files": 9,
+    "test_nloc": 689,
+    "complexity": {
+      "functions": 46,
+      "ccn_mean": 2.02,
+      "ccn_max": 10,
+      "fn_len_max": 23
+    },
+    "hexa_grade_info_only": {
+      "grade": "A+",
+      "score": 98,
+      "violations": 0
+    }
+  },
+  "change": {
+    "agent_exit": 0,
+    "timed_out": false,
+    "cost": {
+      "calls": 1,
+      "unmetered_calls": 0,
+      "input_tokens": 40,
+      "output_tokens": 13617,
+      "cache_read_tokens": 1303700,
+      "cache_write_tokens": 50844,
+      "usd": 0.94,
+      "wall_s": 146.9,
+      "permission_denials": 5
+    },
+    "gate_pass": true,
+    "gate_failures": [],
+    "probes": {
+      "p1-wide-codepoint-url": "pass",
+      "p2-chunked-body-cap": "pass",
+      "p4-malformed-escape": "pass",
+      "p5-partial-corruption": "pass",
+      "p6-empty-store-dir": "pass",
+      "p7-stale-store-handle": "pass"
+    },
+    "defects": 0,
+    "own_tests": {
+      "present": true,
+      "pass": true
+    },
+    "src_files": 22,
+    "src_nloc": 508,
+    "test_files": 9,
+    "test_nloc": 684,
+    "complexity": {
+      "functions": 41,
+      "ccn_mean": 1.73,
+      "ccn_max": 9,
+      "fn_len_max": 14
+    },
+    "hexa_grade_info_only": {
+      "grade": "A",
+      "score": 94,
+      "violations": 0
+    },
+    "uses_bun_sqlite": true,
+    "blast_radius": {
+      "lines_added": 20,
+      "lines_removed": 358,
+      "files_touched": 9,
+      "src_files_touched": 4,
+      "files": [
+        "app/package.json",
+        "app/src/adapters/secondary/file-link-store.ts",
+        "app/src/cache.test.ts",
+        "app/src/cli.test.ts",
+        "app/src/composition-root.ts",
+        "app/src/core/ports/link-log-format.ts",
+        "app/src/core/ports/link-store.ts",
+        "app/src/file-store.test.ts",
+        "app/src/http.test.ts"
+      ]
+    },
+    "share_of_src_changed": 0.63
+  },
+  "accepted": {
+    "build": true,
+    "change": true,
+    "both": true
+  },
+  "models_used": [
+    "claude-opus-5-5"
+  ],
+  "void": [],
+  "workspace": "/tmp/hexa-ab-greenfield-B-2xmv28is"
+}
