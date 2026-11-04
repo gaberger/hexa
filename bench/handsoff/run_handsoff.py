@@ -12,9 +12,11 @@ Two modes:
                         change lands when hexa commits on a green gate.
   --parallel N          tasks that share a repo form a batch and run N at a
                         time, one git worktree per agent off a shared main.
-                        A green change lands by fast-forward; an agent that
-                        started from an older main is reset and sent back a
-                        round.
+                        A finished change goes through a merge queue: rebase
+                        onto the latest main, rerun the gate and
+                        `hexa analyze . --grade A`, and fast-forward main only
+                        if both pass. A conflict or a failed re-gate sends the
+                        task back a round.
 
 Uses these hexa verbs, checked against their clap definitions in hexa-cli
 (src/main.rs, commands/direct.rs, build.rs, spend_cmd.rs), which `--help`
@@ -31,7 +33,7 @@ Usage:
   python3 run_handsoff.py --bench bench/handsoff/tasks --out runs/par --runs 3 --parallel 4
   HANDSOFF_NOTIFY="<cmd>" ...   escalation hook, called with the payload path
 """
-import argparse, hashlib, json, os, shlex, shutil, subprocess, sys
+import argparse, hashlib, json, os, queue, shlex, shutil, subprocess, sys
 import threading, time, tomllib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -204,29 +206,76 @@ def finish(run_dir, t, result, last_out, stop, success):
 
 # ------------------------------------------------------------------ parallel
 
-class Lander:
-    """Lands a finished change on main by fast-forward, one at a time.
+class EventLog:
+    """Append-only JSONL log of merge-queue events, shared by a batch's agents."""
 
-    Main is advanced only when the agent's branch already contains it, so the
-    first agent to finish lands and anyone who started from an older main is
-    refused. A refused agent's worktree is reset to the new main and the task
-    goes back a round.
+    def __init__(self, path, t0):
+        self.path, self.t0, self.lock = path, t0, threading.Lock()
+
+    def __call__(self, task, event, **kw):
+        rec = {"t_s": round(time.time() - self.t0, 3), "task": task, "event": event, **kw}
+        with self.lock, open(self.path, "a") as f:
+            f.write(json.dumps(rec) + "\n")
+
+
+class MergeQueue:
+    """Serialises landings onto main, first come first served.
+
+    A finished change is rebased onto the latest main, then the gate and the
+    architecture grade are rerun on the rebased tree. Main is fast-forwarded
+    only if both pass. A conflict resets the agent's worktree to main; a failed
+    re-gate leaves the rebased tree in place. Either way the agent gets the
+    task back for another round.
     """
 
-    def __init__(self, main, t0):
-        self.main, self.t0, self.lock = main, t0, threading.Lock()
+    def __init__(self, main, log):
+        self.main, self.log, self.q = main, log, queue.Queue()
+        threading.Thread(target=self._serve, daemon=True).start()
 
     def submit(self, t, wt):
-        with self.lock:
-            code, _ = sh(f"git merge -q --ff-only agent/{t['id']}", self.main, timeout=300)
-            if code != 0:
-                sh("git reset -q --hard main && git clean -fdq", wt)
-                return {"status": "conflict"}
-            return {"status": "landed", "at_s": round(time.time() - self.t0, 3)}
+        done, box = threading.Event(), {}
+        self.log(t["id"], "submitted")
+        self.q.put((t, wt, done, box))
+        done.wait()
+        return box
+
+    def _serve(self):
+        while True:
+            t, wt, done, box = self.q.get()
+            try:
+                box.update(self._land(t, wt))
+            except Exception as e:  # a queue that dies silently would hang every agent
+                box.update(status="error", detail=repr(e))
+                self.log(t["id"], "queue_error", detail=repr(e))
+            done.set()
+
+    def _land(self, t, wt):
+        tid = t["id"]
+        code, out = sh("git rebase main", wt, timeout=300)
+        if code != 0:
+            sh("git rebase --abort", wt)
+            sh("git reset -q --hard main && git clean -fdq", wt)
+            self.log(tid, "conflict", detail=out[-500:])
+            return {"status": "conflict"}
+        self.log(tid, "rebased")
+        g, _ = sh(t["gate"], wt, timeout=1800)
+        a, _ = sh(f"{HEXA} analyze . --grade A", wt, timeout=600)
+        if g != 0 or a != 0:
+            failed = "gate" if g != 0 else "grade"
+            self.log(tid, "regate_failed", failed=failed)
+            return {"status": "regate_failed", "failed": failed}
+        branch = f"agent/{tid}"
+        code, out = sh(f"git merge -q --ff-only {branch}", self.main, timeout=300)
+        if code != 0:  # main moved under us; treat like a conflict
+            sh("git reset -q --hard main && git clean -fdq", wt)
+            self.log(tid, "conflict", detail="fast-forward refused: " + out[-300:])
+            return {"status": "conflict"}
+        self.log(tid, "landed", head=git_head(self.main))
+        return {"status": "landed", "at_s": round(time.time() - self.log.t0, 3)}
 
 
-def run_agent(task_dir, t, wt, run_dir, mq):
-    """One agent's life in a batch: rounds of hexa, each green one offered to main."""
+def run_agent(task_dir, t, wt, run_dir, mq, log):
+    """One agent's life in a batch: rounds of hexa, each green one through the queue."""
     result = base_result(task_dir, t, "parallel", run_dir.parent.name)
     # hexa's spend log is global, so concurrent agents can't be told apart:
     # rounds and time cap each agent; spend is recorded per batch.
@@ -241,6 +290,7 @@ def run_agent(task_dir, t, wt, run_dir, mq):
         code, last_out = sh(agent_cmd(t), wt, timeout=remaining)
         rounds.append(code)
         (run_dir / f"round{len(rounds)}.log").write_text(last_out)
+        log(t["id"], "round", round=len(rounds), exit=code)
         if code != 0:
             continue
         verdict = mq.submit(t, wt)
@@ -249,17 +299,25 @@ def run_agent(task_dir, t, wt, run_dir, mq):
             break
         if verdict.get("status") == "conflict":
             conflicts += 1
+        elif verdict.get("status") == "regate_failed":
+            regates += 1
+        else:
+            stop = "queue_error"
+            break
+        log(t["id"], "sent_back", reason=verdict.get("status"))
     landed = landed_at is not None
     result.update(rounds=rounds, success=landed, landed=landed, committed=landed,
                   landed_at_s=landed_at, wall_s=round(time.time() - start, 1),
                   conflicts=conflicts, regate_failures=regates, spend_usd=None,
                   stop_reason=None if landed else stop)
+    if not landed:
+        log(t["id"], "escalated", reason=stop)
     finish(run_dir, t, result, last_out, stop, landed)
     return result
 
 
 def run_batch(name, members, batch_dir, workers):
-    """Run one batch: shared main, a worktree per agent, one landing at a time."""
+    """Run one batch: shared main, a worktree per agent, a merge queue in front of main."""
     if batch_dir.exists():
         shutil.rmtree(batch_dir)
     batch_dir.mkdir(parents=True)
@@ -278,7 +336,8 @@ def run_batch(name, members, batch_dir, workers):
         return
 
     t_start = time.time()
-    mq = Lander(main, t_start)
+    log = EventLog(batch_dir / "events.jsonl", t_start)
+    mq = MergeQueue(main, log)
     cost0, tok0, _ = spend(main)
     jobs = []
     for task_dir, t in members:
@@ -291,7 +350,7 @@ def run_batch(name, members, batch_dir, workers):
 
     def one(job):
         task_dir, t, wt, rd, locked = job
-        r = run_agent(task_dir, t, wt, rd, mq)
+        r = run_agent(task_dir, t, wt, rd, mq, log)
         r["locked_before"] = locked
         r["grade_dir"] = str(main.resolve())  # graded on the integrated main
         r["batch"] = name
@@ -342,7 +401,7 @@ def main():
     ap.add_argument("--out", default="runs")
     ap.add_argument("--runs", type=int, default=3)
     ap.add_argument("--parallel", type=int, default=0,
-                    help="run each batch N agents at a time, one worktree each")
+                    help="run each batch N agents at a time through a merge queue")
     ap.add_argument("--only", nargs="*", help="task ids to run")
     a = ap.parse_args()
 
