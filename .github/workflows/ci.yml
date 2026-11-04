@@ -91,6 +91,9 @@ jobs:
       - name: Every decision's spec
         run: ./target/release/hexa spec check && ./target/release/hexa spec verify --ci
         env:
+          # Tests that run the CLI (ADR-2611031914) use this tree's binary, not a stale or missing debug one.
+          HEXA_BIN: ${{ github.workspace }}/target/release/hexa
+        env:
           HEXA_TEST_NPM: 1
           HEXA_TEST_CARGO_NET: 1
       # `hexa dev test lint` denies warnings and had been red since this
