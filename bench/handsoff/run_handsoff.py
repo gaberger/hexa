@@ -6,8 +6,15 @@ human involved. A run ends in a landed change or an escalation (rounds, spend
 or time ran out). The grader (grade_handsoff.py) scores the results afterwards
 in a separate process.
 
-Each task runs alone, in a fresh copy of its repo; the change lands when
-hexa commits on a green gate.
+Two modes:
+
+  sequential (default)  each task alone, in a fresh copy of its repo; the
+                        change lands when hexa commits on a green gate.
+  --parallel N          tasks that share a repo form a batch and run N at a
+                        time, one git worktree per agent off a shared main.
+                        A green change lands by fast-forward; an agent that
+                        started from an older main is reset and sent back a
+                        round.
 
 Uses these hexa verbs, checked against their clap definitions in hexa-cli
 (src/main.rs, commands/direct.rs, build.rs, spend_cmd.rs), which `--help`
@@ -21,10 +28,12 @@ Set HEXA_BIN to point at another binary (the self-test uses a stub).
 
 Usage:
   python3 run_handsoff.py --bench bench/handsoff/tasks --out runs/seq --runs 3
+  python3 run_handsoff.py --bench bench/handsoff/tasks --out runs/par --runs 3 --parallel 4
   HANDSOFF_NOTIFY="<cmd>" ...   escalation hook, called with the payload path
 """
 import argparse, hashlib, json, os, shlex, shutil, subprocess, sys
-import time, tomllib
+import threading, time, tomllib
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 HEXA = os.environ.get("HEXA_BIN", "hexa")
@@ -193,6 +202,114 @@ def finish(run_dir, t, result, last_out, stop, success):
         })
 
 
+# ------------------------------------------------------------------ parallel
+
+class Lander:
+    """Lands a finished change on main by fast-forward, one at a time.
+
+    Main is advanced only when the agent's branch already contains it, so the
+    first agent to finish lands and anyone who started from an older main is
+    refused. A refused agent's worktree is reset to the new main and the task
+    goes back a round.
+    """
+
+    def __init__(self, main, t0):
+        self.main, self.t0, self.lock = main, t0, threading.Lock()
+
+    def submit(self, t, wt):
+        with self.lock:
+            code, _ = sh(f"git merge -q --ff-only agent/{t['id']}", self.main, timeout=300)
+            if code != 0:
+                sh("git reset -q --hard main && git clean -fdq", wt)
+                return {"status": "conflict"}
+            return {"status": "landed", "at_s": round(time.time() - self.t0, 3)}
+
+
+def run_agent(task_dir, t, wt, run_dir, mq):
+    """One agent's life in a batch: rounds of hexa, each green one offered to main."""
+    result = base_result(task_dir, t, "parallel", run_dir.parent.name)
+    # hexa's spend log is global, so concurrent agents can't be told apart:
+    # rounds and time cap each agent; spend is recorded per batch.
+    max_rounds, _cost_cap, _token_cap, deadline = caps(t)
+    rounds, conflicts, regates, landed_at, last_out, stop = [], 0, 0, None, "", "rounds"
+    start = time.time()
+    while len(rounds) < max_rounds:
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            stop = "time"
+            break
+        code, last_out = sh(agent_cmd(t), wt, timeout=remaining)
+        rounds.append(code)
+        (run_dir / f"round{len(rounds)}.log").write_text(last_out)
+        if code != 0:
+            continue
+        verdict = mq.submit(t, wt)
+        if verdict.get("status") == "landed":
+            landed_at = verdict["at_s"]
+            break
+        if verdict.get("status") == "conflict":
+            conflicts += 1
+    landed = landed_at is not None
+    result.update(rounds=rounds, success=landed, landed=landed, committed=landed,
+                  landed_at_s=landed_at, wall_s=round(time.time() - start, 1),
+                  conflicts=conflicts, regate_failures=regates, spend_usd=None,
+                  stop_reason=None if landed else stop)
+    finish(run_dir, t, result, last_out, stop, landed)
+    return result
+
+
+def run_batch(name, members, batch_dir, workers):
+    """Run one batch: shared main, a worktree per agent, one landing at a time."""
+    if batch_dir.exists():
+        shutil.rmtree(batch_dir)
+    batch_dir.mkdir(parents=True)
+    main = batch_dir / "main"
+    task_dir0, t0_ = members[0]
+    init_repo(task_dir0 / t0_.get("repo", "repo"), main)
+
+    code, out = sh(f"{HEXA} analyze . --grade A", main, timeout=300)
+    if code != 0:
+        for task_dir, t in members:
+            rd = batch_dir / t["id"]
+            rd.mkdir()
+            r = base_result(task_dir, t, "parallel", batch_dir.name)
+            r.update(outcome_hint="invalid_floor", floor_log=out[-4000:])
+            (rd / "result.json").write_text(json.dumps(r, indent=2))
+        return
+
+    t_start = time.time()
+    mq = Lander(main, t_start)
+    cost0, tok0, _ = spend(main)
+    jobs = []
+    for task_dir, t in members:
+        rd = batch_dir / t["id"]
+        rd.mkdir()
+        wt = batch_dir / "wt" / t["id"]
+        sh(f"git worktree add -q -b agent/{t['id']} {shlex.quote(str(wt.resolve()))} main", main)
+        locked = hash_locked(main, t.get("locked", []))
+        jobs.append((task_dir, t, wt, rd, locked))
+
+    def one(job):
+        task_dir, t, wt, rd, locked = job
+        r = run_agent(task_dir, t, wt, rd, mq)
+        r["locked_before"] = locked
+        r["grade_dir"] = str(main.resolve())  # graded on the integrated main
+        r["batch"] = name
+        (rd / "result.json").write_text(json.dumps(r, indent=2))
+        return r
+
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        results = list(ex.map(one, jobs))
+    cost1, tok1, _ = spend(main)
+    (batch_dir / "batch.json").write_text(json.dumps({
+        "batch": name, "run": batch_dir.name, "workers": workers,
+        "tasks": [r["task"] for r in results], "wall_s": round(time.time() - t_start, 1),
+        "landed": sum(r["landed"] for r in results),
+        "spend_usd": delta(cost0, cost1), "tokens": delta(tok0, tok1),
+        "main": str(main.resolve()), "head": git_head(main),
+    }, indent=2))
+
+
 # ---------------------------------------------------------------------- main
 
 def load_tasks(bench, only):
@@ -205,11 +322,27 @@ def load_tasks(bench, only):
     return out
 
 
+def batches(tasks):
+    """Group tasks by `batch`, else by the repo they start from."""
+    groups = {}
+    for task_dir, t in tasks:
+        repo = (task_dir / t.get("repo", "repo")).resolve()
+        key = t.get("batch") or str(repo)
+        groups.setdefault(key, []).append((task_dir, t, repo))
+    for key, members in groups.items():
+        repos = {m[2] for m in members}
+        if len(repos) > 1:
+            sys.exit(f"batch {key!r} mixes starting repos: {sorted(map(str, repos))}")
+    return {k: [(d, t) for d, t, _ in v] for k, v in groups.items()}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--bench", default="bench/handsoff/tasks")
     ap.add_argument("--out", default="runs")
     ap.add_argument("--runs", type=int, default=3)
+    ap.add_argument("--parallel", type=int, default=0,
+                    help="run each batch N agents at a time, one worktree each")
     ap.add_argument("--only", nargs="*", help="task ids to run")
     a = ap.parse_args()
 
@@ -217,18 +350,32 @@ def main():
     if not tasks:
         sys.exit(f"no tasks under {a.bench}")
     out = Path(a.out)
-    for task_dir, t in tasks:
+
+    if a.parallel <= 0:
+        for task_dir, t in tasks:
+            for k in range(1, a.runs + 1):
+                run_dir = out / t["id"] / f"run{k}"
+                if run_dir.exists():
+                    shutil.rmtree(run_dir)
+                run_dir.mkdir(parents=True)
+                print(f"[{t['id']} run{k}] ...", flush=True)
+                r = run_sequential(task_dir, t, run_dir)
+                (run_dir / "result.json").write_text(json.dumps(r, indent=2))
+                state = ("invalid floor" if r.get("outcome_hint") else
+                         "landed" if r.get("landed") else "escalated")
+                print(f"[{t['id']} run{k}] {state}", flush=True)
+        return
+
+    for key, members in batches(tasks).items():
+        name = members[0][1].get("batch") or \
+            f"{Path(key).name}-{hashlib.sha1(key.encode()).hexdigest()[:6]}"
         for k in range(1, a.runs + 1):
-            run_dir = out / t["id"] / f"run{k}"
-            if run_dir.exists():
-                shutil.rmtree(run_dir)
-            run_dir.mkdir(parents=True)
-            print(f"[{t['id']} run{k}] ...", flush=True)
-            r = run_sequential(task_dir, t, run_dir)
-            (run_dir / "result.json").write_text(json.dumps(r, indent=2))
-            state = ("invalid floor" if r.get("outcome_hint") else
-                     "landed" if r.get("landed") else "escalated")
-            print(f"[{t['id']} run{k}] {state}", flush=True)
+            batch_dir = out / name / f"run{k}"
+            print(f"[batch {name} run{k}] {len(members)} tasks, {a.parallel} at a time", flush=True)
+            run_batch(name, members, batch_dir, a.parallel)
+            b = json.loads((batch_dir / "batch.json").read_text()) \
+                if (batch_dir / "batch.json").exists() else {}
+            print(f"[batch {name} run{k}] landed {b.get('landed', 0)}/{len(members)}", flush=True)
 
 
 if __name__ == "__main__":
