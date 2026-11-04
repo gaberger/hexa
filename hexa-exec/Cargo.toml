@@ -23,8 +23,15 @@ regex = "1"
 sha2 = "0.10"
 walkdir = "2"
 tracing = "0.1"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "blocking"] }
 tokio = { version = "1", features = ["full"] }
 
 [dev-dependencies]
 tempfile = "3"
+
+# The sealed spec tests (tests/adr_2611031914_spec.rs) may not be edited, and
+# carry two style patterns clippy flags. Allowed here, by name, so
+# `clippy --all-targets -D warnings` holds without touching a sealed test.
+[lints.clippy]
+if_same_then_else = "allow"
+collapsible_str_replace = "allow"

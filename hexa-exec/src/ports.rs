@@ -227,3 +227,32 @@ pub trait Forge: Send + Sync {
     fn find_pr(&self, head: &str) -> Result<Option<hexa_core::ports::forge::PrRef>, hexa_core::ports::forge::ForgeError>;
     fn open_pr(&self, d: &hexa_core::ports::forge::PrDraft) -> Result<hexa_core::ports::forge::PrRef, hexa_core::ports::forge::ForgeError>;
 }
+
+/// What `hexa forge status` asks a forge, and nothing else: whether it
+/// answers, and whether the credential is accepted. Neither call writes.
+pub trait ForgeStatus {
+    /// The server's version, or the repository's name: proof it answers.
+    fn answers(&self) -> Result<String, hexa_core::ports::forge::ForgeError>;
+    /// The login the credential belongs to, or "accepted".
+    fn credential(&self) -> Result<String, hexa_core::ports::forge::ForgeError>;
+}
+
+/// A forge adapter with both faces: the one the verbs build.
+pub trait ForgeBoth: Forge + ForgeStatus {}
+impl<T: Forge + ForgeStatus> ForgeBoth for T {}
+
+/// The hosts hexa knows a forge on: `$HEXA_HOME/forges.json` (ADR-2611031914 §2).
+pub trait ForgeHosts: Send + Sync {
+    fn path(&self) -> PathBuf;
+    /// A missing file is an empty list; a file that does not parse is an
+    /// error naming it, never treated as empty.
+    fn list(&self) -> Result<Vec<hexa_core::ports::forge::ForgeHost>, String>;
+    /// Add or replace the entry for `h.host`.
+    fn upsert(&self, h: hexa_core::ports::forge::ForgeHost) -> Result<(), String>;
+}
+
+/// One process at a time files on a target: held over find → open → record.
+/// The guard releases the lock when dropped; a killed process releases it too.
+pub trait TargetLock: Send + Sync {
+    fn acquire(&self, t: &hexa_core::ports::forge::ForgeTarget, wait: std::time::Duration) -> Result<Box<dyn Send>, String>;
+}
