@@ -180,6 +180,55 @@ def claude_usage(out):
             "subtype": "no_json", "is_error": True}
 
 
+def ensure_hooks(repo):
+    """Make sure the floor carries hexa's Claude Code hooks. Returns an error or None.
+
+    A repo with no .hexa/ gets `hexa init . --no-claude-md`, committed into the
+    floor so the agent's diff never includes it. A repo that already has .hexa/
+    is not re-initialised: `hexa init --force` rewrites .hexa/project.json and
+    ADR-rules.toml, the rules the grade is measured against. It must already
+    carry the hooks, or the floor is invalid.
+    """
+    if not (repo / ".hexa").exists():
+        code, out = sh(f"{HEXA} init . --no-claude-md", repo, timeout=300)
+        if code != 0:
+            return f"hexa init failed: {out[-1500:]}"
+        sh("git add -A && (git diff --cached --quiet || git commit -qm 'floor: hexa init')", repo)
+    settings = repo / ".claude" / "settings.json"
+    if not settings.exists() or "hexa hook" not in settings.read_text():
+        return ("the floor's .claude/settings.json has no hexa hooks; "
+                "run `hexa init` on the fixture before benchmarking it")
+    return None
+
+
+def write_claude_settings(wt, t, task_dir):
+    """Deny the session edits to locked paths, the holdouts and its own settings.
+
+    Written to .claude/settings.local.json, not settings.json: hexa init keeps
+    its hooks in the tracked settings.json, and rewriting that would drop them
+    or ride along in every change the queue lands. The local file is excluded
+    from git, so it is never committed. In local settings `/path` is anchored at
+    the working directory and `//path` is absolute; Edit rules cover every
+    built-in editing tool, and deny beats allow. Permission rules do not stop a
+    Bash command from writing a file, which is why the grader also checks the
+    locked hashes.
+    """
+    holdout = (task_dir / "holdout").resolve()
+    deny = [f"Edit(/{p})" for p in t.get("locked", [])]
+    deny += [f"Read(/{holdout}/**)", f"Edit(/{holdout}/**)", "Edit(/.claude/**)"]
+    path = wt / ".claude" / "settings.local.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"permissions": {"allow": ["Edit", "Bash"], "deny": deny}},
+                               indent=2) + "\n")
+    _, common = sh("git rev-parse --git-common-dir", wt)
+    exclude = (wt / common.strip()).resolve() / "info" / "exclude"
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    lines = exclude.read_text().splitlines() if exclude.exists() else []
+    if ".claude/settings.local.json" not in lines:
+        exclude.write_text("\n".join(lines + [".claude/settings.local.json"]) + "\n")
+    return deny
+
+
 def run_round(t, wt, timeout, note=None):
     """One agent round in `wt`. Returns exit code, output, and whether the
     change is ready to land.
@@ -253,15 +302,21 @@ def run_sequential(task_dir, t, run_dir):
     work = run_dir / "work"
     init_repo(task_dir / t.get("repo", "repo"), work)
     result = base_result(task_dir, t, "sequential", run_dir.name)
+    claude = agent_kind(t) == "claude-code"
+    err = ensure_hooks(work) if claude else None
+    if err:
+        result.update(outcome_hint="invalid_floor", floor_log=err)
+        return result
 
     code, out = sh(f"{HEXA} analyze . --grade A", work, timeout=300)
     if code != 0:
         result.update(outcome_hint="invalid_floor", floor_log=out[-4000:])
         return result
 
+    if claude:
+        result["denied"] = write_claude_settings(work, t, task_dir)
     result["locked_before"] = hash_locked(work, t.get("locked", []))
     head0 = git_head(work)
-    claude = agent_kind(t) == "claude-code"
     cost0, tok0, _ = (None, None, "") if claude else spend(work)
     acc = {"cost": None, "tokens": None, "sessions": []}
     max_rounds, cost_cap, token_cap, deadline = caps(t)
@@ -454,7 +509,10 @@ def run_batch(name, members, batch_dir, workers):
     task_dir0, t0_ = members[0]
     init_repo(task_dir0 / t0_.get("repo", "repo"), main)
 
-    code, out = sh(f"{HEXA} analyze . --grade A", main, timeout=300)
+    err = None
+    if any(agent_kind(t) == "claude-code" for _, t in members):
+        err = ensure_hooks(main)  # committed on main, so every worktree inherits them
+    code, out = (1, err) if err else sh(f"{HEXA} analyze . --grade A", main, timeout=300)
     if code != 0:
         for task_dir, t in members:
             rd = batch_dir / t["id"]
@@ -474,13 +532,16 @@ def run_batch(name, members, batch_dir, workers):
         rd.mkdir()
         wt = batch_dir / "wt" / t["id"]
         sh(f"git worktree add -q -b agent/{t['id']} {shlex.quote(str(wt.resolve()))} main", main)
+        denied = write_claude_settings(wt, t, task_dir) if agent_kind(t) == "claude-code" else None
         locked = hash_locked(main, t.get("locked", []))
-        jobs.append((task_dir, t, wt, rd, locked))
+        jobs.append((task_dir, t, wt, rd, locked, denied))
 
     def one(job):
-        task_dir, t, wt, rd, locked = job
+        task_dir, t, wt, rd, locked, denied = job
         r = run_agent(task_dir, t, wt, rd, mq, log)
         r["locked_before"] = locked
+        if denied is not None:
+            r["denied"] = denied
         r["grade_dir"] = str(main.resolve())  # graded on the integrated main
         r["batch"] = name
         (rd / "result.json").write_text(json.dumps(r, indent=2))
