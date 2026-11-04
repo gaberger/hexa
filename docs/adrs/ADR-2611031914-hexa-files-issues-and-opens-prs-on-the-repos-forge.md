@@ -1,6 +1,6 @@
 # ADR-2611031914: hexa files issues and opens pull requests on the repository's forge
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-11-03
 **Drivers:** On 2026-11-02, working in strata, eight hexa bugs were found and recorded with `hexa memory store bug:…`: the red check accepting stub tests, `hexa do` committing untracked files, foreign ADR ids in installed assets, and five more. Each sits in one project's `.hexa/memory.jsonl`, seen by the next session there and by nobody else. Both pull requests of the day (#30, #31) were opened by hand with `gh pr create` and hand-written bodies, and `hexa gap pr <id>` prints a pull request it cannot open. strata lives on `git.local`, a Forgejo 16 server, where nothing in hexa can open anything at all. The owner: integrate hexa with the repository's forge to file issues and create pull requests, on GitHub and Forgejo, through an explicit, deduplicated verb.
 
