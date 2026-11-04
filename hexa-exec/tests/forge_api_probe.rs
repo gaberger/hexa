@@ -2,7 +2,7 @@
 //! from the ADR text, not from the code. It only has to compile: a
 //! signature that drifts from the ADR stops the build here.
 
-#![allow(dead_code, unused_variables)]
+#![allow(dead_code, unused_variables, clippy::type_complexity)]
 
 use std::path::Path;
 
