@@ -10,7 +10,9 @@ category    = "feature"          # feature | bugfix-rule | bugfix-test-only | re
 lang        = "rust"
 solvable    = true               # false for escalation traps
 
-mode        = "build"            # "do" = one file (hexa do run), "build" = multi-file (hexa build)
+agent       = "claude-code"      # "claude-code" = headless `claude -p` driving hexa's verbs
+                                 # "hexa" (default) = the runner calls the verb below itself
+mode        = "build"            # hexa agent only: "do" = one file (hexa do run), "build" = multi-file
 prompt      = "Add tag search: GET /links?tag=<t> returns links carrying that tag"
 target      = "src"              # for mode = "build"
 # file      = "src/lib.rs"       # for mode = "do"
@@ -28,7 +30,10 @@ suite_cmd   = "cargo test"       # regression check on the whole project
 locked      = ["tests/tag_search.rs", "src/ports/**/*.rs", ".hexa/ADR-rules.toml"]
 
 # Caps. Hitting any of them counts as an escalation.
-max_rounds    = 3
-spend_cap_usd = 2.0              # from `hexa spend --json`; local models report no cost
+max_turns     = 40               # claude-code: turns per session (--max-turns)
+# max_sessions = 1               # claude-code: sessions per task; default 1, 2 in a batch
+max_rounds    = 3                # hexa agent: verb calls per task
+spend_cap_usd = 2.0              # claude-code: --max-budget-usd per session and the task total;
+                                 # hexa agent: from `hexa spend --json` (local models report no cost)
 # token_cap   = 2000000          # optional; the cap that bites on a local ladder
 timeout_min   = 30

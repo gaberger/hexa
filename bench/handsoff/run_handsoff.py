@@ -18,6 +18,18 @@ Two modes:
                         if both pass. A conflict or a failed re-gate sends the
                         task back a round.
 
+Two agents, chosen per task with `agent` in task.toml:
+
+  hexa (default)  the runner calls `hexa do run` / `hexa build` directly; a
+                  round is one call, ready when it exits 0.
+  claude-code     the runner launches `claude -p` headless in the worktree
+                  with the task, its gate and the rule "use hexa verbs; done
+                  means the gate exits 0 and hexa analyze --grade A passes".
+                  A round is one session, capped by max_turns and
+                  spend_cap_usd (--max-budget-usd); cost and tokens come from
+                  its JSON result. The change is ready only if the gate exits
+                  0 afterwards. Set CLAUDE_BIN to use another binary.
+
 Uses these hexa verbs, checked against their clap definitions in hexa-cli
 (src/main.rs, commands/direct.rs, build.rs, spend_cmd.rs), which `--help`
 prints:
@@ -39,6 +51,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 HEXA = os.environ.get("HEXA_BIN", "hexa")
+CLAUDE = os.environ.get("CLAUDE_BIN", "claude")
 for k, v in (("GIT_AUTHOR_NAME", "handsoff-bench"), ("GIT_COMMITTER_NAME", "handsoff-bench"),
              ("GIT_AUTHOR_EMAIL", "bench@handsoff.local"),
              ("GIT_COMMITTER_EMAIL", "bench@handsoff.local")):
@@ -116,6 +129,81 @@ def agent_cmd(t):
     return f"{HEXA} build {q(t['prompt'])} --target {q(t.get('target', '.'))} --gate {q(t['gate'])}"
 
 
+def agent_kind(t):
+    return t.get("agent", "hexa")
+
+
+def claude_prompt(t, note=None):
+    """The task, its gate, and the rule, as one headless prompt."""
+    q = shlex.quote
+    p = (f"{t['prompt']}\n\n"
+         f"The gate for this task is: {t['gate']}\n\n"
+         "Use hexa verbs. First record the gate with "
+         f"`hexa loop gate {q(t['gate'])}`, then make the change with `hexa do run` "
+         "or `hexa build`. Done means the gate exits 0 and "
+         "`hexa analyze . --grade A` passes. Do not edit the gate's tests or any "
+         "locked file.")
+    if note:
+        p += (f"\n\nYour previous attempt was sent back ({note}). The tree now "
+              "includes everything that has landed on main since you started.")
+    return p
+
+
+def claude_cmd(t, note=None):
+    """`claude -p`, headless. Flags checked against `claude --help` (2.1.318);
+    --max-turns is accepted but not listed there."""
+    q = shlex.quote
+    return (f"{CLAUDE} -p {q(claude_prompt(t, note))} --output-format json"
+            f" --max-turns {int(t.get('max_turns', 40))}"
+            f" --max-budget-usd {float(t.get('spend_cap_usd', 2.0))}"
+            " --permission-mode dontAsk --no-session-persistence")
+
+
+def claude_usage(out):
+    """Cost, tokens, turns and outcome from the session's JSON result."""
+    for line in reversed(out.splitlines()):
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            j = json.loads(line)
+        except ValueError:
+            continue
+        u = j.get("usage") or {}
+        tokens = sum(int(u.get(k) or 0) for k in (
+            "input_tokens", "output_tokens",
+            "cache_creation_input_tokens", "cache_read_input_tokens"))
+        return {"cost_usd": j.get("total_cost_usd"), "tokens": tokens,
+                "turns": j.get("num_turns"), "subtype": j.get("subtype"),
+                "is_error": j.get("is_error")}
+    return {"cost_usd": None, "tokens": None, "turns": None,
+            "subtype": "no_json", "is_error": True}
+
+
+def run_round(t, wt, timeout, note=None):
+    """One agent round in `wt`. Returns exit code, output, and whether the
+    change is ready to land.
+
+    hexa:        one `do run` / `build`; ready when it exits 0 (it commits).
+    claude-code: one headless session; ready only if the gate exits 0
+                 afterwards, whatever the session reported. Work the session
+                 left uncommitted is committed so the queue has a change.
+    """
+    if agent_kind(t) != "claude-code":
+        code, out = sh(agent_cmd(t), wt, timeout=timeout)
+        return {"code": code, "out": out, "ready": code == 0}
+    code, out = sh(claude_cmd(t, note), wt, timeout=timeout)
+    usage = claude_usage(out)
+    g, gout = sh(t["gate"], wt, timeout=1800)
+    ready = g == 0
+    if ready:
+        _, dirty = sh("git status --porcelain", wt)
+        if dirty.strip():
+            sh("git add -A && git commit -qm 'bench: work the session left uncommitted'", wt)
+    return {"code": code, "out": f"{out}\n--- gate exit {g} ---\n{gout}",
+            "ready": ready, "usage": usage}
+
+
 def escalate(run_dir, payload):
     """Write the payload and fire the notifier if configured. True if it reported success."""
     path = run_dir / "escalation.json"
@@ -133,10 +221,30 @@ def base_result(task_dir, t, mode, run_name):
             "mode": mode, "run": run_name, "task_dir": str(task_dir.resolve())}
 
 
-def caps(t):
-    """(max_rounds, cost cap USD, token cap or None, deadline)."""
-    return (int(t.get("max_rounds", 3)), float(t.get("spend_cap_usd", 2.0)),
+def caps(t, parallel=False):
+    """(max rounds, cost cap USD, token cap or None, deadline).
+
+    For claude-code a round is a whole session, already capped inside by
+    max_turns and --max-budget-usd, so rounds count sessions: one by default,
+    two in a batch so the merge queue can send a change back.
+    """
+    if agent_kind(t) == "claude-code":
+        rounds = int(t.get("max_sessions", 2 if parallel else 1))
+    else:
+        rounds = int(t.get("max_rounds", 3))
+    return (rounds, float(t.get("spend_cap_usd", 2.0)),
             t.get("token_cap"), time.time() + 60 * float(t.get("timeout_min", 30)))
+
+
+def add_usage(acc, r):
+    """Accumulate a claude-code round's cost and tokens into acc."""
+    u = r.get("usage")
+    if not u:
+        return
+    acc["sessions"].append(u)
+    for k, field in (("cost", "cost_usd"), ("tokens", "tokens")):
+        if u.get(field) is not None:
+            acc[k] = (acc[k] or 0) + u[field]
 
 
 # ---------------------------------------------------------------- sequential
@@ -153,7 +261,9 @@ def run_sequential(task_dir, t, run_dir):
 
     result["locked_before"] = hash_locked(work, t.get("locked", []))
     head0 = git_head(work)
-    cost0, tok0, _ = spend(work)
+    claude = agent_kind(t) == "claude-code"
+    cost0, tok0, _ = (None, None, "") if claude else spend(work)
+    acc = {"cost": None, "tokens": None, "sessions": []}
     max_rounds, cost_cap, token_cap, deadline = caps(t)
     start, rounds, last_out, success, stop = time.time(), [], "", False, "rounds"
 
@@ -162,26 +272,36 @@ def run_sequential(task_dir, t, run_dir):
         if remaining <= 0:
             stop = "time"
             break
-        code, last_out = sh(agent_cmd(t), work, timeout=remaining)
-        rounds.append(code)
+        r = run_round(t, work, remaining)
+        last_out = r["out"]
+        rounds.append(r["code"])
+        add_usage(acc, r)
         (run_dir / f"round{i + 1}.log").write_text(last_out)
-        if code == 0:
+        if r["ready"]:
             success = True
             break
-        cost, tok, _ = spend(work)
-        if (delta(cost0, cost) or 0) >= cost_cap or \
-                (token_cap and (delta(tok0, tok) or 0) >= token_cap):
+        if claude:
+            cost, tok = acc["cost"], acc["tokens"]
+        else:
+            c, k, _ = spend(work)
+            cost, tok = delta(cost0, c), delta(tok0, k)
+        if (cost or 0) >= cost_cap or (token_cap and (tok or 0) >= token_cap):
             stop = "spend"
             break
 
-    cost1, tok1, spend_raw = spend(work)
+    if claude:
+        spend_usd, tokens, spend_raw = acc["cost"], acc["tokens"], ""
+    else:
+        cost1, tok1, spend_raw = spend(work)
+        spend_usd, tokens = delta(cost0, cost1), delta(tok0, tok1)
     head1 = git_head(work)
     wall = round(time.time() - start, 1)
     result.update(
+        agent=agent_kind(t), sessions=acc["sessions"],
         rounds=rounds, success=success, head0=head0, head1=head1,
         committed=bool(head1 and head1 != head0), landed=success,
         landed_at_s=wall if success else None, wall_s=wall,
-        spend_usd=delta(cost0, cost1), tokens=delta(tok0, tok1),
+        spend_usd=spend_usd, tokens=tokens,
         spend_raw=spend_raw[-2000:], stop_reason=None if success else stop,
         conflicts=0, regate_failures=0, grade_dir=str(work.resolve()),
     )
@@ -279,19 +399,23 @@ def run_agent(task_dir, t, wt, run_dir, mq, log):
     result = base_result(task_dir, t, "parallel", run_dir.parent.name)
     # hexa's spend log is global, so concurrent agents can't be told apart:
     # rounds and time cap each agent; spend is recorded per batch.
-    max_rounds, _cost_cap, _token_cap, deadline = caps(t)
+    max_rounds, _cost_cap, _token_cap, deadline = caps(t, parallel=True)
     rounds, conflicts, regates, landed_at, last_out, stop = [], 0, 0, None, "", "rounds"
+    acc, note = {"cost": None, "tokens": None, "sessions": []}, None
     start = time.time()
     while len(rounds) < max_rounds:
         remaining = deadline - time.time()
         if remaining <= 0:
             stop = "time"
             break
-        code, last_out = sh(agent_cmd(t), wt, timeout=remaining)
-        rounds.append(code)
+        r = run_round(t, wt, remaining, note)
+        last_out = r["out"]
+        rounds.append(r["code"])
+        add_usage(acc, r)
         (run_dir / f"round{len(rounds)}.log").write_text(last_out)
-        log(t["id"], "round", round=len(rounds), exit=code)
-        if code != 0:
+        log(t["id"], "round", round=len(rounds), exit=r["code"], ready=r["ready"])
+        if not r["ready"]:
+            note = "the gate did not exit 0"
             continue
         verdict = mq.submit(t, wt)
         if verdict.get("status") == "landed":
@@ -299,16 +423,21 @@ def run_agent(task_dir, t, wt, run_dir, mq, log):
             break
         if verdict.get("status") == "conflict":
             conflicts += 1
+            note = "a rebase conflict with main; your worktree was reset to main"
         elif verdict.get("status") == "regate_failed":
             regates += 1
+            note = f"after rebasing onto main, the {verdict.get('failed')} check failed"
         else:
             stop = "queue_error"
             break
         log(t["id"], "sent_back", reason=verdict.get("status"))
     landed = landed_at is not None
-    result.update(rounds=rounds, success=landed, landed=landed, committed=landed,
+    result.update(agent=agent_kind(t), sessions=acc["sessions"],
+                  rounds=rounds, success=landed, landed=landed, committed=landed,
                   landed_at_s=landed_at, wall_s=round(time.time() - start, 1),
-                  conflicts=conflicts, regate_failures=regates, spend_usd=None,
+                  conflicts=conflicts, regate_failures=regates,
+                  # claude-code reports its own cost; hexa's spend log is global
+                  spend_usd=acc["cost"], tokens=acc["tokens"],
                   stop_reason=None if landed else stop)
     if not landed:
         log(t["id"], "escalated", reason=stop)
@@ -364,7 +493,9 @@ def run_batch(name, members, batch_dir, workers):
         "batch": name, "run": batch_dir.name, "workers": workers,
         "tasks": [r["task"] for r in results], "wall_s": round(time.time() - t_start, 1),
         "landed": sum(r["landed"] for r in results),
-        "spend_usd": delta(cost0, cost1), "tokens": delta(tok0, tok1),
+        "spend_usd": delta(cost0, cost1), "tokens": delta(tok0, tok1),  # hexa's log
+        "agent_spend_usd": round(sum(r["spend_usd"] or 0 for r in results), 4),
+        "agent_tokens": sum(r["tokens"] or 0 for r in results),
         "main": str(main.resolve()), "head": git_head(main),
     }, indent=2))
 
