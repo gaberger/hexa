@@ -1,0 +1,405 @@
+{
+  "adr": "ADR-2611031914",
+  "feature": "forge-issues-and-prs",
+  "description": "hexa files deduplicated issues and opens pull requests on the repository's GitHub or Forgejo forge, as a dry run unless --send is given, and never sends or stores a secret",
+  "universal": [
+    "§2",
+    "§3",
+    "§4",
+    "§6"
+  ],
+  "accepted": {
+    "by": "Gary Berger",
+    "sha256": "70a7e2c76a37fcc400e8d85cf2cc9fd411c621b6e9d32e3052d0053a2479859e"
+  },
+  "sealed": {
+    "hexa-exec/tests/adr_2611031914_spec.rs": "1426a710f87d12804b954a30f3d8fbe770381db86ec50b66899f207f58a6833e"
+  },
+  "red": "ff1ce1c",
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "The Forgejo adapter opens an issue through the REST API v1 with the token from the named variable",
+      "given": "a ForgeTarget {kind: Forgejo, host: \"git.local\", owner: \"me\", repo: \"strata\", token_env: Some(\"STRATA_TOKEN\")}, STRATA_TOKEN set to \"t0k\", and a local HTTP double of the Forgejo API",
+      "when": "ForgeForgejo::new(&target, <double url>) is called and open_issue is called with an IssueDraft",
+      "then": "the double receives one POST to /api/v1/repos/me/strata/issues with header `Authorization: token t0k` and the draft's title and body, and open_issue returns the IssueRef the double answered with",
+      "test": "hexa-exec/tests/adr_2611031914_spec.rs::part_1::s01_forgejo_adapter_opens_issue_with_token"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "The GitHub adapter drives the gh CLI rather than HTTP",
+      "given": "a ForgeTarget {kind: Github, host: \"github.com\", owner: \"me\", repo: \"hexa\", token_env: None} and a recording stub `gh`",
+      "when": "ForgeGithub::new(&target, <stub path>) is called and open_pr is called with a PrDraft",
+      "then": "the stub records an invocation that creates a pull request on me/hexa with the draft's head, base, title and body, and open_pr returns a PrRef parsed from the stub's output",
+      "test": "hexa-exec/tests/adr_2611031914_spec.rs::part_1::s02_github_adapter_drives_gh_cli"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "The Forgejo adapter refuses to be built without its token",
+      "given": "a Forgejo ForgeTarget whose token_env is \"STRATA_TOKEN\", once with STRATA_TOKEN unset and once with it set to the empty string",
+      "when": "ForgeForgejo::new(&target, <double url>) is called",
+      "then": "each call returns Err(ForgeError::Unauthorized(msg)) where msg names STRATA_TOKEN, and the double receives no request",
+      "test": "hexa-exec/tests/adr_2611031914_spec.rs::part_1::s03_forgejo_adapter_refuses_without_token"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A rejected token is Unauthorized naming the variable, never its value",
+      "given": "STRATA_TOKEN set to \"secret-value-123\" and a Forgejo double that answers 401 to every request",
+      "when": "find_issue is called through the Forgejo adapter, and `hexa issue file bug:x --send` is run against the same double",
+      "then": "find_issue returns Err(ForgeError::Unauthorized(msg)) with msg naming STRATA_TOKEN and not containing \"secret-value-123\"; the CLI's stdout and stderr name STRATA_TOKEN and do not contain \"secret-value-123\"",
+      "test": "hexa-exec/tests/adr_2611031914_spec.rs::part_1::s04_rejected_token_is_unauthorized_without_value"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "A github.com https remote maps to a GitHub target",
+      "given": "remote_url \"https://github.com/acme/hexa.git\" and an empty hosts list",
+      "when": "forge_for_remote is called",
+      "then": "it returns Some(ForgeTarget {kind: Github, host: \"github.com\", owner: \"acme\", repo: \"hexa\", token_env: None})",
+      "test": "hexa-exec/tests/adr_2611031914_spec.rs::part_1::s05_github_https_remote_maps_to_github"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "An ssh remote on a host listed in forges.json maps to the recorded kind and variable",
+      "given": "remote_url \"git@git.local:me/strata.git\" and hosts [ForgeHost {host: \"git.local\", kind: Forgejo, token_env: Some(\"STRATA_TOKEN\")}]",
+      "when": "forge_for_remote is called",
+      "then": "it returns Some(ForgeTarget {kind: Forgejo, host: \"git.local\", owner: \"me\", repo: \"strata\", token_env: Some(\"STRATA_TOKEN\")})",
+      "test": "hexa-exec/tests/adr_2611031914_spec.rs::part_1::s06_ssh_remote_on_listed_host_maps_to_recorded_kind"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "forge add records the host, kind and variable name",
+      "given": "HEXA_HOME pointed at an empty temporary directory and STRATA_TOKEN set to \"t0k\"",
+      "when": "`hexa forge add git.local --kind forgejo --token-env STRATA_TOKEN` is run",
+      "then": "$HEXA_HOME/forges.json lists git.local with kind forgejo and token variable STRATA_TOKEN, and no file under HEXA_HOME contains \"t0k\"",
+      "test": "hexa-exec/tests/adr_2611031914_spec.rs::part_1::s07_forge_add_records_host_kind_and_variable"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "An unknown host has no target, and the verbs say which host and how to add it",
+      "given": "a repository whose origin is \"https://code.example.org/me/x.git\" and an empty forges.json",
+      "when": "forge_for_remote is called on that URL, and `hexa issue file bug:x` is run in that repository",
+      "then": "forge_for_remote returns None; the CLI sends nothing, names code.example.org as unknown, and shows `hexa forge add` as the way to add it",
+      "test": "hexa-exec/tests/adr_2611031914_spec.rs::part_1::s08_unknown_host_has_no_target_and_cli_explains"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "forge status reports and writes nothing",
+      "given": "a repository with a Forgejo origin listed in forges.json, a double that answers, and a snapshot of HEXA_HOME and the repository's .hexa directory",
+      "when": "`hexa forge status` is run",
+      "then": "it prints the target, whether the forge answers and whether the credential is accepted; no file in HEXA_HOME or the repository changes, and the double receives no request that creates anything",
+      "test": "hexa-exec/tests/adr_2611031914_spec.rs::part_1::s09_forge_status_reports_and_writes_nothing"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§2"
+      ],
+      "kind": "property",
+      "description": "The https and ssh forms of a remote map to the same target",
+      "given": "any host, owner and repo, and hosts either empty or listing that host with any kind",
+      "when": "forge_for_remote is called on \"https://<host>/<owner>/<repo>.git\" and on \"git@<host>:<owner>/<repo>.git\"",
+      "then": "both calls return the same value, which is Some exactly when the host is github.com or is listed in hosts",
+      "test": "hexa-exec/tests/adr_2611031914_spec.rs::part_1::s10_https_and_ssh_forms_map_to_same_target"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "issue file without --send prints the issue and sends nothing",
+      "given": "a Forgejo repository with memory key bug:red-check-accepts-stubs recorded and a counting double",
+      "when": "`hexa issue file bug:red-check-accepts-stubs` is run",
+      "then": "stdout shows the target, the title and the body ending with `<!-- hexa-key: bug:red-check-accepts-stubs -->`; the double receives no POST and memory has no issue:bug:red-check-accepts-stubs entry",
+      "test": "hexa-exec/tests/adr_2611031914_spec.rs::part_2::s11_issue_file_dry_run_prints_and_sends_nothing"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "gap pr keeps printing, and --send opens it under pr open's rules",
+      "given": "a GitHub repository whose current branch is pushed at HEAD, a gap no-completion-model, and a recording stub gh",
+      "when": "`hexa gap pr no-completion-model` is run, then `hexa gap pr no-completion-model --send`",
+      "then": "the first prints the pull request and the stub records no create; the second makes the stub record one pull-request create",
+      "test": "hexa-exec/tests/adr_2611031914_spec.rs::part_2::s12_gap_pr_prints_then_send_opens_one"
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "A dry run of sync or pr open opens nothing and records nothing",
+      "given": "a Forgejo repository with two unfiled bug: keys, the current branch pushed at HEAD with no open pull request, and a counting double",
+      "when": "`hexa issue sync` and `hexa pr open` are run without --send",
+      "then": "the double receives no POST, memory gains no issue: entry, and both commands print what they would send",
+      "test": "hexa-exec/tests/adr_2611031914_spec.rs::part_2::s13_dry_run_sync_and_pr_open_send_nothing"
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§3"
+      ],
+      "kind": "property",
+      "description": "No verb creates anything without --send",
+      "given": "any of `hexa issue file <key>`, `hexa issue sync`, `hexa pr open`, `hexa gap pr <id>`, with any valid arguments, against either the Forgejo double or the stub gh",
+      "when": "it is run without --send",
+      "then": "no issue or pull request is created on the forge and no issue: key is written to memory",
+      "test": "hexa-exec/tests/adr_2611031914_spec.rs::part_2::s14_nothing_created_without_send"
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "issue file --send opens one issue carrying the marker and records its URL",
+      "given": "a Forgejo repository, bug:foreign-adr-ids recorded in memory, and a double with no issues",
+      "when": "`hexa issue file bug:foreign-adr-ids --send` is run",
+      "then": "the double receives exactly one issue POST whose body ends with `<!-- hexa-key: bug:foreign-adr-ids -->`, and memory key issue:bug:foreign-adr-ids holds the URL the double returned",
+      "test": "hexa-exec/tests/adr_2611031914_spec.rs::part_2::s15_issue_file_send_opens_one_with_marker"
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "sync files only keys without an issue: entry, limited by --prefix",
+      "given": "memory with bug:a, bug:b (issue:bug:b already set), gap:c, and note:d, and a double with no issues",
+      "when": "`hexa issue sync --send` is run, and separately on a fresh copy `hexa issue sync --prefix gap: --send`",
+      "then": "the first opens issues for bug:a and gap:c only; the second opens one for gap:c only; neither opens one for bug:b or note:d",
+      "test": "hexa-exec/tests/adr_2611031914_spec.rs::part_2::s16_sync_files_only_unfiled_keys_and_honours_prefix"
+    },
+    {
+      "id": "S17",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "A second send finds the issue and opens none",
+      "given": "the state after S15, with the double holding the issue it opened",
+      "when": "`hexa issue file bug:foreign-adr-ids --send` is run again",
+      "then": "the double receives no issue POST and the existing issue's URL is printed",
+      "test": "hexa-exec/tests/adr_2611031914_spec.rs::part_2::s17_second_send_finds_existing_issue"
+    },
+    {
+      "id": "S18",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "A closed issue with the marker still counts as filed",
+      "given": "bug:x recorded with no issue:bug:x entry, and a double holding a closed issue whose body contains `<!-- hexa-key: bug:x -->`",
+      "when": "`hexa issue file bug:x --send` is run",
+      "then": "no issue is opened, the closed issue's URL is printed and stored under issue:bug:x",
+      "test": "hexa-exec/tests/adr_2611031914_spec.rs::part_2::s18_closed_issue_with_marker_counts_as_filed"
+    },
+    {
+      "id": "S19",
+      "decision": [
+        "§4"
+      ],
+      "kind": "property",
+      "description": "Filing n times files once",
+      "given": "any bug: or gap: key, any n ≥ 1, and a double that starts with no issue for that key",
+      "when": "`hexa issue file <key> --send` is run n times, or `hexa issue sync --send` is run n times",
+      "then": "exactly one issue with that key's marker exists on the double, and issue:<key> holds its URL",
+      "test": "hexa-exec/tests/adr_2611031914_spec.rs::part_2::s19_filing_n_times_files_once"
+    },
+    {
+      "id": "S20",
+      "decision": [
+        "§5"
+      ],
+      "kind": "example",
+      "description": "pr open --send opens a pull request for a pushed branch against the default branch",
+      "given": "a Forgejo repository on branch feat/x, pushed to the remote at HEAD, remote default branch main, and no open pull request from feat/x",
+      "when": "`hexa pr open --send` is run",
+      "then": "the double receives one pull-request POST with head feat/x and base main, whose body lists the commit subjects of main..HEAD, and its URL is printed",
+      "test": "hexa-exec/tests/adr_2611031914_spec.rs::part_2::s20_pr_open_send_opens_one_against_default_branch"
+    },
+    {
+      "id": "S21",
+      "decision": [
+        "§5"
+      ],
+      "kind": "example",
+      "description": "pr_body carries the commits and, when given, the ADR, gate and last result",
+      "given": "commits [\"Add forge port\", \"Add Forgejo adapter\"], adr Some(\"ADR-2611031914\"), gate Some(\"cargo test -p hexa-core forge\"), last_result Some(\"passed\")",
+      "when": "pr_body is called, and again with adr, gate and last_result all None",
+      "then": "the first contains both subjects, ADR-2611031914, the gate command and \"passed\"; the second contains both subjects and none of the other three",
+      "test": "hexa-exec/tests/adr_2611031914_spec.rs::part_3::s21_pr_body_carries_commits_and_evidence"
+    },
+    {
+      "id": "S22",
+      "decision": [
+        "§5"
+      ],
+      "kind": "example",
+      "description": "An existing open pull request from the branch is found, not duplicated",
+      "given": "branch feat/x pushed at HEAD and a double already holding an open pull request from feat/x",
+      "when": "`hexa pr open --send` is run",
+      "then": "no pull-request POST is made and the existing pull request's URL is printed",
+      "test": "hexa-exec/tests/adr_2611031914_spec.rs::part_3::s22_existing_open_pull_request_is_found_not_duplicated"
+    },
+    {
+      "id": "S23",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "An unpushed branch is refused and not pushed",
+      "given": "branch feat/y that is not on the remote, and separately branch feat/z whose remote copy is one commit behind HEAD",
+      "when": "`hexa pr open --send` is run on each",
+      "then": "each run fails saying to push the branch, the forge receives no pull-request POST, and the remote's refs are unchanged",
+      "test": "hexa-exec/tests/adr_2611031914_spec.rs::part_3::s23_unpushed_branch_is_refused_and_not_pushed"
+    },
+    {
+      "id": "S24",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "--body replaces the generated body",
+      "given": "branch feat/x pushed at HEAD with commit subject \"Add forge port\", and a file body.md containing \"Hand-written body\"",
+      "when": "`hexa pr open --body body.md --send` is run",
+      "then": "the opened pull request's body is the content of body.md and does not contain \"Add forge port\"",
+      "test": "hexa-exec/tests/adr_2611031914_spec.rs::part_3::s24_body_file_replaces_generated_body"
+    },
+    {
+      "id": "S25",
+      "decision": [
+        "§6"
+      ],
+      "kind": "example",
+      "description": "looks_secret names the first line that holds a credential shape",
+      "given": "text \"first\\nsecond\\nkey ghp_abcdefghijklmnopqrstuvwxyz0123456789\\nAKIAABCDEFGHIJKLMNOP\"",
+      "when": "looks_secret(text, None) is called",
+      "then": "it returns Some(3)",
+      "test": "hexa-exec/tests/adr_2611031914_spec.rs::part_3::s25_looks_secret_names_first_matching_line"
+    },
+    {
+      "id": "S26",
+      "decision": [
+        "§6"
+      ],
+      "kind": "example",
+      "description": "The forge's current token value is a secret shape",
+      "given": "text \"line one\\nmy token is t0k-local-xyz\" and token Some(\"t0k-local-xyz\")",
+      "when": "looks_secret(text, token) is called, and again with token None",
+      "then": "the first returns Some(2); the second returns None",
+      "test": "hexa-exec/tests/adr_2611031914_spec.rs::part_3::s26_current_token_value_is_a_secret_shape"
+    },
+    {
+      "id": "S27",
+      "decision": [
+        "§6"
+      ],
+      "kind": "negative",
+      "description": "A send whose body holds a token-shaped string is refused before any request",
+      "given": "memory key bug:leak whose value contains, on its second line, \"sk-ant-abc123def456\", and a counting Forgejo double",
+      "when": "`hexa issue file bug:leak --send` is run",
+      "then": "the command fails naming line 2, its output does not contain \"sk-ant-abc123def456\", the double receives no request, and memory has no issue:bug:leak",
+      "test": "hexa-exec/tests/adr_2611031914_spec.rs::part_3::s27_send_with_token_shaped_body_is_refused"
+    },
+    {
+      "id": "S28",
+      "decision": [
+        "§6"
+      ],
+      "kind": "negative",
+      "description": "Ordinary text is not a secret",
+      "given": "text \"The red check accepts stub tests.\\nSee ADR-2610221540 §2.\"",
+      "when": "looks_secret(text, None) is called",
+      "then": "it returns None",
+      "test": "hexa-exec/tests/adr_2611031914_spec.rs::part_3::s28_ordinary_text_is_not_a_secret"
+    },
+    {
+      "id": "S29",
+      "decision": [
+        "§6"
+      ],
+      "kind": "property",
+      "description": "The first credential shape anywhere is found at its line",
+      "given": "any multi-line text with no credential shape, any 1-based line n of it, and any one shape from sk-, ghp_, gho_, github_pat_, glpat-, AKIA plus 16 upper-case characters, a -----BEGIN … PRIVATE KEY----- line, or the token value",
+      "when": "looks_secret is called on the text unchanged, and on the text with that shape inserted into line n",
+      "then": "the unchanged text gives None and the changed text gives Some(n)",
+      "test": "hexa-exec/tests/adr_2611031914_spec.rs::part_3::s29_first_credential_shape_is_found_at_its_line"
+    },
+    {
+      "id": "S30",
+      "decision": [
+        "§7"
+      ],
+      "kind": "example",
+      "description": "key_marker and issue_from_memory build the documented draft",
+      "given": "key \"bug:red-check-accepts-stubs\", value \"The red check accepts stub tests. It should reject them.\", project \"strata\"",
+      "when": "key_marker(key) and issue_from_memory(key, value, project) are called",
+      "then": "key_marker returns \"<!-- hexa-key: bug:red-check-accepts-stubs -->\"; the draft's key is the key, its title is \"The red check accepts stub tests\" (the first sentence), and its body contains the value and \"strata\" and ends with the marker",
+      "test": "hexa-exec/tests/adr_2611031914_spec.rs::part_3::s30_key_marker_and_issue_from_memory_build_documented_draft"
+    },
+    {
+      "id": "S31",
+      "decision": [
+        "§7"
+      ],
+      "kind": "negative",
+      "description": "A long first sentence is cut to 80 characters",
+      "given": "a value whose first sentence is 200 characters long",
+      "when": "issue_from_memory(\"bug:long\", value, \"strata\") is called",
+      "then": "the title is at most 80 characters and the body still holds the whole value",
+      "test": "hexa-exec/tests/adr_2611031914_spec.rs::part_4::s31_long_first_sentence_is_cut_to_80_characters"
+    },
+    {
+      "id": "S32",
+      "decision": [
+        "§7"
+      ],
+      "kind": "negative",
+      "description": "The hosts file follows HEXA_HOME and leaves ~/.hexa alone",
+      "given": "HEXA_HOME set to a temporary directory and a snapshot of ~/.hexa/forges.json (or its absence)",
+      "when": "`hexa forge add git.local --kind forgejo --token-env STRATA_TOKEN` is run",
+      "then": "the host is written to $HEXA_HOME/forges.json and ~/.hexa/forges.json is unchanged",
+      "test": "hexa-exec/tests/adr_2611031914_spec.rs::part_4::s32_hosts_file_follows_hexa_home_and_leaves_home_alone"
+    }
+  ]
+}

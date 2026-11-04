@@ -29,8 +29,13 @@ pub enum GapAction {
         #[arg(long = "fix")]
         fix: Vec<String>,
     },
-    /// Print the pull request that closes a gap: a title line, then the body. Opens nothing
-    Pr { id: String },
+    /// Print the pull request that closes a gap: a title line, then the body. Opens nothing without --send
+    Pr {
+        id: String,
+        /// Open it for the current, pushed branch, under `hexa pr open`'s rules
+        #[arg(long)]
+        send: bool,
+    },
 }
 
 /// Print `g` where its dead end is reached, and record the hit. Recording is
@@ -48,7 +53,7 @@ pub fn hit(g: &Guide, project_dir: &Path) {
 }
 
 /// The records in `~/.hexa/gaps.jsonl`: hits, and guides added by hand.
-fn read() -> (Vec<Hit>, Vec<Guide>) {
+pub(crate) fn read() -> (Vec<Hit>, Vec<Guide>) {
     let str_of = |v: &serde_json::Value, k: &str| v.get(k).and_then(|x| x.as_str()).map(str::to_string);
     let list_of = |v: &serde_json::Value, k: &str| -> Vec<String> {
         v.get(k).and_then(|x| x.as_array()).map(|a| a.iter().filter_map(|s| s.as_str().map(str::to_string)).collect()).unwrap_or_default()
@@ -75,7 +80,11 @@ pub async fn run(action: GapAction) -> anyhow::Result<()> {
     match action {
         GapAction::List => list(),
         GapAction::Add { id, what, around, fix } => add(Guide { id, what, around, fix }),
-        GapAction::Pr { id } => pr(&id),
+        GapAction::Pr { id, send: false } => pr(&id),
+        GapAction::Pr { id, send: true } => {
+            let text = pr_text_of(&id)?;
+            crate::commands::forge::blocking(move || send_pr(&id, &text)).await
+        }
     }
 }
 
@@ -123,6 +132,25 @@ fn add(g: Guide) -> anyhow::Result<()> {
 }
 
 fn pr(id: &str) -> anyhow::Result<()> {
+    print!("{}", pr_text_of(id)?);
+    Ok(())
+}
+
+/// Open the gap's pull request: its first line the title, the rest the body.
+fn send_pr(id: &str, text: &str) -> anyhow::Result<()> {
+    let (title, body) = text.split_once('\n').unwrap_or((text, ""));
+    let cwd = std::env::current_dir()?;
+    if let Some(branch) = crate::commands::forge::git(&cwd, &["symbolic-ref", "--short", "-q", "HEAD"]) {
+        if !branch.contains(id) {
+            eprintln!("  {} the branch `{branch}` does not name the gap `{id}`", "!".yellow());
+        }
+    }
+    let args = crate::commands::pr::PrOpenArgs { base: None, draft: false, body: None, send: true };
+    crate::commands::pr::open_pr_flow(&args, Some(title.trim().to_string()), Some(body.trim().to_string()))
+}
+
+/// The pull request text for gap `id`, as `hexa gap pr` prints it.
+fn pr_text_of(id: &str) -> anyhow::Result<String> {
     let (hits, added) = read();
     let unlisted: Vec<String> = added.iter().map(|g| g.id.clone()).collect();
     let (g, is_unlisted) = match guide::find(id) {
@@ -133,6 +161,5 @@ fn pr(id: &str) -> anyhow::Result<()> {
         },
     };
     let rows = guide::rank(&hits, &unlisted);
-    print!("{}", guide::pr_text(&g, rows.iter().find(|r| r.id == id), is_unlisted));
-    Ok(())
+    Ok(guide::pr_text(&g, rows.iter().find(|r| r.id == id), is_unlisted))
 }
