@@ -1,6 +1,7 @@
 //! Value objects shared across the workspace. Pure data, no I/O.
 
 pub mod api_optimization;
+pub mod forge;
 pub mod gate_ledger;
 pub mod guide;
 pub mod intent;
