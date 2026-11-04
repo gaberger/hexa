@@ -1,0 +1,31 @@
+# bench/handsoff/<task-id>/task.toml
+# Folder layout per task:
+#   task.toml   this file (written by a human before the run)
+#   repo/       starting tree, hexa-scaffolded, must pass `hexa analyze . --grade A`
+#   holdout/    hidden tests, copied in only by the grader, never seen by the agent
+#   expected/   optional reference fix, for diff-size comparison only
+
+id          = "linkstore-tag-search"
+category    = "feature"          # feature | bugfix-rule | bugfix-test-only | refactor | adapter-swap | unsolvable
+lang        = "rust"
+solvable    = true               # false for escalation traps
+
+mode        = "build"            # "do" = one file (hexa do run), "build" = multi-file (hexa build)
+prompt      = "Add tag search: GET /links?tag=<t> returns links carrying that tag"
+target      = "src"              # for mode = "build"
+# file      = "src/lib.rs"       # for mode = "do"
+
+# The gate: visible to the agent, must exit 0 to commit.
+gate        = "cargo test --test tag_search"
+
+# Run by the grader only, after holdout/ is copied into the tree.
+holdout_cmd = "cargo test --test tag_search_holdout"
+suite_cmd   = "cargo test"       # regression check on the whole project
+
+# Files the agent must not change (globs). Any change = tampered.
+locked      = ["tests/tag_search.rs", "src/ports/**/*.rs", ".hexa/ADR-rules.toml"]
+
+# Caps. Hitting any of them counts as an escalation.
+max_rounds    = 3
+spend_cap_usd = 2.0
+timeout_min   = 30
