@@ -215,3 +215,15 @@ pub struct Facts {
 pub trait Provenance: Send + Sync {
     fn write(&self, dir: &Path, facts: &Facts) -> std::io::Result<()>;
 }
+
+/// The repository's forge: where an issue is filed and a pull request is
+/// opened (ADR-2611031914 §1). `ForgeGithub` drives the `gh` CLI;
+/// `ForgeForgejo` calls the Gitea-compatible REST API v1.
+pub trait Forge: Send + Sync {
+    /// The issue, open or closed, whose body carries `key`'s marker (§4).
+    fn find_issue(&self, key: &str) -> Result<Option<hexa_core::ports::forge::IssueRef>, hexa_core::ports::forge::ForgeError>;
+    fn open_issue(&self, d: &hexa_core::ports::forge::IssueDraft) -> Result<hexa_core::ports::forge::IssueRef, hexa_core::ports::forge::ForgeError>;
+    /// The open pull request from branch `head`, if any (§5).
+    fn find_pr(&self, head: &str) -> Result<Option<hexa_core::ports::forge::PrRef>, hexa_core::ports::forge::ForgeError>;
+    fn open_pr(&self, d: &hexa_core::ports::forge::PrDraft) -> Result<hexa_core::ports::forge::PrRef, hexa_core::ports::forge::ForgeError>;
+}
