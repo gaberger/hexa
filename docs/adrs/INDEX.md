@@ -62,3 +62,4 @@ _One gateway-mediated agent loop; code-graph context as the differentiator_
 
 | ADR-2611020815 | accepted | ADR-2611020815: A run does not replace the loop's gate |  |
 | ADR-2611040900 | proposed | ADR-2611040900: The frontier delegate gets the gate's verdict back |  |
+| ADR-2611041000 | proposed | ADR-2611041000: The claude-code adapter runs the model it reports |  |
