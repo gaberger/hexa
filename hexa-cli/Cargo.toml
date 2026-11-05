@@ -31,7 +31,7 @@ anyhow = "1"
 async-trait = "0.1"
 dirs = "5"
 libc = "0.2"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "rustls-tls-native-roots", "json", "stream"] }
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 # Parse --since durations like "1h", "30m" in `hexa sched watch` (wp-brain-updates-to-operator P2.1)

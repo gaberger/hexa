@@ -104,6 +104,11 @@ impl ForgeForgejo {
         let resp = req.header(AUTHORIZATION, auth).send().map_err(|e| {
             let kind = if e.is_timeout() {
                 "timed out"
+            } else if refused_certificate(&e) {
+                // A forge behind a private CA answers `curl` (the system store
+                // trusts the CA) but not a client that does not read it; saying
+                // "could not connect" sent the owner to the network instead.
+                "its TLS certificate is not trusted; add the issuer's CA to the system trust store"
             } else if e.is_connect() {
                 "could not connect"
             } else {
@@ -278,6 +283,21 @@ impl Forge for ForgeForgejo {
             _ => Err(ForgeError::Refused(format!("{} opened a pull request but did not say where", self.host))),
         }
     }
+}
+
+/// Whether a failed request failed on the server's TLS certificate: some error
+/// in its source chain names a certificate. Only the fixed words are tested;
+/// no part of the chain is returned, so nothing in it can reach a message.
+fn refused_certificate(e: &reqwest::Error) -> bool {
+    let mut cur: Option<&(dyn std::error::Error + 'static)> = Some(e);
+    while let Some(err) = cur {
+        let s = err.to_string().to_ascii_lowercase();
+        if s.contains("certificate") || s.contains("unknownissuer") {
+            return true;
+        }
+        cur = err.source();
+    }
+    false
 }
 
 impl ForgeStatus for ForgeForgejo {
