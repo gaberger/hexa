@@ -51,6 +51,9 @@ const EXCLUDE_PATTERNS: &[&str] = &[
     "/test/",
     "/__tests__/",
     "/target/",
+    // Claude Code agent worktrees: full copies of the tree, gitignored, never
+    // the project's own sources.
+    "/.claude/worktrees/",
 ];
 
 fn matches_exclude(file_path: &str, patterns: &[&str]) -> bool {
@@ -900,6 +903,30 @@ mod tests {
 
     fn make_analyzer() -> ArchAnalyzer {
         ArchAnalyzer::new(Arc::new(TreeSitterAdapter::new()))
+    }
+
+    /// Claude Code agent worktrees live under `.claude/worktrees/<name>/` and
+    /// hold full copies of the source. Counted, they were 61 files with no
+    /// layer and capped one project's grade at B 84 (coverage 321/382).
+    #[tokio::test]
+    async fn claude_agent_worktrees_are_not_project_sources() {
+        let dir = tempfile::tempdir().unwrap();
+        for rel in ["src/lib.rs", ".claude/worktrees/agent-1/src/lib.rs"] {
+            let p = dir.path().join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, "pub fn f() {}\n").unwrap();
+        }
+        let files = collect_source_files(dir.path()).await.unwrap();
+        assert_eq!(files, vec!["src/lib.rs".to_string()], "{files:?}");
+    }
+
+    /// The exclusion is the directory, not the word: a crate named `worktrees`
+    /// is analysed.
+    #[test]
+    fn a_directory_that_merely_contains_the_word_is_still_analysed() {
+        assert!(matches_exclude(".claude/worktrees/agent-1/src/lib.rs", EXCLUDE_PATTERNS));
+        assert!(!matches_exclude("crates/worktrees/src/lib.rs", EXCLUDE_PATTERNS));
+        assert!(!matches_exclude("src/claude/worktrees/lib.rs", EXCLUDE_PATTERNS));
     }
 
     #[tokio::test]
