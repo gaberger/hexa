@@ -415,8 +415,15 @@ fn hexa_bin() -> PathBuf {
     if let Ok(p) = std::env::var("HEXA_BIN") {
         return PathBuf::from(p);
     }
-    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("../target/debug/hexa");
-    assert!(p.exists(), "build hexa-cli first: {}", p.display());
+    // Beside this test binary, in whichever profile it was built (CI tests
+    // in release): target/<profile>/deps/<test> → target/<profile>/hexa.
+    let exe = std::env::current_exe().expect("current exe");
+    let mut dir = exe.parent().expect("test binary dir").to_path_buf();
+    if dir.ends_with("deps") {
+        dir.pop();
+    }
+    let p = dir.join("hexa");
+    assert!(p.exists(), "build hexa-cli first (same profile as this test): {}", p.display());
     p
 }
 
