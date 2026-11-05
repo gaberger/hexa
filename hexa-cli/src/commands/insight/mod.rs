@@ -44,18 +44,6 @@ pub async fn run(action: InsightAction) -> anyhow::Result<()> {
     }
 }
 
-/// Where Claude Code keeps its project transcripts: `$CLAUDE_CONFIG_DIR/projects`
-/// when that variable is set and non-empty, else `~/.claude/projects`. A profile
-/// such as `~/.claude-profiles/<name>/config` keeps them under its own config
-/// dir (https://code.claude.com/docs/en/memory, "Storage location"), so reading
-/// only `~/.claude` found none of that profile's sessions.
-fn claude_projects_root(config_dir: Option<&str>, home: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
-    match config_dir.filter(|d| !d.is_empty()) {
-        Some(d) => Some(std::path::Path::new(d).join("projects")),
-        None => home.map(|h| h.join(".claude").join("projects")),
-    }
-}
-
 /// Scan the most recent Claude Code transcript JSONL files for assistant
 /// turns and extract punch-list items via the existing `extract_punch_list`
 /// pure function in `commands::hook::punch_list`. Read-only.
@@ -71,7 +59,7 @@ async fn punch_list_run(json: bool) -> anyhow::Result<()> {
     let mut findings: Vec<serde_json::Value> = Vec::new();
 
     let config_dir = std::env::var("CLAUDE_CONFIG_DIR").ok();
-    let transcripts_root: Option<PathBuf> = claude_projects_root(config_dir.as_deref(), dirs::home_dir().as_deref());
+    let transcripts_root: Option<PathBuf> = crate::commands::claude_paths::claude_projects_root(config_dir.as_deref(), dirs::home_dir().as_deref());
     if let Some(root) = transcripts_root.filter(|r| r.is_dir()) {
         // Find recently-modified JSONL files across all project dirs.
         let cutoff = std::time::SystemTime::now()
@@ -208,37 +196,3 @@ pub enum Tier {
 }
 
 pub use extractor::extract_insights;
-
-#[cfg(test)]
-mod transcripts_root {
-    use super::*;
-    use std::path::{Path, PathBuf};
-
-    /// Claude Code keeps its data under `$CLAUDE_CONFIG_DIR` when that is set
-    /// (https://code.claude.com/docs/en/memory, "Storage location"); a profile
-    /// such as `~/.claude-profiles/<name>/config` has its transcripts there, and
-    /// `~/.claude` is only the default.
-    #[test]
-    fn the_config_dir_wins_when_it_is_set() {
-        let home = Path::new("/home/u");
-        assert_eq!(
-            claude_projects_root(Some("/home/u/.claude-profiles/p/config"), Some(home)),
-            Some(PathBuf::from("/home/u/.claude-profiles/p/config/projects"))
-        );
-    }
-
-    #[test]
-    fn an_unset_or_empty_config_dir_falls_back_to_the_default() {
-        let home = Path::new("/home/u");
-        let default = Some(PathBuf::from("/home/u/.claude/projects"));
-        assert_eq!(claude_projects_root(None, Some(home)), default);
-        assert_eq!(claude_projects_root(Some(""), Some(home)), default);
-    }
-
-    #[test]
-    fn a_config_dir_needs_no_home_and_nothing_means_no_root() {
-        assert_eq!(claude_projects_root(Some("/cfg"), None), Some(PathBuf::from("/cfg/projects")));
-        assert_eq!(claude_projects_root(None, None), None);
-        assert_eq!(claude_projects_root(Some(""), None), None);
-    }
-}
