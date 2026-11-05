@@ -291,3 +291,18 @@ async fn the_test_writer_is_told_the_crates_it_may_use() {
         "the writer is told the crates it may use: {seen}"
     );
 }
+
+/// The writer is told the crate's Rust edition: strata's 2024 crates got tests
+/// naming a variable `gen`, a reserved keyword there, and none compiled.
+#[tokio::test]
+async fn the_test_writer_is_told_the_rust_edition() {
+    let (_t, r) = repo();
+    let spec = accepted(&r);
+    let (double, seen) = Double::new(&[TESTS_RED.to_string()]);
+    let path_env = std::env::var("PATH").unwrap_or_default();
+    hexa_exec::spec_author::generate_tests(&double, "a-local-model", &r, &spec, Path::new("."), &path_env)
+        .await
+        .expect("generated");
+    let seen = seen.lock().unwrap().join("\n");
+    assert!(seen.contains("The crate is Rust edition 2021"), "the writer is told the edition: {seen}");
+}

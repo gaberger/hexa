@@ -356,6 +356,21 @@ fn lib_name(manifest: &str) -> Option<String> {
     name("lib").or_else(|| name("package")).map(|v| v.replace('-', "_"))
 }
 
+/// The crate's Rust edition: inline, or inherited from the workspace root's
+/// `[workspace.package]`. A writer that does not know it writes 2021 code in a
+/// 2024 crate (`gen` is reserved there).
+fn crate_edition(root: &Path, manifest: &str) -> Option<String> {
+    let toml: toml::Value = toml::from_str(manifest).ok()?;
+    match toml.get("package")?.get("edition")? {
+        toml::Value::String(e) => Some(e.clone()),
+        toml::Value::Table(t) if t.get("workspace").and_then(|w| w.as_bool()) == Some(true) => {
+            let root_toml: toml::Value = toml::from_str(&std::fs::read_to_string(root.join("Cargo.toml")).ok()?).ok()?;
+            root_toml.get("workspace")?.get("package")?.get("edition")?.as_str().map(str::to_string)
+        }
+        _ => None,
+    }
+}
+
 /// The crates a test in this crate can name: its own library, its normal and
 /// dev dependencies (as `use` paths spell them, `-` as `_`, renames by their
 /// key), in order, without repeats.
@@ -538,6 +553,10 @@ pub async fn generate_tests(
     let signatures = given_block(root, &given);
     let crates: Vec<String> = test_crates(&lib, &manifest).iter().map(|c| format!("`{c}`")).collect();
     let crates = format!("The tests may use only these crates: {}, std.\n", crates.join(", "));
+    let crates = match crate_edition(root, &manifest) {
+        Some(e) => format!("The crate is Rust edition {e}; write code valid in that edition.\n{crates}"),
+        None => crates,
+    };
     let parts: Vec<&[_]> = all.chunks(TESTS_PER_CALL).collect();
     let batched = parts.len() > 1;
     // Each batch is written alone, with the ADR (whose Decision names the API
@@ -662,6 +681,17 @@ async fn seal(unsealed: Unsealed, body: &str, adr: &str) -> Result<String, Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An inherited edition is read from the workspace root's
+    /// `[workspace.package]`; an inline one from the crate; none is `None`.
+    #[test]
+    fn the_edition_is_read_inline_or_from_the_workspace() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("Cargo.toml"), "[workspace]\nmembers = [\"c\"]\n[workspace.package]\nedition = \"2024\"\n").unwrap();
+        assert_eq!(crate_edition(d.path(), "[package]\nname = \"c\"\nedition.workspace = true\n").as_deref(), Some("2024"));
+        assert_eq!(crate_edition(d.path(), "[package]\nname = \"c\"\nedition = \"2021\"\n").as_deref(), Some("2021"));
+        assert_eq!(crate_edition(d.path(), "[package]\nname = \"c\"\n").as_deref(), None);
+    }
 
     #[test]
     fn only_port_and_domain_files_are_contracts() {
