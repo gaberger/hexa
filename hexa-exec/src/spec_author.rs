@@ -356,6 +356,28 @@ fn lib_name(manifest: &str) -> Option<String> {
     name("lib").or_else(|| name("package")).map(|v| v.replace('-', "_"))
 }
 
+/// The first line of every generated test file: it is sealed, so style lints
+/// on it can only block a gate, never be fixed.
+const GENERATED_HEADER: &str = "#![allow(unused, clippy::all)]";
+
+/// Format `path` with rustfmt for `edition`, and return the formatted text.
+/// `None` when rustfmt is missing or fails (the compile check that follows
+/// then reports the file as it is).
+fn rustfmt_in_place(path: &Path, edition: Option<&str>, path_env: &str) -> Option<String> {
+    let mut cmd = std::process::Command::new("rustfmt");
+    if let Some(e) = edition {
+        cmd.args(["--edition", e]);
+    }
+    if !path_env.is_empty() {
+        cmd.env("PATH", path_env);
+    }
+    let ok = cmd.arg(path).output().ok()?.status.success();
+    if !ok {
+        return None;
+    }
+    std::fs::read_to_string(path).ok()
+}
+
 /// The crate's Rust edition: inline, or inherited from the workspace root's
 /// `[workspace.package]`. A writer that does not know it writes 2021 code in a
 /// 2024 crate (`gen` is reserved there).
@@ -620,8 +642,12 @@ pub async fn generate_tests(
     if let Some(parent) = abs.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let body = body + "\n";
+    // A sealed file can never be reformatted or restyled, so it is written
+    // formatted and lint-exempt: `cargo fmt` is then a no-op on it, and a
+    // style lint can never fail a gate on it. Correctness is red-then-green.
+    let body = format!("{GENERATED_HEADER}\n{body}\n");
     std::fs::write(&abs, &body).map_err(|e| e.to_string())?;
+    let body = rustfmt_in_place(&abs, crate_edition(root, &manifest).as_deref(), path_env).unwrap_or(body);
     let unsealed = Unsealed { root: root.to_path_buf(), file: file.clone() };
 
     let refs: BTreeMap<String, String> = names.iter().map(|(sid, f)| (sid.clone(), format!("{file}::{f}"))).collect();
