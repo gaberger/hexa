@@ -356,6 +356,43 @@ fn lib_name(manifest: &str) -> Option<String> {
     name("lib").or_else(|| name("package")).map(|v| v.replace('-', "_"))
 }
 
+/// The first line of every generated test file: it is sealed, so style lints
+/// on it can only block a gate, never be fixed.
+const GENERATED_HEADER: &str = "#![allow(unused, clippy::all)]";
+
+/// Format `path` with rustfmt for `edition`, and return the formatted text.
+/// `None` when rustfmt is missing or fails (the compile check that follows
+/// then reports the file as it is).
+fn rustfmt_in_place(path: &Path, edition: Option<&str>, path_env: &str) -> Option<String> {
+    let mut cmd = std::process::Command::new("rustfmt");
+    if let Some(e) = edition {
+        cmd.args(["--edition", e]);
+    }
+    if !path_env.is_empty() {
+        cmd.env("PATH", path_env);
+    }
+    let ok = cmd.arg(path).output().ok()?.status.success();
+    if !ok {
+        return None;
+    }
+    std::fs::read_to_string(path).ok()
+}
+
+/// The crate's Rust edition: inline, or inherited from the workspace root's
+/// `[workspace.package]`. A writer that does not know it writes 2021 code in a
+/// 2024 crate (`gen` is reserved there).
+fn crate_edition(root: &Path, manifest: &str) -> Option<String> {
+    let toml: toml::Value = toml::from_str(manifest).ok()?;
+    match toml.get("package")?.get("edition")? {
+        toml::Value::String(e) => Some(e.clone()),
+        toml::Value::Table(t) if t.get("workspace").and_then(|w| w.as_bool()) == Some(true) => {
+            let root_toml: toml::Value = toml::from_str(&std::fs::read_to_string(root.join("Cargo.toml")).ok()?).ok()?;
+            root_toml.get("workspace")?.get("package")?.get("edition")?.as_str().map(str::to_string)
+        }
+        _ => None,
+    }
+}
+
 /// The crates a test in this crate can name: its own library, its normal and
 /// dev dependencies (as `use` paths spell them, `-` as `_`, renames by their
 /// key), in order, without repeats.
@@ -538,6 +575,10 @@ pub async fn generate_tests(
     let signatures = given_block(root, &given);
     let crates: Vec<String> = test_crates(&lib, &manifest).iter().map(|c| format!("`{c}`")).collect();
     let crates = format!("The tests may use only these crates: {}, std.\n", crates.join(", "));
+    let crates = match crate_edition(root, &manifest) {
+        Some(e) => format!("The crate is Rust edition {e}; write code valid in that edition.\n{crates}"),
+        None => crates,
+    };
     let parts: Vec<&[_]> = all.chunks(TESTS_PER_CALL).collect();
     let batched = parts.len() > 1;
     // Each batch is written alone, with the ADR (whose Decision names the API
@@ -601,8 +642,12 @@ pub async fn generate_tests(
     if let Some(parent) = abs.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let body = body + "\n";
+    // A sealed file can never be reformatted or restyled, so it is written
+    // formatted and lint-exempt: `cargo fmt` is then a no-op on it, and a
+    // style lint can never fail a gate on it. Correctness is red-then-green.
+    let body = format!("{GENERATED_HEADER}\n{body}\n");
     std::fs::write(&abs, &body).map_err(|e| e.to_string())?;
+    let body = rustfmt_in_place(&abs, crate_edition(root, &manifest).as_deref(), path_env).unwrap_or(body);
     let unsealed = Unsealed { root: root.to_path_buf(), file: file.clone() };
 
     let refs: BTreeMap<String, String> = names.iter().map(|(sid, f)| (sid.clone(), format!("{file}::{f}"))).collect();
@@ -662,6 +707,17 @@ async fn seal(unsealed: Unsealed, body: &str, adr: &str) -> Result<String, Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An inherited edition is read from the workspace root's
+    /// `[workspace.package]`; an inline one from the crate; none is `None`.
+    #[test]
+    fn the_edition_is_read_inline_or_from_the_workspace() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("Cargo.toml"), "[workspace]\nmembers = [\"c\"]\n[workspace.package]\nedition = \"2024\"\n").unwrap();
+        assert_eq!(crate_edition(d.path(), "[package]\nname = \"c\"\nedition.workspace = true\n").as_deref(), Some("2024"));
+        assert_eq!(crate_edition(d.path(), "[package]\nname = \"c\"\nedition = \"2021\"\n").as_deref(), Some("2021"));
+        assert_eq!(crate_edition(d.path(), "[package]\nname = \"c\"\n").as_deref(), None);
+    }
 
     #[test]
     fn only_port_and_domain_files_are_contracts() {

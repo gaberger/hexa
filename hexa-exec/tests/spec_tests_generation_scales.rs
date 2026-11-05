@@ -291,3 +291,41 @@ async fn the_test_writer_is_told_the_crates_it_may_use() {
         "the writer is told the crates it may use: {seen}"
     );
 }
+
+/// The writer is told the crate's Rust edition: strata's 2024 crates got tests
+/// naming a variable `gen`, a reserved keyword there, and none compiled.
+#[tokio::test]
+async fn the_test_writer_is_told_the_rust_edition() {
+    let (_t, r) = repo();
+    let spec = accepted(&r);
+    let (double, seen) = Double::new(&[TESTS_RED.to_string()]);
+    let path_env = std::env::var("PATH").unwrap_or_default();
+    hexa_exec::spec_author::generate_tests(&double, "a-local-model", &r, &spec, Path::new("."), &path_env)
+        .await
+        .expect("generated");
+    let seen = seen.lock().unwrap().join("\n");
+    assert!(seen.contains("The crate is Rust edition 2021"), "the writer is told the edition: {seen}");
+}
+
+/// A generated file is sealed, so it is formatted before its red commit and
+/// opens lint-exempt: a sealed test can never be reformatted or restyled, and
+/// strata's first two sealed files failed `cargo fmt --check` and clippy.
+#[tokio::test]
+async fn a_generated_file_is_formatted_and_lint_exempt_before_it_is_sealed() {
+    let (_t, r) = repo();
+    let spec = accepted(&r);
+    let messy = TESTS_RED.replace(
+        "fn two_doubles_to_four() { assert_eq!(fx::double(2), 4); }",
+        "fn   two_doubles_to_four( ) {assert_eq!( fx::double(2),4 );}",
+    );
+    let (double, _) = Double::new(&[messy]);
+    let path_env = std::env::var("PATH").unwrap_or_default();
+    let g = hexa_exec::spec_author::generate_tests(&double, "a-local-model", &r, &spec, Path::new("."), &path_env)
+        .await
+        .expect("generated");
+    let file = std::fs::read_to_string(r.join(&g.file)).unwrap();
+    assert!(file.starts_with("#![allow(unused, clippy::all)]"), "lint-exempt header first:\n{file}");
+    assert!(file.contains("fn two_doubles_to_four() {\n"), "rustfmt ran before sealing:\n{file}");
+    let check = std::process::Command::new("rustfmt").args(["--edition", "2021", "--check"]).arg(r.join(&g.file)).status().unwrap();
+    assert!(check.success(), "the sealed file is rustfmt-clean");
+}
