@@ -14,14 +14,15 @@ The only other way to make `verify` pass is to write the new sha256 into the spe
 
 1. **A new verb, `hexa spec amend <ADR> --reason "<why>"`**, for the case where the scenarios are unchanged and a sealed file's content has to change.
 2. **It shows before it records.** The first call prints a unified diff between the sealed version of each changed file and the current file, then prints the command to confirm, ending in `--confirm <sha256 of the current file>`. It writes nothing. The sealed version is the revision of that file in git history whose sha256 equals the sealed hash; if no revision matches, the verb refuses ("the sealed version is not in git history, so the edit cannot be shown"), because an amendment nobody can read is not reviewed.
-3. **It records only on `--confirm`.** The call with `--confirm <hash>` succeeds only if `<hash>` equals the sha256 of the file as it is now, so the confirmation is for exactly the content that was shown. It appends to the spec JSON, per file, an entry in a new `amendments` list: `{file, from, to, by, reason, at, base_commit}`, and sets `sealed[file]` to `to`. `by` defaults to `git config user.name`, as `accept` does. An empty `--reason` is refused.
-4. **What it refuses.**
+3. **One file per confirmation.** When more than one sealed file of the ADR differs from its seal, `--file <path>` is required, and the first call prints the diff for that file only; `--confirm` applies to that file. With exactly one differing file `--file` is optional. Several files are amended by several calls, each with its own diff and its own hash, so a person never confirms content they were not shown.
+4. **It records only on `--confirm`.** The call with `--confirm <hash>` succeeds only if `<hash>` equals the sha256 of the file as it is now, so the confirmation is for exactly the content that was shown. It appends to the spec JSON, per file, an entry in a new `amendments` list: `{file, from, to, by, reason, at, base_commit}`, and sets `sealed[file]` to `to`. `by` defaults to `git config user.name`, as `accept` does. An empty `--reason` is refused.
+5. **What it refuses.**
    - The spec is not accepted, or its accepted hash no longer matches its scenarios (the scenarios changed: that goes through the spec).
    - A scenario's test function, named in the spec, is no longer in the new file.
    - The file is not under a `tests/` directory (the existing seal rule).
    - Nothing differs from the seal (nothing to amend).
-5. **Amendments stay visible.** `hexa spec verify` prints, per ADR, how many amendments its sealed files carry (`2 amendments`), and `--verbose` lists each with its reason. `verify --ci` passes on an amended seal, and fails if an amendment's `to` does not equal the file's current hash (an edit after the amendment is drift again).
-6. **`hexa spec seal` points here.** Its refusal message adds: "if the scenarios are unchanged and the edit is deliberate, `hexa spec amend`".
+6. **Amendments stay visible.** `hexa spec verify` prints, per ADR, how many amendments its sealed files carry (`2 amendments`), and `--verbose` lists each with its reason. `verify --ci` passes on an amended seal, and fails if an amendment's `to` does not equal the file's current hash (an edit after the amendment is drift again).
+7. **`hexa spec seal` points here.** Its refusal message adds: "if the scenarios are unchanged and the edit is deliberate, `hexa spec amend`".
 
 What the verb cannot do is judge whether an edit weakened an assertion. The diff and the reason are the review; the amendment record is the evidence that a person was shown the change.
 
@@ -44,6 +45,7 @@ The tests of `spec_amend` run `amend` in a temporary git repository with an acce
 
 - a fixture edit with the scenarios unchanged: the first call prints the diff and writes nothing (the spec JSON is byte-identical), the call with the right `--confirm` records one amendment and `verify` passes with `1 amendment`;
 - a `--confirm` hash that is not the file's current hash is refused and writes nothing;
+- with two differing sealed files and no `--file`, the verb refuses and names both; with `--file` it diffs and amends that file only, and the other stays unsealed-changed;
 - an empty `--reason` is refused;
 - a scenario's test function deleted from the file is refused;
 - changed scenarios (the accepted hash no longer matches) are refused with a pointer to the spec route;
