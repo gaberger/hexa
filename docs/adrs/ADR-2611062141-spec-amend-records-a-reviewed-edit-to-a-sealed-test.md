@@ -1,6 +1,6 @@
 # ADR-2611062141: `hexa spec amend` records a reviewed edit to a sealed test
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-11-06
 **Drivers:** strata's stage A ADR (id 2611062020, 2026-11-06). A breaking base-schema change made two attributes required, so the fixtures in two sealed spec test files had to change: sites, racks, devices, cables, prefixes and addresses now carry a `lifecycle/status`; device types a vendor and slug; devices a role. All scenarios still pass (32 of 32 and 38 of 38), but both seals report "changed since sealing", and hexa offers no supported way to say that the change was deliberate and reviewed. The owner asked for the verb to be built (2026-11-06).
 
