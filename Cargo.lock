@@ -626,7 +626,7 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "hexa-analysis"
-version = "26.11.3"
+version = "26.11.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -646,7 +646,7 @@ dependencies = [
 
 [[package]]
 name = "hexa-cli"
-version = "26.11.3"
+version = "26.11.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -699,7 +699,7 @@ dependencies = [
 
 [[package]]
 name = "hexa-exec"
-version = "26.11.3"
+version = "26.11.4"
 dependencies = [
  "async-trait",
  "chrono",
@@ -724,7 +724,7 @@ dependencies = [
 
 [[package]]
 name = "hexa-git"
-version = "26.11.3"
+version = "26.11.4"
 dependencies = [
  "git2",
  "serde",
@@ -734,7 +734,7 @@ dependencies = [
 
 [[package]]
 name = "hexa-graph"
-version = "26.11.3"
+version = "26.11.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -751,7 +751,7 @@ dependencies = [
 
 [[package]]
 name = "hexa-infer"
-version = "26.11.3"
+version = "26.11.4"
 dependencies = [
  "async-trait",
  "chrono",
