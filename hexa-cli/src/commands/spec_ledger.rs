@@ -8,7 +8,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use colored::Colorize;
-use hexa_core::ports::spec::{coverage, numbered_decisions, Acceptance, Spec};
+use serde_json::Value;
+use hexa_core::ports::spec::{coverage, numbered_decisions, test_ref, Acceptance, Finding, Spec};
 
 use hexa_exec::spec_author::{acceptance_holds, content_hash, run_test_alone, sha256_hex, TestRun};
 
@@ -20,6 +21,8 @@ const SPEC_REQUIRED_FROM: u64 = 2610221540;
 
 const ADRS: &str = "docs/adrs";
 const SPECS: &str = "docs/specs";
+/// Where else a ledger may keep its ADRs.
+const ADR_DIRS: [&str; 2] = [ADRS, "docs/adr"];
 
 /// `ADR-…` from a full id or bare digits.
 fn normalise(id: &str) -> String {
@@ -61,20 +64,24 @@ fn status_of(text: &str) -> String {
 }
 
 fn ledger(root: &Path) -> anyhow::Result<Vec<Adr>> {
-    let mut out: Vec<Adr> = std::fs::read_dir(root.join(ADRS))
-        .map_err(|e| anyhow::anyhow!("no {ADRS}/: {e}"))?
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|x| x == "md"))
-        .filter_map(|p| {
+    let mut out: Vec<Adr> = Vec::new();
+    let mut any = false;
+    for dir in ADR_DIRS {
+        let Ok(entries) = std::fs::read_dir(root.join(dir)) else { continue };
+        any = true;
+        out.extend(entries.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "md")).filter_map(|p| {
             let stem = p.file_stem()?.to_string_lossy().to_string();
             stem.starts_with("ADR-").then(|| {
                 let status = status_of(&std::fs::read_to_string(&p).unwrap_or_default());
                 Adr { id: adr_id_of(&stem), path: p, status }
             })
-        })
-        .collect();
+        }));
+    }
+    if !any {
+        anyhow::bail!("no {ADRS}/: not found");
+    }
     out.sort_by(|a, b| a.id.cmp(&b.id));
+    out.dedup_by(|a, b| a.id == b.id);
     Ok(out)
 }
 
@@ -83,12 +90,50 @@ fn find(root: &Path, id: &str) -> anyhow::Result<Adr> {
     ledger(root)?.into_iter().find(|a| a.id == id).ok_or_else(|| anyhow::anyhow!("{id}: no such ADR in {ADRS}/"))
 }
 
+/// Where an ADR's spec is kept: `docs/specs/<ADR>.json`, else the first of the
+/// other homes a ledger may use that exists.
 fn spec_path(root: &Path, id: &str) -> PathBuf {
-    root.join(SPECS).join(format!("{id}.json"))
+    let homes = [
+        root.join(SPECS).join(format!("{id}.json")),
+        root.join(".hexa/specs").join(format!("{id}.json")),
+        root.join("docs/adr").join(format!("{id}.spec.json")),
+        root.join(ADRS).join(format!("{id}.spec.json")),
+    ];
+    homes.iter().find(|p| p.exists()).cloned().unwrap_or_else(|| homes[0].clone())
 }
 
 fn load(root: &Path, id: &str) -> anyhow::Result<Option<Spec>> {
     Ok(load_text(root, id)?.map(|(_, spec)| spec))
+}
+
+/// A spec that keeps its scenarios under `scenarios` rather than `specs`. It
+/// is read as a spec, and written back in its own shape.
+fn is_alt(text: &str) -> bool {
+    serde_json::from_str::<Value>(text).ok().is_some_and(|v| v.get("specs").is_none() && v.get("scenarios").is_some())
+}
+
+fn read_spec(text: &str) -> serde_json::Result<Spec> {
+    let mut v: Value = serde_json::from_str(text)?;
+    if is_alt(text) {
+        if let Some(o) = v.as_object_mut() {
+            if let Some(sc) = o.remove("scenarios") {
+                o.insert("specs".into(), sc);
+            }
+            if !o.contains_key("feature") {
+                let adr = o.get("adr").cloned().unwrap_or_else(|| Value::String(String::new()));
+                o.insert("feature".into(), adr);
+            }
+        }
+    }
+    serde_json::from_value(v)
+}
+
+/// The amendments the spec file carries, oldest first.
+fn amendments_of(text: &str) -> Vec<Value> {
+    serde_json::from_str::<Value>(text)
+        .ok()
+        .and_then(|v| v.get("amendments").and_then(Value::as_array).cloned())
+        .unwrap_or_default()
 }
 
 /// The spec and the exact text it was read from.
@@ -98,7 +143,7 @@ fn load_text(root: &Path, id: &str) -> anyhow::Result<Option<(String, Spec)>> {
         return Ok(None);
     }
     let text = std::fs::read_to_string(&p)?;
-    let spec = serde_json::from_str(&text).map_err(|e| anyhow::anyhow!("{}: not a spec: {e}", p.display()))?;
+    let spec = read_spec(&text).map_err(|e| anyhow::anyhow!("{}: not a spec: {e}", p.display()))?;
     Ok(Some((text, spec)))
 }
 
@@ -116,16 +161,77 @@ fn save_unchanged(root: &Path, spec: &Spec, read: &str) -> anyhow::Result<()> {
     save(root, spec)
 }
 
+/// The spec as written: its fields, then the amendments, which are not the
+/// spec's behaviour and are kept apart from `Spec`.
+#[derive(serde::Serialize)]
+struct WithAmendments<'a> {
+    #[serde(flatten)]
+    spec: &'a Spec,
+    #[serde(skip_serializing_if = "<[Value]>::is_empty")]
+    amendments: &'a [Value],
+}
+
 fn save(root: &Path, spec: &Spec) -> anyhow::Result<()> {
+    write_spec(root, spec, None)
+}
+
+/// Write `spec`. The amendments on disk are kept unless `amendments` replaces
+/// them: a list that is append-only survives every other write.
+fn write_spec(root: &Path, spec: &Spec, amendments: Option<&[Value]>) -> anyhow::Result<()> {
     let p = spec_path(root, &spec.adr);
-    std::fs::write(&p, serde_json::to_string_pretty(spec)? + "\n")?;
+    let old: Option<Value> = std::fs::read_to_string(&p).ok().and_then(|t| serde_json::from_str(&t).ok());
+    let kept: Vec<Value> = match amendments {
+        Some(a) => a.to_vec(),
+        None => old.as_ref().and_then(|o| o.get("amendments")).and_then(Value::as_array).cloned().unwrap_or_default(),
+    };
+    let text = match old {
+        Some(Value::Object(mut file)) if !file.contains_key("specs") && file.contains_key("scenarios") => {
+            let Value::Object(new) = serde_json::to_value(spec)? else { anyhow::bail!("a spec is an object") };
+            for k in ["accepted", "sealed", "red"] {
+                match new.get(k) {
+                    Some(v) => {
+                        file.insert(k.into(), v.clone());
+                    }
+                    None => {
+                        file.remove(k);
+                    }
+                }
+            }
+            if let (Some(Value::Array(have)), Some(Value::Array(now))) = (file.get_mut("scenarios"), new.get("specs")) {
+                for s in have.iter_mut().filter_map(Value::as_object_mut) {
+                    let id = s.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+                    let Some(n) = now.iter().find(|n| n["id"] == id) else { continue };
+                    for k in ["test", "red"] {
+                        match n.get(k) {
+                            Some(v) => {
+                                s.insert(k.into(), v.clone());
+                            }
+                            None => {
+                                s.remove(k);
+                            }
+                        }
+                    }
+                }
+            }
+            if kept.is_empty() {
+                file.remove("amendments");
+            } else {
+                file.insert("amendments".into(), Value::Array(kept));
+            }
+            serde_json::to_string_pretty(&Value::Object(file))?
+        }
+        _ => serde_json::to_string_pretty(&WithAmendments { spec, amendments: &kept })?,
+    };
+    std::fs::write(&p, text + "\n")?;
     Ok(())
 }
 
 /// Coverage findings for one ADR and its spec, printed. True when covered.
-fn print_coverage(adr: &Adr, spec: &Spec) -> bool {
+fn print_coverage(adr: &Adr, spec: &Spec, alt: bool) -> bool {
     let text = std::fs::read_to_string(&adr.path).unwrap_or_default();
-    let findings = coverage(&adr.id, &numbered_decisions(&text), spec);
+    let mut findings = coverage(&adr.id, &numbered_decisions(&text), spec);
+    // A spec in the `scenarios` shape states examples; it is not asked for negatives.
+    findings.retain(|f| !(alt && matches!(f, Finding::NoNegative(_))));
     for e in spec.exempt.iter().filter(|e| !e.reason.trim().is_empty()) {
         println!("  {} {} {} exempt: {}", "\u{25cb}".dimmed(), adr.id, e.decision, e.reason);
     }
@@ -145,8 +251,9 @@ pub fn check(adr: Option<&str>) -> anyhow::Result<()> {
     };
     let (mut covered, mut failed, mut legacy) = (0, 0, 0);
     for a in &adrs {
-        match load(&root, &a.id)? {
-            Some(spec) if print_coverage(a, &spec) => {
+        let loaded = load_text(&root, &a.id)?;
+        match loaded.map(|(t, s)| (is_alt(&t), s)) {
+            Some((alt, spec)) if print_coverage(a, &spec, alt) => {
                 covered += 1;
                 println!("  {} {} covered ({} scenarios)", "\u{2713}".green(), a.id, spec.specs.len());
             }
@@ -170,8 +277,8 @@ pub fn check(adr: Option<&str>) -> anyhow::Result<()> {
 pub fn accept(adr: &str, by: Option<&str>) -> anyhow::Result<()> {
     let root = std::env::current_dir()?;
     let a = find(&root, adr)?;
-    let mut spec = load(&root, &a.id)?.ok_or_else(|| anyhow::anyhow!("{} has no spec to accept", a.id))?;
-    if !print_coverage(&a, &spec) {
+    let (text, mut spec) = load_text(&root, &a.id)?.ok_or_else(|| anyhow::anyhow!("{} has no spec to accept", a.id))?;
+    if !print_coverage(&a, &spec, is_alt(&text)) {
         anyhow::bail!("{}: the spec does not cover the decision; accept a complete one", a.id);
     }
     let by = acceptor(
@@ -344,18 +451,73 @@ fn record_generated(spec: &mut Spec, refs: &BTreeMap<String, String>, red: &str,
 pub fn seal(adr: &str) -> anyhow::Result<()> {
     let root = std::env::current_dir()?;
     let a = find(&root, adr)?;
-    let mut spec = load(&root, &a.id)?.ok_or_else(|| anyhow::anyhow!("{} has no spec to seal", a.id))?;
+    let (text, mut spec) = load_text(&root, &a.id)?.ok_or_else(|| anyhow::anyhow!("{} has no spec to seal", a.id))?;
     if let Err(why) = acceptance_holds(&spec) {
         anyhow::bail!("{}: {why}. Tests are sealed against an accepted spec, never a draft", a.id);
     }
-    spec.sealed = seal_files(&root, &a.id, &spec)?;
+    spec.sealed = seal_files_of(&root, &a.id, &spec, test_files(&root, &spec, &text))?;
     save(&root, &spec)
+}
+
+/// The test files the scenarios name. In the `scenarios` shape a test may be a
+/// bare function name: its file is the scenario's `file`, else the one file
+/// under a `tests/` directory that declares it.
+fn test_files(root: &Path, spec: &Spec, text: &str) -> std::collections::BTreeSet<String> {
+    let mut out = spec.test_files();
+    if !is_alt(text) {
+        return out;
+    }
+    let raw: Value = serde_json::from_str(text).unwrap_or(Value::Null);
+    for (s, r) in spec.specs.iter().zip(raw["scenarios"].as_array().into_iter().flatten()) {
+        let Some(t) = s.test.as_deref().filter(|t| test_ref(t).is_none()) else { continue };
+        match r["file"].as_str() {
+            Some(f) => {
+                out.insert(f.to_string());
+            }
+            None => out.extend(find_test_file(root, root, t)),
+        }
+    }
+    out
+}
+
+/// The first `.rs` file under a `tests/` directory in `dir` that declares `fn name(`.
+fn find_test_file(root: &Path, dir: &Path, name: &str) -> Option<String> {
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(dir).ok()?.flatten().map(|e| e.path()).collect();
+    entries.sort();
+    for p in entries {
+        let n = p.file_name()?.to_string_lossy().to_string();
+        if p.is_dir() {
+            if matches!(n.as_str(), ".git" | "target" | "node_modules") {
+                continue;
+            }
+            if let Some(f) = find_test_file(root, &p, name) {
+                return Some(f);
+            }
+        } else if p.extension().is_some_and(|x| x == "rs") {
+            let rel = p.strip_prefix(root).ok()?;
+            if rel.iter().any(|c| c == "tests")
+                && std::fs::read_to_string(&p).is_ok_and(|t| t.contains(&format!("fn {name}(")))
+            {
+                return Some(rel.to_string_lossy().to_string());
+            }
+        }
+    }
+    None
 }
 
 /// Hash every test file `spec`'s scenarios name. A spec naming none would
 /// seal nothing and still report success, so it is refused.
+#[cfg(test)]
 fn seal_files(root: &Path, id: &str, spec: &Spec) -> anyhow::Result<BTreeMap<String, String>> {
-    let files = spec.test_files();
+    seal_files_of(root, id, spec, spec.test_files())
+}
+
+fn seal_files_of(
+    root: &Path,
+    id: &str,
+    spec: &Spec,
+    files: std::collections::BTreeSet<String>,
+) -> anyhow::Result<BTreeMap<String, String>> {
     if files.is_empty() {
         anyhow::bail!("{id}: no scenario names a test, so there is nothing to seal. Run `hexa spec tests {id} --crate <dir>` first");
     }
@@ -378,7 +540,9 @@ fn seal_files(root: &Path, id: &str, spec: &Spec) -> anyhow::Result<BTreeMap<Str
         // changes through the spec, never by hand.
         if spec.sealed.get(&f).is_some_and(|s| *s != hash) {
             anyhow::bail!(
-                "{}: seal broken: {f} changed since sealing. A sealed test changes through the spec, not by re-sealing",
+                "{}: seal broken: {f} changed since sealing. A sealed test changes through the spec, not by re-sealing; \
+                 if the scenarios are unchanged and the edit is deliberate, `hexa spec amend {} --reason \"<why>\"`",
+                id,
                 id
             );
         }
@@ -389,7 +553,7 @@ fn seal_files(root: &Path, id: &str, spec: &Spec) -> anyhow::Result<BTreeMap<Str
 }
 
 /// `hexa spec verify [ADR] [--ci]` — drift is a failure (§6, §7, §8).
-pub async fn verify(adr: Option<&str>, ci: bool, prove: bool) -> anyhow::Result<()> {
+pub async fn verify(adr: Option<&str>, ci: bool, prove: bool, verbose: bool) -> anyhow::Result<()> {
     let root = std::env::current_dir()?;
     println!("{} each scenario's sealed test, run alone", "\u{2b21} spec verify".cyan().bold());
     let adrs = match adr {
@@ -404,20 +568,48 @@ pub async fn verify(adr: Option<&str>, ci: bool, prove: bool) -> anyhow::Result<
     let (mut passed, mut failed, mut pending, mut unproven) = (0, 0, 0, 0);
     let mut fatal = 0;
     for a in &adrs {
-        let Some(spec) = load(&root, &a.id)? else {
+        let Some((text, spec)) = load_text(&root, &a.id)? else {
             println!("  {} {} has no spec", "\u{2717}".red(), a.id);
             fatal += 1;
             continue;
         };
-        if !print_coverage(a, &spec) {
+        let alt = is_alt(&text);
+        if !print_coverage(a, &spec, alt) {
             fatal += 1;
         }
         if let Err(why) = acceptance_holds(&spec) {
             println!("  {} {} {}", "\u{2717}".red(), a.id, why);
             fatal += 1;
         }
-        for f in spec.test_files() {
+        let amended = amendments_of(&text);
+        if !amended.is_empty() {
+            let n = amended.len();
+            println!("  {} {} {} amendment{}", "\u{25cb}".dimmed(), a.id, n, if n == 1 { "" } else { "s" });
+            if verbose {
+                for e in &amended {
+                    let short = |k: &str| e[k].as_str().unwrap_or("?").chars().take(12).collect::<String>();
+                    println!(
+                        "      {} {}…→{}… by {} at {}: {}",
+                        e["file"].as_str().unwrap_or("?"),
+                        short("from"),
+                        short("to"),
+                        e["by"].as_str().unwrap_or("?"),
+                        e["at"].as_str().unwrap_or("?"),
+                        e["reason"].as_str().unwrap_or("")
+                    );
+                }
+            }
+        }
+        for f in test_files(&root, &spec, &text) {
             let now = std::fs::read(root.join(&f)).map(|b| sha256_hex(&b)).ok();
+            // An amended file must still be what its latest amendment recorded.
+            let latest = amended.iter().rev().find(|e| e["file"].as_str() == Some(f.as_str())).and_then(|e| e["to"].as_str());
+            if let (Some(to), Some(n)) = (latest, now.as_deref()) {
+                if to != n && spec.sealed.get(&f).is_some_and(|s| s == n) {
+                    println!("  {} {} {} changed since its latest amendment (the seal was moved without one)", "\u{2717}".red(), a.id, f);
+                    fatal += 1;
+                }
+            }
             match (spec.sealed.get(&f), now) {
                 (None, _) => {
                     println!("  {} {} {} is not sealed (`hexa spec seal`)", "\u{2717}".red(), a.id, f);
@@ -447,6 +639,10 @@ pub async fn verify(adr: Option<&str>, ci: bool, prove: bool) -> anyhow::Result<
                 println!("  {} {} {} pending: no test yet", mark, a.id, s.id);
                 continue;
             };
+            if alt && test_ref(r).is_none() {
+                println!("  {} {} {} not run here: `{}` is a bare test name, not `<path>.rs::<fn>`", "\u{25cb}".dimmed(), a.id, s.id, r);
+                continue;
+            }
             match run_test_alone(&root, &path_env, r, None).await {
                 TestRun::Passed => {
                     passed += 1;
@@ -491,6 +687,209 @@ pub async fn verify(adr: Option<&str>, ci: bool, prove: bool) -> anyhow::Result<
         anyhow::bail!("spec verification failed");
     }
     Ok(())
+}
+
+/// `hexa spec amend <ADR> --reason <why> [--file <f>] [--confirm <sha256>]`
+/// (ADR-2611062141). The scenarios are unchanged and a sealed file's content
+/// has to change. The first call shows the diff and writes nothing; the call
+/// with the hash of the file as shown records the amendment and moves the seal.
+pub fn amend(
+    adr: &str,
+    reason: &str,
+    file: Option<&str>,
+    confirm: Option<&str>,
+    by: Option<&str>,
+) -> anyhow::Result<()> {
+    let root = std::env::current_dir()?;
+    let a = find(&root, adr)?;
+    let id = a.id.as_str();
+    if reason.trim().is_empty() {
+        anyhow::bail!("{id}: --reason is empty: say why the sealed test is being changed");
+    }
+    let (text, mut spec) = load_text(&root, id)?.ok_or_else(|| anyhow::anyhow!("{id} has no spec to amend"))?;
+    match acceptance_holds(&spec) {
+        Ok(()) => {}
+        Err(why) if spec.accepted.is_none() => anyhow::bail!("{id}: {why}"),
+        Err(_) => anyhow::bail!(
+            "{id}: the scenarios changed since they were accepted. That goes through the spec, not through amend: \
+             a person runs `hexa spec accept {id}` again, then `hexa spec tests {id} --crate <dir>`"
+        ),
+    }
+    if spec.sealed.is_empty() {
+        anyhow::bail!("{id}: nothing is sealed, so there is nothing to amend");
+    }
+    // What differs from its seal, with the file as it is now.
+    let mut differing: Vec<(String, Option<Vec<u8>>)> = Vec::new();
+    for (f, sealed) in &spec.sealed {
+        let now = std::fs::read(root.join(f)).ok();
+        if now.as_deref().map(sha256_hex).as_deref() != Some(sealed.as_str()) {
+            differing.push((f.clone(), now));
+        }
+    }
+    let chosen = match file.map(|f| f.trim_start_matches("./")) {
+        Some(f) => {
+            if !spec.sealed.contains_key(f) {
+                let all: Vec<&str> = spec.sealed.keys().map(String::as_str).collect();
+                anyhow::bail!("{id}: {f} is not a sealed file of this spec (sealed: {})", all.join(", "));
+            }
+            if !differing.iter().any(|d| d.0 == f) {
+                anyhow::bail!("{id}: nothing to amend: {f} matches its seal");
+            }
+            f.to_string()
+        }
+        None => match differing.as_slice() {
+            [] => anyhow::bail!("{id}: nothing to amend: every sealed file matches its seal"),
+            [(f, _)] => f.clone(),
+            many => {
+                let names: Vec<&str> = many.iter().map(|d| d.0.as_str()).collect();
+                anyhow::bail!(
+                    "{id}: {} sealed files differ from their seal: {}. --file <path> is required: one file is amended per confirmation",
+                    many.len(),
+                    names.join(", ")
+                )
+            }
+        },
+    };
+    let now_bytes = differing
+        .into_iter()
+        .find(|d| d.0 == chosen)
+        .and_then(|d| d.1)
+        .ok_or_else(|| anyhow::anyhow!("{id}: {chosen} is gone; a deleted sealed test cannot be amended"))?;
+    let now_hash = sha256_hex(&now_bytes);
+    if !Path::new(&chosen).iter().any(|c| c == "tests") {
+        anyhow::bail!("{id}: {chosen} is not under a tests/ directory; only a sealed test file is amended");
+    }
+    let sealed_hash = spec.sealed[&chosen].clone();
+    let mut amended = amendments_of(&text);
+    let Some((base_commit, base_bytes)) = sealed_version(&root, &chosen, &sealed_hash, &amended) else {
+        anyhow::bail!("{id}: {chosen}: the sealed version is not in git history, so the edit cannot be shown");
+    };
+
+    // Every test function a scenario names in this file must survive the edit.
+    let before = String::from_utf8_lossy(&base_bytes).to_string();
+    let after = String::from_utf8_lossy(&now_bytes).to_string();
+    let raw: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+    let scenario_files: Vec<Option<String>> = raw["scenarios"]
+        .as_array()
+        .or_else(|| raw["specs"].as_array())
+        .into_iter()
+        .flatten()
+        .map(|s| s["file"].as_str().map(str::to_string))
+        .collect();
+    let mut missing: Vec<String> = Vec::new();
+    for (i, s) in spec.specs.iter().enumerate() {
+        let Some(t) = s.test.as_deref() else { continue };
+        let (belongs, leaf) = match test_ref(t) {
+            Some((_, f)) if f.ends_with("::") => continue,
+            Some((p, f)) => (p == chosen, f.rsplit("::").next().unwrap_or(f)),
+            None => {
+                let named = scenario_files.get(i).cloned().flatten();
+                (named.map_or_else(|| before.contains(&format!("fn {t}(")), |n| n == chosen), t)
+            }
+        };
+        if belongs && !after.contains(&format!("fn {leaf}(")) {
+            missing.push(format!("{leaf} ({})", s.id));
+        }
+    }
+    if !missing.is_empty() {
+        anyhow::bail!(
+            "{id}: {chosen} no longer has the test function(s) the scenarios name: {}. A scenario keeps its test; changing that goes through the spec",
+            missing.join(", ")
+        );
+    }
+
+    let Some(given) = confirm else {
+        let diff = unified_diff(&chosen, &base_bytes, &now_bytes)?;
+        println!("{} {id} {chosen}, against its sealed version at {}", "\u{2b21} spec amend".cyan().bold(), &base_commit[..base_commit.len().min(12)]);
+        println!("{diff}");
+        println!("  The diff above and your reason are the review: this verb cannot tell whether an edit weakened an assertion.");
+        println!("  To record it, as shown:\n\n    hexa spec amend {id} --file {chosen} --reason {reason:?} --confirm {now_hash}\n");
+        return Ok(());
+    };
+    if !given.trim().eq_ignore_ascii_case(&now_hash) {
+        anyhow::bail!(
+            "{id}: --confirm {given} is not the sha256 of {chosen} as it is now, so it confirms content that was not shown. \
+             Run again without --confirm to see the diff of the file as it stands"
+        );
+    }
+    let by = acceptor(
+        by,
+        || {
+            let out = std::process::Command::new("git").args(["config", "user.name"]).output().ok()?;
+            Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+        },
+        || std::env::var("USER").ok(),
+    )?;
+    amended.push(serde_json::json!({
+        "file": chosen,
+        "from": sealed_hash,
+        "to": now_hash,
+        "by": by,
+        "reason": reason,
+        "at": chrono::Utc::now().to_rfc3339(),
+        "base_commit": base_commit,
+    }));
+    spec.sealed.insert(chosen.clone(), now_hash.clone());
+    write_spec(&root, &spec, Some(&amended))?;
+    println!("  {} {id} amended {chosen} to {} by {by}: {reason}", "\u{2713}".green(), &now_hash[..12]);
+    Ok(())
+}
+
+/// The sealed version of `file`: the revision in git history whose sha256 is
+/// `hash`. A seal that an earlier amendment moved may name a version nobody
+/// committed; it falls back to the version that amendment replaced, which a
+/// person was shown, so the diff then spans every edit since.
+fn sealed_version(root: &Path, file: &str, hash: &str, amended: &[Value]) -> Option<(String, Vec<u8>)> {
+    let mut want = hash.to_string();
+    for _ in 0..=amended.len() {
+        if let Some(found) = in_history(root, file, &want) {
+            return Some(found);
+        }
+        let prior = amended
+            .iter()
+            .rev()
+            .find(|e| e["file"].as_str() == Some(file) && e["to"].as_str() == Some(want.as_str()))
+            .and_then(|e| e["from"].as_str())?;
+        want = prior.to_string();
+    }
+    None
+}
+
+fn in_history(root: &Path, file: &str, hash: &str) -> Option<(String, Vec<u8>)> {
+    let log = std::process::Command::new("git").args(["log", "--format=%H", "--"]).arg(file).current_dir(root).output().ok()?;
+    if !log.status.success() {
+        return None;
+    }
+    for rev in String::from_utf8_lossy(&log.stdout).lines() {
+        let shown = std::process::Command::new("git").arg("show").arg(format!("{rev}:./{file}")).current_dir(root).output().ok()?;
+        if shown.status.success() && sha256_hex(&shown.stdout) == hash {
+            return Some((rev.to_string(), shown.stdout));
+        }
+    }
+    None
+}
+
+/// A unified diff of `old` to `new`, from `git diff --no-index`.
+fn unified_diff(file: &str, old: &[u8], new: &[u8]) -> anyhow::Result<String> {
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+    let dir = std::env::temp_dir().join(format!("hexa-amend-{}-{nanos}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    let out = (|| {
+        std::fs::write(dir.join("sealed"), old)?;
+        std::fs::write(dir.join("current"), new)?;
+        std::process::Command::new("git")
+            .args(["diff", "--no-index", "--no-color", "--no-ext-diff", "--", "sealed", "current"])
+            .current_dir(&dir)
+            .output()
+    })();
+    let _ = std::fs::remove_dir_all(&dir);
+    let out = out?;
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    let hunks: Vec<&str> = text.lines().skip_while(|l| !l.starts_with("@@")).collect();
+    if hunks.is_empty() {
+        anyhow::bail!("{file}: git produced no diff between the sealed version and the file");
+    }
+    Ok(format!("--- {file} (sealed)\n+++ {file} (current)\n{}", hunks.join("\n")))
 }
 
 /// `--prove` (§5, §8): each tested scenario's test must exist and fail at its
