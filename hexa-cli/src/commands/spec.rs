@@ -61,6 +61,24 @@ pub enum SpecAction {
     },
     /// Seal the test files an accepted spec names (ADR-2610221540 §6)
     Seal { adr: String },
+    /// Record a reviewed edit to a sealed test when the scenarios are
+    /// unchanged: the first call shows the diff, `--confirm` records it
+    /// (ADR-2611062141)
+    Amend {
+        adr: String,
+        /// Why the sealed file changes
+        #[arg(long)]
+        reason: String,
+        /// The sealed file to amend; required when several differ
+        #[arg(long)]
+        file: Option<String>,
+        /// The sha256 of the file as the first call showed it
+        #[arg(long)]
+        confirm: Option<String>,
+        /// Who amends; defaults to `git config user.name`
+        #[arg(long)]
+        by: Option<String>,
+    },
     /// Run each scenario's sealed test alone; drift fails (ADR-2610221540 §8)
     Verify {
         adr: Option<String>,
@@ -72,6 +90,9 @@ pub enum SpecAction {
         /// exist and fail there; a test green there is a mirror (§5)
         #[arg(long)]
         prove: bool,
+        /// List each amendment with its reason
+        #[arg(long)]
+        verbose: bool,
     },
 }
 
@@ -85,7 +106,10 @@ pub async fn run(action: SpecAction) -> anyhow::Result<()> {
         SpecAction::Check { adr } => super::spec_ledger::check(adr.as_deref()),
         SpecAction::Accept { adr, by } => super::spec_ledger::accept(&adr, by.as_deref()),
         SpecAction::Seal { adr } => super::spec_ledger::seal(&adr),
-        SpecAction::Verify { adr, ci, prove } => super::spec_ledger::verify(adr.as_deref(), ci, prove).await,
+        SpecAction::Amend { adr, reason, file, confirm, by } => {
+            super::spec_ledger::amend(&adr, &reason, file.as_deref(), confirm.as_deref(), by.as_deref())
+        }
+        SpecAction::Verify { adr, ci, prove, verbose } => super::spec_ledger::verify(adr.as_deref(), ci, prove, verbose).await,
     }
 }
 
