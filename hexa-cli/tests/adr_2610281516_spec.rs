@@ -548,8 +548,8 @@ fn s07_identical_completion_answered_from_cache() {
 struct NoOpCompressor;
 #[async_trait::async_trait]
 impl hexa_infer::ports::PromptCompressor for NoOpCompressor {
-    async fn compress(&self, _model: &str, messages: Vec<hexa_core::domain::messages::Message>) -> Result<Vec<hexa_core::domain::messages::Message>, String> {
-        Ok(messages)
+    async fn compress(&self, _model: &str, messages: Vec<hexa_core::domain::messages::Message>) -> Result<(Vec<hexa_core::domain::messages::Message>, std::collections::HashMap<String, String>), String> {
+        Ok((messages, std::collections::HashMap::new()))
     }
 }
 

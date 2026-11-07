@@ -183,7 +183,6 @@
         "hexa-infer/src/adapters/secondary/mod.rs",
         "hexa-exec/src/compress.rs",
         "hexa-infer/src/lib.rs",
-        "hexa-cli/tests/adr_2610281516_spec.rs",
         "hexa-core/src/ports/inference.rs",
         "hexa-infer/src/adapters/secondary/semantic_compressor.rs",
         "hexa-infer/src/ports.rs",
@@ -200,13 +199,16 @@
         "hexa-infer/src/adapters/secondary/ollama.rs",
         "hexa-infer/src/wiring.rs",
         "hexa-infer/src/adapters/secondary/claude_code.rs",
-        "hexa-cli/src/fmt.rs"
+        "hexa-cli/src/fmt.rs",
+        "hexa-exec/tests/adr_2610221540_spec_3.rs",
+        "hexa-exec/tests/a_spec_is_drafted_and_its_tests_generated_red.rs",
+        "hexa-cli/tests/adr_2610281516_spec.rs"
       ],
       "gate": "cargo check --workspace",
       "pid": 4181418,
       "pid_start": 125216759,
       "stage": "gate",
-      "updated": "2026-11-07T02:59:28.415755975+00:00"
+      "updated": "2026-11-07T03:15:44.966390094+00:00"
     },
     "98e2c655-4143-4992-8aa4-f0eab7cfe5df": {
       "files": [
