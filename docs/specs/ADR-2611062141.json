@@ -11,7 +11,7 @@
   ],
   "accepted": {
     "by": "Gary Berger",
-    "sha256": "26ce941919187f64405bf3676fe5f02d5652e2a8ff132ea3b93468709863e08c"
+    "sha256": "741dd6f2916620e2dd281ad2db7570b9e79d1e31eaba1f6046c86742e2807f8a"
   },
   "specs": [
     {
@@ -175,9 +175,9 @@
       ],
       "kind": "negative",
       "description": "Amend refuses an unaccepted spec.",
-      "given": "A spec that has never been accepted.",
-      "when": "The user runs amend.",
-      "then": "The command is refused and nothing is written."
+      "given": "Two repositories. In the first (the control), the spec is accepted and sealed and its sealed file has had a fixture edit with the scenarios unchanged. In the second, the spec has never been accepted.",
+      "when": "amend is run with a non-empty reason in the control repository, then in the unaccepted one.",
+      "then": "In the control it prints a unified diff and a confirm command. In the unaccepted one it is refused, the message says the spec is not accepted, and the spec JSON is byte-identical to before."
     },
     {
       "id": "S16",
