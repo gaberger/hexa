@@ -2,7 +2,7 @@
 
 **Status:** Proposed
 **Date:** 2026-11-06
-**Drivers:** strata ADR-2611062020 stage A (2026-11-06). A breaking base-schema change made two attributes required, so the fixtures in two sealed spec test files had to change: sites, racks, devices, cables, prefixes and addresses now carry a `lifecycle/status`; device types a vendor and slug; devices a role. All scenarios still pass (32 of 32 and 38 of 38), but both seals report "changed since sealing", and hexa offers no supported way to say that the change was deliberate and reviewed. The owner asked for the verb to be built (2026-11-06).
+**Drivers:** strata's stage A ADR (id 2611062020, 2026-11-06). A breaking base-schema change made two attributes required, so the fixtures in two sealed spec test files had to change: sites, racks, devices, cables, prefixes and addresses now carry a `lifecycle/status`; device types a vendor and slug; devices a role. All scenarios still pass (32 of 32 and 38 of 38), but both seals report "changed since sealing", and hexa offers no supported way to say that the change was deliberate and reviewed. The owner asked for the verb to be built (2026-11-06).
 
 ## Context
 
@@ -56,5 +56,5 @@ The tests of `spec_amend` run `amend` in a temporary git repository with an acce
 ## References
 
 - ADR-2610221540 §6, §8: sealed tests and `verify`
-- strata ADR-2611062020: the stage A schema change that needs this
+- strata's stage A ADR (id 2611062020): the schema change that needs this
 - `hexa-cli/src/commands/spec_ledger.rs`: `seal_files` (the refusal) and `verify`
