@@ -38,10 +38,10 @@ What the verb cannot do is judge whether an edit weakened an assertion. The diff
 Written before the code. From the repository root:
 
 ```
-cargo test -p hexa-cli --test spec_amend && hexa spec verify ADR-2611062141
+cargo test -p hexa-cli --test adr_2611062141_spec && hexa spec verify ADR-2611062141
 ```
 
-The tests of `spec_amend` run `amend` in a temporary git repository with an accepted, sealed spec:
+The tests of `adr_2611062141_spec` run `amend` in a temporary git repository with an accepted, sealed spec:
 
 - a fixture edit with the scenarios unchanged: the first call prints the diff and writes nothing (the spec JSON is byte-identical), the call with the right `--confirm` records one amendment and `verify` passes with `1 amendment`;
 - a `--confirm` hash that is not the file's current hash is refused and writes nothing;
