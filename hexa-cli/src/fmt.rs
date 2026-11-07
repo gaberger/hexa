@@ -3,9 +3,10 @@
 //! ONE function for all hexa CLI table output:
 //!   `pretty_table(&["Col1", "Col2"], &[vec!["a", "b"], vec!["c", "d"]])`
 //!
-//! Plus helpers: status_badge, score_badge, truncate, progress.
+//! Plus helpers: status_badge, score_badge, truncate, progress, telemetry_badge.
 
 use colored::Colorize;
+use std::collections::HashMap;
 use tabled::settings::Style;
 use tabled::{Table, Tabled};
 
@@ -49,6 +50,21 @@ pub fn status_badge(status: &str) -> String {
         "fail" | "failed" | "error" => status.red().bold().to_string(),
         _ => status.to_string(),
     }
+}
+
+/// Render a telemetry value as a badge using mapping from telemetry.json.
+pub fn telemetry_badge(key: &str, value: &str, mapping: &HashMap<String, TelemetryMap>) -> String {
+    if let Some(m) = mapping.get(key) {
+        format!("{} {}: {}", m.icon, m.label, value).dimmed().to_string()
+    } else {
+        format!("{}: {}", key, value).dimmed().to_string()
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct TelemetryMap {
+    pub label: String,
+    pub icon: String,
 }
 
 // ── Text Helpers ────────────────────────────────────────────────────────
@@ -112,4 +128,12 @@ mod tests {
         assert!(p.contains("3/5"));
     }
 
+    #[test]
+    fn telemetry_badge_formatting() {
+        let mut mapping = HashMap::new();
+        mapping.insert("ratio".to_string(), TelemetryMap { label: "Ratio".into(), icon: "🧠".into() });
+
+        assert_eq!(telemetry_badge("ratio", "2.5x", &mapping), "🧠 Ratio: 2.5x".dimmed().to_string());
+        assert_eq!(telemetry_badge("unknown", "123", &mapping), "unknown: 123".dimmed().to_string());
+    }
 }

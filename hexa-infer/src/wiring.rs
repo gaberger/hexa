@@ -13,13 +13,30 @@ use crate::adapters::secondary::{
     command, AnthropicAdapter, ClaudeCodeInferenceAdapter, CommandCompletionAdapter, FileCompletionCache,
     OllamaInferenceAdapter,
     OpenAiCompatAdapter,
+    semantic_compressor::{CompressorConfig, SemanticCompressor},
 };
 use crate::endpoint::Endpoint;
-use crate::ports::{Backends, CompletionCache, Usage};
+use crate::ports::{Backends, CompletionCache, PromptCompressor, Usage};
 use crate::registry;
+use std::sync::Arc;
 
 /// The registry-backed [`Backends`]: what `hexa_infer::complete_text` and `complete_raw` run on.
 pub struct RegistryBackends;
+
+pub struct RegistryCompressor;
+
+#[async_trait]
+impl PromptCompressor for RegistryCompressor {
+    async fn compress(&self, model: &str, messages: Vec<hexa_core::domain::messages::Message>) -> Result<(Vec<hexa_core::domain::messages::Message>, std::collections::HashMap<String, String>), String> {
+        let backends = Arc::new(RegistryBackends);
+        crate::adapters::secondary::semantic_compressor::SemanticCompressor::new(
+            backends,
+            crate::adapters::secondary::semantic_compressor::CompressorConfig::default(),
+        )
+        .compress(model, messages)
+        .await
+    }
+}
 
 #[async_trait]
 impl Backends for RegistryBackends {

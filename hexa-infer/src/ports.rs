@@ -162,6 +162,17 @@ pub trait EndpointRegistry: Send + Sync {
     fn remove(&self, id: &str) -> Result<bool, String>;
 }
 
+/// A service that compresses conversation history to fit within
+/// model context windows while preserving semantic signal.
+#[async_trait]
+pub trait PromptCompressor: Send + Sync {
+    /// Compresses the provided messages for the given model.
+    ///
+    /// Returns the compressed messages and a map of telemetry metadata
+    /// (e.g. compression ratio, tokens saved).
+    async fn compress(&self, model: &str, messages: Vec<hexa_core::domain::messages::Message>) -> Result<(Vec<hexa_core::domain::messages::Message>, std::collections::HashMap<String, String>), String>;
+}
+
 /// `base_url`, with the environment reader injected. The local server's
 /// address comes from `host_env` (`HEXA_OLLAMA_HOST`), then `OLLAMA_HOST`,
 /// then the default port; a bare `host:port` gets `http://`.

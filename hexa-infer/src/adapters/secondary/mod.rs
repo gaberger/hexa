@@ -11,6 +11,7 @@ pub mod file_cache;
 pub mod ollama_chat;
 pub mod ollama;
 pub mod openai_compat;
+pub mod semantic_compressor;
 pub mod vec_stream;
 
 pub use anthropic::AnthropicAdapter;
@@ -19,3 +20,4 @@ pub use command::CommandCompletionAdapter;
 pub use file_cache::FileCompletionCache;
 pub use ollama::OllamaInferenceAdapter;
 pub use openai_compat::OpenAiCompatAdapter;
+pub use semantic_compressor::SemanticCompressor;

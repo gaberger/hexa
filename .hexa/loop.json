@@ -7,6 +7,25 @@
       "stage": "build",
       "updated": "2026-10-16T12:23:57.026799324+00:00"
     },
+    "04f2350c-0307-45b8-9f57-18ba951dd914": {
+      "adr": "ADR-2610271736",
+      "files": [
+        "hexa-cli/assets/skills/hexa-maintain/SKILL.md",
+        "docs/adrs/ADR-2610271308-hexa-hey-routes-only-to-verbs-hexa-has.md",
+        "hexa-core/src/domain/intent.rs",
+        "hexa-cli/assets/skills/hexa-workflow/SKILL.md",
+        "docs/analysis/2026-10-27_DRIFT_REPORT.md",
+        "docs/adrs/ADR-2610271649-an-adapter-importing-another-adapter-in-its-own-layer-is-a-violation.md",
+        "hexa-cli/src/commands/analyze.rs",
+        "docs/adrs/ADR-2610271736-hexa-designs-with-an-elephant-and-reviews-with-goldfish.md",
+        "hexa-core/src/domain/design.rs"
+      ],
+      "gate": "hexa spec verify ADR-2610271736",
+      "pid": 1519697,
+      "pid_start": 34128318,
+      "stage": "gate",
+      "updated": "2026-10-27T21:37:49.267903121+00:00"
+    },
     "08d3a796-7764-544d-b6e2-0baf96498c3b": {
       "adr": "ADR-2609221900",
       "gate": "cargo test -p hexa-exec --test provenance_is_recorded",
@@ -143,14 +162,60 @@
       "stage": "build",
       "updated": "2026-09-16T21:37:14.436969878+00:00"
     },
-    "4d3a229d-fefe-44b6-993f-5268fe1070ac": {
+    "54c69c15-4dbd-44ca-9cdf-c588f4930c97": {
+      "adr": "ADR-2610281628",
       "files": [
-        "hexa-cli/src/commands/mod.rs",
-        "hexa-cli/Cargo.toml"
+        "hexa-infer/src/adapters/secondary/command.rs",
+        "hexa-cli/src/commands/design.rs",
+        "hexa-exec/src/egm.rs",
+        "docs/adrs/ADR-2610281011-design-is-the-first-stage-of-the-hexa-loop.md"
       ],
-      "pid": 295843,
-      "pid_start": 374249,
-      "updated": "2026-11-07T23:06:01.838480501+00:00"
+      "gate": "hexa spec verify ADR-2610281442",
+      "pid": 2808620,
+      "pid_start": 42561984,
+      "stage": "done",
+      "updated": "2026-10-28T21:25:33.484195644+00:00"
+    },
+    "95efe401-bfb7-42d7-bc40-3f3c95f1296f": {
+      "files": [
+        ".claude/scripts/billion-context-shim.js",
+        "hexa-infer/src/adapters/secondary/billion_context.rs",
+        "hexa-infer/src/adapters/secondary/mod.rs",
+        "hexa-exec/src/compress.rs",
+        "hexa-infer/src/lib.rs",
+        "hexa-cli/tests/adr_2610281516_spec.rs",
+        "hexa-core/src/ports/inference.rs",
+        "hexa-infer/src/adapters/secondary/semantic_compressor.rs",
+        "hexa-infer/src/ports.rs",
+        "hexa-infer/src/complete.rs",
+        "hexa-cli/assets/telemetry.json",
+        ".hexa/project.json",
+        "docs/adrs/ADR-2611050000.md",
+        "hexa-cli/assets/skills/hexa-status-summary.md",
+        "docs/specs/ADR-2611050000.json",
+        "hexa-infer/src/adapters/secondary/anthropic.rs",
+        "hexa-infer/src/adapters/secondary/command.rs",
+        "hexa-infer/src/adapters/secondary/ollama_chat.rs",
+        "hexa-infer/src/adapters/secondary/openai_compat.rs",
+        "hexa-infer/src/adapters/secondary/ollama.rs",
+        "hexa-infer/src/wiring.rs",
+        "hexa-infer/src/adapters/secondary/claude_code.rs",
+        "hexa-cli/src/fmt.rs"
+      ],
+      "gate": "cargo check --workspace",
+      "pid": 4181418,
+      "pid_start": 125216759,
+      "stage": "gate",
+      "updated": "2026-11-07T02:59:28.415755975+00:00"
+    },
+    "98e2c655-4143-4992-8aa4-f0eab7cfe5df": {
+      "files": [
+        "/tmp/claude-1000/-var-home-gary-projects-hexa/ee8fb34f-11c8-4f68-ae63-cf73b1065ce7/scratchpad/mab/bench/handsoff/run_handsoff.py",
+        "/tmp/claude-1000/-var-home-gary-projects-hexa/ee8fb34f-11c8-4f68-ae63-cf73b1065ce7/scratchpad/mab/bench/handsoff/RUBRIC.md"
+      ],
+      "pid": 772215,
+      "pid_start": 115011216,
+      "updated": "2026-11-06T13:42:54.037867796+00:00"
     },
     "b9c6ffc9-fa43-5885-8b3b-b05a86188c1c": {
       "adr": "ADR-2610100005",
@@ -161,6 +226,17 @@
       "running": null,
       "stage": "harden",
       "updated": "2026-10-10T01:09:56.959702193+00:00"
+    },
+    "ee8fb34f-11c8-4f68-ae63-cf73b1065ce7": {
+      "files": [
+        "/tmp/claude-1000/-var-home-gary-projects-hexa/ee8fb34f-11c8-4f68-ae63-cf73b1065ce7/scratchpad/mab/bench/handsoff/tasks/_floors/unsound/src/main.ts",
+        "/tmp/claude-1000/-var-home-gary-projects-hexa/ee8fb34f-11c8-4f68-ae63-cf73b1065ce7/scratchpad/mab/bench/handsoff/run_handsoff.py",
+        "/tmp/claude-1000/-var-home-gary-projects-hexa/ee8fb34f-11c8-4f68-ae63-cf73b1065ce7/scratchpad/dod/docs/adrs/ADR-2611050746-done-is-a-verdict-hexa-reaches-not-a-word.md",
+        "/home/gary/.claude/projects/-var-home-gary-projects-hexa/memory/handsoff-bench-tasks.md"
+      ],
+      "pid": 2972170,
+      "pid_start": 111827231,
+      "updated": "2026-11-05T13:13:41.113158504+00:00"
     }
   }
 }

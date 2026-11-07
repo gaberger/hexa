@@ -1,0 +1,45 @@
+{
+  "adr": "ADR-2611050000",
+  "title": "Template-Driven Telemetry Rendering",
+  "scenarios": [
+    {
+      "id": "S1",
+      "description": "Render full telemetry for compression ratio and tokens saved",
+      "input": {
+        "telemetry": {
+          "compression_ratio": "8.5x",
+          "tokens_saved": "120k"
+        }
+      },
+      "expected": "🧠 Context: 8.5x ⚡️ Saved: 120k"
+    },
+    {
+      "id": "S2",
+      "description": "Render partial telemetry (only tokens saved)",
+      "input": {
+        "telemetry": {
+          "tokens_saved": "10k"
+        }
+      },
+      "expected": "⚡️ Saved: 10k"
+    },
+    {
+      "id": "S3",
+      "description": "Render nothing for empty telemetry",
+      "input": {
+        "telemetry": {}
+      },
+      "expected": ""
+    },
+    {
+      "id": "S4",
+      "description": "Ignore unknown telemetry keys",
+      "input": {
+        "telemetry": {
+          "unknown_metric": "100"
+        }
+      },
+      "expected": ""
+    }
+  ]
+}

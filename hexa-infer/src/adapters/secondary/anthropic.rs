@@ -252,6 +252,7 @@ impl IInferencePort for AnthropicAdapter {
             cache_read_tokens: api_resp.usage.cache_read_input_tokens.unwrap_or(0) as u64,
             cache_write_tokens: api_resp.usage.cache_creation_input_tokens.unwrap_or(0) as u64,
             latency_ms: started.elapsed().as_millis() as u64,
+            telemetry: std::collections::HashMap::new(),
         })
     }
 

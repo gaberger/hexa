@@ -116,6 +116,7 @@ impl IInferencePort for CommandCompletionAdapter {
             cache_read_tokens: 0,
             cache_write_tokens: 0,
             latency_ms: start.elapsed().as_millis() as u64,
+            telemetry: std::collections::HashMap::new(),
         })
     }
 

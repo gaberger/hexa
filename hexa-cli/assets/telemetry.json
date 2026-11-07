@@ -1,0 +1,22 @@
+{
+  "compression_ratio": {
+    "label": "Context",
+    "icon": "🧠",
+    "format": "{value}x"
+  },
+  "tokens_saved": {
+    "label": "Saved",
+    "icon": "⚡️",
+    "format": "{value}"
+  },
+  "original_tokens": {
+    "label": "Raw",
+    "icon": "📦",
+    "format": "{value}k"
+  },
+  "compressed_tokens": {
+    "label": "Compact",
+    "icon": "📉",
+    "format": "{value}k"
+  }
+}
