@@ -1445,9 +1445,12 @@ fn package_prefix(repo_root: &std::path::Path, file: &str) -> Option<String> {
 pub fn broken_seals(repo_root: &std::path::Path) -> Vec<String> {
     let mut broken: Vec<String> = seals(repo_root)
         .into_iter()
-        .filter(|(path, sum)| {
-            let now = std::fs::read(repo_root.join(path)).map(|b| sha256_hex(&b));
-            now.ok().as_deref() != sum.as_str()
+        .filter(|(path, sum)| match std::fs::read(repo_root.join(path)) {
+            Ok(b) => Some(sha256_hex(&b).as_str()) != sum.as_str(),
+            // Absent now: an edit only if HEAD has it (a run deleted it). Absent at
+            // HEAD too (a superseded ADR's file removed by an earlier commit, issue
+            // #50) is no change, so it must not block unrelated commits.
+            Err(_) => tracked_in_head(repo_root, path),
         })
         .map(|(path, _)| path)
         .collect();
