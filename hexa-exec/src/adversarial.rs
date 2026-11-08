@@ -1306,7 +1306,10 @@ impl Batching<'_> {
     async fn fast_gate(&self, touched: &[String]) -> (bool, bool) {
         let cmd = crate::direct_exec::substitute_touched(self.fast_gate, touched);
         let (passed, out) = crate::direct_exec::run_evidence(&cmd, self.repo_root).await;
-        let vacuous = passed && crate::direct_exec::evidence_is_vacuous(&out);
+        // harden is not among ADR-2611081151 §5's consumers: only zero tests
+        // turns a pass here into a fail, read by the one reader.
+        let vacuous = passed
+            && crate::direct_exec::evidence_verdict(passed, &out, false) == hexa_core::domain::evidence::Evidence::Vacuous;
         (passed && !vacuous, vacuous)
     }
 

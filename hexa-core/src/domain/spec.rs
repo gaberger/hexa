@@ -144,13 +144,30 @@ pub enum SealVerdict {
 /// `amendments` are all of the spec's, oldest first: only those for `file`
 /// apply (ADR-2611081151 §1).
 pub fn judge_seal(
-    _file: &str,
-    _at_red: Option<&str>,
-    _amendments: &[Amendment],
-    _recorded: Option<&str>,
-    _current: Option<&str>,
+    file: &str,
+    at_red: Option<&str>,
+    amendments: &[Amendment],
+    recorded: Option<&str>,
+    current: Option<&str>,
 ) -> SealVerdict {
-    unimplemented!("ADR-2611081151 §1")
+    let Some(anchor) = at_red else { return SealVerdict::Unanchored };
+    let mut expected = anchor;
+    for (i, a) in amendments.iter().enumerate().filter(|(_, a)| a.file == file) {
+        if a.from != expected {
+            return SealVerdict::BrokenChain(i);
+        }
+        expected = &a.to;
+    }
+    // The record is checked before the file: a record moved to match an edit
+    // is the laundering this verdict exists to name (ADR-2611081151 §1).
+    if recorded != Some(expected) {
+        return SealVerdict::Rewritten;
+    }
+    match current {
+        None => SealVerdict::Gone,
+        Some(c) if c != expected => SealVerdict::Edited,
+        Some(_) => SealVerdict::Holds,
+    }
 }
 
 /// The `§n` of each numbered item at the left margin of `## Decision`.

@@ -36,6 +36,10 @@ pub enum LoopAction {
     Gate {
         /// A shell command, e.g. "cargo test --test add"
         command: String,
+        /// The gate runs no test runner (a build, a lint): its exit status
+        /// alone decides, and every report says `uncounted` (ADR-2611081151 §6).
+        #[arg(long)]
+        uncounted: bool,
     },
     /// Record the stage: design, decide, gate, build, harden or done
     Stage {
@@ -393,6 +397,11 @@ fn record_run_gate_in(
                 );
             }
             _ => {
+                if recorded != Some(gate) {
+                    // A new gate is counted until it is declared otherwise
+                    // (ADR-2611081151 §6).
+                    obj.insert("gate_uncounted".to_string(), serde_json::json!(false));
+                }
                 obj.insert("gate".to_string(), serde_json::json!(gate));
                 obj.insert("stage".to_string(), serde_json::json!(stage));
                 if let Some(f) = fast_gate {
@@ -417,6 +426,18 @@ pub fn kept_gate_line(r: &RunGate) -> Option<String> {
 
 /// Record a run's gate and print the kept-gate line if there is one. Errors
 /// are not the run's concern: outside a hexa project there is no loop.
+/// A run declared its evidence uncounted (`hexa do run --uncounted`): when
+/// that evidence is the loop's gate, the gate is uncounted too, so `stage
+/// done` judges it the way the run did (ADR-2611081151 §6).
+pub fn note_gate_uncounted(gate: &str) {
+    let Ok(cwd) = std::env::current_dir() else { return };
+    let _ = edit_entry(&cwd, &session_id(), session_pid(), |obj| {
+        if obj.get("gate").and_then(|v| v.as_str()) == Some(gate) {
+            obj.insert("gate_uncounted".to_string(), serde_json::json!(true));
+        }
+    });
+}
+
 pub fn note_run_gate(gate: &str, stage: &str, fast_gate: Option<&str>) {
     let Ok(cwd) = std::env::current_dir() else { return };
     if let Ok(r) = record_run_gate(&cwd, gate, stage, fast_gate) {
@@ -790,58 +811,20 @@ fn glance_run(state: &serde_json::Value, now: chrono::DateTime<chrono::Utc>) -> 
     Some(format!("running {where_} {elapsed}"))
 }
 
-/// What running the gate established (ADR-2609132059).
-///
-/// Three states because two would have to lie about one of them: a gate
-/// that is not a test runner cannot be told apart from one that ran no
-/// tests, and calling either of those a pass is the failure this whole
-/// mechanism exists to prevent.
-#[derive(Debug, Clone, PartialEq)]
-pub enum GateOutcome {
-    /// Ran, and something passed.
-    Proved(String),
-    /// Ran and failed.
-    Failed(String),
-    /// Ran, and every result line reported zero passed.
-    Vacuous,
-    /// Ran and passed, with no test counts in its output to read.
-    Unreadable,
-}
-
-impl GateOutcome {
-    /// May the stage be recorded on this?
-    fn closes(&self) -> bool {
-        matches!(self, GateOutcome::Proved(_) | GateOutcome::Unreadable)
-    }
-
-    fn line(&self) -> String {
-        match self {
-            GateOutcome::Proved(what) => format!("gate passed: {what}"),
-            GateOutcome::Failed(_) => "gate FAILED".to_string(),
-            GateOutcome::Vacuous => "gate ran and measured nothing — 0 passed is not a pass".to_string(),
-            GateOutcome::Unreadable => "gate passed; its output carries no test count, so vacuity was not checked".to_string(),
-        }
-    }
-}
-
-/// Read a gate run's result from its exit status and output.
-///
-/// The vacuity rule is blacksheep's, written down and never implemented
-/// here: a gate naming a test target that does not exist exits 0, runs
-/// nothing, and would satisfy a check that only read the status.
-fn gate_outcome(passed: bool, output: &str) -> GateOutcome {
-    if !passed {
-        return GateOutcome::Failed(output.to_string());
-    }
-    let counts: Vec<u64> = output
-        .lines()
-        .filter_map(|l| l.trim().strip_prefix("test result:"))
-        .filter_map(|rest| rest.split_whitespace().nth(1)?.parse().ok())
-        .collect();
-    match counts.as_slice() {
-        [] => GateOutcome::Unreadable,
-        c if c.iter().all(|n| *n == 0) => GateOutcome::Vacuous,
-        c => GateOutcome::Proved(format!("{} test(s) passed", c.iter().sum::<u64>())),
+/// The line that says what running the gate established (ADR-2609132059),
+/// read by the one reader (ADR-2611081151 §4–§6). Only a pass, or a declared
+/// uncounted gate that exited 0, closes the stage.
+fn gate_line(verdict: &hexa_core::ports::evidence::Evidence) -> String {
+    use hexa_core::ports::evidence::{Evidence, KNOWN_RUNNERS};
+    match verdict {
+        Evidence::Passed { tests } => format!("gate passed: {tests} test(s) passed"),
+        Evidence::Uncounted => "gate passed (uncounted): its exit status alone decided".to_string(),
+        Evidence::Vacuous => "gate ran and measured nothing — 0 passed is not a pass".to_string(),
+        Evidence::Unrecognised => format!(
+            "gate exited 0 but its output is unrecognised: no test runner this reader knows wrote it ({KNOWN_RUNNERS}); \
+             a gate that runs no tests is recorded with `hexa loop gate --uncounted`"
+        ),
+        Evidence::Failed { reason } => format!("gate FAILED: {reason}"),
     }
 }
 
@@ -1041,13 +1024,17 @@ pub async fn run(action: Option<LoopAction>) -> anyhow::Result<()> {
             update_loop(&cwd, serde_json::json!({ "adr": id, "stage": stage })).map_err(|e| anyhow::anyhow!(e))?;
             println!("{} {}", "\u{2b21}".green(), status_line(&cwd));
         }
-        LoopAction::Gate { command } => {
+        LoopAction::Gate { command, uncounted } => {
             let command = command.trim().to_string();
             if command.is_empty() {
                 anyhow::bail!("a gate is a command; it cannot be empty");
             }
-            update_loop(&cwd, serde_json::json!({ "gate": command, "stage": "gate" })).map_err(|e| anyhow::anyhow!(e))?;
+            update_loop(&cwd, serde_json::json!({ "gate": command, "gate_uncounted": uncounted, "stage": "gate" }))
+                .map_err(|e| anyhow::anyhow!(e))?;
             println!("{} {}", "\u{2b21}".green(), status_line(&cwd));
+            if uncounted {
+                println!("  gate recorded as uncounted: its exit status alone will decide");
+            }
         }
         LoopAction::Evidence { command } => {
             let command = command.trim().to_string();
@@ -1069,22 +1056,28 @@ pub async fn run(action: Option<LoopAction>) -> anyhow::Result<()> {
             // (ADR-2609132059).
             if stage == "done" {
                 let st = read_loop(&cwd);
-                match st.as_ref().and_then(|s| s.get("gate")).and_then(|v| v.as_str()).filter(|g| !g.is_empty()) {
-                    Some(gate) => {
-                        println!("  running the gate: {gate}");
-                        let (passed, output) = hexa_exec::direct_exec::run_evidence(gate, &cwd).await;
-                        let outcome = gate_outcome(passed, &output);
-                        println!("  {}", outcome.line());
-                        if !outcome.closes() {
-                            if let GateOutcome::Failed(o) = &outcome {
-                                for l in o.lines().rev().take(12).collect::<Vec<_>>().into_iter().rev() {
-                                    println!("    {l}");
-                                }
-                            }
-                            anyhow::bail!("the stage stays where it was: {}", outcome.line());
+                // Done needs a gate that passed: none recorded is not done
+                // (ADR-2611081151 §5).
+                let Some(gate) =
+                    st.as_ref().and_then(|s| s.get("gate")).and_then(|v| v.as_str()).filter(|g| !g.is_empty())
+                else {
+                    anyhow::bail!(
+                        "no gate recorded, so nothing would be proved: record one with `hexa loop gate '<cmd>'` \
+                         (or `--uncounted` for a gate that runs no tests); the stage stays where it was"
+                    );
+                };
+                let uncounted = st.as_ref().and_then(|s| s.get("gate_uncounted")).and_then(|v| v.as_bool()).unwrap_or(false);
+                println!("  running the gate: {gate}");
+                let (passed, output) = hexa_exec::direct_exec::run_evidence(gate, &cwd).await;
+                let verdict = hexa_core::ports::evidence::read_evidence(passed, &output, uncounted);
+                println!("  {}", gate_line(&verdict));
+                if !verdict.passes() {
+                    if matches!(verdict, hexa_core::ports::evidence::Evidence::Failed { .. }) {
+                        for l in output.lines().rev().take(12).collect::<Vec<_>>().into_iter().rev() {
+                            println!("    {l}");
                         }
                     }
-                    None => println!("  no gate recorded — done, with nothing proved"),
+                    anyhow::bail!("the stage stays where it was: {}", gate_line(&verdict));
                 }
                 if let Some(st) = st {
                     let adr = st.get("adr").and_then(|v| v.as_str());
@@ -1643,54 +1636,32 @@ mod visible_run {
 
 #[cfg(test)]
 mod gate_at_done {
-    use super::{gate_outcome, GateOutcome};
+    use super::gate_line;
+    use hexa_core::ports::evidence::{read_evidence, Evidence};
 
-    /// ADR-2609132059 §1 and §2: a gate that ran and proved something
-    /// closes the stage; one that failed or measured nothing does not.
+    /// Only a gate that proved something closes the stage, and every other
+    /// verdict's line says which it is (ADR-2609132059, ADR-2611081151 §5).
     #[test]
-    fn only_a_gate_that_proved_something_closes_the_stage() {
+    fn each_verdict_reads_as_what_it_is() {
         let passing = "running 3 tests\ntest result: ok. 3 passed; 0 failed; 0 ignored";
-        assert_eq!(gate_outcome(true, passing), GateOutcome::Proved("3 test(s) passed".into()));
-
-        let failing = "test result: FAILED. 2 passed; 1 failed";
-        assert!(matches!(gate_outcome(false, failing), GateOutcome::Failed(_)));
-
-        // The whole point: a target that does not exist exits 0 and runs nothing.
+        assert_eq!(gate_line(&read_evidence(true, passing, false)), "gate passed: 3 test(s) passed");
         let vacuous = "running 0 tests\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 filtered out";
-        assert_eq!(gate_outcome(true, vacuous), GateOutcome::Vacuous);
+        assert!(gate_line(&read_evidence(true, vacuous, false)).contains("measured nothing"));
+        assert!(gate_line(&Evidence::Failed { reason: "boom".into() }).contains("FAILED"));
     }
 
-    /// A workspace run has many empty targets and one that matters; the sum
-    /// is what decides, not any single line.
+    /// A build is not a test runner: unrecognised, never a silent pass, and
+    /// the line names the way to declare it (ADR-2611081151 §5, §6).
     #[test]
-    fn empty_targets_beside_a_real_one_still_prove_something() {
-        let mixed = "\
-test result: ok. 0 passed; 0 failed
-test result: ok. 12 passed; 0 failed
-test result: ok. 0 passed; 0 failed";
-        assert_eq!(gate_outcome(true, mixed), GateOutcome::Proved("12 test(s) passed".into()));
-    }
-
-    /// §3: a gate that is not a test runner is reported as unreadable, not
-    /// judged either way — `cargo build`, a script, a grep.
-    #[test]
-    fn a_gate_with_no_test_counts_passes_and_says_it_was_not_checked() {
+    fn a_build_gate_is_unrecognised_unless_declared_uncounted() {
         let build = "   Compiling hexa-cli v26.9.8\n    Finished `dev` profile in 1.2s";
-        let outcome = gate_outcome(true, build);
-        assert_eq!(outcome, GateOutcome::Unreadable);
-        assert!(outcome.closes(), "an unreadable shape is not a failure");
-        assert!(outcome.line().contains("vacuity was not checked"), "{}", outcome.line());
-    }
-
-    /// Each state's line says which it is, and only the two that closed
-    /// claim a pass.
-    #[test]
-    fn each_outcome_reads_as_what_it_is() {
-        assert!(GateOutcome::Proved("1 test(s) passed".into()).closes());
-        assert!(!GateOutcome::Failed("boom".into()).closes());
-        assert!(!GateOutcome::Vacuous.closes());
-        assert!(GateOutcome::Vacuous.line().contains("0 passed is not a pass"));
-        assert!(GateOutcome::Failed("boom".into()).line().contains("FAILED"));
+        let v = read_evidence(true, build, false);
+        assert!(!v.passes());
+        let line = gate_line(&v);
+        assert!(line.contains("unrecognised") && line.contains("--uncounted"), "{line}");
+        let declared = read_evidence(true, build, true);
+        assert!(declared.passes());
+        assert!(gate_line(&declared).contains("uncounted"));
     }
 }
 

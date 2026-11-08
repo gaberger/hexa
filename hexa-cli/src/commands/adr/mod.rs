@@ -1954,6 +1954,17 @@ pub(crate) fn gate_command(markdown: &str) -> Option<String> {
     bold_gate(markdown)
 }
 
+/// Whether the ADR declares its gate uncounted: the `## Gate` heading that
+/// [`gate_command`] reads (the last) says `uncounted`, as in
+/// `## Gate (uncounted)`. Its exit status alone decides (ADR-2611081151 §6).
+pub(crate) fn gate_uncounted(markdown: &str) -> bool {
+    markdown
+        .lines()
+        .filter(|l| l.starts_with("## Gate"))
+        .last()
+        .is_some_and(|h| h.to_ascii_lowercase().contains("uncounted"))
+}
+
 /// The non-empty backquoted spans in `text`, in order.
 fn spans(text: &str) -> impl Iterator<Item = &str> {
     text.split('`').skip(1).step_by(2).map(str::trim).filter(|s| !s.is_empty())
@@ -2071,9 +2082,11 @@ pub(crate) fn failure_tail(out: &str, n: usize) -> String {
     tail
 }
 
-/// Sort a non-zero exit into "the gate failed" or "this machine cannot run
-/// the gate", by what the output says.
-pub(crate) fn classify_gate(ok: bool, out: &str) -> GateOutcome {
+/// Sort a gate run: passed by the one reader (ADR-2611081151 §4–§6), else
+/// "the gate failed" or "this machine cannot run the gate", by what the
+/// output says. `uncounted` is the ADR's `## Gate (uncounted)` declaration.
+pub(crate) fn classify_gate(ok: bool, out: &str, uncounted: bool) -> GateOutcome {
+    use hexa_core::ports::evidence::{read_evidence, Evidence, KNOWN_RUNNERS};
     // Before pass or fail: a case that refused to skip is neither. Its gate
     // exits non-zero, and calling that a failed decision sends the reader to
     // the code when the machine is what is missing.
@@ -2082,14 +2095,19 @@ pub(crate) fn classify_gate(ok: bool, out: &str) -> GateOutcome {
         return GateOutcome::NotProvenHere(reason.trim_matches(|c| c == '"' || c == '\'').to_string());
     }
     if ok {
-        // A vacuous gate is a failed gate: exit 0 with zero tests observed
-        // proves nothing.
-        if hexa_exec::direct_exec::tests_observed(out) == Some(0) {
-            return GateOutcome::Failed(
-                "the command exited 0 but ran 0 tests (vacuous gate)\n".to_string(),
-            );
-        }
-        return GateOutcome::Passed;
+        return match read_evidence(true, out, uncounted) {
+            Evidence::Passed { .. } | Evidence::Uncounted => GateOutcome::Passed,
+            Evidence::Vacuous => {
+                GateOutcome::Failed("the command exited 0 but ran 0 tests: it measured nothing (vacuous gate)\n".to_string())
+            }
+            Evidence::Unrecognised => GateOutcome::Failed(format!(
+                "the command exited 0 but its output is unrecognised: no test runner this reader knows wrote it \
+                 ({KNOWN_RUNNERS}). A gate that runs no tests is declared with `## Gate (uncounted)`.\n"
+            )),
+            Evidence::Failed { reason } => {
+                GateOutcome::Failed(format!("the command exited 0 but {reason}\n{}", failure_tail(out, 10)))
+            }
+        };
     }
     const CARGO: [&str; 4] = [
         "failed to parse lock file",
@@ -2214,7 +2232,7 @@ async fn run_gates(ci: bool, dry_run: bool) -> anyhow::Result<()> {
             Some(cmd) => {
                 let shell = format!("export PATH={:?} HEXA_NO_SKIP=1; {}", path, cmd);
                 let (ok, out) = hexa_exec::direct_exec::run_evidence(&shell, &root).await;
-                match classify_gate(ok, &out) {
+                match classify_gate(ok, &out, gate_uncounted(&text)) {
                     GateOutcome::Passed => (Outcome::Passed, String::new(), String::new()),
                     GateOutcome::Failed(tail) => (Outcome::Failed, format!("gate failed: {cmd}"), tail),
                     GateOutcome::UnrunnableHere(reason) => {
@@ -2387,15 +2405,32 @@ mod adr_gates_classify {
     use super::{classify_gate, failure_tail, gate_path, GateOutcome};
     use std::path::{Path, PathBuf};
 
+    /// Exit 0 is no longer a pass whatever the output (ADR-2611081151 §5):
+    /// output no known runner wrote fails, unless the gate is declared uncounted.
     #[test]
-    fn exit_zero_is_a_pass_whatever_the_output() {
-        assert!(matches!(classify_gate(true, "warning: something"), GateOutcome::Passed));
+    fn exit_zero_with_unrecognised_output_passes_only_when_declared_uncounted() {
+        match classify_gate(true, "warning: something", false) {
+            GateOutcome::Failed(why) => assert!(why.contains("unrecognised") && why.contains("cargo test"), "{why}"),
+            other => panic!("expected Failed, got {other:?}"),
+        }
+        assert!(matches!(classify_gate(true, "warning: something", true), GateOutcome::Passed));
+        assert!(matches!(classify_gate(true, "test result: ok. 2 passed; 0 failed", false), GateOutcome::Passed));
+    }
+
+    #[test]
+    fn the_uncounted_declaration_is_read_from_the_gate_heading() {
+        assert!(super::gate_uncounted("# A\n\n## Gate (uncounted)\n\n`make lint`\n"));
+        assert!(!super::gate_uncounted("# A\n\n## Gate\n\n`cargo test`\n"));
+        // Only the gate in force counts: the last `## Gate` heading.
+        assert!(super::gate_uncounted("## Gate\n\n`cargo test`\n\n## Gate (re-recorded; uncounted)\n\n`grep -q x f`\n"));
+        assert!(!super::gate_uncounted("## Gate (uncounted)\n\n`grep -q x f`\n\n## Gate (re-recorded)\n\n`cargo test`\n"));
+        assert_eq!(super::gate_command("# A\n\n## Gate (uncounted)\n\n`make lint`\n").as_deref(), Some("make lint"));
     }
 
     #[test]
     fn a_cargo_that_cannot_read_the_lockfile_is_unrunnable_here() {
         let out = "error: failed to parse lock file at: /x/Cargo.lock\n\nCaused by:\n  lock file version 4 requires `-Znext-lockfile-bump`\n";
-        match classify_gate(false, out) {
+        match classify_gate(false, out, false) {
             GateOutcome::UnrunnableHere(reason) => assert!(reason.to_lowercase().contains("cargo"), "{reason}"),
             other => panic!("expected UnrunnableHere, got {other:?}"),
         }
@@ -2408,14 +2443,14 @@ mod adr_gates_classify {
             "curl: (6) Could not resolve host: api.github.com\n",
             "curl: (7) Failed to connect to api.github.com port 443\n",
         ] {
-            assert!(matches!(classify_gate(false, out), GateOutcome::UnrunnableHere(_)), "{out}");
+            assert!(matches!(classify_gate(false, out, false), GateOutcome::UnrunnableHere(_)), "{out}");
         }
     }
 
     #[test]
     fn a_real_failure_carries_the_last_ten_lines() {
         let out: String = (1..=30).map(|i| format!("line {i}\n")).collect();
-        match classify_gate(false, &out) {
+        match classify_gate(false, &out, false) {
             GateOutcome::Failed(tail) => {
                 assert!(tail.starts_with("line 21"), "{tail}");
                 assert!(tail.trim_end().ends_with("line 30"));
@@ -2450,7 +2485,7 @@ mod adr_gates_classify {
     #[test]
     fn a_gate_that_ran_zero_tests_is_a_failure_not_a_pass() {
         let out = "running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out\n";
-        match classify_gate(true, out) {
+        match classify_gate(true, out, false) {
             GateOutcome::Failed(why) => assert!(why.contains("0 tests") || why.to_lowercase().contains("vacuous"), "{why}"),
             other => panic!("expected Failed, got {other:?}"),
         }

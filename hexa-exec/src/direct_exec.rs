@@ -57,6 +57,10 @@ pub struct DirectTask {
     /// run they are restored (deleted if they did not exist before).
     #[serde(default)]
     pub also: Vec<String>,
+    /// The evidence runs no test runner: its exit status alone decides, and
+    /// the commit says `uncounted` (ADR-2611081151 §6).
+    #[serde(default)]
+    pub uncounted: bool,
 }
 
 /// Refuse any `--also` path that could leave the repository or reach into
@@ -371,101 +375,47 @@ pub(crate) async fn lock_tree(main_root: &std::path::Path) -> Result<TreeLock, S
     .map_err(|e| format!("tree lock: {e}"))?
 }
 
-/// Did the evidence command actually exercise anything?
-///
-/// A `cargo test <filter>` matching zero tests exits 0 and prints "running 0
-/// tests" — a pass that verified nothing. The gate exists to require the change
-/// be *exercised*, so that is not satisfied.
-///
-/// **This counts across suites rather than matching one line.** The first
-/// version asked `output.contains("0 passed; 0 failed; 0 ignored")`, which is
-/// true of any multi-binary cargo run that happens to contain one empty target
-/// — a lib with no inline tests, a binary whose tests live in `tests/`. A real
-/// run of a scaffolded project, 39 tests passing across four binaries, was
-/// judged vacuous by that check and its commit would have been rejected. A gate
-/// that fails for a reason unrelated to what it gates is indistinguishable from
-/// the gated thing being broken.
-///
-/// Recognises cargo, `go test`, and node's TAP output. When it recognises
-/// nothing — a `make check`, a shell script — it returns `false`: we cannot
-/// judge, and rejecting every unrecognised runner would break more gates than
-/// it protects. That limit is real and is why this is a guard against the
-/// crudest case, not a proof of coverage.
-pub(crate) fn evidence_is_vacuous(output: &str) -> bool {
-    matches!(tests_observed(output), Some(0))
+/// What a run's evidence proved, read by the one reader in hexa-core
+/// (ADR-2611081151 §4–§6). Only `passes()` lets a run commit: output no known
+/// runner wrote is `Unrecognised`, and zero tests is `Vacuous`, unless the
+/// task declared its evidence `uncounted`.
+pub fn evidence_verdict(passed: bool, output: &str, uncounted: bool) -> hexa_core::domain::evidence::Evidence {
+    hexa_core::domain::evidence::read_evidence(passed, output, uncounted)
 }
 
-/// How many tests the output reports having run, or `None` if no runner we
-/// know about is recognisable in it.
-pub fn tests_observed(output: &str) -> Option<u64> {
-    let mut total: u64 = 0;
-    let mut recognised = false;
-
-    for line in output.lines() {
-        let t = line.trim();
-
-        // cargo: "test result: ok. 39 passed; 0 failed; …"
-        if let Some(rest) = t.strip_prefix("test result:") {
-            recognised = true;
-            if let Some(n) = rest.split_whitespace().find_map(|w| w.parse::<u64>().ok()) {
-                total = total.saturating_add(n);
-            }
-            continue;
-        }
-        // cargo: "running 12 tests". Only a count is cargo's; a script's
-        // "running integration tests" is not a runner we recognise.
-        if let Some(rest) = t.strip_prefix("running ") {
-            let count = rest.strip_suffix(" tests").or_else(|| rest.strip_suffix(" test"));
-            if count.is_some_and(|n| n.parse::<u64>().is_ok()) {
-                recognised = true;
-            }
-            continue;
-        }
-        // node --test TAP: "# pass 88"
-        if let Some(rest) = t.strip_prefix("# pass ") {
-            recognised = true;
-            if let Ok(n) = rest.trim().parse::<u64>() {
-                total = total.saturating_add(n);
-            }
-            continue;
-        }
-        // go: "ok  \tpkg\t0.01s" means the package's tests ran and passed;
-        // "?   \tpkg\t[no test files]" means it had none, and
-        // "ok  \tpkg\t0.002s [no tests to run]" means a `-run` filter matched
-        // none. Both markers are checked first: the second line starts `ok`.
-        if t.contains("[no test files]") || t.contains("[no tests to run]") {
-            recognised = true;
-            continue;
-        }
-        if t.starts_with("ok  \t") || t.starts_with("ok\t") {
-            recognised = true;
-            total = total.saturating_add(1);
-            continue;
-        }
-        if t.starts_with("--- PASS") || t.starts_with("=== RUN") {
-            recognised = true;
-            total = total.saturating_add(1);
-            continue;
-        }
+/// The feedback a failed evidence run gives the next attempt and the report.
+pub fn evidence_failure(cmd: &str, verdict: &hexa_core::domain::evidence::Evidence, output: &str) -> String {
+    use hexa_core::domain::evidence::{Evidence, KNOWN_RUNNERS};
+    match verdict {
+        Evidence::Vacuous => format!(
+            "evidence `{cmd}` measured nothing: it ran 0 tests (exit 0 but nothing executed). \
+             The named test must actually EXIST and RUN. Output:\n{output}"
+        ),
+        Evidence::Unrecognised => format!(
+            "evidence `{cmd}` exited 0 but its output is unrecognised: no test runner this reader knows wrote it \
+             ({KNOWN_RUNNERS}). Use a test command, or declare the evidence --uncounted. Output:\n{output}"
+        ),
+        Evidence::Failed { reason } => format!("evidence `{cmd}` failed: {reason}. Output:\n{output}"),
+        Evidence::Passed { .. } | Evidence::Uncounted => String::new(),
     }
+}
 
-    recognised.then_some(total)
+/// The instruction as the commit records it: an uncounted run says so in its
+/// subject (ADR-2611081151 §6).
+pub fn commit_instruction(task: &DirectTask) -> String {
+    if task.uncounted {
+        format!("[evidence uncounted] {}", task.instruction)
+    } else {
+        task.instruction.clone()
+    }
 }
 
 #[cfg(test)]
-mod vacuous_tests {
-    use super::{evidence_is_vacuous, tests_observed};
+mod evidence_tests {
+    use super::{commit_instruction, evidence_failure, evidence_verdict, DirectTask};
 
-    #[test]
-    fn a_cargo_run_with_no_tests_is_vacuous() {
-        let out = "running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out";
-        assert!(evidence_is_vacuous(out));
-        assert_eq!(tests_observed(out), Some(0));
-    }
-
-    /// The regression. Four cargo binaries, one of them empty, 39 tests in
-    /// total. The old substring check called this vacuous and would have
-    /// rejected a correct, fully-gated commit.
+    /// The regression the old parser was written for: four cargo binaries,
+    /// one of them empty, 39 tests in total, is a pass.
     #[test]
     fn one_empty_binary_among_several_is_not_vacuous() {
         let out = "\
@@ -473,54 +423,34 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
 test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
 test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
 test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out";
-        assert_eq!(tests_observed(out), Some(39));
-        assert!(!evidence_is_vacuous(out));
+        assert!(evidence_verdict(true, out, false).passes());
     }
 
+    /// `go test -run NoSuchTest ./pkg` exits 0 with an `ok` line; it ran nothing.
     #[test]
-    fn node_tap_output_is_counted() {
-        assert_eq!(tests_observed("# tests 88\n# pass 88\n# fail 0"), Some(88));
-        assert!(!evidence_is_vacuous("# pass 88"));
-        assert!(evidence_is_vacuous("# pass 0"));
+    fn a_go_run_filter_that_matches_nothing_does_not_pass() {
+        assert!(!evidence_verdict(true, "ok  \tdemo/pkg\t0.002s [no tests to run]", false).passes());
+        assert!(evidence_verdict(true, "ok  \tdemo/pkg\t0.002s [no tests to run]\nok  \tdemo\t0.004s", false).passes());
     }
 
+    /// A script's own words are not a runner's: unrecognised, and the
+    /// feedback names the runners and the way out.
     #[test]
-    fn a_go_run_with_only_empty_packages_is_vacuous() {
-        assert!(evidence_is_vacuous("?   \tdemo/internal/ports\t[no test files]"));
-        assert!(!evidence_is_vacuous(
-            "?   \tdemo/internal/ports\t[no test files]\nok  \tdemo\t0.004s"
-        ));
-    }
-
-    /// `go test -run NoSuchTest ./pkg` exits 0 and prints an `ok` line. It is
-    /// the go form of cargo's "running 0 tests" and must not pass the gate.
-    #[test]
-    fn a_go_run_filter_that_matches_nothing_is_vacuous() {
-        let out = "ok  \tdemo/pkg\t0.002s [no tests to run]";
-        assert_eq!(tests_observed(out), Some(0));
-        assert!(evidence_is_vacuous(out));
-        assert!(evidence_is_vacuous("ok  \tdemo/pkg\t(cached) [no tests to run]"));
-        assert!(!evidence_is_vacuous(
-            "ok  \tdemo/pkg\t0.002s [no tests to run]\nok  \tdemo\t0.004s"
-        ));
-    }
-
-    /// An unrecognised runner is not judged. Rejecting every `make check`
-    /// would break more gates than the guard protects.
-    #[test]
-    fn an_unrecognised_runner_is_not_called_vacuous() {
-        assert_eq!(tests_observed("Build succeeded.\nAll checks passed."), None);
-        assert!(!evidence_is_vacuous("Build succeeded.\nAll checks passed."));
-    }
-
-    /// A make or shell gate that announces "running integration tests" is not
-    /// cargo. Only cargo's "running <n> tests" form is recognised.
-    #[test]
-    fn a_script_that_prints_running_tests_is_not_called_vacuous() {
+    fn a_script_gate_is_unrecognised_unless_declared_uncounted() {
         let out = "running integration tests\nall 12 checks passed";
-        assert_eq!(tests_observed(out), None);
-        assert!(!evidence_is_vacuous(out));
-        assert!(!evidence_is_vacuous("running unit test\nok"));
+        let v = evidence_verdict(true, out, false);
+        assert!(!v.passes());
+        let why = evidence_failure("make check", &v, out);
+        assert!(why.contains("unrecognised") && why.contains("cargo test") && why.contains("--uncounted"), "{why}");
+        assert!(evidence_verdict(true, out, true).passes());
+    }
+
+    #[test]
+    fn an_uncounted_run_says_so_in_its_commit_subject() {
+        let t = DirectTask { instruction: "bump".into(), uncounted: true, ..Default::default() };
+        assert!(commit_instruction(&t).contains("uncounted"));
+        let t = DirectTask { instruction: "bump".into(), ..Default::default() };
+        assert_eq!(commit_instruction(&t), "bump");
     }
 }
 
@@ -866,15 +796,13 @@ async fn exec_attempts(deps: &ExecDeps, task: &DirectTask, repo_root: &std::path
         // 4. Run the evidence command.
         let (passed, output) = run_evidence(&task.evidence, repo_root).await;
         result.evidence_output = output.chars().take(4000).collect();
-        // A `cargo test <filter>` that matches ZERO tests prints "running 0 tests"
-        // / "0 passed; 0 failed" and still exits 0 — a vacuous pass. The whole point
-        // of the gate is that the change is *verified*, so reject it (found by the
-        // 2026-06-04 review swarm).
-        let vacuous = passed && evidence_is_vacuous(&output);
-        if passed && !vacuous {
+        // Only a run the one reader calls a pass commits: zero tests, a reported
+        // failure, or output no known runner wrote is not (ADR-2611081151 §5).
+        let verdict = evidence_verdict(passed, &output, task.uncounted);
+        if verdict.passes() {
             result.evidence_passed = true;
             // 5. Commit the target + the pre-run supporting files (start-snapshot).
-            match commit_with_also(repo_root, &task.file, &task.instruction, factory, &start_dirty, &task.also)
+            match commit_with_also(repo_root, &task.file, &commit_instruction(task), factory, &start_dirty, &task.also)
                 .await
             {
                 Ok(hash) => {
@@ -893,21 +821,9 @@ async fn exec_attempts(deps: &ExecDeps, task: &DirectTask, repo_root: &std::path
             }
         } else {
             // Feed the failure back for the next attempt.
-            last_error = Some(if vacuous {
-                format!(
-                    "evidence `{}` PASSED VACUOUSLY — it ran 0 tests (exit 0 but nothing executed). \
-                     The named test must actually EXIST and RUN. Output:\n{}",
-                    task.evidence,
-                    output.chars().take(2000).collect::<String>()
-                )
-            } else {
-                format!(
-                    "evidence `{}` FAILED. Output:\n{}",
-                    task.evidence,
-                    output.chars().take(2500).collect::<String>()
-                )
-            });
-            tracing::warn!(attempt, vacuous, "direct_exec: evidence not satisfied, retrying with error fed back");
+            let shown: String = output.chars().take(2500).collect();
+            last_error = Some(evidence_failure(&task.evidence, &verdict, &shown));
+            tracing::warn!(attempt, ?verdict, "direct_exec: evidence not satisfied, retrying with error fed back");
         }
     }
 
@@ -1439,9 +1355,11 @@ fn package_prefix(repo_root: &std::path::Path, file: &str) -> Option<String> {
 }
 
 /// Every sealed test in the tree whose bytes no longer match its seal, or
-/// that is gone (ADR-2610221540 §6). Seals are read from each
-/// `docs/specs/*.json`; only the `sealed` map is read, so a spec this cannot
-/// otherwise parse still guards its tests.
+/// that is gone (ADR-2610221540 §6), and every spec record that differs from
+/// HEAD (ADR-2611081151 §3). Seals are read from each `docs/specs/*.json` as
+/// HEAD has it, never from the working tree: a run that rewrites or removes a
+/// seal is still judged by the one it started under. Only the `sealed` map is
+/// read, so a spec this cannot otherwise parse still guards its tests.
 pub fn broken_seals(repo_root: &std::path::Path) -> Vec<String> {
     let mut broken: Vec<String> = seals(repo_root)
         .into_iter()
@@ -1454,19 +1372,52 @@ pub fn broken_seals(repo_root: &std::path::Path) -> Vec<String> {
         })
         .map(|(path, _)| path)
         .collect();
+    broken.extend(changed_spec_records(repo_root));
     broken.sort();
     broken.dedup();
     broken
 }
 
-/// Every `(path, seal)` entry of every `docs/specs/*.json` `sealed` map.
+/// Whether `path` is a spec record, which a run may not touch (ADR-2611081151 §3).
+pub(crate) fn is_spec_record(path: &str) -> bool {
+    path.starts_with("docs/specs/") && path.ends_with(".json")
+}
+
+/// Every `docs/specs/*.json` that differs from HEAD: modified, added or deleted.
+fn changed_spec_records(repo_root: &std::path::Path) -> Vec<String> {
+    let Ok(out) = std::process::Command::new("git")
+        .args(["status", "--porcelain", "--untracked-files=all", "--", "docs/specs"])
+        .current_dir(repo_root)
+        .output()
+    else {
+        return Vec::new();
+    };
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| l.get(3..))
+        .map(|p| p.rsplit(" -> ").next().unwrap_or(p).trim_matches('"').to_string())
+        .filter(|p| is_spec_record(p))
+        .collect()
+}
+
+/// Every `(path, seal)` entry of every `docs/specs/*.json` `sealed` map, as
+/// HEAD has them (ADR-2611081151 §3).
 fn seals(repo_root: &std::path::Path) -> Vec<(String, Value)> {
-    let Ok(entries) = std::fs::read_dir(repo_root.join("docs/specs")) else { return Vec::new() };
-    entries
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|x| x == "json"))
-        .filter_map(|p| serde_json::from_str::<Value>(&std::fs::read_to_string(p).ok()?).ok())
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .args(args)
+            .current_dir(repo_root)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| o.stdout)
+    };
+    let Some(listing) = git(&["ls-tree", "-r", "--name-only", "HEAD", "--", "docs/specs"]) else { return Vec::new() };
+    String::from_utf8_lossy(&listing)
+        .lines()
+        .filter(|p| is_spec_record(p))
+        .filter_map(|p| git(&["show", &format!("HEAD:{p}")]))
+        .filter_map(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
         .filter_map(|v| v.get("sealed").and_then(Value::as_object).cloned())
         .flat_map(|sealed| sealed.into_iter())
         .collect()
@@ -1588,7 +1539,15 @@ pub async fn commit_with_also(
     if !broken.is_empty() {
         let mut kept = Vec::new();
         for p in &broken {
-            if !restore_seal(repo_root, p, start_dirty).await {
+            // A spec record the run changed goes back to HEAD's; one already
+            // dirty before the run is the operator's and is left alone
+            // (ADR-2611081151 §3).
+            let restored = if is_spec_record(p) {
+                !start_dirty.contains(p) && restore_unlisted(repo_root, std::slice::from_ref(p)).await.is_empty()
+            } else {
+                restore_seal(repo_root, p, start_dirty).await
+            };
+            if !restored {
                 kept.push(p.as_str());
             }
         }
@@ -1598,8 +1557,8 @@ pub async fn commit_with_also(
             format!("not restored, left as they are: {}", kept.join(", "))
         };
         return Err(format!(
-            "refused: the change edited sealed test(s) {}. A sealed test changes through its spec, never in a fix \
-             (ADR-2610221540 §6); {fate}, nothing committed",
+            "refused: the change edited sealed test(s) or spec record(s) {}. A sealed test and its record change \
+             through the spec, never in a fix (ADR-2610221540 §6, ADR-2611081151 §3); {fate}, nothing committed",
             broken.join(", ")
         ));
     }
@@ -1834,34 +1793,39 @@ mod commit_snapshot_tests {
     // "from HEAD" would replace the correct bytes with stale ones. A malformed
     // (non-string) seal can never match, so it must not revert on every attempt.
     #[tokio::test]
-    async fn a_seal_head_does_not_hold_or_a_malformed_seal_is_never_restored_from_head() {
+    // ADR-2611081151 §3: HEAD's seals are the authority. A run that re-seals
+    // (rewrites the spec record) and loosens the test is refused, and both the
+    // record and the test go back to HEAD's; a record the operator had already
+    // changed before the run is theirs and is left as it is.
+    async fn a_run_that_reseals_is_undone_to_heads_seal_and_a_pre_run_record_is_left_alone() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
-        sealed_repo(dir, "#[test]\nfn old() {}\n");
-        let resealed = "#[test]\nfn new() { assert!(true) }\n";
-        std::fs::write(dir.join("tests/sealed.rs"), resealed).unwrap();
-        let sum = super::sha256_hex(resealed.as_bytes());
+        let old = "#[test]\nfn old() {}\n";
+        sealed_repo(dir, old);
+        let head_record = std::fs::read_to_string(dir.join("docs/specs/spec.json")).unwrap();
+        let loose = "// loosened\n";
+        let sum = super::sha256_hex(loose.as_bytes());
         std::fs::write(
             dir.join("docs/specs/spec.json"),
             format!(r#"{{"adr":"x","feature":"f","sealed":{{"tests/sealed.rs":"{sum}"}},"specs":[]}}"#),
         )
         .unwrap();
-        // The run loosens the re-sealed test; HEAD holds the old one, not the seal.
-        std::fs::write(dir.join("tests/sealed.rs"), "// loosened\n").unwrap();
+        std::fs::write(dir.join("tests/sealed.rs"), loose).unwrap();
         std::fs::write(dir.join("target.rs"), "fn t() {}").unwrap();
-        commit(dir, "target.rs", "add target", false, &[]).await.unwrap_err();
-        assert_eq!(std::fs::read_to_string(dir.join("tests/sealed.rs")).unwrap(), "// loosened\n",
-            "HEAD's stale copy must not replace the tree's");
+        let why = commit(dir, "target.rs", "add target", false, &[]).await.unwrap_err();
+        assert!(why.contains("docs/specs/spec.json") && why.contains("tests/sealed.rs"), "{why}");
+        assert_eq!(std::fs::read_to_string(dir.join("tests/sealed.rs")).unwrap(), old, "the test is back to HEAD's sealed copy");
+        assert_eq!(std::fs::read_to_string(dir.join("docs/specs/spec.json")).unwrap(), head_record, "the record is back to HEAD's");
 
-        std::fs::write(
-            dir.join("docs/specs/spec.json"),
-            r#"{"adr":"x","feature":"f","sealed":{"tests/sealed.rs":42},"specs":[]}"#,
-        )
-        .unwrap();
-        std::fs::write(dir.join("tests/sealed.rs"), resealed).unwrap();
-        commit(dir, "target.rs", "add target", false, &[]).await.unwrap_err();
-        assert_eq!(std::fs::read_to_string(dir.join("tests/sealed.rs")).unwrap(), resealed,
-            "a malformed seal refuses, but reverts nothing");
+        // The same record edit made before the run started is the operator's.
+        std::fs::write(dir.join("docs/specs/spec.json"), r#"{"adr":"x","feature":"f","sealed":{"tests/sealed.rs":42},"specs":[]}"#)
+            .unwrap();
+        let start = vec!["docs/specs/spec.json".to_string()];
+        commit(dir, "target.rs", "add target", false, &start).await.unwrap_err();
+        assert!(
+            std::fs::read_to_string(dir.join("docs/specs/spec.json")).unwrap().contains(":42"),
+            "a pre-run record is refused, but left as it is"
+        );
     }
 
     // The bug: when `git commit` failed, only the target was unstaged; the

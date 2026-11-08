@@ -763,6 +763,110 @@ fn seal_files_of(
 }
 
 /// `hexa spec verify [ADR] [--ci]` — drift is a failure (§6, §7, §8).
+/// The bytes of `file` at `commit`, if that commit holds it.
+fn blob_at(root: &Path, commit: &str, file: &str) -> Option<Vec<u8>> {
+    std::process::Command::new("git")
+        .args(["cat-file", "blob", &format!("{commit}:{file}")])
+        .current_dir(root)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| o.stdout)
+}
+
+/// The sha256 a sealed file is anchored to (ADR-2611081151 §1, §2): its blob
+/// at the red commit of the scenarios it holds, else at the spec's red
+/// commit, else at the first commit in history that added it. `None` when no
+/// commit holds it: unanchored.
+fn seal_anchor(root: &Path, raw: &Value, file: &str) -> Option<String> {
+    let scenario_reds = raw
+        .get("specs")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|s| s.get("test").and_then(Value::as_str).is_some_and(|t| t.starts_with(file)))
+        .filter_map(|s| s.get("red").and_then(Value::as_str));
+    let reds: Vec<&str> = scenario_reds.chain(raw.get("red").and_then(Value::as_str)).filter(|r| !r.trim().is_empty()).collect();
+    if let Some(bytes) = reds.iter().find_map(|r| blob_at(root, r, file)) {
+        return Some(sha256_hex(&bytes));
+    }
+    let adds = std::process::Command::new("git")
+        .args(["log", "--diff-filter=A", "--format=%H", "--", file])
+        .current_dir(root)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())?;
+    let first = String::from_utf8_lossy(&adds.stdout).lines().last()?.to_string();
+    blob_at(root, &first, file).map(|b| sha256_hex(&b))
+}
+
+/// The spec's amendments as the domain reads them, oldest first.
+fn amendment_chain(raw: &Value) -> Vec<hexa_core::ports::spec::Amendment> {
+    let s = |e: &Value, k: &str| e.get(k).and_then(Value::as_str).unwrap_or_default().to_string();
+    raw.get("amendments")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|e| hexa_core::ports::spec::Amendment {
+            file: s(e, "file"),
+            from: s(e, "from"),
+            to: s(e, "to"),
+            by: s(e, "by"),
+            reason: s(e, "reason"),
+            at: s(e, "at"),
+            base_commit: s(e, "base_commit"),
+        })
+        .collect()
+}
+
+/// Judge every sealed file of one spec against history (ADR-2611081151 §1,
+/// §2), print each that does not hold, and return how many fail. `also` names
+/// test files the scenarios point at that the `sealed` map may lack.
+fn report_seals(root: &Path, id: &str, raw: &Value, also: &[String], ci: bool) -> usize {
+    use hexa_core::ports::spec::{judge_seal, SealVerdict};
+    let sealed = raw.get("sealed").and_then(Value::as_object);
+    let mut files: Vec<String> = sealed.map(|m| m.keys().cloned().collect()).unwrap_or_default();
+    files.extend(also.iter().cloned());
+    files.sort();
+    files.dedup();
+    let amendments = amendment_chain(raw);
+    let mut fatal = 0;
+    for f in &files {
+        let Some(recorded) = sealed.and_then(|m| m.get(f)).and_then(Value::as_str) else {
+            println!("  {} {} {} is not sealed (`hexa spec seal`)", "\u{2717}".red(), id, f);
+            fatal += 1;
+            continue;
+        };
+        let current = std::fs::read(root.join(f)).ok().map(|b| sha256_hex(&b));
+        let anchor = seal_anchor(root, raw, f);
+        let verdict = judge_seal(f, anchor.as_deref(), &amendments, Some(recorded), current.as_deref());
+        let (line, fails) = match verdict {
+            SealVerdict::Holds => continue,
+            SealVerdict::Edited => (format!("seal broken: {f} changed since sealing. A sealed test changes through the spec"), true),
+            SealVerdict::Gone => (format!("seal broken: {f} is gone"), true),
+            SealVerdict::Rewritten => (
+                format!(
+                    "seal rewritten: {f}'s recorded hash moved without an amendment; history anchors it at {}…, the record says {}…",
+                    anchor.as_deref().unwrap_or("?").chars().take(12).collect::<String>(),
+                    recorded.chars().take(12).collect::<String>()
+                ),
+                true,
+            ),
+            SealVerdict::BrokenChain(i) => {
+                (format!("seal broken: amendment {i} of {f} does not continue the chain from the anchored hash"), true)
+            }
+            SealVerdict::Unanchored => (
+                format!("seal unanchored: no commit in history holds {f}; re-anchor it with `hexa spec tests --red-at <commit>`"),
+                ci,
+            ),
+        };
+        let mark = if fails { "\u{2717}".red() } else { "?".yellow() };
+        println!("  {} {} {}", mark, id, line);
+        fatal += usize::from(fails);
+    }
+    fatal
+}
+
 pub async fn verify(adr: Option<&str>, ci: bool, prove: bool, verbose: bool) -> anyhow::Result<()> {
     let root = std::env::current_dir()?;
     println!("{} each scenario's sealed test, run alone", "\u{2b21} spec verify".cyan().bold());
@@ -778,10 +882,25 @@ pub async fn verify(adr: Option<&str>, ci: bool, prove: bool, verbose: bool) -> 
     let (mut passed, mut failed, mut pending, mut unproven) = (0, 0, 0, 0);
     let mut fatal = 0;
     for a in &adrs {
-        let Some((text, spec)) = load_text(&root, &a.id)? else {
-            println!("  {} {} has no spec", "\u{2717}".red(), a.id);
-            fatal += 1;
-            continue;
+        // The seals are judged from the raw record, so a spec this cannot
+        // otherwise parse still guards its tests (ADR-2611081151 §1).
+        let raw: Option<Value> =
+            std::fs::read_to_string(spec_path(&root, &a.id)).ok().and_then(|t| serde_json::from_str(&t).ok());
+        let (text, spec) = match load_text(&root, &a.id) {
+            Ok(Some(loaded)) => loaded,
+            Ok(None) => {
+                println!("  {} {} has no spec", "\u{2717}".red(), a.id);
+                fatal += 1;
+                continue;
+            }
+            Err(e) => {
+                if let Some(raw) = &raw {
+                    fatal += report_seals(&root, &a.id, raw, &[], ci);
+                }
+                println!("  {} {} spec does not parse: {e}", "\u{2717}".red(), a.id);
+                fatal += 1;
+                continue;
+            }
         };
         let alt = is_alt(&text);
         if !print_coverage(a, &spec, alt) {
@@ -810,37 +929,9 @@ pub async fn verify(adr: Option<&str>, ci: bool, prove: bool, verbose: bool) -> 
                 }
             }
         }
-        for f in test_files(&root, &spec, &text) {
-            let now = std::fs::read(root.join(&f)).map(|b| sha256_hex(&b)).ok();
-            // An amended file must still be what its latest amendment recorded.
-            let latest = amended.iter().rev().find(|e| e["file"].as_str() == Some(f.as_str())).and_then(|e| e["to"].as_str());
-            if let (Some(to), Some(n)) = (latest, now.as_deref()) {
-                if to != n && spec.sealed.get(&f).is_some_and(|s| s == n) {
-                    println!("  {} {} {} changed since its latest amendment (the seal was moved without one)", "\u{2717}".red(), a.id, f);
-                    fatal += 1;
-                }
-            }
-            match (spec.sealed.get(&f), now) {
-                (None, _) => {
-                    println!("  {} {} {} is not sealed (`hexa spec seal`)", "\u{2717}".red(), a.id, f);
-                    fatal += 1;
-                }
-                (Some(_), None) => {
-                    println!("  {} {} seal broken: {} is gone", "\u{2717}".red(), a.id, f);
-                    fatal += 1;
-                }
-                (Some(s), Some(n)) if *s != n => {
-                    println!(
-                        "  {} {} seal broken: {} changed since sealing. A sealed test changes through the spec",
-                        "\u{2717}".red(),
-                        a.id,
-                        f
-                    );
-                    fatal += 1;
-                }
-                _ => {}
-            }
-        }
+        let named: Vec<String> = test_files(&root, &spec, &text).into_iter().collect();
+        let raw = raw.unwrap_or(Value::Null);
+        fatal += report_seals(&root, &a.id, &raw, &named, ci);
         let completed = a.status == "completed";
         for s in &spec.specs {
             let Some(r) = s.test.as_deref() else {

@@ -344,10 +344,17 @@ async fn apply_and_verify(
         return EditOutcome::ApplyFailed(e);
     }
     let (passed, output) = direct_exec::run_evidence(&task.evidence, repo_root).await;
-    let vacuous = passed && direct_exec::evidence_is_vacuous(&output);
-    if passed && !vacuous {
-        match direct_exec::commit_with_also(repo_root, &task.file, &task.instruction, factory, start_dirty, &task.also)
-            .await
+    let verdict = direct_exec::evidence_verdict(passed, &output, task.uncounted);
+    if verdict.passes() {
+        match direct_exec::commit_with_also(
+            repo_root,
+            &task.file,
+            &direct_exec::commit_instruction(task),
+            factory,
+            start_dirty,
+            &task.also,
+        )
+        .await
         {
             Ok(hash) => EditOutcome::Committed(hash),
             Err(e) => {
@@ -367,19 +374,11 @@ async fn apply_and_verify(
         }
     } else {
         let _ = std::fs::write(abs_path, &content); // revert the failed edit
-        let detail = if vacuous {
-            format!(
-                "evidence `{}` PASSED VACUOUSLY (ran 0 tests). The change must be actually exercised. Output:\n{}",
-                task.evidence,
-                output.chars().take(1800).collect::<String>()
-            )
-        } else {
-            format!(
-                "evidence `{}` FAILED (edit reverted). Read the error, then propose a corrected edit:\n{}",
-                task.evidence,
-                output.chars().take(1800).collect::<String>()
-            )
-        };
+        let shown: String = output.chars().take(1800).collect();
+        let detail = format!(
+            "{} The edit was reverted; read the error, then propose a corrected edit.",
+            direct_exec::evidence_failure(&task.evidence, &verdict, &shown)
+        );
         EditOutcome::EvidenceFailed(detail)
     }
 }
@@ -929,13 +928,20 @@ pub async fn claude_attempts(
 
     result.edit_applied = snapshot.changed();
     let (passed, output) = direct_exec::run_evidence(&task.evidence, repo_root).await;
-    let vacuous = passed && direct_exec::evidence_is_vacuous(&output);
+    let verdict = direct_exec::evidence_verdict(passed, &output, task.uncounted);
     result.evidence_output = output.chars().take(4000).collect();
     result.attempts = 1;
 
-    if passed && !vacuous {
-        match direct_exec::commit_with_also(repo_root, &task.file, &task.instruction, factory, &start_dirty, &task.also)
-            .await
+    if verdict.passes() {
+        match direct_exec::commit_with_also(
+            repo_root,
+            &task.file,
+            &direct_exec::commit_instruction(task),
+            factory,
+            &start_dirty,
+            &task.also,
+        )
+        .await
         {
             Ok(hash) => {
                 result.ok = true;
@@ -960,10 +966,14 @@ pub async fn claude_attempts(
     } else {
         snapshot.restore();
         also_snapshot.restore();
-        let mut msg = if vacuous {
-            "claude: evidence passed vacuously (0 tests) — reverted".to_string()
-        } else {
-            "claude: evidence did not pass — reverted".to_string()
+        use hexa_core::domain::evidence::Evidence;
+        let mut msg = match &verdict {
+            Evidence::Vacuous => "claude: evidence measured nothing (0 tests) — reverted".to_string(),
+            Evidence::Unrecognised => format!(
+                "claude: evidence output is unrecognised (no known test runner: {}) — reverted; declare it --uncounted if it runs none",
+                hexa_core::domain::evidence::KNOWN_RUNNERS
+            ),
+            _ => "claude: evidence did not pass — reverted".to_string(),
         };
         if !result.restored_unlisted.is_empty() {
             msg.push_str(&format!(

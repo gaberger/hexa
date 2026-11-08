@@ -168,23 +168,30 @@ pub async fn run(args: ScaffoldArgs) -> Result<()> {
     // without looking — the vacuous-gate hole, in the verb whose own docs cite
     // the rule against it.
     let (exit_ok, gate_out) = run_gate(&target, gate);
-    let observed = hexa_exec::direct_exec::tests_observed(&gate_out);
-    let gate_ok = exit_ok && observed != Some(0);
+    // The one reader decides (ADR-2611081151 §4): zero tests, a reported
+    // failure, or output no known runner wrote is not a pass.
+    use hexa_core::ports::evidence::{read_evidence, Evidence, KNOWN_RUNNERS};
+    let verdict = read_evidence(exit_ok, &gate_out, false);
+    let gate_ok = verdict.passes();
     println!(
         "  {} gate re-run: {}{}",
         if gate_ok { "✓".green() } else { "✗".red() },
         if gate_ok { "PASS".green() } else { "FAIL".red() },
-        match observed {
-            Some(n) if exit_ok => format!(" — {n} test(s) ran").dimmed().to_string(),
-            None if exit_ok => " — runner not recognised, test count unknown".dimmed().to_string(),
+        match &verdict {
+            Evidence::Passed { tests } => format!(" — {tests} test(s) ran").dimmed().to_string(),
             _ => String::new(),
         }
     );
-    if exit_ok && observed == Some(0) {
-        println!(
+    match &verdict {
+        Evidence::Vacuous => println!(
             "      {}",
-            "the gate exited 0 having run no tests — a pass that verified nothing".yellow()
-        );
+            "the gate exited 0 having run no tests — it measured nothing".yellow()
+        ),
+        Evidence::Unrecognised => println!(
+            "      {}",
+            format!("the gate exited 0 but its output is unrecognised (known runners: {KNOWN_RUNNERS})").yellow()
+        ),
+        _ => {}
     }
     if !exit_ok {
         println!("{}", indent(&tail(&gate_out, 12), "      ").dimmed());

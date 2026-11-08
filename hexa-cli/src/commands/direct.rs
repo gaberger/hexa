@@ -41,6 +41,11 @@ pub enum DoAction {
         /// in an isolated run, and left (and named) on the operator's tree.
         #[arg(long = "also", value_name = "ALSO")]
         also: Vec<String>,
+        /// The evidence runs no test runner (a build, a lint): its exit status
+        /// alone decides, and the report and commit say `uncounted`
+        /// (ADR-2611081151 §6). Without it, output no runner wrote fails.
+        #[arg(long)]
+        uncounted: bool,
     },
     /// List recent direct runs (task, evidence verdict, commit).
     Runs,
@@ -53,7 +58,7 @@ pub async fn run(action: DoAction) -> anyhow::Result<()> {
     // the same binary.
 
     match action {
-        DoAction::Run { instruction, file, evidence, model, attempts, fast, max_steps, also } => {
+        DoAction::Run { instruction, file, evidence, model, attempts, fast, max_steps, also, uncounted } => {
             if let Err(e) = hexa_exec::direct_exec::validate_also_paths(&also) {
                 anyhow::bail!("{e}");
             }
@@ -63,7 +68,10 @@ pub async fn run(action: DoAction) -> anyhow::Result<()> {
             // The evidence command becomes the loop's gate only if it has none
             // (ADR-2611020815): side work must not replace the work's gate.
             crate::commands::loop_cmd::note_run_gate(&evidence, "build", None);
-            let mut body = json!({ "instruction": instruction, "file": file, "evidence": evidence, "fast": fast, "isolate": false, "also": also });
+            if uncounted {
+                crate::commands::loop_cmd::note_gate_uncounted(&evidence);
+            }
+            let mut body = json!({ "instruction": instruction, "file": file, "evidence": evidence, "fast": fast, "isolate": false, "also": also, "uncounted": uncounted });
             if let Some(m) = model {
                 body["model"] = json!(m);
             }
@@ -76,6 +84,9 @@ pub async fn run(action: DoAction) -> anyhow::Result<()> {
             let mode = if fast { "single-shot" } else { "react loop" };
             println!("{} {} {}", "⬡ direct:".cyan().bold(), instruction, format!("[{}]", mode).dimmed());
             println!("  {} {}  {} {}", "file".dimmed(), file, "evidence".dimmed(), evidence);
+            if uncounted {
+                println!("  {} evidence uncounted: its exit status alone decides (ADR-2611081151 §6)", "!".yellow());
+            }
             if !also.is_empty() {
                 println!("  {} {}", "also".dimmed(), also.join(", "));
             }
@@ -88,7 +99,11 @@ pub async fn run(action: DoAction) -> anyhow::Result<()> {
             let attempts_n = r.get("attempts").and_then(|v| v.as_u64()).unwrap_or(0);
             let committed = r.get("committed").and_then(|v| v.as_str());
             let step_word = if fast { "attempt(s)" } else { "step(s)" };
-            let ev_label = if ev { "pass".green() } else { "fail".red() };
+            let ev_label = match (ev, uncounted) {
+                (true, true) => "pass (uncounted)".green(),
+                (true, false) => "pass".green(),
+                (false, _) => "fail".red(),
+            };
 
             // Files the run changed but was not given (parley K17): name them
             // whatever the outcome, so they are never left without a word.

@@ -83,7 +83,7 @@ The gate section was rewritten as one runnable command and the suite is green lo
 test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 279 filtered out
 ```
 
-## Gate (re-recorded 2026-10-22)
+## Gate (re-recorded 2026-10-22; uncounted)
 
 `grep -q "branches: \[main, 'adr/\*\*'\]" .github/workflows/ci.yml && grep -qE '^  pull_request:' .forgejo/workflows/ci.yml`
 

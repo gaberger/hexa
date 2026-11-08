@@ -11,6 +11,8 @@ pub mod provenance;
 pub mod forge;
 // Whether every ADR's gate passes, given what is declared unbuilt (ADR-2610271110).
 pub mod gate_ledger;
+// What a gate's run proved, read by one fail-closed reader (ADR-2611081151).
+pub mod evidence;
 // Which hexa verb a plain-English request names (ADR-2610271308).
 pub mod guide;
 pub mod intent;

@@ -80,6 +80,9 @@ fn task(evidence: &str, also: &[&str]) -> DirectTask {
         evidence: evidence.into(),
         isolate: Some(false),
         also: also.iter().map(|s| s.to_string()).collect(),
+        // These runs are about what is committed, not what the evidence
+        // counted: `true`/`false` decide by exit status (ADR-2611081151 §6).
+        uncounted: true,
         ..Default::default()
     }
 }

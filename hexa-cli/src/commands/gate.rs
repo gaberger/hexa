@@ -231,6 +231,7 @@ pub(crate) async fn measure(
     root: &Path,
     gate: &str,
     composition_root: &str,
+    uncounted: bool,
 ) -> anyhow::Result<Vec<Coverage>> {
     let mut files = Vec::new();
     collect_files(root, &mut files)?;
@@ -259,9 +260,12 @@ pub(crate) async fn measure(
 
         let guard = Restore { path: path.clone(), bytes };
         std::fs::remove_file(&path)?;
-        let (ok, _out) = hexa_exec::direct_exec::run_evidence(gate, root).await;
+        let (ok, out) = hexa_exec::direct_exec::run_evidence(gate, root).await;
         drop(guard);
-        rows.push(Coverage { module, gate_survived: ok, type_only });
+        // The gate survived the deletion when it still passes by the one
+        // reader, not merely exits 0 (ADR-2611081151 §4).
+        let survived = hexa_core::ports::evidence::read_evidence(ok, &out, uncounted).passes();
+        rows.push(Coverage { module, gate_survived: survived, type_only });
     }
     Ok(rows)
 }
@@ -271,22 +275,56 @@ pub async fn run(
     target: String,
     gate: String,
     composition_root: Option<String>,
+    uncounted: bool,
 ) -> anyhow::Result<()> {
+    use hexa_core::ports::evidence::{read_evidence, Evidence, KNOWN_RUNNERS};
     let root = PathBuf::from(&target);
 
+    // A library crate's `lib.rs` is its composition root, as a binary's
+    // `main.rs` is (CLAUDE.md: each crate's lib.rs wires its adapters).
     let composition_root = match composition_root {
         Some(c) => c,
-        None => ["src/main.ts", "src/main.rs", "main.go", "src/index.ts"]
+        None => ["src/main.ts", "src/main.rs", "main.go", "src/index.ts", "src/lib.rs"]
             .iter()
             .find(|c| root.join(c).exists())
             .map(|c| c.to_string())
             .unwrap_or_default(),
     };
 
-    let rows = measure(&root, &gate, &composition_root).await;
+    // Coverage is measured from a gate that passes on the unmodified tree
+    // (ADR-2611081151 §7): a gate that fails there survives every deletion
+    // for the wrong reason.
+    let (ok, out) = hexa_exec::direct_exec::run_evidence(&gate, &root).await;
+    let baseline = read_evidence(ok, &out, uncounted);
+    if !baseline.passes() {
+        let why = match &baseline {
+            Evidence::Failed { reason } => format!("the gate did not pass on the unmodified tree: {reason}"),
+            Evidence::Vacuous => "the gate measured nothing on the unmodified tree: it ran zero tests".to_string(),
+            Evidence::Unrecognised => format!(
+                "the gate's output on the unmodified tree is unrecognised: no test runner this reader knows wrote it \
+                 ({KNOWN_RUNNERS}); declare a gate that runs no tests with --uncounted"
+            ),
+            Evidence::Passed { .. } | Evidence::Uncounted => String::new(),
+        };
+        println!("{} {}", "deletion coverage of".bold(), gate.cyan());
+        println!("  {} {why}", "✗".red());
+        println!("  nothing was deleted and no coverage is reported");
+        anyhow::bail!("{why}");
+    }
+
+    let rows = measure(&root, &gate, &composition_root, uncounted).await;
     let rows = rows?;
 
-    println!("{} {}", "deletion coverage of".bold(), gate.cyan());
+    if uncounted {
+        println!(
+            "{} {} {}",
+            "deletion coverage of".bold(),
+            gate.cyan(),
+            "(uncounted: its exit status alone decides)".dimmed()
+        );
+    } else {
+        println!("{} {}", "deletion coverage of".bold(), gate.cyan());
+    }
 
     let needed: Vec<&str> =
         rows.iter().filter(|r| !r.gate_survived).map(|r| r.module.as_str()).collect();

@@ -143,6 +143,10 @@ enum GateAction {
         /// Inferred from the tree when omitted.
         #[arg(long = "composition-root")]
         composition_root: Option<String>,
+        /// The gate runs no test runner: its exit status alone decides, and
+        /// the report says `uncounted` (ADR-2611081151 §6).
+        #[arg(long)]
+        uncounted: bool,
     },
 }
 
@@ -506,8 +510,8 @@ async fn run() -> anyhow::Result<()> {
         Commands::Spend(args) => commands::spend_cmd::run(args).await,
         Commands::Adr { action } => commands::adr::run(action).await,
         Commands::Gate { action } => match action {
-            GateAction::Coverage { target, gate, composition_root } => {
-                commands::gate::run(target, gate, composition_root).await
+            GateAction::Coverage { target, gate, composition_root, uncounted } => {
+                commands::gate::run(target, gate, composition_root, uncounted).await
             }
         },
         Commands::Design { fresh, action } => {
