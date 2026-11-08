@@ -55,7 +55,7 @@ fn ledger(body: &str) -> tempfile::TempDir {
 
 #[test]
 fn a_bold_gate_line_is_a_gate() {
-    let d = ledger("## Implementation\n\n**Gate:** `true` — the house format since September.");
+    let d = ledger("## Implementation\n\n**Gate:** `printf 'test result: ok. 1 passed; 0 failed'` — the house format since September.");
     let (code, out) = run(d.path(), &["adr", "gates"]);
     assert_eq!(code, 0, "{out}");
     assert!(!out.contains("records no gate"), "`**Gate:**` records a gate:\n{out}");
@@ -66,7 +66,7 @@ fn a_bold_gate_line_is_a_gate() {
 fn a_commit_id_before_the_command_is_not_the_command() {
     // ADR-2609221700's shape: the first backquoted span is the commit the
     // gate failed against, and the commands follow as a list.
-    let d = ledger("## Implementation\n\n**Gates**, both written first and shown failing against `19b3487`:\n\n- `true` — one.\n- `true` — two.");
+    let d = ledger("## Implementation\n\n**Gates**, both written first and shown failing against `19b3487`:\n\n- `printf 'test result: ok. 1 passed; 0 failed'` — one.\n- `printf 'test result: ok. 1 passed; 0 failed'` — two.");
     let (code, out) = run(d.path(), &["adr", "gates"]);
     assert_eq!(code, 0, "a commit id is not a program:\n{out}");
     assert!(out.contains("1 passed"), "{out}");
@@ -74,7 +74,7 @@ fn a_commit_id_before_the_command_is_not_the_command() {
 
 #[test]
 fn every_listed_gate_runs_not_only_the_first() {
-    let d = ledger("## Implementation\n\n**Gates**, written first:\n\n- `true` — passes.\n- `false` — fails.");
+    let d = ledger("## Implementation\n\n**Gates**, written first:\n\n- `printf 'test result: ok. 1 passed; 0 failed'` — passes.\n- `false` — fails.");
     let (code, out) = run(d.path(), &["adr", "gates"]);
     assert_ne!(code, 0, "running half of a gate and calling it green is the narrowing this forbids:\n{out}");
     assert!(out.contains("1 failed"), "{out}");
@@ -83,7 +83,7 @@ fn every_listed_gate_runs_not_only_the_first() {
 #[test]
 fn prose_after_the_command_is_not_part_of_it() {
     // ADR-2609211200's shape: more backquoted text follows in the sentence.
-    let d = ledger("## Implementation\n\n**Gate:** `true` — store in one project, `false` in another, and read back.");
+    let d = ledger("## Implementation\n\n**Gate:** `printf 'test result: ok. 1 passed; 0 failed'` — store in one project, `false` in another, and read back.");
     let (code, out) = run(d.path(), &["adr", "gates"]);
     assert_eq!(code, 0, "only the leading command is the gate:\n{out}");
     assert!(out.contains("1 passed"), "and it is found and run:\n{out}");
@@ -93,7 +93,7 @@ fn prose_after_the_command_is_not_part_of_it() {
 fn an_appended_gate_section_replaces_the_one_before_it() {
     // An accepted body is append-only (ADR-2609151930): a gate that went
     // stale is re-recorded below, never rewritten in place.
-    let d = ledger("## Gate\n\n`false`\n\n## Gate (re-recorded 2027-01-02)\n\n`true`: the original polled a window that moved.");
+    let d = ledger("## Gate\n\n`false`\n\n## Gate (re-recorded 2027-01-02)\n\n`printf 'test result: ok. 1 passed; 0 failed'`: the original polled a window that moved.");
     let (code, out) = run(d.path(), &["adr", "gates"]);
     assert_eq!(code, 0, "the last gate section is the current one:\n{out}");
 }

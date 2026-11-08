@@ -14,7 +14,7 @@
     "sha256": "da45edd1fea0827f9b9c4a4a2aa645c4b5e5dfd2b61057c3db6b7c330c1e299d"
   },
   "sealed": {
-    "hexa-cli/tests/adr_2611081151_spec_2.rs": "eb9ceb19a3aac08428dc5b6e8172e913ec6a8386f7f1c3c0e7a7f379c0f8c1f9"
+    "hexa-cli/tests/adr_2611081151_spec_2.rs": "01b9eaf6dfacc4af27ba7766e47c11c0dbf132cddc1971040ff10b07064f6397"
   },
   "specs": [
     {
@@ -573,6 +573,17 @@
       "then": "it proceeds to measure coverage",
       "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_5::s43_declared_uncounted_gate_that_exits_zero_is_measured",
       "red": "6d5d39a"
+    }
+  ],
+  "amendments": [
+    {
+      "at": "2026-11-08T17:58:54.452129371+00:00",
+      "base_commit": "6b5ce57c96a7af7a5d4143698ef4a98bb6edee54",
+      "by": "gary (run by Claude on gary's instruction)",
+      "file": "hexa-cli/tests/adr_2611081151_spec_2.rs",
+      "from": "eb9ceb19a3aac08428dc5b6e8172e913ec6a8386f7f1c3c0e7a7f379c0f8c1f9",
+      "reason": "S35 ran hexa do with no model reachable anywhere, CI included; a completion command now stands in for one on the --fast path. What S35 checks (success, an 'uncounted' report line, 'uncounted' in the commit) is unchanged",
+      "to": "01b9eaf6dfacc4af27ba7766e47c11c0dbf132cddc1971040ff10b07064f6397"
     }
   ]
 }

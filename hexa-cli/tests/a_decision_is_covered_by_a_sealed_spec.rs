@@ -111,6 +111,16 @@ fn project(status: &str, n: usize) -> tempfile::TempDir {
     let d = tempfile::tempdir().expect("tempdir");
     fixture_crate(d.path());
     write_adr(d.path(), status, n);
+    // A seal is anchored in history (ADR-2611081151 §2), so the fixture is a
+    // repository whose test file is committed before it is sealed.
+    for args in [
+        &["init", "-q"][..],
+        &["add", "-A"][..],
+        &["-c", "user.name=t", "-c", "user.email=t@x", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "fixture"][..],
+    ] {
+        let ok = Command::new("git").args(args).current_dir(d.path()).output().expect("git runs").status.success();
+        assert!(ok, "git {args:?}");
+    }
     d
 }
 

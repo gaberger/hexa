@@ -968,10 +968,16 @@ mod part_4 {
         )
         .unwrap();
 
-        let run = hexa(
-            dir,
-            home.path(),
-            &[
+        // No model is reachable in a test: a completion command stands in for
+        // one on the single-shot path, replying with the edit to make.
+        let stub = home.path().join("stub-model.sh");
+        std::fs::write(&stub, "#!/bin/sh\ncat >/dev/null\nprintf 'MODE: append\\n```\\nworld\\n```\\n'\n").unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let run = Command::new(env!("CARGO_BIN_EXE_hexa"))
+            .args([
                 "do",
                 "run",
                 "Append the line 'world' to notes.txt",
@@ -980,8 +986,20 @@ mod part_4 {
                 "--evidence",
                 "true",
                 "--uncounted",
-            ],
-        );
+                "--fast",
+                "--model",
+                "stub",
+            ])
+            .current_dir(dir)
+            .env("HOME", home.path())
+            .env("NO_COLOR", "1")
+            .env("HEXA_COMPLETION_COMMAND", &stub)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@example.com")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@example.com")
+            .output()
+            .expect("hexa binary runs");
         let out = text(&run);
         assert!(run.status.success(), "hexa do run failed: {out}");
         let report_has = out.lines().any(|l| l.contains("uncounted"));
