@@ -838,7 +838,7 @@ pub async fn generate_tests_with(
         .accepted_content()
         .specs
         .into_iter()
-        .filter(|s| options.only.as_ref().is_none_or(|only| only.iter().any(|o| *o == s.id)))
+        .filter(|s| options.only.as_ref().is_none_or(|only| only.contains(&s.id)))
         .collect();
     let scenarios = serde_json::to_string_pretty(&targets).map_err(|e| e.to_string())?;
     let crates: Vec<String> = test_crates(&lib, &manifest).iter().map(|c| format!("`{c}`")).collect();

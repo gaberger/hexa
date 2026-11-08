@@ -1,4 +1,5 @@
 //! Integration tests for ADR-2610271736: hexa designs with an elephant and reviews with goldfish.
+#![allow(unused, clippy::all)]
 
 use hexa_core::domain::design::{
     goldfish_prompt, referenced_paths, stage_number, stage_reviewers, stages_for, verify_pin, Pin,

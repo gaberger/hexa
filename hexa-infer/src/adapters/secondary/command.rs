@@ -18,11 +18,9 @@ use tokio::io::AsyncWriteExt;
 
 use super::vec_stream::VecStream;
 
-/// The environment variable naming the completion executable.
-pub const COMMAND_ENV: &str = "HEXA_COMPLETION_COMMAND";
-
-/// The same route under the name the spec pipeline's tests give it.
-pub const AGENT_ENV: &str = "HEXA_AGENT";
+/// The variables naming the completion executable live with the ports, where
+/// discovery can read them too.
+pub use crate::ports::{AGENT_ENV, COMMAND_ENV};
 
 /// The executable `HEXA_COMPLETION_COMMAND` (or `HEXA_AGENT`) names, if set.
 pub fn configured() -> Option<String> {

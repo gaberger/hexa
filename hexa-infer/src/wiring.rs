@@ -29,10 +29,7 @@ pub struct RegistryCompressor;
 impl PromptCompressor for RegistryCompressor {
     async fn compress(&self, model: &str, messages: Vec<hexa_core::domain::messages::Message>) -> Result<(Vec<hexa_core::domain::messages::Message>, std::collections::HashMap<String, String>), String> {
         let backends = Arc::new(RegistryBackends);
-        crate::adapters::secondary::semantic_compressor::SemanticCompressor::new(
-            backends,
-            crate::adapters::secondary::semantic_compressor::CompressorConfig::default(),
-        )
+        SemanticCompressor::new(backends, CompressorConfig::default())
         .compress(model, messages)
         .await
     }

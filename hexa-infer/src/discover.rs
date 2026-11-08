@@ -94,7 +94,7 @@ fn discover_with(
 
     // A completion command named in the environment: a tool-less route of its
     // own (the command adapter), not the frontier CLI.
-    use crate::adapters::secondary::command::{AGENT_ENV, COMMAND_ENV};
+    use crate::ports::{AGENT_ENV, COMMAND_ENV};
     if let Some((key, cmd)) = [COMMAND_ENV, AGENT_ENV].iter().find_map(|k| env(k).filter(|c| !c.trim().is_empty()).map(|c| (*k, c))) {
         out.push(Found { kind: "command", name: "completion command".to_string(), detail: cmd, via: key.to_string(), reachable: Some(true), models: Vec::new() });
     }
@@ -329,7 +329,7 @@ mod tests {
     /// a machine with nothing else (a CI runner) can still run the spec verbs.
     #[test]
     fn a_completion_command_in_the_environment_is_a_path() {
-        for key in [crate::adapters::secondary::command::COMMAND_ENV, crate::adapters::secondary::command::AGENT_ENV] {
+        for key in [crate::ports::COMMAND_ENV, crate::ports::AGENT_ENV] {
             let pairs = [(key, "/tmp/agent.sh")];
             let env = env_of(&pairs);
             let found = discover_with(&env, &[], None, &|_| Some(false));

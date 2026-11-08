@@ -8,6 +8,13 @@ use async_trait::async_trait;
 use crate::endpoint::Endpoint;
 use hexa_core::ports::inference::{InferenceError, InferenceRequest, InferenceResponse};
 
+/// The environment variable naming a tool-less completion executable. The
+/// command adapter runs it; discovery reports it as a path.
+pub const COMMAND_ENV: &str = "HEXA_COMPLETION_COMMAND";
+
+/// The same route under the name the spec pipeline's tests give it.
+pub const AGENT_ENV: &str = "HEXA_AGENT";
+
 /// Whatever serves a model. The use case builds a request and asks; which adapter answers is
 /// wiring ([`crate::wiring`]).
 #[async_trait]

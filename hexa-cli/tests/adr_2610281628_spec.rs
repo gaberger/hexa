@@ -1,4 +1,5 @@
 //! ADR-2610281628: an amended decision is re-proved where it changed.
+#![allow(unused, clippy::all)]
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;

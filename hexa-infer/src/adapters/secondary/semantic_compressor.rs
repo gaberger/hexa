@@ -52,7 +52,7 @@ impl SemanticCompressor {
                 return Ok(content);
             }
 
-            let chunk_size = (current_messages.len() + 3) / 4;
+            let chunk_size = current_messages.len().div_ceil(4);
             let mut summaries = Vec::new();
             for chunk in current_messages.chunks(chunk_size) {
                 summaries.push(self.summarize_chunk(chunk).await?);

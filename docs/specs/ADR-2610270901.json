@@ -13,8 +13,8 @@
     "sha256": "6d3c1f96e7254fe605be69a0ea611e11f2ee123b9b949524ffd158b5ad3882ab"
   },
   "sealed": {
-    "hexa-infer/tests/adr_2610270901_spec.rs": "3ef8dff27570d2d29fb7609aac94972013d37d54ef7811f9fd5110d80c338023",
-    "hexa-infer/tests/adr_2610270901_spec_2.rs": "7afb06a06853325d5f5ae3fa60a11e8f5eca62fb429bc2020927a88d9faa8646"
+    "hexa-infer/tests/adr_2610270901_spec.rs": "241e5f56d0dce54c969d688b4b438455c892b597f797eeebadb44ef26df38366",
+    "hexa-infer/tests/adr_2610270901_spec_2.rs": "9d91decbcaebf32bab04eca617f39014c10ea82161bc546b0366a78fef8aa3af"
   },
   "red": "aaec0c0",
   "specs": [
@@ -316,6 +316,26 @@
       "then": "The ADR does not pass on the strength of the ADR-2610270901 exception; the normal gate applies.",
       "test": "hexa-infer/tests/adr_2610270901_spec.rs::the_bootstrap_exception_is_not_available_to_other_adrs",
       "red": "aaec0c0"
+    }
+  ],
+  "amendments": [
+    {
+      "at": "2026-11-08T15:12:17.515996739+00:00",
+      "base_commit": "8915a81032413e37a3a9215f1c7dd418ac06b962",
+      "by": "gary (run by Claude on gary's instruction)",
+      "file": "hexa-infer/tests/adr_2610270901_spec.rs",
+      "from": "3ef8dff27570d2d29fb7609aac94972013d37d54ef7811f9fd5110d80c338023",
+      "reason": "add the lint header hexa gives generated test files, #![allow(unused, clippy::all)], so CI clippy -D warnings passes; no test changed",
+      "to": "241e5f56d0dce54c969d688b4b438455c892b597f797eeebadb44ef26df38366"
+    },
+    {
+      "at": "2026-11-08T15:12:17.542348221+00:00",
+      "base_commit": "8915a81032413e37a3a9215f1c7dd418ac06b962",
+      "by": "gary (run by Claude on gary's instruction)",
+      "file": "hexa-infer/tests/adr_2610270901_spec_2.rs",
+      "from": "7afb06a06853325d5f5ae3fa60a11e8f5eca62fb429bc2020927a88d9faa8646",
+      "reason": "add the lint header hexa gives generated test files, #![allow(unused, clippy::all)], so CI clippy -D warnings passes; no test changed",
+      "to": "9d91decbcaebf32bab04eca617f39014c10ea82161bc546b0366a78fef8aa3af"
     }
   ]
 }

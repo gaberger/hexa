@@ -5,6 +5,7 @@
 //! These tests sit beside the sealed `adr_2610270901_spec.rs`. They record
 //! the prompt written to the CLI's stdin through the public
 //! `ProcessSpawner` trait, so they rely on nothing private to the adapter.
+#![allow(unused, clippy::all)]
 
 use std::future::Future;
 use std::path::Path;

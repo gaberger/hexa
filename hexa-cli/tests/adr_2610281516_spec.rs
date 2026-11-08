@@ -1,5 +1,6 @@
 //! Sealed tests for ADR-2610281516: inference is measured, cached, and repaired
 //! rather than repeated.
+#![allow(unused, clippy::all)]
 
 use std::fs;
 use std::future::Future;

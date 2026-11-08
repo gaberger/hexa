@@ -3,6 +3,7 @@
 //! Written by hand from the accepted spec, before the adapter, under the
 //! ADR's §5 bootstrap exception: the route a test writer needs is the route
 //! these tests are for.
+#![allow(unused, clippy::all)]
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
