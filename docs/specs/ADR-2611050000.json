@@ -2,7 +2,7 @@
   "adr": "ADR-2611050000",
   "feature": "Template-Driven Telemetry Rendering",
   "accepted": {
-    "by": "Claude Code",
+    "by": "gary",
     "sha256": "254ebc93421df27dccda846b1c05c8b082a9d94bb795d7af1ef10ec883e7f92e"
   },
   "specs": [
