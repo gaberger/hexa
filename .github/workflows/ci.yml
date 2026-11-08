@@ -71,6 +71,9 @@ jobs:
       - name: Test
         run: cargo test --workspace --profile ci --locked
         env:
+          # Tests that run the CLI look in target/debug and target/release
+          # unless told; the binary this job built is in target/ci.
+          HEXA_BIN: ${{ github.workspace }}/target/ci/hexa
           HEXA_TEST_NPM: 1
           HEXA_TEST_CARGO_NET: 1
           # A case that would skip fails as "not proven here" (ADR-2610221540 §8).

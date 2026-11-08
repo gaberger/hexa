@@ -114,7 +114,22 @@ impl ForgeGithub {
         if self.host != "github.com" {
             cmd.env("GH_HOST", &self.host);
         }
-        let mut child = cmd.spawn().map_err(|_| ForgeError::Unreachable(format!("gh not found at {}", self.gh.display())))?;
+        // "Text file busy" passes in moments (a fork still holding the file's
+        // write handle); retry briefly, and say what actually failed.
+        let mut attempt = cmd.spawn();
+        for wait_ms in [10, 50, 200, 500] {
+            match &attempt {
+                Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                    std::thread::sleep(std::time::Duration::from_millis(wait_ms));
+                    attempt = cmd.spawn();
+                }
+                _ => break,
+            }
+        }
+        let mut child = attempt.map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => ForgeError::Unreachable(format!("gh not found at {}", self.gh.display())),
+            _ => ForgeError::Unreachable(format!("cannot run gh at {}: {e}", self.gh.display())),
+        })?;
         let mut out = child.stdout.take();
         let mut err = child.stderr.take();
         let t_out = std::thread::spawn(move || {
