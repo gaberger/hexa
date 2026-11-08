@@ -533,7 +533,7 @@
     },
     {
       "at": "2026-11-08T14:35:36.958417365+00:00",
-      "base_commit": "640602a598f2438508693d1291600c8fdab2972f",
+      "base_commit": "dc5e8ce80fe9d4f6a78ce3dea0029e833654bb60",
       "by": "gary (run by Claude on gary's instruction)",
       "file": "hexa-exec/tests/a_spec_is_drafted_and_its_tests_generated_red.rs",
       "from": "d2182fb14f5fdfe79cd27ead3f597964590c1fd6335f170c65f3ee2ff70e2824",
@@ -542,7 +542,7 @@
     },
     {
       "at": "2026-11-08T14:35:36.970296237+00:00",
-      "base_commit": "7aefad1895a51ec98ec305af684ef593cf757bda",
+      "base_commit": "581a07b1707eb563d5e445501837cfb97ac3898d",
       "by": "gary (run by Claude on gary's instruction)",
       "file": "hexa-exec/tests/adr_2610221540_spec_3.rs",
       "from": "3a72ca80834ca6b4ff544dedd18471ca6cd68fd9b774017de77f883c110d8213",
@@ -551,7 +551,7 @@
     },
     {
       "at": "2026-11-08T14:41:51.002960319+00:00",
-      "base_commit": "4b9b98383b981f0915b85c57311d0e575aafbcd7",
+      "base_commit": "b9bbcaf4b0093156f25950cf0bbcb78f1d13faaf",
       "by": "gary (run by Claude on gary's instruction)",
       "file": "hexa-exec/tests/a_sealed_test_is_never_committed.rs",
       "from": "5a861c13851defd0dd2e3bdc7d99e5d6f26bf7a2688a85e66ccc2f281f723685",

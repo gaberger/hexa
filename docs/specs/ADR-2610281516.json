@@ -310,7 +310,7 @@
   "amendments": [
     {
       "at": "2026-11-08T14:32:03.853835409+00:00",
-      "base_commit": "fadfec828bb231037ac38e07d073f2227d4eb876",
+      "base_commit": "b8cc17b2b19e96b523116423cdc10882025756f8",
       "by": "gary (run by Claude on gary's instruction)",
       "file": "hexa-cli/tests/adr_2610281516_spec.rs",
       "from": "7ed495af1b0dbe270111ebffbc491e15cceb948cf331f67beba3504d4eae7d1c",
@@ -319,7 +319,7 @@
     },
     {
       "at": "2026-11-08T15:12:17.629315234+00:00",
-      "base_commit": "df6f338f88742df2bcb90d0dedbda02d210816c4",
+      "base_commit": "318bebe567165cbc97cabd80688f6a736a8b5d3a",
       "by": "gary (run by Claude on gary's instruction)",
       "file": "hexa-cli/tests/adr_2610281516_spec.rs",
       "from": "5d44c3e50c21b2ad8c1f9d219538fc0512a60911fefea17cd32a32a8672727c6",

@@ -16,7 +16,7 @@
   "sealed": {
     "hexa-cli/tests/adr_2611062141_spec.rs": "4bde805b1cc82150160c55861a7ca1686bbbd0c37d5f483865f7ea3f13e8df41"
   },
-  "red": "cbd9cda",
+  "red": "40df867",
   "specs": [
     {
       "id": "S01",

@@ -235,7 +235,7 @@
   "amendments": [
     {
       "at": "2026-11-08T15:12:17.656388398+00:00",
-      "base_commit": "5d4230b2369a978012252d7839bcdb67277205f8",
+      "base_commit": "4dc5a81198ec043d48cbc883e5ba1432d11248d5",
       "by": "gary (run by Claude on gary's instruction)",
       "file": "hexa-cli/tests/adr_2610281628_spec.rs",
       "from": "42fe81f36d2371f57368e238f97283c6680e8c49a7eb0f772fec801528327b57",

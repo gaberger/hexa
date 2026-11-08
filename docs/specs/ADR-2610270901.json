@@ -321,7 +321,7 @@
   "amendments": [
     {
       "at": "2026-11-08T15:12:17.515996739+00:00",
-      "base_commit": "8915a81032413e37a3a9215f1c7dd418ac06b962",
+      "base_commit": "ad022ddf793f9b3efb405d0c8204adde99f6aa95",
       "by": "gary (run by Claude on gary's instruction)",
       "file": "hexa-infer/tests/adr_2610270901_spec.rs",
       "from": "3ef8dff27570d2d29fb7609aac94972013d37d54ef7811f9fd5110d80c338023",
@@ -330,7 +330,7 @@
     },
     {
       "at": "2026-11-08T15:12:17.542348221+00:00",
-      "base_commit": "8915a81032413e37a3a9215f1c7dd418ac06b962",
+      "base_commit": "ad022ddf793f9b3efb405d0c8204adde99f6aa95",
       "by": "gary (run by Claude on gary's instruction)",
       "file": "hexa-infer/tests/adr_2610270901_spec_2.rs",
       "from": "7afb06a06853325d5f5ae3fa60a11e8f5eca62fb429bc2020927a88d9faa8646",
