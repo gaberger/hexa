@@ -1,0 +1,22 @@
+# Version updates for the two things this repository depends on from
+# outside: crates (Cargo.lock) and the actions its workflows run.
+# Security updates are on in the repository settings; these keep the
+# routine bumps small and weekly instead of letting them pile up.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      cargo-minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
