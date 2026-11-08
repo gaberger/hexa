@@ -1,0 +1,491 @@
+{
+  "adr": "ADR-2611081151",
+  "feature": "Gate evidence reader and history-anchored seals",
+  "description": "A gate passes only on output that proves tests ran and passed, or when a person has declared it uncounted. A sealed test's expected hash comes from git history and its amendment chain, never from the editable JSON.",
+  "universal": [
+    "§1",
+    "§2",
+    "§4",
+    "§5",
+    "§6"
+  ],
+  "accepted": {
+    "by": "Gary",
+    "sha256": "da45edd1fea0827f9b9c4a4a2aa645c4b5e5dfd2b61057c3db6b7c330c1e299d"
+  },
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A sealed file whose bytes match its blob at the red commit holds",
+      "given": "a sealed file tests/a.rs with at_red = H0, no amendments, recorded = H0, current = H0",
+      "when": "judge_seal(\"tests/a.rs\", Some(H0), [], Some(H0), Some(H0)) is called",
+      "then": "the verdict is Holds"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "An amendment chain moves the expected hash",
+      "given": "at_red = H0, and one amendment for tests/a.rs with from = H0 and to = H1, recorded = H1, current = H1",
+      "when": "judge_seal is called for tests/a.rs",
+      "then": "the verdict is Holds"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "Amendments for other files do not apply",
+      "given": "at_red = H0, and one amendment for tests/b.rs with from = X and to = Y, recorded = H0, current = H0",
+      "when": "judge_seal is called for tests/a.rs with that amendment list",
+      "then": "the verdict is Holds"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A loosened test whose new hash was written into the JSON by hand is refused as Rewritten",
+      "given": "at_red = H0, no amendments, recorded = H1, current = H1, where H1 ≠ H0",
+      "when": "judge_seal is called",
+      "then": "the verdict is Rewritten, not Holds"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A file edited after sealing is Edited",
+      "given": "at_red = H0, no amendments, recorded = H0, current = H2, where H2 ≠ H0",
+      "when": "judge_seal is called",
+      "then": "the verdict is Edited"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "An amendment whose from does not continue the chain is a broken chain at its index",
+      "given": "at_red = H0, and amendments for tests/a.rs [ {from H0, to H1}, {from H9, to H2} ], where H9 ≠ H1, recorded = H2, current = H2",
+      "when": "judge_seal is called",
+      "then": "the verdict is BrokenChain(1)"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "hexa spec verify fails on an edited, rewritten or broken-chain seal",
+      "given": "a spec whose sealed file judges as Edited, Rewritten or BrokenChain",
+      "when": "hexa spec verify runs on that spec",
+      "then": "it exits non-zero and names the file and its verdict"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§1"
+      ],
+      "kind": "property",
+      "description": "The JSON record never moves the expected hash",
+      "given": "any at_red hash H0, any amendment list whose chain for the file is unbroken and ends at E, and any recorded hash R ≠ E",
+      "when": "judge_seal is called with current = E",
+      "then": "the verdict is never Holds"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§1"
+      ],
+      "kind": "property",
+      "description": "An unbroken chain with matching record and file always holds",
+      "given": "any H0 and any chain of amendments for the file where each from equals the previous to, ending at E",
+      "when": "judge_seal is called with recorded = E and current = E",
+      "then": "the verdict is Holds"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "A file with no blob at the red commit is Unanchored",
+      "given": "at_red = None, no amendments, recorded = H0, current = H0",
+      "when": "judge_seal is called",
+      "then": "the verdict is Unanchored"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "verify --ci fails an unanchored seal by name",
+      "given": "a spec whose red commit is not an ancestor of HEAD",
+      "when": "hexa spec verify --ci runs",
+      "then": "it exits non-zero and names the unanchored file; it does not report the spec green"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "Re-anchoring with --red-at restores trust",
+      "given": "a spec whose red commit is gone from history, and a commit C in history at which its tests existed and failed",
+      "when": "hexa spec tests --red-at C runs and then hexa spec verify --ci runs",
+      "then": "the seals judge against the blob at C, and verify no longer reports them Unanchored"
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§2"
+      ],
+      "kind": "property",
+      "description": "No anchor means never Holds",
+      "given": "any file, amendments, recorded and current values",
+      "when": "judge_seal is called with at_red = None",
+      "then": "the verdict is never Holds"
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "An agent run is checked against HEAD's seals",
+      "given": "HEAD's spec JSON seals tests/a.rs, and the working tree's JSON has had its sealed map removed",
+      "when": "hexa do runs and its change edits tests/a.rs",
+      "then": "the run is refused as an edit to a sealed test, because seals were read from HEAD"
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "A run that touches a spec JSON is refused and restored",
+      "given": "a hexa do or hexa harden run",
+      "when": "the run's change modifies docs/specs/ADR-X.json",
+      "then": "the file is restored, nothing is committed, and the refusal names docs/specs/ADR-X.json"
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "A sealed file deleted by a run is an edit",
+      "given": "HEAD lists and tracks a sealed file tests/a.rs",
+      "when": "the run deletes tests/a.rs",
+      "then": "the seal is judged Gone and the run is refused"
+    },
+    {
+      "id": "S17",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "A sealed file absent both at HEAD and after the run is not an edit (issue #50)",
+      "given": "a sealed map listing tests/old.rs, which is not tracked at HEAD",
+      "when": "a run leaves tests/old.rs absent",
+      "then": "the run is not refused on account of tests/old.rs"
+    },
+    {
+      "id": "S18",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "cargo test with passing tests reads as Passed",
+      "given": "exit_ok = true and output containing \"test result: ok. 5 passed; 0 failed\"",
+      "when": "read_evidence(true, output, false) is called",
+      "then": "it returns Passed { tests: 5 }"
+    },
+    {
+      "id": "S19",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "The Node 23+ spec reporter is recognised",
+      "given": "exit_ok = true and output with lines \"ℹ tests 4\", \"ℹ pass 4\", \"ℹ fail 0\"",
+      "when": "read_evidence is called without the uncounted declaration",
+      "then": "it returns Passed { tests: 4 }"
+    },
+    {
+      "id": "S20",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "The node --test TAP summary is recognised",
+      "given": "exit_ok = true and output with \"# tests 3\", \"# pass 3\", \"# fail 0\"",
+      "when": "read_evidence is called without the uncounted declaration",
+      "then": "it returns Passed { tests: 3 }"
+    },
+    {
+      "id": "S21",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "The hexa spec verify summary is recognised",
+      "given": "exit_ok = true and output containing \"6 passed · 0 failed\"",
+      "when": "read_evidence is called without the uncounted declaration",
+      "then": "it returns Passed { tests: 6 }"
+    },
+    {
+      "id": "S22",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "A reported failure fails even with exit 0",
+      "given": "exit_ok = true and output containing \"test result: FAILED. 4 passed; 1 failed\"",
+      "when": "read_evidence is called without the uncounted declaration",
+      "then": "it returns Failed"
+    },
+    {
+      "id": "S23",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "An empty node --test run is Vacuous",
+      "given": "exit_ok = true and output with \"# tests 0\", \"# pass 0\", \"# fail 0\"",
+      "when": "read_evidence is called without the uncounted declaration",
+      "then": "it returns Vacuous"
+    },
+    {
+      "id": "S24",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "Silent or unknown output is Unrecognised",
+      "given": "exit_ok = true and output that is empty, or is \"all good\"",
+      "when": "read_evidence is called without the uncounted declaration",
+      "then": "it returns Unrecognised"
+    },
+    {
+      "id": "S25",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "A non-zero exit fails regardless of output",
+      "given": "exit_ok = false and output containing \"test result: ok. 5 passed; 0 failed\"",
+      "when": "read_evidence is called without the uncounted declaration",
+      "then": "it returns Failed"
+    },
+    {
+      "id": "S26",
+      "decision": [
+        "§4"
+      ],
+      "kind": "property",
+      "description": "Passed requires exit 0, at least one test, and no reported failure",
+      "given": "any exit_ok and any output",
+      "when": "read_evidence(exit_ok, output, false) returns Passed { tests }",
+      "then": "exit_ok is true, tests ≥ 1, and no recognised line in output reports a failed test"
+    },
+    {
+      "id": "S27",
+      "decision": [
+        "§4"
+      ],
+      "kind": "property",
+      "description": "A non-zero exit is always Failed",
+      "given": "any output",
+      "when": "read_evidence(false, output, false) is called",
+      "then": "it returns Failed"
+    },
+    {
+      "id": "S28",
+      "decision": [
+        "§5"
+      ],
+      "kind": "example",
+      "description": "Only Passed (or a declared Uncounted) passes",
+      "given": "the values Passed { tests: 1 } and Uncounted",
+      "when": "passes() is called on each",
+      "then": "both return true"
+    },
+    {
+      "id": "S29",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "Vacuous, Unrecognised and Failed do not pass",
+      "given": "the values Vacuous, Unrecognised and Failed { reason: \"x\" }",
+      "when": "passes() is called on each",
+      "then": "each returns false"
+    },
+    {
+      "id": "S30",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "A gate of `true` is refused by every gate consumer",
+      "given": "a gate command `true` that exits 0 and prints nothing, not declared uncounted",
+      "when": "hexa do, hexa adr gates or hexa loop stage done runs that gate",
+      "then": "it fails, reports the output as unrecognised, and lists the runners the reader knows"
+    },
+    {
+      "id": "S31",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "Closing a stage with no recorded gate fails",
+      "given": "a loop stage with no gate recorded",
+      "when": "hexa loop stage done runs",
+      "then": "it fails and says that no gate is recorded"
+    },
+    {
+      "id": "S32",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "A vacuous gate fails as measured nothing",
+      "given": "a gate whose run reads as Vacuous",
+      "when": "any gate consumer runs it",
+      "then": "it fails with a message saying the gate measured nothing"
+    },
+    {
+      "id": "S33",
+      "decision": [
+        "§5"
+      ],
+      "kind": "property",
+      "description": "passes is true exactly for Passed and Uncounted",
+      "given": "any Evidence value e",
+      "when": "e.passes() is called",
+      "then": "it is true if and only if e is Passed { .. } or Uncounted"
+    },
+    {
+      "id": "S34",
+      "decision": [
+        "§6"
+      ],
+      "kind": "example",
+      "description": "A declared uncounted gate that exits 0 is Uncounted",
+      "given": "exit_ok = true, output \"build finished\", and the uncounted declaration",
+      "when": "read_evidence(true, output, true) is called",
+      "then": "it returns Uncounted"
+    },
+    {
+      "id": "S35",
+      "decision": [
+        "§6"
+      ],
+      "kind": "example",
+      "description": "Uncounted results are labelled wherever they are reported",
+      "given": "a gate declared with hexa do run … --uncounted that exits 0",
+      "when": "hexa do reports the result and writes its commit",
+      "then": "the report line and the commit message both contain the word \"uncounted\""
+    },
+    {
+      "id": "S36",
+      "decision": [
+        "§6"
+      ],
+      "kind": "negative",
+      "description": "A declared uncounted gate that exits non-zero fails",
+      "given": "exit_ok = false and the uncounted declaration",
+      "when": "read_evidence(false, output, true) is called",
+      "then": "it returns Failed"
+    },
+    {
+      "id": "S37",
+      "decision": [
+        "§6"
+      ],
+      "kind": "negative",
+      "description": "Unrecognised output is never treated as uncounted without the declaration",
+      "given": "exit_ok = true and output \"build finished\"",
+      "when": "read_evidence(true, output, false) is called",
+      "then": "it returns Unrecognised, not Uncounted"
+    },
+    {
+      "id": "S38",
+      "decision": [
+        "§6"
+      ],
+      "kind": "property",
+      "description": "Uncounted is produced only by the declaration",
+      "given": "any exit_ok and any output",
+      "when": "read_evidence(exit_ok, output, false) is called",
+      "then": "it never returns Uncounted"
+    },
+    {
+      "id": "S39",
+      "decision": [
+        "§6"
+      ],
+      "kind": "property",
+      "description": "For a declared uncounted gate, the exit status alone decides",
+      "given": "any output",
+      "when": "read_evidence(exit_ok, output, true) is called",
+      "then": "the result passes if and only if exit_ok is true"
+    },
+    {
+      "id": "S40",
+      "decision": [
+        "§7"
+      ],
+      "kind": "example",
+      "description": "Coverage is reported from a gate that passes on the intact tree",
+      "given": "a gate whose run on the unmodified tree reads as Passed",
+      "when": "hexa gate coverage runs",
+      "then": "it first runs the gate once on the unmodified tree, then reports coverage"
+    },
+    {
+      "id": "S41",
+      "decision": [
+        "§7"
+      ],
+      "kind": "negative",
+      "description": "A failing gate yields no coverage",
+      "given": "the gate `false`",
+      "when": "hexa gate coverage --gate false runs",
+      "then": "it reports no coverage and no hole count, gives the reason, and exits non-zero"
+    },
+    {
+      "id": "S42",
+      "decision": [
+        "§7"
+      ],
+      "kind": "negative",
+      "description": "A vacuous or unrecognised baseline yields no coverage",
+      "given": "a gate whose run on the unmodified tree reads as Vacuous or Unrecognised, and which is not declared uncounted",
+      "when": "hexa gate coverage runs",
+      "then": "it reports no coverage, names the reason, and exits non-zero"
+    },
+    {
+      "id": "S43",
+      "decision": [
+        "§7"
+      ],
+      "kind": "example",
+      "description": "A declared uncounted gate that exits 0 on the intact tree is measured",
+      "given": "a gate declared uncounted that exits 0 on the unmodified tree",
+      "when": "hexa gate coverage runs",
+      "then": "it proceeds to measure coverage"
+    }
+  ]
+}
