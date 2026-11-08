@@ -20,6 +20,10 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Read-only token: CI only reads the repository (code scanning alert 3).
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 

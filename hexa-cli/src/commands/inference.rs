@@ -523,8 +523,7 @@ async fn add_from_template(
         }
         Ok(None) if template.name == "ollama" => String::new(), // Ollama doesn't need a key
         Ok(None) => {
-            let var = template.api_key_env.as_deref().unwrap_or("<VAR>");
-            println!("  {} No API key provided. Set {} or use --key <VAR>", "✗".red(), var);
+            println!("  {} No API key provided. Set the provider API key environment variable or use --key <VAR>", "✗".red());
             return Ok(());
         }
         Err(e) => {
