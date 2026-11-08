@@ -499,6 +499,7 @@ pub async fn tests(
     let g = hexa_exec::generate_spec_tests(&model, &root, &spec, Path::new(krate), &path_env, &options)
         .await
         .map_err(|e| anyhow::anyhow!(e))?;
+    let replaced_hash = replace.as_ref().and_then(|r| spec.sealed.get(&r.old_file).cloned());
     if let Some(r) = &replace {
         spec.sealed.remove(&r.old_file);
     }
@@ -506,8 +507,46 @@ pub async fn tests(
     save_unchanged(&root, &spec, &read)?;
     println!("  {} {} tests in {}, every one red at {}", "\u{2713}".green(), g.refs.len(), g.file, g.red);
     seal(&a.id)?;
+    // A replacement at the same path moves the seal, so it is recorded as an
+    // amendment: every move of a seal is in the chain (ADR-2611081151 §1).
+    if let (Some(r), Some(from)) = (&replace, replaced_hash) {
+        if r.old_file == g.file {
+            record_replacement(&root, &a.id, &r.old_file, &from, &r.because)?;
+        }
+    }
     println!("\n  Commit {}/{}.json. The tests are sealed: build the decision until they pass.", SPECS, a.id);
     Ok(())
+}
+
+/// Append the amendment a `--replace` at the same path makes: the seal moved
+/// from `from` to the file's new hash, for `because` (ADR-2611081151 §1).
+fn record_replacement(root: &Path, id: &str, file: &str, from: &str, because: &str) -> anyhow::Result<()> {
+    let (text, mut spec) = load_text(root, id)?.ok_or_else(|| anyhow::anyhow!("{id} has no spec"))?;
+    let Some(to) = spec.sealed.get(file).cloned() else { return Ok(()) };
+    if to == from {
+        return Ok(());
+    }
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .filter(|s| !s.is_empty())
+    };
+    let mut amended = amendments_of(&text);
+    amended.push(serde_json::json!({
+        "file": file,
+        "from": from,
+        "to": to,
+        "by": git(&["config", "user.name"]).or_else(|| std::env::var("USER").ok()).unwrap_or_else(|| "hexa spec tests".to_string()),
+        "reason": format!("replaced by `hexa spec tests --replace`: {because}"),
+        "at": chrono::Utc::now().to_rfc3339(),
+        "base_commit": git(&["rev-parse", "HEAD"]).unwrap_or_default(),
+    }));
+    spec.sealed.insert(file.to_string(), to);
+    write_spec(root, &spec, Some(&amended))
 }
 
 /// The `#[test]` function a `/// <id>:` doc line names in `text`, if any.
@@ -775,21 +814,11 @@ fn blob_at(root: &Path, commit: &str, file: &str) -> Option<Vec<u8>> {
 }
 
 /// The sha256 a sealed file is anchored to (ADR-2611081151 §1, §2): its blob
-/// at the red commit of the scenarios it holds, else at the spec's red
-/// commit, else at the first commit in history that added it. `None` when no
-/// commit holds it: unanchored.
-fn seal_anchor(root: &Path, raw: &Value, file: &str) -> Option<String> {
-    let scenario_reds = raw
-        .get("specs")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter(|s| s.get("test").and_then(Value::as_str).is_some_and(|t| t.starts_with(file)))
-        .filter_map(|s| s.get("red").and_then(Value::as_str));
-    let reds: Vec<&str> = scenario_reds.chain(raw.get("red").and_then(Value::as_str)).filter(|r| !r.trim().is_empty()).collect();
-    if let Some(bytes) = reds.iter().find_map(|r| blob_at(root, r, file)) {
-        return Some(sha256_hex(&bytes));
-    }
+/// at the first commit in the branch's history that added it. Every clone
+/// computes the same anchor (a red commit kept off the branch is not in a
+/// clone), and every later change must be a recorded amendment. `None` when
+/// no commit holds it: unanchored.
+fn seal_anchor(root: &Path, file: &str) -> Option<String> {
     let adds = std::process::Command::new("git")
         .args(["log", "--diff-filter=A", "--format=%H", "--", file])
         .current_dir(root)
@@ -838,7 +867,7 @@ fn report_seals(root: &Path, id: &str, raw: &Value, also: &[String], ci: bool) -
             continue;
         };
         let current = std::fs::read(root.join(f)).ok().map(|b| sha256_hex(&b));
-        let anchor = seal_anchor(root, raw, f);
+        let anchor = seal_anchor(root, f);
         let verdict = judge_seal(f, anchor.as_deref(), &amendments, Some(recorded), current.as_deref());
         let (line, fails) = match verdict {
             SealVerdict::Holds => continue,
@@ -855,6 +884,12 @@ fn report_seals(root: &Path, id: &str, raw: &Value, also: &[String], ci: bool) -
             SealVerdict::BrokenChain(i) => {
                 (format!("seal broken: amendment {i} of {f} does not continue the chain from the anchored hash"), true)
             }
+            // No anchor never hides an edit: the file is still held to its
+            // record, the check this replaces (ADR-2610221540 §6).
+            SealVerdict::Unanchored if current.as_deref() != Some(recorded) => match current {
+                None => (format!("seal broken: {f} is gone"), true),
+                Some(_) => (format!("seal broken: {f} changed since sealing. A sealed test changes through the spec"), true),
+            },
             SealVerdict::Unanchored => (
                 format!("seal unanchored: no commit in history holds {f}; re-anchor it with `hexa spec tests --red-at <commit>`"),
                 ci,
