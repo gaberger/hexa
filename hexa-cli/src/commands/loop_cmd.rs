@@ -143,14 +143,57 @@ fn session_pid() -> u64 {
     resolve_session(&|k| std::env::var(k).ok(), posix_session()).1
 }
 
-/// When the process `pid` started, in clock ticks since boot: field 22 of
-/// /proc/{pid}/stat, after the parenthesised command name. `None` when
-/// there is no such process (or no /proc). A pid is recycled; a pid with
-/// its start time is not, so the pair names one process.
+/// Where a process start time can be read from. The seam that lets the
+/// macOS path (no /proc; `ps -o lstart=`) run under test on Linux.
+trait ProcessProbe {
+    /// The text of /proc/{pid}/stat, where /proc exists.
+    fn proc_stat(&self, pid: u64) -> Option<String>;
+    /// The output of `ps -o lstart= -p {pid}`, where that is the way to ask.
+    fn ps_lstart(&self, pid: u64) -> Option<String>;
+}
+
+/// The real machine: /proc on Linux, `ps` on macOS.
+struct SystemProbe;
+
+impl ProcessProbe for SystemProbe {
+    fn proc_stat(&self, pid: u64) -> Option<String> {
+        std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()
+    }
+    fn ps_lstart(&self, pid: u64) -> Option<String> {
+        if !cfg!(target_os = "macos") {
+            return None;
+        }
+        let out = std::process::Command::new("ps")
+            .args(["-o", "lstart=", "-p", &pid.to_string()])
+            .env("LC_ALL", "C")
+            .output()
+            .ok()?;
+        out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+    }
+}
+
+/// When the process `pid` started, as a number that names one process
+/// together with its pid. On Linux: clock ticks since boot, field 22 of
+/// /proc/{pid}/stat after the parenthesised command name. Without /proc
+/// (macOS): a stable hash of the `ps -o lstart=` text, which has one-second
+/// resolution and is only ever compared for equality. `None` when there is
+/// no such process. A pid is recycled; a pid with its start time is not.
+fn pid_start_with(probe: &dyn ProcessProbe, pid: u64) -> Option<u64> {
+    if let Some(stat) = probe.proc_stat(pid) {
+        let after = &stat[stat.rfind(')')? + 1..];
+        return after.split_whitespace().nth(19)?.parse().ok();
+    }
+    let text = probe.ps_lstart(pid)?;
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    // FNV-1a: stable across runs and builds, unlike the std hasher.
+    Some(text.bytes().fold(0xcbf29ce484222325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3)))
+}
+
 fn pid_start(pid: u64) -> Option<u64> {
-    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    let after = &stat[stat.rfind(')')? + 1..];
-    after.split_whitespace().nth(19)?.parse().ok()
+    pid_start_with(&SystemProbe, pid)
 }
 
 /// A session is live while the process it recorded exists: the pid, and
@@ -160,10 +203,14 @@ fn pid_start(pid: u64) -> Option<u64> {
 /// pid of 0 is unknown and counts as ended. An entry from before the start
 /// time was recorded is judged on the pid alone.
 fn pid_alive(pid: u64, start: Option<u64>) -> bool {
+    pid_alive_with(&SystemProbe, pid, start)
+}
+
+fn pid_alive_with(probe: &dyn ProcessProbe, pid: u64, start: Option<u64>) -> bool {
     if pid == 0 {
         return false;
     }
-    match (pid_start(pid), start) {
+    match (pid_start_with(probe, pid), start) {
         (None, _) => false,
         (Some(now), Some(then)) => now == then,
         (Some(_), None) => true,
@@ -635,6 +682,18 @@ fn next_section_after(text: &str, from: usize) -> Option<usize> {
     None
 }
 
+/// `line` with the loop's telemetry badges at its end (ADR-2611050000 §3). The
+/// telemetry is the `telemetry` map of strings in the loop state; anything
+/// else in that field is no telemetry, and the line comes back unchanged.
+fn with_telemetry(line: &str, state: &serde_json::Value, asset: &crate::fmt::TelemetryAsset) -> String {
+    let telemetry: std::collections::HashMap<String, String> = state
+        .get("telemetry")
+        .and_then(|t| t.as_object())
+        .map(|m| m.iter().filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string()))).collect())
+        .unwrap_or_default();
+    crate::fmt::append_telemetry(line, &crate::fmt::telemetry_badge(&telemetry, asset))
+}
+
 /// One line for the hooks: the state, or what is missing.
 pub fn status_line(dir: &Path) -> String {
     let project = project_name(dir);
@@ -658,7 +717,7 @@ pub fn status_line(dir: &Path) -> String {
                     line.push_str(&format!(" · doing {} {}", t.n, t.title));
                 }
             }
-            line
+            with_telemetry(&line, &st, &crate::fmt::TelemetryAsset::shipped())
         }
         None => format!(
             "Loop ({project}): stage decide · nothing recorded. Design (optional) → Decide → Gate → Build → Harden. Record with `hexa loop design <draft>`, `hexa loop adr <ID>` and `hexa loop gate '<command>'`."
@@ -1713,6 +1772,53 @@ mod run_gate {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A machine as macOS presents it: no /proc, `ps -o lstart=` answers.
+    struct MacProbe(std::collections::HashMap<u64, String>);
+    impl ProcessProbe for MacProbe {
+        fn proc_stat(&self, _pid: u64) -> Option<String> {
+            None
+        }
+        fn ps_lstart(&self, pid: u64) -> Option<String> {
+            self.0.get(&pid).cloned()
+        }
+    }
+    /// A machine as Linux presents it: /proc/{pid}/stat, and no `ps` asked.
+    struct LinuxProbe;
+    impl ProcessProbe for LinuxProbe {
+        fn proc_stat(&self, pid: u64) -> Option<String> {
+            (pid == 42).then(|| "42 (a b) S 1 42 42 0 -1 4194560 1 2 3 4 5 6 7 8 20 0 1 0 987654 1 1".to_string())
+        }
+        fn ps_lstart(&self, pid: u64) -> Option<String> {
+            assert_ne!(pid, 42, "ps must not be consulted where /proc answers");
+            None
+        }
+    }
+
+    /// Issue #40: without /proc every session read as ended, which switched
+    /// off the cross-session guards. With the macOS-shaped probe a live pid
+    /// has a start time, the recorded pair matches itself, and a recycled pid
+    /// (a different lstart) does not.
+    #[test]
+    fn without_proc_the_start_time_comes_from_ps_and_liveness_works() {
+        let mut m = std::collections::HashMap::new();
+        m.insert(7u64, "Thu Nov  5 16:53:17 2026\n".to_string());
+        let mac = MacProbe(m);
+        let start = pid_start_with(&mac, 7).expect("a live pid has a start time without /proc");
+        assert!(pid_alive_with(&mac, 7, Some(start)), "a live session read as ended");
+        assert!(pid_alive_with(&mac, 7, None), "an entry with no recorded start is judged on the pid");
+        assert!(!pid_alive_with(&mac, 7, Some(start + 1)), "a recycled pid read as the old session");
+        assert!(!pid_alive_with(&mac, 8, Some(start)), "an absent pid read as live");
+        let mut m2 = std::collections::HashMap::new();
+        m2.insert(7u64, "Fri Nov  6 09:00:00 2026".to_string());
+        assert_ne!(pid_start_with(&MacProbe(m2), 7), Some(start), "a different start time must differ");
+    }
+
+    #[test]
+    fn with_proc_the_start_time_is_field_22_and_ps_is_not_asked() {
+        assert_eq!(pid_start_with(&LinuxProbe, 42), Some(987654));
+        assert_eq!(pid_start_with(&LinuxProbe, 43), None);
+    }
+
     #[test]
     fn run_gate_operator_gate_still_replaces() {
         let dir = project("operator");
@@ -1721,5 +1827,50 @@ mod run_gate {
         update_entry(&dir, "aaaa", 1, serde_json::json!({"gate": "new", "stage": "gate"})).unwrap();
         assert_eq!(read_entry(&dir, "aaaa").unwrap()["gate"], "new");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod telemetry_in_the_status_line {
+    use super::*;
+    use crate::fmt::TelemetryAsset;
+
+    fn asset() -> TelemetryAsset {
+        TelemetryAsset::parse(
+            r#"{"compression_ratio": {"icon": "🧠", "label": "Context"}, "tokens_saved": {"icon": "⚡️", "label": "Saved"}}"#,
+        )
+    }
+
+    /// ADR-2611050000 §3: a loop that has telemetry shows it at the end of the line.
+    #[test]
+    fn telemetry_in_the_loop_state_ends_the_line() {
+        let st = serde_json::json!({"telemetry": {"compression_ratio": "8.5x", "tokens_saved": "120k"}});
+        assert_eq!(
+            with_telemetry("Loop (p): stage gate", &st, &asset()),
+            "Loop (p): stage gate 🧠 Context: 8.5x ⚡️ Saved: 120k"
+        );
+    }
+
+    /// No telemetry, an empty map, or only keys the asset does not know: the
+    /// line is unchanged, with no trailing space.
+    #[test]
+    fn a_quiet_loop_gains_nothing() {
+        let line = "Loop (p): stage gate";
+        for st in [
+            serde_json::json!({}),
+            serde_json::json!({"telemetry": {}}),
+            serde_json::json!({"telemetry": {"unknown": "1"}}),
+            serde_json::json!({"telemetry": "not a map"}),
+            serde_json::json!({"telemetry": {"compression_ratio": 8.5}}),
+        ] {
+            assert_eq!(with_telemetry(line, &st, &asset()), line, "{st}");
+        }
+    }
+
+    /// A known key beside an unknown one: only the known one is shown.
+    #[test]
+    fn an_unknown_key_beside_a_known_one_is_left_out() {
+        let st = serde_json::json!({"telemetry": {"zzz": "1", "tokens_saved": "10k"}});
+        assert_eq!(with_telemetry("L", &st, &asset()), "L ⚡️ Saved: 10k");
     }
 }

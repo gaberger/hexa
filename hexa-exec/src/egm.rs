@@ -1037,6 +1037,16 @@ fn compile_design(text: &str, rel: &str) -> Compiled {
     Compiled { title, context, decisions, files }
 }
 
+fn slug(title: &str) -> String {
+    let s: String = title
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    let s = s.split('-').filter(|w| !w.is_empty()).collect::<Vec<_>>().join("-");
+    if s.is_empty() { "design".to_string() } else { s.chars().take(60).collect::<String>().trim_end_matches('-').to_string() }
+}
+
 #[cfg(test)]
 mod compile_tests {
     use super::compile_design;
@@ -1069,14 +1079,4 @@ mod compile_tests {
         assert!(c.context.starts_with("The opening."), "{}", c.context);
         assert_eq!(c.decisions, ["**Layer map.** The layers, top down."]);
     }
-}
-
-fn slug(title: &str) -> String {
-    let s: String = title
-        .to_lowercase()
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
-        .collect();
-    let s = s.split('-').filter(|w| !w.is_empty()).collect::<Vec<_>>().join("-");
-    if s.is_empty() { "design".to_string() } else { s.chars().take(60).collect::<String>().trim_end_matches('-').to_string() }
 }

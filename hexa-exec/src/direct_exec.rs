@@ -139,6 +139,78 @@ impl AlsoSnapshot {
     }
 }
 
+/// The pre-run state of the `--file`: its bytes, or its absence. A file the
+/// run created is removed again on failure, never left behind empty (#37).
+#[derive(Debug, Clone)]
+pub struct FileSnapshot {
+    abs: std::path::PathBuf,
+    bytes: Option<Vec<u8>>,
+}
+
+impl FileSnapshot {
+    pub fn capture(abs: &std::path::Path) -> FileSnapshot {
+        let bytes = if abs.is_file() { std::fs::read(abs).ok() } else { None };
+        FileSnapshot { abs: abs.to_path_buf(), bytes }
+    }
+
+    /// Whether the file now differs from how the run found it.
+    pub fn changed(&self) -> bool {
+        std::fs::read(&self.abs).ok() != self.bytes
+    }
+
+    /// Put the file back as it was; remove it if it did not exist. Best-effort.
+    pub fn restore(&self) {
+        match &self.bytes {
+            Some(b) => {
+                let _ = std::fs::write(&self.abs, b);
+            }
+            None => {
+                if self.abs.is_file() {
+                    let _ = std::fs::remove_file(&self.abs);
+                }
+            }
+        }
+    }
+}
+
+/// Whether `path` is a credential `hexa do` must never commit: a runner token,
+/// an `.env*` file (templates such as `.env.example` excepted), a key (`*.pem`),
+/// anything with `token` in its name, or `.mcp.json`.
+fn is_credential(path: &str) -> bool {
+    let name = path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
+    let template = [".example", ".sample", ".template"].iter().any(|e| name.ends_with(e));
+    name == ".runner"
+        || name == ".mcp.json"
+        || name.ends_with(".pem")
+        || name.contains("token")
+        || ((name == ".env" || name.starts_with(".env.")) && !template)
+}
+
+/// Refuse a run that names a credential as `--file` or `--also`, naming it.
+pub fn refuse_credentials(file: &str, also: &[String]) -> Result<(), String> {
+    for p in std::iter::once(file).chain(also.iter().map(String::as_str)) {
+        let p = normalize_also(p);
+        if is_credential(&p) {
+            return Err(format!(
+                "refused: `{p}` looks like a credential (.runner, .env*, *.pem, *token*, .mcp.json); \
+                 hexa do never commits one, even when named. Nothing committed"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Whether `path` is tracked in the index (a staged new file counts).
+fn tracked_in_index(repo_root: &std::path::Path, path: &str) -> bool {
+    std::process::Command::new("git")
+        .args(["ls-files", "--error-unmatch", "--"])
+        .arg(path)
+        .current_dir(repo_root)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 #[derive(Debug, Serialize)]
 pub struct DirectResult {
     pub ok: bool,
@@ -728,6 +800,9 @@ pub(crate) fn settle_workspace(workspace: crate::direct_workspace::RunWorkspace,
 async fn exec_attempts(deps: &ExecDeps, task: &DirectTask, repo_root: &std::path::Path, factory: bool) -> DirectResult {
     // Snapshot pre-run dirty files so the commit includes the supporting files the
     // evidence depends on (ADR-2606080915 follow-up — do-loop commit-gap fix).
+    if let Err(e) = refuse_credentials(&task.file, &task.also) {
+        return DirectResult::err(e);
+    }
     let start_dirty = dirty_paths(repo_root).await;
     let max_attempts = task.max_attempts.unwrap_or(3).clamp(1, 6);
     let Some(model) = resolve_model(task) else {
@@ -1370,9 +1445,12 @@ fn package_prefix(repo_root: &std::path::Path, file: &str) -> Option<String> {
 pub fn broken_seals(repo_root: &std::path::Path) -> Vec<String> {
     let mut broken: Vec<String> = seals(repo_root)
         .into_iter()
-        .filter(|(path, sum)| {
-            let now = std::fs::read(repo_root.join(path)).map(|b| sha256_hex(&b));
-            now.ok().as_deref() != sum.as_str()
+        .filter(|(path, sum)| match std::fs::read(repo_root.join(path)) {
+            Ok(b) => Some(sha256_hex(&b).as_str()) != sum.as_str(),
+            // Absent now: an edit only if HEAD has it (a run deleted it). Absent at
+            // HEAD too (a superseded ADR's file removed by an earlier commit, issue
+            // #50) is no change, so it must not block unrelated commits.
+            Err(_) => tracked_in_head(repo_root, path),
         })
         .map(|(path, _)| path)
         .collect();
@@ -1526,6 +1604,7 @@ pub async fn commit_with_also(
         ));
     }
     validate_also_paths(also)?;
+    refuse_credentials(file, also)?;
     // Commit the target PLUS the pre-run supporting files (spec / module-registration
     // the evidence needed) so the commit reproduces the green state — not just the
     // target (which left supporting files uncommitted, a broken committed state). Scope
@@ -1539,6 +1618,12 @@ pub async fn commit_with_also(
             && !paths.contains(p)
             && pkg.as_deref().map_or(!p.contains('/'), |pkg| p.starts_with(pkg))
             && repo_root.join(p).exists()
+            // Only what the operator already tracks rides along: an untracked
+            // pre-run file (a token, a draft) is committed only when named (#36).
+            && tracked_in_index(repo_root, p)
+            && !is_credential(p)
+            && !p.starts_with(".hexa/")
+            && !p.starts_with(".claude/")
         {
             paths.push(p.clone());
         }
@@ -1657,6 +1742,10 @@ mod commit_snapshot_tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
         init_repo(dir);
+        // Tracked, then edited before the run: only a tracked file rides along (#36).
+        std::fs::write(dir.join("support.rs"), "// spec").unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-qm", "support"]);
         std::fs::write(dir.join("support.rs"), "// spec the evidence needs").unwrap();
         let start_dirty = dirty_paths(dir).await;
         assert!(start_dirty.iter().any(|p| p == "support.rs"),
@@ -1859,6 +1948,8 @@ mod commit_snapshot_tests {
         init_repo(dir);
         std::fs::create_dir_all(dir.join("mypkg/src")).unwrap();
         std::fs::write(dir.join("mypkg/Cargo.toml"), "[package]\nname=\"m\"\nversion=\"0.0.0\"").unwrap();
+        std::fs::write(dir.join("mypkg/spec.rs"), "// before").unwrap();
+        std::fs::write(dir.join("unrelated.rs"), "// before").unwrap();
         git(dir, &["add", "."]);
         git(dir, &["commit", "-qm", "pkg"]);
         // pre-run dirty: a supporting file IN the package + unrelated WIP OUTSIDE it
@@ -1888,6 +1979,7 @@ mod commit_snapshot_tests {
         std::fs::create_dir_all(dir.join("src")).unwrap();
         std::fs::create_dir_all(dir.join("tests")).unwrap();
         std::fs::write(dir.join("Cargo.toml"), "[package]\nname=\"m\"\nversion=\"0.0.0\"").unwrap();
+        std::fs::write(dir.join("tests/foo.rs"), "// before").unwrap();
         git(dir, &["add", "."]);
         git(dir, &["commit", "-qm", "pkg"]);
         assert_eq!(super::package_prefix(dir, "src/lib.rs").as_deref(), Some(""));

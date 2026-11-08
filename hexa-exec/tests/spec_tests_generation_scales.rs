@@ -52,6 +52,7 @@ impl hexa_infer::ports::Backends for Double {
             cache_read_tokens: 0,
             cache_write_tokens: 0,
             latency_ms: 0,
+            telemetry: Default::default(),
         })
     }
 

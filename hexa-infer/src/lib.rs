@@ -45,7 +45,7 @@ pub async fn complete_text(model: &str, system: &str, user: &str, max_tokens: u3
 /// The loop's JSON completion contract, on the registry-backed backends.
 /// See [`complete::complete_raw_with`].
 pub async fn complete_raw(req: &serde_json::Value) -> Result<serde_json::Value, String> {
-    complete::complete_raw_with(&wiring::RegistryBackends, req).await
+    complete::complete_raw_with(&wiring::RegistryBackends, &wiring::RegistryCompressor, req).await
 }
 
 /// Every row in the spend log.

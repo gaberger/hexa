@@ -132,3 +132,34 @@ async fn harden_reverts_a_fix_that_edits_a_sealed_test_and_commits_the_rest() {
     let shown = git(&dir, &["log", "-p", "--format=", "HEAD", "--", SEALED]);
     assert!(!shown.contains("fn the_rule_holds() {}"), "no commit ever carried the loosened body");
 }
+
+/// Issue #50: a sealed file deleted by an earlier commit (a superseded ADR whose
+/// spec JSON stayed) is absent at HEAD and absent now. That is no edit, so it
+/// must not block an unrelated gated commit.
+#[tokio::test]
+async fn a_sealed_file_absent_at_head_and_after_the_run_is_not_an_edit() {
+    let (_tmp, dir) = repo();
+    git(&dir, &["rm", "-q", SEALED]);
+    git(&dir, &["-c", "user.name=t", "-c", "user.email=t@x", "commit", "-qm", "retire the sealed test on purpose"]);
+    assert!(hexa_exec::direct_exec::broken_seals(&dir).is_empty(), "absent before and after is not an edit");
+
+    // This test expects a commit, so the repo needs an identity of its own: a CI
+    // runner has no global one.
+    git(&dir, &["config", "user.name", "t"]);
+    git(&dir, &["config", "user.email", "t@x"]);
+    std::fs::write(dir.join(TARGET), "original\nfix\n").unwrap();
+    let r = hexa_exec::direct_exec::commit_with_also(&dir, TARGET, "fix the target", false, &[], &[]).await;
+    assert!(r.is_ok(), "an unrelated fix commits: {r:?}");
+}
+
+/// The other half of the gate: deleting a sealed file DURING a run (it is in HEAD)
+/// is still refused, and nothing is committed.
+#[tokio::test]
+async fn deleting_a_tracked_sealed_file_during_a_run_is_still_refused() {
+    let (_tmp, dir) = repo();
+    std::fs::remove_file(dir.join(SEALED)).unwrap();
+    std::fs::write(dir.join(TARGET), "original\nfix\n").unwrap();
+    let r = hexa_exec::direct_exec::commit_with_also(&dir, TARGET, "fix the target", false, &[], &[]).await;
+    let err = r.expect_err("refused");
+    assert!(err.contains("sealed") && err.contains(SEALED), "{err}");
+}

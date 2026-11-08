@@ -12,6 +12,7 @@
 //! - ADRs live at `docs/adr/<ADR-id>.md` and specs at `docs/specs/<ADR-id>.json`.
 //! - `hexa spec accept <ADR>` records acceptance. Its outcome is not asserted.
 //! - A generated test file's location is read from the spec's seal or test refs.
+#![allow(unused, clippy::all)]
 
 use std::fs;
 use std::path::{Path, PathBuf};

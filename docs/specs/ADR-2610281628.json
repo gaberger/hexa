@@ -11,7 +11,7 @@
     "sha256": "59dc1e017477ebf2b09585c27b0a60713250cfc90026d1b9be31ef4f36974ac5"
   },
   "sealed": {
-    "hexa-cli/tests/adr_2610281628_spec.rs": "42fe81f36d2371f57368e238f97283c6680e8c49a7eb0f772fec801528327b57"
+    "hexa-cli/tests/adr_2610281628_spec.rs": "d43907d1b169b98c705df684bf1e9b161bcb086d4d676c081e38d66b1e5baa0f"
   },
   "red": "bb26473",
   "specs": [
@@ -230,6 +230,17 @@
       "when": "the test is proved with `--red-at abc1234`",
       "then": "it is refused, and no scenario is bound to it, and the refusal says the new file does not build at HEAD.",
       "test": "hexa-cli/tests/adr_2610281628_spec.rs::s18_not_building_at_head_is_refused"
+    }
+  ],
+  "amendments": [
+    {
+      "at": "2026-11-08T15:12:17.656388398+00:00",
+      "base_commit": "5d4230b2369a978012252d7839bcdb67277205f8",
+      "by": "gary (run by Claude on gary's instruction)",
+      "file": "hexa-cli/tests/adr_2610281628_spec.rs",
+      "from": "42fe81f36d2371f57368e238f97283c6680e8c49a7eb0f772fec801528327b57",
+      "reason": "add the lint header hexa gives generated test files, #![allow(unused, clippy::all)], so CI clippy -D warnings passes; no test changed",
+      "to": "d43907d1b169b98c705df684bf1e9b161bcb086d4d676c081e38d66b1e5baa0f"
     }
   ]
 }

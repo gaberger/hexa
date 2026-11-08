@@ -1,0 +1,110 @@
+{
+  "adr": "ADR-2611050000",
+  "feature": "Template-Driven Telemetry Rendering",
+  "accepted": {
+    "by": "gary",
+    "sha256": "254ebc93421df27dccda846b1c05c8b082a9d94bb795d7af1ef10ec883e7f92e"
+  },
+  "sealed": {
+    "hexa-cli/tests/adr_2611050000_spec.rs": "8340bc6233ba78378b1b75470d6a258ba6d91b8903ab457fb8be6a366fe4bfad"
+  },
+  "red": "5a17cde",
+  "specs": [
+    {
+      "id": "S1",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "Telemetry asset is loaded and parsed correctly",
+      "given": "a telemetry.json asset with a mapping for 'compression_ratio' to '🧠 Ratio'",
+      "when": "the asset is loaded",
+      "then": "the mapping is available for rendering",
+      "test": "hexa-cli/tests/adr_2611050000_spec.rs::s1_telemetry_asset_is_loaded_and_parsed_correctly"
+    },
+    {
+      "id": "S1n",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "Malformed telemetry asset does not crash the binary",
+      "given": "a telemetry.json asset containing invalid JSON",
+      "when": "the asset is loaded",
+      "then": "it falls back to an empty mapping and logs a warning",
+      "test": "hexa-cli/tests/adr_2611050000_spec.rs::s1n_malformed_telemetry_asset_does_not_crash_the_binary"
+    },
+    {
+      "id": "S2",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "Render full telemetry for compression ratio and tokens saved",
+      "given": "a telemetry map with compression_ratio: '8.5x' and tokens_saved: '120k'",
+      "when": "the telemetry renderer is called",
+      "then": "it produces '🧠 Context: 8.5x ⚡️ Saved: 120k'",
+      "test": "hexa-cli/tests/adr_2611050000_spec.rs::s2_render_full_telemetry_for_compression_ratio_and_tokens_saved"
+    },
+    {
+      "id": "S3",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "Render partial telemetry (only tokens saved)",
+      "given": "a telemetry map with only tokens_saved: '10k'",
+      "when": "the telemetry renderer is called",
+      "then": "it produces '⚡️ Saved: 10k'",
+      "test": "hexa-cli/tests/adr_2611050000_spec.rs::s3_render_partial_telemetry_only_tokens_saved"
+    },
+    {
+      "id": "S4",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "Render nothing for empty telemetry",
+      "given": "an empty telemetry map",
+      "when": "the telemetry renderer is called",
+      "then": "it produces an empty string",
+      "test": "hexa-cli/tests/adr_2611050000_spec.rs::s4_render_nothing_for_empty_telemetry"
+    },
+    {
+      "id": "S5",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "Ignore unknown telemetry keys",
+      "given": "a telemetry map with only unknown_metric: '100'",
+      "when": "the telemetry renderer is called",
+      "then": "it produces an empty string",
+      "test": "hexa-cli/tests/adr_2611050000_spec.rs::s5_ignore_unknown_telemetry_keys"
+    },
+    {
+      "id": "S6",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "Telemetry badges are appended to the status line",
+      "given": "a running execution loop with active telemetry",
+      "when": "the status line is updated",
+      "then": "the rendered telemetry badges are visible at the end of the line",
+      "test": "hexa-cli/tests/adr_2611050000_spec.rs::s6_telemetry_badges_are_appended_to_the_status_line"
+    },
+    {
+      "id": "S6n",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "Empty telemetry does not add trailing whitespace to status line",
+      "given": "a running execution loop with no active telemetry",
+      "when": "the status line is updated",
+      "then": "the status line ends exactly at the last status badge without extra spaces",
+      "test": "hexa-cli/tests/adr_2611050000_spec.rs::s6n_empty_telemetry_does_not_add_trailing_whitespace_to_status_line"
+    }
+  ]
+}

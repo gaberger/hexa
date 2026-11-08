@@ -14,7 +14,7 @@
     "sha256": "ebf92bdfcd898b3ef39f3db71019192ad02c05758027a49ecc2d1f1d06645d26"
   },
   "sealed": {
-    "hexa-cli/tests/adr_2610271736_spec.rs": "962f284e727a3d7cb53d590ad01ab6cd896b2d9d3356cf17c2f67d652784c793"
+    "hexa-cli/tests/adr_2610271736_spec.rs": "ff13c86ef3a57039f83638b13e8e502d2ef44756d4419db9f826d1b4c9110341"
   },
   "red": "7b0d367",
   "specs": [
@@ -462,6 +462,17 @@
       "when": "any `hexa design` or `hexa drift` command runs",
       "then": "every run exits 0, and the set of paths created, modified or deleted is a non-empty subset of files under the artifact directory and docs/analysis/",
       "test": "hexa-cli/tests/adr_2610271736_spec.rs::s37_no_run_writes_outside_allowed_dirs"
+    }
+  ],
+  "amendments": [
+    {
+      "at": "2026-11-08T15:12:17.572839733+00:00",
+      "base_commit": "52dfc52d28208add52fad1d34106923c839b6c48",
+      "by": "gary (run by Claude on gary's instruction)",
+      "file": "hexa-cli/tests/adr_2610271736_spec.rs",
+      "from": "962f284e727a3d7cb53d590ad01ab6cd896b2d9d3356cf17c2f67d652784c793",
+      "reason": "add the lint header hexa gives generated test files, #![allow(unused, clippy::all)], so CI clippy -D warnings passes; no test changed",
+      "to": "ff13c86ef3a57039f83638b13e8e502d2ef44756d4419db9f826d1b4c9110341"
     }
   ]
 }

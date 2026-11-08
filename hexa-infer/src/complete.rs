@@ -15,7 +15,7 @@ use hexa_core::domain::messages::{ContentBlock, Message, Role};
 use hexa_core::domain::messages::StopReason;
 use hexa_core::ports::inference::{InferenceRequest, Priority};
 
-use crate::ports::Backends;
+use crate::ports::{Backends, PromptCompressor};
 
 
 /// Tools, or a real error — never a silent empty list.
@@ -151,19 +151,31 @@ fn text_or_truncation(
 ///
 /// Tolerant about message content on the way in — the loop sends `"content": "text"` for the seed
 /// and block arrays for tool results, and the route accepted both.
-pub async fn complete_raw_with(backends: &dyn Backends, req: &serde_json::Value) -> Result<serde_json::Value, String> {
+pub async fn complete_raw_with(
+    backends: &dyn Backends,
+    compressor: &dyn PromptCompressor,
+    req: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
     let model = req.get("model").and_then(|v| v.as_str()).unwrap_or_default();
     if model.is_empty() {
         return Err("inference: request has no model".into());
     }
 
-    let messages = req
+    let mut messages = req
         .get("messages")
         .and_then(|v| v.as_array())
         .map(|arr| arr.iter().map(message_from_json).collect::<Vec<_>>())
         .unwrap_or_default();
 
+    let mut compression_telemetry = std::collections::HashMap::new();
+    if estimate_tokens(&messages) > 4000 {
+        let (compressed, telemetry) = compressor.compress(model, messages).await?;
+        messages = compressed;
+        compression_telemetry = telemetry;
+    }
+
     let tools = parse_tools(req.get("tools").unwrap_or(&serde_json::Value::Null))?;
+
 
     let request = InferenceRequest {
         model: model.to_string(),
@@ -181,10 +193,11 @@ pub async fn complete_raw_with(backends: &dyn Backends, req: &serde_json::Value)
 
     // Which backend runs it — including sending a tool-using request to one
     // that carries tools and the transcript — is the port's decision.
-    let response = backends.complete(request).await.map_err(|e| e.to_string())?;
+    let mut response = backends.complete(request).await.map_err(|e| e.to_string())?;
 
-    // ContentBlock's serde renames already produce Anthropic's {type: text|tool_use} shape, which
-    // is exactly what extract_tool_uses reads. No hand-rolled mapping to drift.
+    // Merge compression telemetry into the response
+    response.telemetry.extend(compression_telemetry);
+
     backends.record_spend(model, response.input_tokens, response.output_tokens);
 
     Ok(serde_json::json!({
@@ -194,7 +207,14 @@ pub async fn complete_raw_with(backends: &dyn Backends, req: &serde_json::Value)
             "input_tokens": response.input_tokens,
             "output_tokens": response.output_tokens,
         },
+        "telemetry": response.telemetry,
     }))
+}
+
+fn estimate_tokens(messages: &[hexa_core::domain::messages::Message]) -> u64 {
+    messages.iter()
+        .map(|m| m.text_content().len() as u64 / 4)
+        .sum()
 }
 
 /// One message, from the loop's JSON. Content may be a bare string or a block array.

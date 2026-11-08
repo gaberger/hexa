@@ -378,6 +378,7 @@ impl ClaudeCodeInferenceAdapter {
             cache_read_tokens: r.cache_read_tokens,
             cache_write_tokens: 0,
             latency_ms: start.elapsed().as_millis() as u64,
+            telemetry: std::collections::HashMap::new(),
         };
         Ok((response, r.cost_usd))
     }
@@ -571,6 +572,7 @@ impl IInferencePort for ClaudeCodeInferenceAdapter {
                 cache_read_tokens: r.cache_read_tokens,
                 cache_write_tokens: 0,
                 latency_ms: start.elapsed().as_millis() as u64,
+                telemetry: std::collections::HashMap::new(),
             });
         }
         let prompt = collapse_prompt(&request);
@@ -594,6 +596,7 @@ impl IInferencePort for ClaudeCodeInferenceAdapter {
             cache_read_tokens: 0,
             cache_write_tokens: 0,
             latency_ms: start.elapsed().as_millis() as u64,
+            telemetry: std::collections::HashMap::new(),
         })
     }
 

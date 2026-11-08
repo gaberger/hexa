@@ -1,5 +1,6 @@
 //! Sealed tests for ADR-2610281516: inference is measured, cached, and repaired
 //! rather than repeated.
+#![allow(unused, clippy::all)]
 
 use std::fs;
 use std::future::Future;
@@ -14,7 +15,8 @@ use std::task::{Context, Poll, Waker};
 use hexa_core::domain::design::{goldfish_prompt, needs_synthesis, stage_reviewers, Stage};
 use hexa_core::ports::inference::{InferenceError, InferenceRequest, InferenceResponse};
 use hexa_infer::complete::complete_raw_with;
-use hexa_infer::ports::{completion_key, Backends};
+use hexa_infer::ports::{completion_key, Backends, PromptCompressor};
+use hexa_core::domain::messages::Message;
 
 // ── Harness ──────────────────────────────────────────────
 
@@ -544,6 +546,14 @@ fn s07_identical_completion_answered_from_cache() {
     assert!(spend.contains("cache"), "the second entry has source cache: {spend}");
 }
 
+struct NoOpCompressor;
+#[async_trait::async_trait]
+impl hexa_infer::ports::PromptCompressor for NoOpCompressor {
+    async fn compress(&self, _model: &str, messages: Vec<hexa_core::domain::messages::Message>) -> Result<(Vec<hexa_core::domain::messages::Message>, std::collections::HashMap<String, String>), String> {
+        Ok((messages, std::collections::HashMap::new()))
+    }
+}
+
 /// S08: A request that carries tools is never cached.
 #[test]
 fn s08_request_with_tools_never_cached() {
@@ -569,7 +579,7 @@ fn s08_request_with_tools_never_cached() {
         "tools": [{"name": "read_file", "description": "read a file", "input_schema": {"type": "object", "properties": {}}}]
     });
     for _ in 0..2 {
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| block_on(complete_raw_with(&backend, &req))));
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| block_on(complete_raw_with(&backend, &NoOpCompressor, &req))));
         if let Ok(Ok(v)) = r {
             assert!(!v.to_string().contains("CACHED"), "a tooled request was answered from the cache");
         }

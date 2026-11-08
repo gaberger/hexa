@@ -200,80 +200,6 @@ pub fn coverage(adr_id: &str, decisions: &[String], spec: &Spec) -> Vec<Finding>
     out
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn sc(id: &str, d: &[&str], kind: Kind) -> Scenario {
-        Scenario {
-            id: id.into(),
-            decision: d.iter().map(|s| s.to_string()).collect(),
-            kind,
-            description: String::new(),
-            given: String::new(),
-            when: String::new(),
-            then: String::new(),
-            test: None,
-            red: None,
-        }
-    }
-
-    fn spec(specs: Vec<Scenario>) -> Spec {
-        Spec {
-            adr: "A".into(),
-            feature: "f".into(),
-            description: String::new(),
-            universal: vec![],
-            exempt: vec![],
-            accepted: None,
-            sealed: BTreeMap::new(),
-            red: None,
-            specs,
-        }
-    }
-
-    #[test]
-    fn numbered_items_at_the_margin_are_decisions_and_nothing_else_is() {
-        let md = "# A\n\n## Context\n\n1. not a decision\n\n## Decision\n\n1. **One.** x\n   2. nested, not one\n2. **Two.**\n\n   - a bullet\n10. **Ten.**\n\n## Consequences\n\n3. not one\n";
-        assert_eq!(numbered_decisions(md), vec!["§1", "§2", "§10"]);
-        assert!(numbered_decisions("# A\n\n## Context\n\n1. x\n").is_empty());
-    }
-
-    #[test]
-    fn coverage_needs_an_example_and_a_negative_per_decision() {
-        let ds = vec!["§1".to_string(), "§2".to_string()];
-        let ok = spec(vec![sc("S1", &["§1", "§2"], Kind::Example), sc("S2", &["§1", "§2"], Kind::Negative)]);
-        assert!(coverage("A", &ds, &ok).is_empty());
-        let half = spec(vec![sc("S1", &["§1"], Kind::Example)]);
-        let f = coverage("A", &ds, &half);
-        assert!(f.contains(&Finding::NoNegative("§1".into())));
-        assert!(f.contains(&Finding::Uncovered("§2".into())));
-    }
-
-    #[test]
-    fn accepted_content_ignores_what_is_written_after_acceptance() {
-        let mut a = spec(vec![sc("S1", &["§1"], Kind::Example)]);
-        let b = a.clone();
-        a.accepted = Some(Acceptance { by: "p".into(), sha256: "h".into() });
-        a.sealed.insert("t.rs".into(), "h".into());
-        a.red = Some("abc1234".into());
-        a.specs[0].test = Some("tests/a.rs::f".into());
-        a.specs[0].red = Some("def5678".into());
-        assert_eq!(a.accepted_content(), b.accepted_content());
-        a.specs[0].then = "something else".into();
-        assert_ne!(a.accepted_content(), b.accepted_content(), "behaviour is what was accepted");
-    }
-
-    #[test]
-    fn a_test_ref_splits_after_the_file() {
-        assert_eq!(test_ref("tests/a.rs::f"), Some(("tests/a.rs", "f")));
-        assert_eq!(test_ref("src/x.rs::tests::f"), Some(("src/x.rs", "tests::f")));
-        assert_eq!(test_ref("tests/a.rs"), None);
-        assert_eq!(test_ref(".rs::f"), None);
-        assert_eq!(test_ref("tests/a.rs::"), None);
-    }
-}
-
 /// Which bytes of Rust source are code, not a string, char or comment.
 /// Brace matching and macro search read only code bytes.
 fn code_mask(src: &str) -> Vec<bool> {
@@ -694,4 +620,78 @@ pub fn without_tests(source: &str, names: &[String]) -> String {
     }
     out.push_str(&source[at..]);
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sc(id: &str, d: &[&str], kind: Kind) -> Scenario {
+        Scenario {
+            id: id.into(),
+            decision: d.iter().map(|s| s.to_string()).collect(),
+            kind,
+            description: String::new(),
+            given: String::new(),
+            when: String::new(),
+            then: String::new(),
+            test: None,
+            red: None,
+        }
+    }
+
+    fn spec(specs: Vec<Scenario>) -> Spec {
+        Spec {
+            adr: "A".into(),
+            feature: "f".into(),
+            description: String::new(),
+            universal: vec![],
+            exempt: vec![],
+            accepted: None,
+            sealed: BTreeMap::new(),
+            red: None,
+            specs,
+        }
+    }
+
+    #[test]
+    fn numbered_items_at_the_margin_are_decisions_and_nothing_else_is() {
+        let md = "# A\n\n## Context\n\n1. not a decision\n\n## Decision\n\n1. **One.** x\n   2. nested, not one\n2. **Two.**\n\n   - a bullet\n10. **Ten.**\n\n## Consequences\n\n3. not one\n";
+        assert_eq!(numbered_decisions(md), vec!["§1", "§2", "§10"]);
+        assert!(numbered_decisions("# A\n\n## Context\n\n1. x\n").is_empty());
+    }
+
+    #[test]
+    fn coverage_needs_an_example_and_a_negative_per_decision() {
+        let ds = vec!["§1".to_string(), "§2".to_string()];
+        let ok = spec(vec![sc("S1", &["§1", "§2"], Kind::Example), sc("S2", &["§1", "§2"], Kind::Negative)]);
+        assert!(coverage("A", &ds, &ok).is_empty());
+        let half = spec(vec![sc("S1", &["§1"], Kind::Example)]);
+        let f = coverage("A", &ds, &half);
+        assert!(f.contains(&Finding::NoNegative("§1".into())));
+        assert!(f.contains(&Finding::Uncovered("§2".into())));
+    }
+
+    #[test]
+    fn accepted_content_ignores_what_is_written_after_acceptance() {
+        let mut a = spec(vec![sc("S1", &["§1"], Kind::Example)]);
+        let b = a.clone();
+        a.accepted = Some(Acceptance { by: "p".into(), sha256: "h".into() });
+        a.sealed.insert("t.rs".into(), "h".into());
+        a.red = Some("abc1234".into());
+        a.specs[0].test = Some("tests/a.rs::f".into());
+        a.specs[0].red = Some("def5678".into());
+        assert_eq!(a.accepted_content(), b.accepted_content());
+        a.specs[0].then = "something else".into();
+        assert_ne!(a.accepted_content(), b.accepted_content(), "behaviour is what was accepted");
+    }
+
+    #[test]
+    fn a_test_ref_splits_after_the_file() {
+        assert_eq!(test_ref("tests/a.rs::f"), Some(("tests/a.rs", "f")));
+        assert_eq!(test_ref("src/x.rs::tests::f"), Some(("src/x.rs", "tests::f")));
+        assert_eq!(test_ref("tests/a.rs"), None);
+        assert_eq!(test_ref(".rs::f"), None);
+        assert_eq!(test_ref("tests/a.rs::"), None);
+    }
 }

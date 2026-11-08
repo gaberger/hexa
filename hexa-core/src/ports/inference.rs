@@ -54,6 +54,8 @@ pub struct InferenceResponse {
     pub cache_read_tokens: u64,
     pub cache_write_tokens: u64,
     pub latency_ms: u64,
+    /// Metadata for observability (e.g. compression ratios, search hits).
+    pub telemetry: std::collections::HashMap<String, String>,
 }
 
 /// A streaming chunk from an inference engine.

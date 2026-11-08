@@ -100,21 +100,31 @@ pub fn compress_messages(messages: &[Value], opts: &CompressOpts) -> Vec<Value> 
         .enumerate()
         .map(|(i, m)| {
             if !is_observation_turn(m) {
+                // Cap non-observations if they are not very recent (keep last 2).
+                if i < messages.len().saturating_sub(2) {
+                    return cap_message(m.clone(), opts);
+                }
                 return m.clone();
             }
             let blocks = m.get("content").and_then(|c| c.as_array()).cloned().unwrap_or_default();
             if recent_obs.contains(&i) {
-                // Recent: keep, but cap each observation's payload.
+                // Recent: keep, but cap every block's payload.
                 let capped: Vec<Value> = blocks
                     .into_iter()
-                    .map(|b| cap_tool_result(b, opts))
+                    .map(|b| cap_block(b, opts.obs_head, opts.obs_tail))
                     .collect();
                 json!({ "role": "user", "content": capped })
             } else {
-                // Old: collapse every tool_result to a one-line gist.
+                // Old: collapse tool_results to gists, cap everything else.
                 let gists: Vec<Value> = blocks
                     .into_iter()
-                    .map(gist_tool_result)
+                    .map(|b| {
+                        if b.get("type").and_then(|v| v.as_str()) == Some("tool_result") {
+                            gist_tool_result(b)
+                        } else {
+                            cap_block(b, opts.obs_head, opts.obs_tail)
+                        }
+                    })
                     .collect();
                 json!({ "role": "user", "content": gists })
             }
@@ -122,17 +132,39 @@ pub fn compress_messages(messages: &[Value], opts: &CompressOpts) -> Vec<Value> 
         .collect()
 }
 
-fn cap_tool_result(mut b: Value, opts: &CompressOpts) -> Value {
-    if b.get("type").and_then(|v| v.as_str()) != Some("tool_result") {
-        return b;
-    }
+fn cap_block(mut b: Value, head: usize, tail: usize) -> Value {
     if let Some(s) = b.get("content").and_then(|v| v.as_str()) {
-        let capped = cap_str(s, opts.obs_head, opts.obs_tail);
+        let capped = cap_str(s, head, tail);
         if let Some(obj) = b.as_object_mut() {
             obj.insert("content".to_string(), json!(capped));
         }
     }
+    if let Some(s) = b.get("text").and_then(|v| v.as_str()) {
+        let capped = cap_str(s, head, tail);
+        if let Some(obj) = b.as_object_mut() {
+            obj.insert("text".to_string(), json!(capped));
+        }
+    }
     b
+}
+
+fn cap_message(mut m: Value, opts: &CompressOpts) -> Value {
+    if let Some(content) = m.get_mut("content") {
+        match content {
+            Value::String(s) => {
+                *content = json!(cap_str(s, opts.obs_head, opts.obs_tail));
+            }
+            Value::Array(blocks) => {
+                let capped: Vec<Value> = blocks
+                    .iter()
+                    .map(|b| cap_block(b.clone(), opts.obs_head, opts.obs_tail))
+                    .collect();
+                *content = json!(capped);
+            }
+            _ => {}
+        }
+    }
+    m
 }
 
 fn gist_tool_result(b: Value) -> Value {

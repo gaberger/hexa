@@ -31,7 +31,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      # Save the cache on a failing run too: while main was red, every run
+      # started from a stale cache and rebuilt what the last one had built.
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       # The TypeScript scaffold's gate is `npm install && npm test`, and it
       # shipped broken because nothing ran it: `node --test <dir>` stopped
       # discovering tests and started trying to load the directory as a
@@ -50,8 +54,10 @@ jobs:
       # (ADR-2609160100). Without it the gate "cannot run here", and main
       # has been red on that alone since 2026-10-27.
       - uses: oven-sh/setup-bun@v2
+      # The `ci` profile (Cargo.toml): release code without fat LTO, about a
+      # third of the compile time. Shipped binaries still build with `release`.
       - name: Build
-        run: cargo build --workspace --release --locked
+        run: cargo build --workspace --profile ci --locked
       # HEXA_TEST_NPM lets the TypeScript scaffold gate reach the network for
       # its one `npm install`. Off by default — a test that silently reaches
       # the network is a coin flip — and on here, where the network exists.
@@ -59,7 +65,7 @@ jobs:
       # HEXA_TEST_CARGO_NET does the same for the generated axum adapter's gate,
       # which fetches axum from crates.io (ADR-2610100005).
       - name: Test
-        run: cargo test --workspace --release --locked
+        run: cargo test --workspace --profile ci --locked
         env:
           HEXA_TEST_NPM: 1
           HEXA_TEST_CARGO_NET: 1
@@ -71,31 +77,42 @@ jobs:
       # shipped with the A+ floor never verified. A grade regression must
       # not be able to hide behind a lint nit.
       - name: Architecture grade
-        run: ./target/release/hexa analyze . --grade A+ --exit-code
+        run: ./target/ci/hexa analyze . --grade A+ --exit-code
       # Syncing must be a no-op on a clean checkout. It was not: every run
       # appended another copy of every hook.
       - name: Installed assets are in sync
-        run: ./target/release/hexa assets sync --dry-run | grep -q 'Everything up to date'
+        run: ./target/ci/hexa assets sync --dry-run | grep -q 'Everything up to date'
 
       # main went registry-inconsistent under green CI because nothing ran
       # this. A checker nothing runs is documentation.
       - name: Decision registry is consistent
-        run: ./target/release/hexa adr doctor
+        run: ./target/ci/hexa adr doctor
       # Every ADR's recorded gate, with a skipped case failing (ADR-2610221540 §9).
       - name: Every ADR's gate
-        run: ./target/release/hexa adr gates --ci
+        run: ./target/ci/hexa adr gates --ci
         env:
           HEXA_TEST_NPM: 1
           HEXA_TEST_CARGO_NET: 1
       # Every decision's spec: coverage, acceptance, seals, each test alone (ADR-2610221540 §8).
       - name: Every decision's spec
-        run: ./target/release/hexa spec check && ./target/release/hexa spec verify --ci
+        run: ./target/ci/hexa spec check && ./target/ci/hexa spec verify --ci
         env:
           # Tests that run the CLI (ADR-2611031914) use this tree's binary, not a stale or missing debug one.
-          HEXA_BIN: ${{ github.workspace }}/target/release/hexa
+          HEXA_BIN: ${{ github.workspace }}/target/ci/hexa
           HEXA_TEST_NPM: 1
           HEXA_TEST_CARGO_NET: 1
-      # `hexa dev test lint` denies warnings and had been red since this
-      # repository began, because nothing here ran it (ADR-2609122048).
+  # `hexa dev test lint` denies warnings and had been red since this
+  # repository began, because nothing here ran it (ADR-2609122048).
+  # Its own job, in parallel with the gates: it needs no toolchain but Rust,
+  # it used to wait for the whole suite, and its check build no longer adds
+  # to the total. A lint failure still fails CI; it no longer hides a
+  # structural gate, because it never runs before one in the same job.
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - name: Lint
         run: cargo clippy --workspace --all-targets --locked -- -D warnings

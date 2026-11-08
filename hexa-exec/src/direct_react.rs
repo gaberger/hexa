@@ -120,6 +120,9 @@ async fn react_attempts(
             String::new(),
         );
     };
+    if let Err(e) = direct_exec::refuse_credentials(&task.file, &task.also) {
+        return (DirectResult::err(e), 0, model);
+    }
     let max_steps = task.max_steps.unwrap_or(DEFAULT_MAX_STEPS).clamp(1, 40);
     let abs_path = repo_root.join(&task.file);
     // Snapshot pre-run dirty files so the commit includes the supporting files the
@@ -844,6 +847,9 @@ pub async fn claude_attempts(
     factory: bool,
 ) -> (DirectResult, u32, String) {
     let model = task.model.clone().unwrap_or_else(|| "claude-code".to_string());
+    if let Err(e) = direct_exec::refuse_credentials(&task.file, &task.also) {
+        return (DirectResult::err(e), 0, model);
+    }
     // Refuse an escaping --also path before the delegate is ever started.
     let also_snapshot = match direct_exec::AlsoSnapshot::capture(repo_root, &task.also) {
         Ok(s) => s,
@@ -880,7 +886,7 @@ pub async fn claude_attempts(
         left_modified: Vec::new(),
     };
     let abs_path = repo_root.join(&task.file);
-    let snapshot = std::fs::read_to_string(&abs_path).unwrap_or_default();
+    let snapshot = direct_exec::FileSnapshot::capture(&abs_path);
 
     let prompt = delegate_prompt(task);
     let timeout = Duration::from_secs(
@@ -900,7 +906,7 @@ pub async fn claude_attempts(
             return (result, 1, model);
         }
         Err(crate::ports::FrontierError::Timeout(t)) => {
-            let _ = std::fs::write(&abs_path, &snapshot);
+            snapshot.restore();
             also_snapshot.restore();
             let mut msg = format!("claude -p timed out after {}s", t.as_secs());
             if let Err(e) = settle_unlisted(repo_root, task, factory, &start_dirty, &mut result).await {
@@ -915,13 +921,13 @@ pub async fn claude_attempts(
     // K17: its `cargo fmt` left 29 files changed). Settle what it changed
     // beyond them before the gate, so the gate judges what is committed.
     if let Err(e) = settle_unlisted(repo_root, task, factory, &start_dirty, &mut result).await {
-        let _ = std::fs::write(&abs_path, &snapshot);
+        snapshot.restore();
         also_snapshot.restore();
         result.error = Some(e);
         return (result, 1, model);
     }
 
-    result.edit_applied = std::fs::read_to_string(&abs_path).map(|c| c != snapshot).unwrap_or(false);
+    result.edit_applied = snapshot.changed();
     let (passed, output) = direct_exec::run_evidence(&task.evidence, repo_root).await;
     let vacuous = passed && direct_exec::evidence_is_vacuous(&output);
     result.evidence_output = output.chars().take(4000).collect();
@@ -952,7 +958,7 @@ pub async fn claude_attempts(
             }
         }
     } else {
-        let _ = std::fs::write(&abs_path, &snapshot);
+        snapshot.restore();
         also_snapshot.restore();
         let mut msg = if vacuous {
             "claude: evidence passed vacuously (0 tests) — reverted".to_string()

@@ -8,6 +8,13 @@ use async_trait::async_trait;
 use crate::endpoint::Endpoint;
 use hexa_core::ports::inference::{InferenceError, InferenceRequest, InferenceResponse};
 
+/// The environment variable naming a tool-less completion executable. The
+/// command adapter runs it; discovery reports it as a path.
+pub const COMMAND_ENV: &str = "HEXA_COMPLETION_COMMAND";
+
+/// The same route under the name the spec pipeline's tests give it.
+pub const AGENT_ENV: &str = "HEXA_AGENT";
+
 /// Whatever serves a model. The use case builds a request and asks; which adapter answers is
 /// wiring ([`crate::wiring`]).
 #[async_trait]
@@ -109,7 +116,7 @@ impl LocalProvider {
 /// One place a model can be reached.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Found {
-    /// `local`, `api`, `registered` or `frontier`.
+    /// `local`, `api`, `registered`, `command` or `frontier`.
     pub kind: &'static str,
     pub name: String,
     /// The address, path or model; never a secret.
@@ -160,6 +167,17 @@ pub trait EndpointRegistry: Send + Sync {
     fn upsert(&self, endpoint: Endpoint) -> Result<(), String>;
     /// Whether an endpoint with this id was there to remove.
     fn remove(&self, id: &str) -> Result<bool, String>;
+}
+
+/// A service that compresses conversation history to fit within
+/// model context windows while preserving semantic signal.
+#[async_trait]
+pub trait PromptCompressor: Send + Sync {
+    /// Compresses the provided messages for the given model.
+    ///
+    /// Returns the compressed messages and a map of telemetry metadata
+    /// (e.g. compression ratio, tokens saved).
+    async fn compress(&self, model: &str, messages: Vec<hexa_core::domain::messages::Message>) -> Result<(Vec<hexa_core::domain::messages::Message>, std::collections::HashMap<String, String>), String>;
 }
 
 /// `base_url`, with the environment reader injected. The local server's

@@ -10,9 +10,9 @@
     "hexa-cli/tests/a_decision_is_covered_by_a_sealed_spec.rs": "3adf53bd834631dc8bfc2f56b7b566db26826bdffaed93505cc36145ebefbaae",
     "hexa-cli/tests/a_test_was_red_before_the_code.rs": "4b9dd29c253acb78dc900d867db1feaf8f840b3e591ea0a4f849731423d2ae5d",
     "hexa-cli/tests/the_ledger_reads_every_gate_and_no_skip_passes.rs": "415540a622855638be957774d035087bcee6ae85a7b1f7c5e3c1aebec6f6213c",
-    "hexa-exec/tests/a_sealed_test_is_never_committed.rs": "f20f9118d347cc1856380e411416a70af40672e54595238822ed71bc50982fc9",
-    "hexa-exec/tests/a_spec_is_drafted_and_its_tests_generated_red.rs": "d2182fb14f5fdfe79cd27ead3f597964590c1fd6335f170c65f3ee2ff70e2824",
-    "hexa-exec/tests/adr_2610221540_spec_3.rs": "3a72ca80834ca6b4ff544dedd18471ca6cd68fd9b774017de77f883c110d8213"
+    "hexa-exec/tests/a_sealed_test_is_never_committed.rs": "27662fab3ef786aacfac9ba0e68edb55a31c976ffad56056d21ef681b5a9232e",
+    "hexa-exec/tests/a_spec_is_drafted_and_its_tests_generated_red.rs": "22d2501712bfb67720fa52bc2806f6a88f53574be033e3182e2836e8b7736548",
+    "hexa-exec/tests/adr_2610221540_spec_3.rs": "ddf32a1b7922de1066e06512da69034bcf847625bc45cf6a675b8be3e1bf2b0f"
   },
   "specs": [
     {
@@ -519,6 +519,44 @@
       "then": "each routes through one helper that panics 'not proven here' under HEXA_NO_SKIP",
       "test": "hexa-cli/tests/the_ledger_reads_every_gate_and_no_skip_passes.rs::every_skip_site_refuses_under_no_skip",
       "red": "bea3be4"
+    }
+  ],
+  "amendments": [
+    {
+      "at": "2026-11-08T14:35:36.944943364+00:00",
+      "base_commit": "ba7a83575191b4f004b6f86aa11627742a09fd92",
+      "by": "gary (run by Claude on gary's instruction)",
+      "file": "hexa-exec/tests/a_sealed_test_is_never_committed.rs",
+      "from": "f20f9118d347cc1856380e411416a70af40672e54595238822ed71bc50982fc9",
+      "reason": "issue #50 (6302dc2): two regression tests added for a sealed file absent at HEAD; existing tests unchanged",
+      "to": "5a861c13851defd0dd2e3bdc7d99e5d6f26bf7a2688a85e66ccc2f281f723685"
+    },
+    {
+      "at": "2026-11-08T14:35:36.958417365+00:00",
+      "base_commit": "640602a598f2438508693d1291600c8fdab2972f",
+      "by": "gary (run by Claude on gary's instruction)",
+      "file": "hexa-exec/tests/a_spec_is_drafted_and_its_tests_generated_red.rs",
+      "from": "d2182fb14f5fdfe79cd27ead3f597964590c1fd6335f170c65f3ee2ff70e2824",
+      "reason": "adapt the test double to InferenceResponse.telemetry (cd4ac3a); no scenario changes",
+      "to": "22d2501712bfb67720fa52bc2806f6a88f53574be033e3182e2836e8b7736548"
+    },
+    {
+      "at": "2026-11-08T14:35:36.970296237+00:00",
+      "base_commit": "7aefad1895a51ec98ec305af684ef593cf757bda",
+      "by": "gary (run by Claude on gary's instruction)",
+      "file": "hexa-exec/tests/adr_2610221540_spec_3.rs",
+      "from": "3a72ca80834ca6b4ff544dedd18471ca6cd68fd9b774017de77f883c110d8213",
+      "reason": "adapt the test double to InferenceResponse.telemetry (cd4ac3a); no scenario changes",
+      "to": "ddf32a1b7922de1066e06512da69034bcf847625bc45cf6a675b8be3e1bf2b0f"
+    },
+    {
+      "at": "2026-11-08T14:41:51.002960319+00:00",
+      "base_commit": "4b9b98383b981f0915b85c57311d0e575aafbcd7",
+      "by": "gary (run by Claude on gary's instruction)",
+      "file": "hexa-exec/tests/a_sealed_test_is_never_committed.rs",
+      "from": "5a861c13851defd0dd2e3bdc7d99e5d6f26bf7a2688a85e66ccc2f281f723685",
+      "reason": "issue #50 tests: two regression tests (6302dc2), the first given a repo-local git identity so it commits on a runner with none; existing tests unchanged",
+      "to": "27662fab3ef786aacfac9ba0e68edb55a31c976ffad56056d21ef681b5a9232e"
     }
   ]
 }

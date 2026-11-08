@@ -14,7 +14,7 @@
     "sha256": "cdaef0dffb4b9a31c700de5e9f364c637eaa75a985b9707c916c36a39f9b9a30"
   },
   "sealed": {
-    "hexa-cli/tests/adr_2610281516_spec.rs": "7ed495af1b0dbe270111ebffbc491e15cceb948cf331f67beba3504d4eae7d1c"
+    "hexa-cli/tests/adr_2610281516_spec.rs": "876765e5dc7cb33a7bd1ff4b3b8f17dc06b6e009aae26bc921537917584617d9"
   },
   "red": "02c6cea",
   "specs": [
@@ -305,6 +305,26 @@
       "when": "`hexa spec tests` runs to acceptance or final rejection.",
       "then": "At most two follow-ups are sent. Each one contains only the writer's own prior reply plus error text about the test file, missing scenario ids or sites. Each one contains no substring of a project source file outside the test file that is absent from the writer's reply. A file is accepted only if it passed every check in full.",
       "test": "hexa-cli/tests/adr_2610281516_spec.rs::s24_property_follow_ups_bounded_and_confined"
+    }
+  ],
+  "amendments": [
+    {
+      "at": "2026-11-08T14:32:03.853835409+00:00",
+      "base_commit": "fadfec828bb231037ac38e07d073f2227d4eb876",
+      "by": "gary (run by Claude on gary's instruction)",
+      "file": "hexa-cli/tests/adr_2610281516_spec.rs",
+      "from": "7ed495af1b0dbe270111ebffbc491e15cceb948cf331f67beba3504d4eae7d1c",
+      "reason": "adapt to PromptCompressor::compress returning telemetry (f6c1a93, cd4ac3a); no scenario changes",
+      "to": "5d44c3e50c21b2ad8c1f9d219538fc0512a60911fefea17cd32a32a8672727c6"
+    },
+    {
+      "at": "2026-11-08T15:12:17.629315234+00:00",
+      "base_commit": "df6f338f88742df2bcb90d0dedbda02d210816c4",
+      "by": "gary (run by Claude on gary's instruction)",
+      "file": "hexa-cli/tests/adr_2610281516_spec.rs",
+      "from": "5d44c3e50c21b2ad8c1f9d219538fc0512a60911fefea17cd32a32a8672727c6",
+      "reason": "add the lint header hexa gives generated test files, #![allow(unused, clippy::all)], so CI clippy -D warnings passes; no test changed",
+      "to": "876765e5dc7cb33a7bd1ff4b3b8f17dc06b6e009aae26bc921537917584617d9"
     }
   ]
 }
