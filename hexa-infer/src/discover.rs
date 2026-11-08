@@ -92,6 +92,13 @@ fn discover_with(
         });
     }
 
+    // A completion command named in the environment: a tool-less route of its
+    // own (the command adapter), not the frontier CLI.
+    use crate::adapters::secondary::command::{AGENT_ENV, COMMAND_ENV};
+    if let Some((key, cmd)) = [COMMAND_ENV, AGENT_ENV].iter().find_map(|k| env(k).filter(|c| !c.trim().is_empty()).map(|c| (*k, c))) {
+        out.push(Found { kind: "command", name: "completion command".to_string(), detail: cmd, via: key.to_string(), reachable: Some(true), models: Vec::new() });
+    }
+
     // The frontier path: a logged-in claude CLI.
     if let Some(path) = claude_path {
         out.push(Found { kind: "frontier", name: "claude".to_string(), detail: path.to_string(), via: "PATH".to_string(), reachable: Some(true), models: Vec::new() });
@@ -316,5 +323,23 @@ mod tests {
         let ep = Endpoint { id: "box".into(), url: "http://box:8000".into(), provider: "openai_compat".into(), model: "m".into(), models: vec![], status: "healthy".into(), ..Default::default() };
         let found = discover_with(&env, &[ep], Some("/usr/local/bin/claude"), &|u| Some(u.contains("box")));
         assert_eq!(path_words(&found), "box, claude");
+    }
+
+    /// A completion command named in the environment is a path of its own, so
+    /// a machine with nothing else (a CI runner) can still run the spec verbs.
+    #[test]
+    fn a_completion_command_in_the_environment_is_a_path() {
+        for key in [crate::adapters::secondary::command::COMMAND_ENV, crate::adapters::secondary::command::AGENT_ENV] {
+            let pairs = [(key, "/tmp/agent.sh")];
+            let env = env_of(&pairs);
+            let found = discover_with(&env, &[], None, &|_| Some(false));
+            let cmd = found.iter().find(|f| f.kind == "command").unwrap_or_else(|| panic!("{key} found"));
+            assert_eq!(cmd.via, key);
+            assert!(cmd.open());
+            assert_ne!(cmd.kind, "frontier", "the command route is tool-less, not the frontier CLI");
+        }
+        let empty = env_of(&[]);
+        let none = discover_with(&empty, &[], None, &|_| Some(false));
+        assert!(!any_path(&none), "no command named, no path");
     }
 }
