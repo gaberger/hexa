@@ -591,8 +591,13 @@ async fn red_at(
     body: &str,
     refs: &BTreeMap<String, String>,
 ) -> Result<RedCheck, String> {
+    // Two red checks in one process can read the same clock (parallel tests
+    // did, and the second `git worktree add` found the path taken): a counter
+    // makes the name unique within the process, the pid across processes.
+    static CHECKS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = CHECKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-    let wt = std::env::temp_dir().join(format!("hexa-spec-red-{}-{nanos}", std::process::id()));
+    let wt = std::env::temp_dir().join(format!("hexa-spec-red-{}-{n}-{nanos}", std::process::id()));
     let wt_s = wt.to_string_lossy().to_string();
     git(root, &["worktree", "add", "-q", "--detach", &wt_s, head]).await?;
     // A build of its own: an older tree built into the shared target/ leaves
