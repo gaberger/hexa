@@ -13,6 +13,9 @@
     "by": "Gary",
     "sha256": "da45edd1fea0827f9b9c4a4a2aa645c4b5e5dfd2b61057c3db6b7c330c1e299d"
   },
+  "sealed": {
+    "hexa-cli/tests/adr_2611081151_spec_2.rs": "eb9ceb19a3aac08428dc5b6e8172e913ec6a8386f7f1c3c0e7a7f379c0f8c1f9"
+  },
   "specs": [
     {
       "id": "S01",
@@ -23,7 +26,9 @@
       "description": "A sealed file whose bytes match its blob at the red commit holds",
       "given": "a sealed file tests/a.rs with at_red = H0, no amendments, recorded = H0, current = H0",
       "when": "judge_seal(\"tests/a.rs\", Some(H0), [], Some(H0), Some(H0)) is called",
-      "then": "the verdict is Holds"
+      "then": "the verdict is Holds",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_1::s01_matching_blob_at_red_holds",
+      "red": "6d5d39a"
     },
     {
       "id": "S02",
@@ -34,7 +39,9 @@
       "description": "An amendment chain moves the expected hash",
       "given": "at_red = H0, and one amendment for tests/a.rs with from = H0 and to = H1, recorded = H1, current = H1",
       "when": "judge_seal is called for tests/a.rs",
-      "then": "the verdict is Holds"
+      "then": "the verdict is Holds",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_1::s02_amendment_chain_moves_expected_hash",
+      "red": "6d5d39a"
     },
     {
       "id": "S03",
@@ -45,7 +52,9 @@
       "description": "Amendments for other files do not apply",
       "given": "at_red = H0, and one amendment for tests/b.rs with from = X and to = Y, recorded = H0, current = H0",
       "when": "judge_seal is called for tests/a.rs with that amendment list",
-      "then": "the verdict is Holds"
+      "then": "the verdict is Holds",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_1::s03_amendments_for_other_files_do_not_apply",
+      "red": "6d5d39a"
     },
     {
       "id": "S04",
@@ -56,7 +65,9 @@
       "description": "A loosened test whose new hash was written into the JSON by hand is refused as Rewritten",
       "given": "at_red = H0, no amendments, recorded = H1, current = H1, where H1 ≠ H0",
       "when": "judge_seal is called",
-      "then": "the verdict is Rewritten, not Holds"
+      "then": "the verdict is Rewritten, not Holds",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_1::s04_hand_written_hash_is_rewritten",
+      "red": "6d5d39a"
     },
     {
       "id": "S05",
@@ -67,7 +78,9 @@
       "description": "A file edited after sealing is Edited",
       "given": "at_red = H0, no amendments, recorded = H0, current = H2, where H2 ≠ H0",
       "when": "judge_seal is called",
-      "then": "the verdict is Edited"
+      "then": "the verdict is Edited",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_1::s05_file_edited_after_sealing_is_edited",
+      "red": "6d5d39a"
     },
     {
       "id": "S06",
@@ -78,7 +91,9 @@
       "description": "An amendment whose from does not continue the chain is a broken chain at its index",
       "given": "at_red = H0, and amendments for tests/a.rs [ {from H0, to H1}, {from H9, to H2} ], where H9 ≠ H1, recorded = H2, current = H2",
       "when": "judge_seal is called",
-      "then": "the verdict is BrokenChain(1)"
+      "then": "the verdict is BrokenChain(1)",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_1::s06_broken_chain_reports_index",
+      "red": "6d5d39a"
     },
     {
       "id": "S07",
@@ -89,7 +104,9 @@
       "description": "hexa spec verify fails on an edited, rewritten or broken-chain seal",
       "given": "a spec whose sealed file judges as Edited, Rewritten or BrokenChain",
       "when": "hexa spec verify runs on that spec",
-      "then": "it exits non-zero and names the file and its verdict"
+      "then": "it exits non-zero and names the file and its verdict",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_1::s07_spec_verify_fails_on_rewritten_seal",
+      "red": "6d5d39a"
     },
     {
       "id": "S08",
@@ -100,7 +117,9 @@
       "description": "The JSON record never moves the expected hash",
       "given": "any at_red hash H0, any amendment list whose chain for the file is unbroken and ends at E, and any recorded hash R ≠ E",
       "when": "judge_seal is called with current = E",
-      "then": "the verdict is never Holds"
+      "then": "the verdict is never Holds",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_1::s08_record_never_moves_expected_hash",
+      "red": "6d5d39a"
     },
     {
       "id": "S09",
@@ -111,7 +130,9 @@
       "description": "An unbroken chain with matching record and file always holds",
       "given": "any H0 and any chain of amendments for the file where each from equals the previous to, ending at E",
       "when": "judge_seal is called with recorded = E and current = E",
-      "then": "the verdict is Holds"
+      "then": "the verdict is Holds",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_1::s09_unbroken_chain_with_matching_record_holds",
+      "red": "6d5d39a"
     },
     {
       "id": "S10",
@@ -122,7 +143,9 @@
       "description": "A file with no blob at the red commit is Unanchored",
       "given": "at_red = None, no amendments, recorded = H0, current = H0",
       "when": "judge_seal is called",
-      "then": "the verdict is Unanchored"
+      "then": "the verdict is Unanchored",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_1::s10_no_blob_at_red_is_unanchored",
+      "red": "6d5d39a"
     },
     {
       "id": "S11",
@@ -133,7 +156,9 @@
       "description": "verify --ci fails an unanchored seal by name",
       "given": "a spec whose red commit is not an ancestor of HEAD",
       "when": "hexa spec verify --ci runs",
-      "then": "it exits non-zero and names the unanchored file; it does not report the spec green"
+      "then": "it exits non-zero and names the unanchored file; it does not report the spec green",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_2::s11_unanchored_seal_is_not_green",
+      "red": "6d5d39a"
     },
     {
       "id": "S12",
@@ -144,7 +169,9 @@
       "description": "Re-anchoring with --red-at restores trust",
       "given": "a spec whose red commit is gone from history, and a commit C in history at which its tests existed and failed",
       "when": "hexa spec tests --red-at C runs and then hexa spec verify --ci runs",
-      "then": "the seals judge against the blob at C, and verify no longer reports them Unanchored"
+      "then": "the seals judge against the blob at C, and verify no longer reports them Unanchored",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_2::s12_reanchored_seal_judges_against_blob_at_c",
+      "red": "6d5d39a"
     },
     {
       "id": "S13",
@@ -155,7 +182,9 @@
       "description": "No anchor means never Holds",
       "given": "any file, amendments, recorded and current values",
       "when": "judge_seal is called with at_red = None",
-      "then": "the verdict is never Holds"
+      "then": "the verdict is never Holds",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_2::s13_no_anchor_never_holds",
+      "red": "6d5d39a"
     },
     {
       "id": "S14",
@@ -166,7 +195,9 @@
       "description": "An agent run is checked against HEAD's seals",
       "given": "HEAD's spec JSON seals tests/a.rs, and the working tree's JSON has had its sealed map removed",
       "when": "hexa do runs and its change edits tests/a.rs",
-      "then": "the run is refused as an edit to a sealed test, because seals were read from HEAD"
+      "then": "the run is refused as an edit to a sealed test, because seals were read from HEAD",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_2::s14_seals_are_read_from_head",
+      "red": "6d5d39a"
     },
     {
       "id": "S15",
@@ -177,7 +208,9 @@
       "description": "A run that touches a spec JSON is refused and restored",
       "given": "a hexa do or hexa harden run",
       "when": "the run's change modifies docs/specs/ADR-X.json",
-      "then": "the file is restored, nothing is committed, and the refusal names docs/specs/ADR-X.json"
+      "then": "the file is restored, nothing is committed, and the refusal names docs/specs/ADR-X.json",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_2::s15_touching_spec_json_is_refused_by_name",
+      "red": "6d5d39a"
     },
     {
       "id": "S16",
@@ -188,7 +221,9 @@
       "description": "A sealed file deleted by a run is an edit",
       "given": "HEAD lists and tracks a sealed file tests/a.rs",
       "when": "the run deletes tests/a.rs",
-      "then": "the seal is judged Gone and the run is refused"
+      "then": "the seal is judged Gone and the run is refused",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_2::s16_deleted_sealed_file_is_gone",
+      "red": "6d5d39a"
     },
     {
       "id": "S17",
@@ -210,7 +245,9 @@
       "description": "cargo test with passing tests reads as Passed",
       "given": "exit_ok = true and output containing \"test result: ok. 5 passed; 0 failed\"",
       "when": "read_evidence(true, output, false) is called",
-      "then": "it returns Passed { tests: 5 }"
+      "then": "it returns Passed { tests: 5 }",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_2::s18_cargo_test_passed",
+      "red": "6d5d39a"
     },
     {
       "id": "S19",
@@ -221,7 +258,9 @@
       "description": "The Node 23+ spec reporter is recognised",
       "given": "exit_ok = true and output with lines \"ℹ tests 4\", \"ℹ pass 4\", \"ℹ fail 0\"",
       "when": "read_evidence is called without the uncounted declaration",
-      "then": "it returns Passed { tests: 4 }"
+      "then": "it returns Passed { tests: 4 }",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_2::s19_node_spec_reporter_passed",
+      "red": "6d5d39a"
     },
     {
       "id": "S20",
@@ -232,7 +271,9 @@
       "description": "The node --test TAP summary is recognised",
       "given": "exit_ok = true and output with \"# tests 3\", \"# pass 3\", \"# fail 0\"",
       "when": "read_evidence is called without the uncounted declaration",
-      "then": "it returns Passed { tests: 3 }"
+      "then": "it returns Passed { tests: 3 }",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_2::s20_node_tap_passed",
+      "red": "6d5d39a"
     },
     {
       "id": "S21",
@@ -243,7 +284,9 @@
       "description": "The hexa spec verify summary is recognised",
       "given": "exit_ok = true and output containing \"6 passed · 0 failed\"",
       "when": "read_evidence is called without the uncounted declaration",
-      "then": "it returns Passed { tests: 6 }"
+      "then": "it returns Passed { tests: 6 }",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_2::s21_spec_verify_summary_passed",
+      "red": "6d5d39a"
     },
     {
       "id": "S22",
@@ -254,7 +297,9 @@
       "description": "A reported failure fails even with exit 0",
       "given": "exit_ok = true and output containing \"test result: FAILED. 4 passed; 1 failed\"",
       "when": "read_evidence is called without the uncounted declaration",
-      "then": "it returns Failed"
+      "then": "it returns Failed",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_3::s22_reported_failure_fails_even_with_exit_0",
+      "red": "6d5d39a"
     },
     {
       "id": "S23",
@@ -265,7 +310,9 @@
       "description": "An empty node --test run is Vacuous",
       "given": "exit_ok = true and output with \"# tests 0\", \"# pass 0\", \"# fail 0\"",
       "when": "read_evidence is called without the uncounted declaration",
-      "then": "it returns Vacuous"
+      "then": "it returns Vacuous",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_3::s23_empty_node_test_run_is_vacuous",
+      "red": "6d5d39a"
     },
     {
       "id": "S24",
@@ -276,7 +323,9 @@
       "description": "Silent or unknown output is Unrecognised",
       "given": "exit_ok = true and output that is empty, or is \"all good\"",
       "when": "read_evidence is called without the uncounted declaration",
-      "then": "it returns Unrecognised"
+      "then": "it returns Unrecognised",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_3::s24_silent_or_unknown_output_is_unrecognised",
+      "red": "6d5d39a"
     },
     {
       "id": "S25",
@@ -287,7 +336,9 @@
       "description": "A non-zero exit fails regardless of output",
       "given": "exit_ok = false and output containing \"test result: ok. 5 passed; 0 failed\"",
       "when": "read_evidence is called without the uncounted declaration",
-      "then": "it returns Failed"
+      "then": "it returns Failed",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_3::s25_non_zero_exit_fails_regardless_of_output",
+      "red": "6d5d39a"
     },
     {
       "id": "S26",
@@ -298,7 +349,9 @@
       "description": "Passed requires exit 0, at least one test, and no reported failure",
       "given": "any exit_ok and any output",
       "when": "read_evidence(exit_ok, output, false) returns Passed { tests }",
-      "then": "exit_ok is true, tests ≥ 1, and no recognised line in output reports a failed test"
+      "then": "exit_ok is true, tests ≥ 1, and no recognised line in output reports a failed test",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_3::s26_passed_requires_exit_0_tests_and_no_failure",
+      "red": "6d5d39a"
     },
     {
       "id": "S27",
@@ -309,7 +362,9 @@
       "description": "A non-zero exit is always Failed",
       "given": "any output",
       "when": "read_evidence(false, output, false) is called",
-      "then": "it returns Failed"
+      "then": "it returns Failed",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_3::s27_non_zero_exit_is_always_failed",
+      "red": "6d5d39a"
     },
     {
       "id": "S28",
@@ -320,7 +375,9 @@
       "description": "Only Passed (or a declared Uncounted) passes",
       "given": "the values Passed { tests: 1 } and Uncounted",
       "when": "passes() is called on each",
-      "then": "both return true"
+      "then": "both return true",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_3::s28_passed_and_uncounted_pass",
+      "red": "6d5d39a"
     },
     {
       "id": "S29",
@@ -331,7 +388,9 @@
       "description": "Vacuous, Unrecognised and Failed do not pass",
       "given": "the values Vacuous, Unrecognised and Failed { reason: \"x\" }",
       "when": "passes() is called on each",
-      "then": "each returns false"
+      "then": "each returns false",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_3::s29_vacuous_unrecognised_failed_do_not_pass",
+      "red": "6d5d39a"
     },
     {
       "id": "S30",
@@ -342,7 +401,9 @@
       "description": "A gate of `true` is refused by every gate consumer",
       "given": "a gate command `true` that exits 0 and prints nothing, not declared uncounted",
       "when": "hexa do, hexa adr gates or hexa loop stage done runs that gate",
-      "then": "it fails, reports the output as unrecognised, and lists the runners the reader knows"
+      "then": "it fails, reports the output as unrecognised, and lists the runners the reader knows",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_3::s30_gate_true_is_refused_by_every_gate_consumer",
+      "red": "6d5d39a"
     },
     {
       "id": "S31",
@@ -353,7 +414,9 @@
       "description": "Closing a stage with no recorded gate fails",
       "given": "a loop stage with no gate recorded",
       "when": "hexa loop stage done runs",
-      "then": "it fails and says that no gate is recorded"
+      "then": "it fails and says that no gate is recorded",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_3::s31_closing_stage_without_gate_fails",
+      "red": "6d5d39a"
     },
     {
       "id": "S32",
@@ -364,7 +427,9 @@
       "description": "A vacuous gate fails as measured nothing",
       "given": "a gate whose run reads as Vacuous",
       "when": "any gate consumer runs it",
-      "then": "it fails with a message saying the gate measured nothing"
+      "then": "it fails with a message saying the gate measured nothing",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_4::s32_vacuous_gate_fails_as_measured_nothing",
+      "red": "6d5d39a"
     },
     {
       "id": "S33",
@@ -375,7 +440,9 @@
       "description": "passes is true exactly for Passed and Uncounted",
       "given": "any Evidence value e",
       "when": "e.passes() is called",
-      "then": "it is true if and only if e is Passed { .. } or Uncounted"
+      "then": "it is true if and only if e is Passed { .. } or Uncounted",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_4::s33_passes_exactly_for_passed_and_uncounted",
+      "red": "6d5d39a"
     },
     {
       "id": "S34",
@@ -386,7 +453,9 @@
       "description": "A declared uncounted gate that exits 0 is Uncounted",
       "given": "exit_ok = true, output \"build finished\", and the uncounted declaration",
       "when": "read_evidence(true, output, true) is called",
-      "then": "it returns Uncounted"
+      "then": "it returns Uncounted",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_4::s34_declared_uncounted_exit_zero_is_uncounted",
+      "red": "6d5d39a"
     },
     {
       "id": "S35",
@@ -397,7 +466,9 @@
       "description": "Uncounted results are labelled wherever they are reported",
       "given": "a gate declared with hexa do run … --uncounted that exits 0",
       "when": "hexa do reports the result and writes its commit",
-      "then": "the report line and the commit message both contain the word \"uncounted\""
+      "then": "the report line and the commit message both contain the word \"uncounted\"",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_4::s35_uncounted_labelled_in_report_and_commit",
+      "red": "6d5d39a"
     },
     {
       "id": "S36",
@@ -408,7 +479,9 @@
       "description": "A declared uncounted gate that exits non-zero fails",
       "given": "exit_ok = false and the uncounted declaration",
       "when": "read_evidence(false, output, true) is called",
-      "then": "it returns Failed"
+      "then": "it returns Failed",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_4::s36_declared_uncounted_nonzero_fails",
+      "red": "6d5d39a"
     },
     {
       "id": "S37",
@@ -419,7 +492,9 @@
       "description": "Unrecognised output is never treated as uncounted without the declaration",
       "given": "exit_ok = true and output \"build finished\"",
       "when": "read_evidence(true, output, false) is called",
-      "then": "it returns Unrecognised, not Uncounted"
+      "then": "it returns Unrecognised, not Uncounted",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_4::s37_unrecognised_without_declaration",
+      "red": "6d5d39a"
     },
     {
       "id": "S38",
@@ -430,7 +505,9 @@
       "description": "Uncounted is produced only by the declaration",
       "given": "any exit_ok and any output",
       "when": "read_evidence(exit_ok, output, false) is called",
-      "then": "it never returns Uncounted"
+      "then": "it never returns Uncounted",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_4::s38_uncounted_only_by_declaration",
+      "red": "6d5d39a"
     },
     {
       "id": "S39",
@@ -441,7 +518,9 @@
       "description": "For a declared uncounted gate, the exit status alone decides",
       "given": "any output",
       "when": "read_evidence(exit_ok, output, true) is called",
-      "then": "the result passes if and only if exit_ok is true"
+      "then": "the result passes if and only if exit_ok is true",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_4::s39_uncounted_exit_status_alone_decides",
+      "red": "6d5d39a"
     },
     {
       "id": "S40",
@@ -452,7 +531,9 @@
       "description": "Coverage is reported from a gate that passes on the intact tree",
       "given": "a gate whose run on the unmodified tree reads as Passed",
       "when": "hexa gate coverage runs",
-      "then": "it first runs the gate once on the unmodified tree, then reports coverage"
+      "then": "it first runs the gate once on the unmodified tree, then reports coverage",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_4::s40_coverage_from_gate_passing_on_intact_tree",
+      "red": "6d5d39a"
     },
     {
       "id": "S41",
@@ -463,7 +544,9 @@
       "description": "A failing gate yields no coverage",
       "given": "the gate `false`",
       "when": "hexa gate coverage --gate false runs",
-      "then": "it reports no coverage and no hole count, gives the reason, and exits non-zero"
+      "then": "it reports no coverage and no hole count, gives the reason, and exits non-zero",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_4::s41_failing_gate_yields_no_coverage",
+      "red": "6d5d39a"
     },
     {
       "id": "S42",
@@ -474,7 +557,9 @@
       "description": "A vacuous or unrecognised baseline yields no coverage",
       "given": "a gate whose run on the unmodified tree reads as Vacuous or Unrecognised, and which is not declared uncounted",
       "when": "hexa gate coverage runs",
-      "then": "it reports no coverage, names the reason, and exits non-zero"
+      "then": "it reports no coverage, names the reason, and exits non-zero",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_5::s42_vacuous_or_unrecognised_baseline_yields_no_coverage",
+      "red": "6d5d39a"
     },
     {
       "id": "S43",
@@ -485,7 +570,9 @@
       "description": "A declared uncounted gate that exits 0 on the intact tree is measured",
       "given": "a gate declared uncounted that exits 0 on the unmodified tree",
       "when": "hexa gate coverage runs",
-      "then": "it proceeds to measure coverage"
+      "then": "it proceeds to measure coverage",
+      "test": "hexa-cli/tests/adr_2611081151_spec_2.rs::part_5::s43_declared_uncounted_gate_that_exits_zero_is_measured",
+      "red": "6d5d39a"
     }
   ]
 }
