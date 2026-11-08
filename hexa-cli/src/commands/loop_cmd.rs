@@ -143,14 +143,57 @@ fn session_pid() -> u64 {
     resolve_session(&|k| std::env::var(k).ok(), posix_session()).1
 }
 
-/// When the process `pid` started, in clock ticks since boot: field 22 of
-/// /proc/{pid}/stat, after the parenthesised command name. `None` when
-/// there is no such process (or no /proc). A pid is recycled; a pid with
-/// its start time is not, so the pair names one process.
+/// Where a process start time can be read from. The seam that lets the
+/// macOS path (no /proc; `ps -o lstart=`) run under test on Linux.
+trait ProcessProbe {
+    /// The text of /proc/{pid}/stat, where /proc exists.
+    fn proc_stat(&self, pid: u64) -> Option<String>;
+    /// The output of `ps -o lstart= -p {pid}`, where that is the way to ask.
+    fn ps_lstart(&self, pid: u64) -> Option<String>;
+}
+
+/// The real machine: /proc on Linux, `ps` on macOS.
+struct SystemProbe;
+
+impl ProcessProbe for SystemProbe {
+    fn proc_stat(&self, pid: u64) -> Option<String> {
+        std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()
+    }
+    fn ps_lstart(&self, pid: u64) -> Option<String> {
+        if !cfg!(target_os = "macos") {
+            return None;
+        }
+        let out = std::process::Command::new("ps")
+            .args(["-o", "lstart=", "-p", &pid.to_string()])
+            .env("LC_ALL", "C")
+            .output()
+            .ok()?;
+        out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+    }
+}
+
+/// When the process `pid` started, as a number that names one process
+/// together with its pid. On Linux: clock ticks since boot, field 22 of
+/// /proc/{pid}/stat after the parenthesised command name. Without /proc
+/// (macOS): a stable hash of the `ps -o lstart=` text, which has one-second
+/// resolution and is only ever compared for equality. `None` when there is
+/// no such process. A pid is recycled; a pid with its start time is not.
+fn pid_start_with(probe: &dyn ProcessProbe, pid: u64) -> Option<u64> {
+    if let Some(stat) = probe.proc_stat(pid) {
+        let after = &stat[stat.rfind(')')? + 1..];
+        return after.split_whitespace().nth(19)?.parse().ok();
+    }
+    let text = probe.ps_lstart(pid)?;
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    // FNV-1a: stable across runs and builds, unlike the std hasher.
+    Some(text.bytes().fold(0xcbf29ce484222325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3)))
+}
+
 fn pid_start(pid: u64) -> Option<u64> {
-    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    let after = &stat[stat.rfind(')')? + 1..];
-    after.split_whitespace().nth(19)?.parse().ok()
+    pid_start_with(&SystemProbe, pid)
 }
 
 /// A session is live while the process it recorded exists: the pid, and
@@ -160,10 +203,14 @@ fn pid_start(pid: u64) -> Option<u64> {
 /// pid of 0 is unknown and counts as ended. An entry from before the start
 /// time was recorded is judged on the pid alone.
 fn pid_alive(pid: u64, start: Option<u64>) -> bool {
+    pid_alive_with(&SystemProbe, pid, start)
+}
+
+fn pid_alive_with(probe: &dyn ProcessProbe, pid: u64, start: Option<u64>) -> bool {
     if pid == 0 {
         return false;
     }
-    match (pid_start(pid), start) {
+    match (pid_start_with(probe, pid), start) {
         (None, _) => false,
         (Some(now), Some(then)) => now == then,
         (Some(_), None) => true,
@@ -1711,6 +1758,53 @@ mod run_gate {
         assert_eq!(e["last_run"]["stage"], "build", "{e}");
         assert!(e["last_run"]["at"].as_str().is_some_and(|s| !s.is_empty()), "{e}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A machine as macOS presents it: no /proc, `ps -o lstart=` answers.
+    struct MacProbe(std::collections::HashMap<u64, String>);
+    impl ProcessProbe for MacProbe {
+        fn proc_stat(&self, _pid: u64) -> Option<String> {
+            None
+        }
+        fn ps_lstart(&self, pid: u64) -> Option<String> {
+            self.0.get(&pid).cloned()
+        }
+    }
+    /// A machine as Linux presents it: /proc/{pid}/stat, and no `ps` asked.
+    struct LinuxProbe;
+    impl ProcessProbe for LinuxProbe {
+        fn proc_stat(&self, pid: u64) -> Option<String> {
+            (pid == 42).then(|| "42 (a b) S 1 42 42 0 -1 4194560 1 2 3 4 5 6 7 8 20 0 1 0 987654 1 1".to_string())
+        }
+        fn ps_lstart(&self, pid: u64) -> Option<String> {
+            assert_ne!(pid, 42, "ps must not be consulted where /proc answers");
+            None
+        }
+    }
+
+    /// Issue #40: without /proc every session read as ended, which switched
+    /// off the cross-session guards. With the macOS-shaped probe a live pid
+    /// has a start time, the recorded pair matches itself, and a recycled pid
+    /// (a different lstart) does not.
+    #[test]
+    fn without_proc_the_start_time_comes_from_ps_and_liveness_works() {
+        let mut m = std::collections::HashMap::new();
+        m.insert(7u64, "Thu Nov  5 16:53:17 2026\n".to_string());
+        let mac = MacProbe(m);
+        let start = pid_start_with(&mac, 7).expect("a live pid has a start time without /proc");
+        assert!(pid_alive_with(&mac, 7, Some(start)), "a live session read as ended");
+        assert!(pid_alive_with(&mac, 7, None), "an entry with no recorded start is judged on the pid");
+        assert!(!pid_alive_with(&mac, 7, Some(start + 1)), "a recycled pid read as the old session");
+        assert!(!pid_alive_with(&mac, 8, Some(start)), "an absent pid read as live");
+        let mut m2 = std::collections::HashMap::new();
+        m2.insert(7u64, "Fri Nov  6 09:00:00 2026".to_string());
+        assert_ne!(pid_start_with(&MacProbe(m2), 7), Some(start), "a different start time must differ");
+    }
+
+    #[test]
+    fn with_proc_the_start_time_is_field_22_and_ps_is_not_asked() {
+        assert_eq!(pid_start_with(&LinuxProbe, 42), Some(987654));
+        assert_eq!(pid_start_with(&LinuxProbe, 43), None);
     }
 
     #[test]
