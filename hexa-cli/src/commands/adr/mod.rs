@@ -1960,8 +1960,7 @@ pub(crate) fn gate_command(markdown: &str) -> Option<String> {
 pub(crate) fn gate_uncounted(markdown: &str) -> bool {
     markdown
         .lines()
-        .filter(|l| l.starts_with("## Gate"))
-        .last()
+        .rfind(|l| l.starts_with("## Gate"))
         .is_some_and(|h| h.to_ascii_lowercase().contains("uncounted"))
 }
 

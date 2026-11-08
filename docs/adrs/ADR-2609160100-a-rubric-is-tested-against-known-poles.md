@@ -54,7 +54,7 @@ reference.
   repository, including the architecture grader's detectors, is subject to the
   same question: what known-bad input makes it fire?
 
-## Gate
+## Gate (uncounted)
 
 `./bench/selftest.sh`
 
