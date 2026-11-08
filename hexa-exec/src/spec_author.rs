@@ -1061,8 +1061,27 @@ fn unmendable_reason(body: &str, ids: &[&str], names: &BTreeMap<String, String>)
     let missing: Vec<&str> = ids.iter().copied().filter(|i| !names.contains_key(*i)).collect();
     let sites = hexa_core::domain::spec::unpassable_sites(body);
     if !missing.is_empty() {
+        // The line is there but binds nothing: it stands inside a function or
+        // below the attribute. Say so, and where it goes.
+        let misplaced: Vec<&str> = missing
+            .iter()
+            .copied()
+            .filter(|id| {
+                body.lines().any(|l| {
+                    l.trim().strip_prefix("///").and_then(|d| d.split_whitespace().next()).is_some_and(|w| w.trim_end_matches(':') == *id)
+                })
+            })
+            .collect();
+        let placement = if misplaced.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " The `/// <id>: <description>` line for {} is there but inside a function or below its attribute; it must stand above `#[test]`, outside the function body.",
+                misplaced.join(", ")
+            )
+        };
         Some(format!(
-            "The tests name no test for {}: every scenario gets one, under a `/// <id>: <description>` line.",
+            "The tests name no test for {}: every scenario gets one, under a `/// <id>: <description>` line.{placement}",
             missing.join(", ")
         ))
     } else if !sites.is_empty() {
@@ -1472,5 +1491,25 @@ mod tests {
         assert_eq!(block("{\"a\": 1}"), "{\"a\": 1}");
         // A fence inside the body, as a test of a fenced model reply has, is not the end.
         assert_eq!(block("```rust\nlet r = \"```rust\\nx\\n```\";\nfn t() {}\n```\n"), "let r = \"```rust\\nx\\n```\";\nfn t() {}");
+    }
+
+    /// A writer that puts the `/// <id>:` line inside the function is told so,
+    /// and where the line goes: the binding rule itself stays as strict.
+    #[test]
+    fn a_scenario_line_inside_a_function_body_is_named_in_the_repair() {
+        let misplaced = "#[test]\nfn s1_a() {\n    /// S1: a thing\n    assert!(true);\n}\n";
+        let names = tests_by_scenario(misplaced, &["S1"]);
+        assert!(names.is_empty(), "a line inside the body binds nothing: {names:?}");
+        let why = unmendable_reason(misplaced, &["S1"], &names).expect("S1 has no test");
+        assert!(why.contains("S1") && why.contains("above `#[test]`") && why.contains("inside"), "{why}");
+
+        // No such line anywhere: the plain message, with no claim about placement.
+        let absent = "#[test]\nfn s1_a() {\n    assert!(false);\n}\n";
+        let why = unmendable_reason(absent, &["S1"], &tests_by_scenario(absent, &["S1"])).expect("S1 has no test");
+        assert!(!why.contains("inside"), "{why}");
+
+        // Placed right, nothing to mend.
+        let placed = "/// S1: a thing\n#[test]\nfn s1_a() {\n    assert_eq!(thing(), 2);\n}\n";
+        assert!(unmendable_reason(placed, &["S1"], &tests_by_scenario(placed, &["S1"])).is_none());
     }
 }
