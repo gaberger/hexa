@@ -1,22 +1,6 @@
 {
-  "compression_ratio": {
-    "label": "Context",
-    "icon": "🧠",
-    "format": "{value}x"
-  },
-  "tokens_saved": {
-    "label": "Saved",
-    "icon": "⚡️",
-    "format": "{value}"
-  },
-  "original_tokens": {
-    "label": "Raw",
-    "icon": "📦",
-    "format": "{value}k"
-  },
-  "compressed_tokens": {
-    "label": "Compact",
-    "icon": "📉",
-    "format": "{value}k"
-  }
+  "compression_ratio": { "icon": "🧠", "label": "Context" },
+  "tokens_saved": { "icon": "⚡️", "label": "Saved" },
+  "original_tokens": { "icon": "📦", "label": "Raw" },
+  "compressed_tokens": { "icon": "📉", "label": "Compact" }
 }

@@ -682,6 +682,18 @@ fn next_section_after(text: &str, from: usize) -> Option<usize> {
     None
 }
 
+/// `line` with the loop's telemetry badges at its end (ADR-2611050000 §3). The
+/// telemetry is the `telemetry` map of strings in the loop state; anything
+/// else in that field is no telemetry, and the line comes back unchanged.
+fn with_telemetry(line: &str, state: &serde_json::Value, asset: &crate::fmt::TelemetryAsset) -> String {
+    let telemetry: std::collections::HashMap<String, String> = state
+        .get("telemetry")
+        .and_then(|t| t.as_object())
+        .map(|m| m.iter().filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string()))).collect())
+        .unwrap_or_default();
+    crate::fmt::append_telemetry(line, &crate::fmt::telemetry_badge(&telemetry, asset))
+}
+
 /// One line for the hooks: the state, or what is missing.
 pub fn status_line(dir: &Path) -> String {
     let project = project_name(dir);
@@ -705,7 +717,7 @@ pub fn status_line(dir: &Path) -> String {
                     line.push_str(&format!(" · doing {} {}", t.n, t.title));
                 }
             }
-            line
+            with_telemetry(&line, &st, &crate::fmt::TelemetryAsset::shipped())
         }
         None => format!(
             "Loop ({project}): stage decide · nothing recorded. Design (optional) → Decide → Gate → Build → Harden. Record with `hexa loop design <draft>`, `hexa loop adr <ID>` and `hexa loop gate '<command>'`."
@@ -1815,5 +1827,50 @@ mod run_gate {
         update_entry(&dir, "aaaa", 1, serde_json::json!({"gate": "new", "stage": "gate"})).unwrap();
         assert_eq!(read_entry(&dir, "aaaa").unwrap()["gate"], "new");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod telemetry_in_the_status_line {
+    use super::*;
+    use crate::fmt::TelemetryAsset;
+
+    fn asset() -> TelemetryAsset {
+        TelemetryAsset::parse(
+            r#"{"compression_ratio": {"icon": "🧠", "label": "Context"}, "tokens_saved": {"icon": "⚡️", "label": "Saved"}}"#,
+        )
+    }
+
+    /// ADR-2611050000 §3: a loop that has telemetry shows it at the end of the line.
+    #[test]
+    fn telemetry_in_the_loop_state_ends_the_line() {
+        let st = serde_json::json!({"telemetry": {"compression_ratio": "8.5x", "tokens_saved": "120k"}});
+        assert_eq!(
+            with_telemetry("Loop (p): stage gate", &st, &asset()),
+            "Loop (p): stage gate 🧠 Context: 8.5x ⚡️ Saved: 120k"
+        );
+    }
+
+    /// No telemetry, an empty map, or only keys the asset does not know: the
+    /// line is unchanged, with no trailing space.
+    #[test]
+    fn a_quiet_loop_gains_nothing() {
+        let line = "Loop (p): stage gate";
+        for st in [
+            serde_json::json!({}),
+            serde_json::json!({"telemetry": {}}),
+            serde_json::json!({"telemetry": {"unknown": "1"}}),
+            serde_json::json!({"telemetry": "not a map"}),
+            serde_json::json!({"telemetry": {"compression_ratio": 8.5}}),
+        ] {
+            assert_eq!(with_telemetry(line, &st, &asset()), line, "{st}");
+        }
+    }
+
+    /// A known key beside an unknown one: only the known one is shown.
+    #[test]
+    fn an_unknown_key_beside_a_known_one_is_left_out() {
+        let st = serde_json::json!({"telemetry": {"zzz": "1", "tokens_saved": "10k"}});
+        assert_eq!(with_telemetry("L", &st, &asset()), "L ⚡️ Saved: 10k");
     }
 }
