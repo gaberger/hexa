@@ -116,7 +116,7 @@ impl LocalProvider {
 /// One place a model can be reached.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Found {
-    /// `local`, `api`, `registered` or `frontier`.
+    /// `local`, `api`, `registered`, `command` or `frontier`.
     pub kind: &'static str,
     pub name: String,
     /// The address, path or model; never a secret.
