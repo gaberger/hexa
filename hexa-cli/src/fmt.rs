@@ -52,19 +52,44 @@ pub fn status_badge(status: &str) -> String {
     }
 }
 
-/// Render a telemetry value as a badge using mapping from telemetry.json.
-pub fn telemetry_badge(key: &str, value: &str, mapping: &HashMap<String, TelemetryMap>) -> String {
-    if let Some(m) = mapping.get(key) {
-        format!("{} {}: {}", m.icon, m.label, value).dimmed().to_string()
-    } else {
-        format!("{}: {}", key, value).dimmed().to_string()
+// ── Telemetry (ADR-2611050000) ──────────────────────────────────────────
+
+/// How one telemetry key is shown: `{icon} {label}: {value}`.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct TelemetryEntry {
+    pub icon: String,
+    pub label: String,
+}
+
+/// The telemetry asset, keyed by telemetry key.
+#[derive(Debug, Default)]
+pub struct TelemetryAsset {
+    entries: HashMap<String, TelemetryEntry>,
+}
+
+impl TelemetryAsset {
+    /// Parse the text of `telemetry.json`. Never fails: malformed text gives an
+    /// empty asset and a warning on stderr, so the binary starts regardless.
+    pub fn parse(_text: &str) -> TelemetryAsset {
+        unimplemented!("ADR-2611050000 §1")
+    }
+
+    pub fn get(&self, _key: &str) -> Option<&TelemetryEntry> {
+        unimplemented!("ADR-2611050000 §1")
     }
 }
 
-#[derive(serde::Deserialize)]
-pub struct TelemetryMap {
-    pub label: String,
-    pub icon: String,
+/// One `{icon} {label}: {value}` per key the asset knows, in key order, joined
+/// by a single space. A key the asset does not know is left out. Plain text:
+/// the caller styles it. Empty when nothing is shown.
+pub fn telemetry_badge(_telemetry: &HashMap<String, String>, _asset: &TelemetryAsset) -> String {
+    unimplemented!("ADR-2611050000 §2")
+}
+
+/// `line`, then a space and `badge`; `line` unchanged when `badge` is empty, so
+/// a quiet loop gains no trailing whitespace.
+pub fn append_telemetry(_line: &str, _badge: &str) -> String {
+    unimplemented!("ADR-2611050000 §3")
 }
 
 // ── Text Helpers ────────────────────────────────────────────────────────
@@ -126,14 +151,5 @@ mod tests {
     fn progress_formatting() {
         let p = progress(3, 5);
         assert!(p.contains("3/5"));
-    }
-
-    #[test]
-    fn telemetry_badge_formatting() {
-        let mut mapping = HashMap::new();
-        mapping.insert("ratio".to_string(), TelemetryMap { label: "Ratio".into(), icon: "🧠".into() });
-
-        assert_eq!(telemetry_badge("ratio", "2.5x", &mapping), "🧠 Ratio: 2.5x".dimmed().to_string());
-        assert_eq!(telemetry_badge("unknown", "123", &mapping), "unknown: 123".dimmed().to_string());
     }
 }
