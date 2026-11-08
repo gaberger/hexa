@@ -72,4 +72,4 @@ _One gateway-mediated agent loop; code-graph context as the differentiator_
 
 | ADR-2611020815 | accepted | ADR-2611020815: A run does not replace the loop's gate |  |
 | ADR-2611031914 | accepted | ADR-2611031914: hexa files issues and opens pull requests on the repository's forge |  |
-| ADR-2611081151 | proposed | ADR-2611081151: A check that cannot read its evidence fails, and a seal is anchored in history |  |
+| ADR-2611081151 | accepted | ADR-2611081151: A check that cannot read its evidence fails, and a seal is anchored in history |  |

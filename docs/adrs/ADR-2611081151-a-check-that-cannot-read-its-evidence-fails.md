@@ -1,6 +1,6 @@
 # ADR-2611081151: A check that cannot read its evidence fails, and a seal is anchored in history
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-11-08
 **Drivers:** the workflow value assessment of 2026-11-08 (six agents, 39 workflows, planted defects). Its two highest-ranked fixes share one cause. Four groups found independently that a gate check passes output it cannot read. Two found that a sealed test can be loosened without a trace. The owner asked for both to be fixed together (2026-11-08).
 
