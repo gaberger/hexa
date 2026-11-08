@@ -23,9 +23,20 @@ regex = "1"
 sha2 = "0.10"
 walkdir = "2"
 tracing = "0.1"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "rustls-tls-native-roots", "json", "stream", "blocking"] }
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"
 
 [dev-dependencies]
 tempfile = "3"
+# ADR-2611031914 follow-up: a local TLS server with a private CA, to test that
+# the forge client trusts the system store (tests/forge_tls_trust.rs).
+rcgen = "0.13"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+
+# The sealed spec tests (tests/adr_2611031914_spec.rs) may not be edited, and
+# carry two style patterns clippy flags. Allowed here, by name, so
+# `clippy --all-targets -D warnings` holds without touching a sealed test.
+[lints.clippy]
+if_same_then_else = "allow"
+collapsible_str_replace = "allow"

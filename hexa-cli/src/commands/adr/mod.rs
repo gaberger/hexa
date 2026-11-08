@@ -1942,7 +1942,7 @@ pub enum GateRun {
 ///
 /// An ADR whose gate is commands in prose has no single thing to run, and
 /// saying so is better than running half of it.
-fn gate_command(markdown: &str) -> Option<String> {
+pub(crate) fn gate_command(markdown: &str) -> Option<String> {
     if markdown.contains("\n## Gate") {
         let after = markdown.rsplit("\n## Gate").next().unwrap_or("");
         // Stop at the next heading, so a later section's backquotes are not it.

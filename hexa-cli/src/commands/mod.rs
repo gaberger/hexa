@@ -1,4 +1,5 @@
 pub mod adr;
+pub mod claude_paths;
 pub mod api;
 pub mod assets_cmd;
 pub mod bootstrap;
@@ -16,6 +17,10 @@ pub mod insight;
 pub mod inference;
 pub mod init;
 pub mod memory;
+pub mod gap;
+pub mod forge;
+pub mod issue;
+pub mod pr;
 pub mod loop_cmd;
 pub mod spend_cmd;
 pub mod plan;
