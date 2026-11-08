@@ -10,7 +10,7 @@
     "hexa-cli/tests/a_decision_is_covered_by_a_sealed_spec.rs": "3adf53bd834631dc8bfc2f56b7b566db26826bdffaed93505cc36145ebefbaae",
     "hexa-cli/tests/a_test_was_red_before_the_code.rs": "4b9dd29c253acb78dc900d867db1feaf8f840b3e591ea0a4f849731423d2ae5d",
     "hexa-cli/tests/the_ledger_reads_every_gate_and_no_skip_passes.rs": "415540a622855638be957774d035087bcee6ae85a7b1f7c5e3c1aebec6f6213c",
-    "hexa-exec/tests/a_sealed_test_is_never_committed.rs": "5a861c13851defd0dd2e3bdc7d99e5d6f26bf7a2688a85e66ccc2f281f723685",
+    "hexa-exec/tests/a_sealed_test_is_never_committed.rs": "27662fab3ef786aacfac9ba0e68edb55a31c976ffad56056d21ef681b5a9232e",
     "hexa-exec/tests/a_spec_is_drafted_and_its_tests_generated_red.rs": "22d2501712bfb67720fa52bc2806f6a88f53574be033e3182e2836e8b7736548",
     "hexa-exec/tests/adr_2610221540_spec_3.rs": "ddf32a1b7922de1066e06512da69034bcf847625bc45cf6a675b8be3e1bf2b0f"
   },
@@ -548,6 +548,15 @@
       "from": "3a72ca80834ca6b4ff544dedd18471ca6cd68fd9b774017de77f883c110d8213",
       "reason": "adapt the test double to InferenceResponse.telemetry (cd4ac3a); no scenario changes",
       "to": "ddf32a1b7922de1066e06512da69034bcf847625bc45cf6a675b8be3e1bf2b0f"
+    },
+    {
+      "at": "2026-11-08T14:41:51.002960319+00:00",
+      "base_commit": "6302dc2ea993bfcad38987e03ac7c1587399f918",
+      "by": "gary (run by Claude on gary's instruction)",
+      "file": "hexa-exec/tests/a_sealed_test_is_never_committed.rs",
+      "from": "5a861c13851defd0dd2e3bdc7d99e5d6f26bf7a2688a85e66ccc2f281f723685",
+      "reason": "issue #50 tests: two regression tests (6302dc2), the first given a repo-local git identity so it commits on a runner with none; existing tests unchanged",
+      "to": "27662fab3ef786aacfac9ba0e68edb55a31c976ffad56056d21ef681b5a9232e"
     }
   ]
 }

@@ -143,6 +143,10 @@ async fn a_sealed_file_absent_at_head_and_after_the_run_is_not_an_edit() {
     git(&dir, &["-c", "user.name=t", "-c", "user.email=t@x", "commit", "-qm", "retire the sealed test on purpose"]);
     assert!(hexa_exec::direct_exec::broken_seals(&dir).is_empty(), "absent before and after is not an edit");
 
+    // This test expects a commit, so the repo needs an identity of its own: a CI
+    // runner has no global one.
+    git(&dir, &["config", "user.name", "t"]);
+    git(&dir, &["config", "user.email", "t@x"]);
     std::fs::write(dir.join(TARGET), "original\nfix\n").unwrap();
     let r = hexa_exec::direct_exec::commit_with_also(&dir, TARGET, "fix the target", false, &[], &[]).await;
     assert!(r.is_ok(), "an unrelated fix commits: {r:?}");
