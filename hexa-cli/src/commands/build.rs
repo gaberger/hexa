@@ -115,10 +115,9 @@ pub async fn run_build(args: BuildArgs) -> anyhow::Result<()> {
     if args.detach {
         return detach("build", &args.target);
     }
-    // The gate is recorded in the loop, so the hooks can see the work is under one.
-    if let Ok(cwd) = std::env::current_dir() {
-        let _ = crate::commands::loop_cmd::update_loop(&cwd, serde_json::json!({ "gate": args.gate.clone(), "stage": "build" }));
-    }
+    // The gate is recorded in the loop, so the hooks can see the work is under
+    // one, unless the loop already has another (ADR-2611020815).
+    crate::commands::loop_cmd::note_run_gate(&args.gate, "build", None);
     let repo_root = std::env::current_dir()?;
     println!(
         "{} {} {} {}",
@@ -300,14 +299,9 @@ pub async fn run_harden(args: HardenArgs) -> anyhow::Result<()> {
     if let Some(blocker) = first_blocker(&hexa_infer::discovery().discover(), "hexa harden") {
         anyhow::bail!(blocker);
     }
-    // The gate is recorded in the loop, so the hooks can see the work is under one.
-    if let Ok(cwd) = std::env::current_dir() {
-        let mut update = serde_json::json!({ "gate": args.gate.clone(), "stage": "harden" });
-        if let Some(fast) = &args.fast_gate {
-            update["fast_gate"] = serde_json::Value::String(fast.clone());
-        }
-        let _ = crate::commands::loop_cmd::update_loop(&cwd, update);
-    }
+    // The gate is recorded in the loop, so the hooks can see the work is under
+    // one, unless the loop already has another (ADR-2611020815).
+    crate::commands::loop_cmd::note_run_gate(&args.gate, "harden", args.fast_gate.as_deref());
     let repo_root = std::env::current_dir()?;
     let model = args.model.as_deref().map(|m| format!(" · model {m}")).unwrap_or_default();
     let fast = args.fast_gate.as_deref().map(|f| format!(" · fast gate: {}", f.dimmed())).unwrap_or_default();

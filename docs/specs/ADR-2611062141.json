@@ -1,0 +1,322 @@
+{
+  "adr": "ADR-2611062141",
+  "feature": "hexa spec amend",
+  "description": "A two-step, reviewed verb that records a deliberate edit to a sealed test file when the scenarios are unchanged. It shows a diff first, records only on a hash-matched confirmation, and keeps every amendment visible in verify.",
+  "universal": [
+    "§2",
+    "§3",
+    "§4",
+    "§5",
+    "§6"
+  ],
+  "accepted": {
+    "by": "Gary Berger",
+    "sha256": "741dd6f2916620e2dd281ad2db7570b9e79d1e31eaba1f6046c86742e2807f8a"
+  },
+  "sealed": {
+    "hexa-cli/tests/adr_2611062141_spec.rs": "4bde805b1cc82150160c55861a7ca1686bbbd0c37d5f483865f7ea3f13e8df41"
+  },
+  "red": "cbd9cda",
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "The amend verb exists and handles a fixture-only change to a sealed file of an accepted spec.",
+      "given": "A temporary git repository with an accepted spec for ADR X whose scenarios are unchanged, and one sealed file tests/a.rs that has since been edited (fixture change only).",
+      "when": "The user runs `hexa spec amend ADR-X --reason \"schema change\"`.",
+      "then": "The command is recognised and does not fail as unknown. It proceeds to show the change for tests/a.rs and does not refuse it as a re-seal.",
+      "test": "hexa-cli/tests/adr_2611062141_spec.rs::part_1::s01_amend_verb_exists_and_handles_fixture_change"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "The amend verb requires a --reason argument.",
+      "given": "An accepted, sealed spec with one changed sealed file.",
+      "when": "The user runs `hexa spec amend ADR-X` without `--reason`.",
+      "then": "The command is refused with a message naming the missing `--reason`. The spec JSON is byte-identical to before.",
+      "test": "hexa-cli/tests/adr_2611062141_spec.rs::part_1::s02_amend_requires_reason"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "The first call prints a diff and the confirm command, and writes nothing.",
+      "given": "An accepted spec with sealed file tests/a.rs, whose sealed version is a commit in git history, and a working copy that differs from it.",
+      "when": "The user runs `hexa spec amend ADR-X --reason \"fixtures\"` without `--confirm`.",
+      "then": "The output contains a unified diff from the sealed version of tests/a.rs to the current file. The output then shows a command ending in `--confirm <sha256 of current tests/a.rs>`. The spec JSON is byte-identical to before the call.",
+      "test": "hexa-cli/tests/adr_2611062141_spec.rs::part_1::s03_first_call_prints_diff_and_confirm_command"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "Amend refuses when the sealed version is not in git history.",
+      "given": "An accepted spec whose sealed hash for tests/a.rs matches no revision of tests/a.rs in git history, and a current file that differs.",
+      "when": "The user runs `hexa spec amend ADR-X --reason \"fixtures\"`, with or without `--confirm`.",
+      "then": "The command is refused with the message \"the sealed version is not in git history, so the edit cannot be shown\". No diff is offered as confirmable. The spec JSON is byte-identical.",
+      "test": "hexa-cli/tests/adr_2611062141_spec.rs::part_1::s04_refuses_when_sealed_version_not_in_history"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§2"
+      ],
+      "kind": "property",
+      "description": "A call without --confirm never writes to the spec JSON.",
+      "given": "Any spec, in any acceptance or seal state, with any set of changed files.",
+      "when": "`hexa spec amend` is run without `--confirm`, whatever the outcome.",
+      "then": "The spec JSON bytes after the call equal the bytes before it. Every printed confirm hash equals the sha256 of the current file whose diff was printed.",
+      "test": "hexa-cli/tests/adr_2611062141_spec.rs::part_1::s05_call_without_confirm_never_writes"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "With two differing files, --file selects one, and only that file is diffed and amended.",
+      "given": "An accepted spec with sealed files tests/a.rs and tests/b.rs, both changed since sealing.",
+      "when": "The user runs amend with `--file tests/a.rs --reason r`, then again with `--file tests/a.rs --reason r --confirm <hash of a>`.",
+      "then": "The first call's diff covers only tests/a.rs. After the confirm, the amendments list holds one entry, for tests/a.rs. `sealed[tests/b.rs]` is unchanged, and verify still reports tests/b.rs as changed since sealing.",
+      "test": "hexa-cli/tests/adr_2611062141_spec.rs::part_1::s06_file_selects_one_of_two"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "Amend refuses when several files differ and --file is not given.",
+      "given": "An accepted spec with two sealed files, tests/a.rs and tests/b.rs, both differing from their seals.",
+      "when": "The user runs `hexa spec amend ADR-X --reason r` without `--file`, with or without `--confirm`.",
+      "then": "The command is refused, and the message names both tests/a.rs and tests/b.rs and says that `--file` is required. The spec JSON is byte-identical.",
+      "test": "hexa-cli/tests/adr_2611062141_spec.rs::part_1::s07_several_differ_requires_file"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "--file is optional when exactly one file differs.",
+      "given": "An accepted spec with two sealed files, of which only tests/a.rs differs from its seal.",
+      "when": "The user runs `hexa spec amend ADR-X --reason r` without `--file`.",
+      "then": "The diff for tests/a.rs is printed, followed by a confirm command for its current hash.",
+      "test": "hexa-cli/tests/adr_2611062141_spec.rs::part_1::s08_file_optional_with_one_differing"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§3"
+      ],
+      "kind": "property",
+      "description": "Each successful confirmation amends exactly one file.",
+      "given": "Any accepted spec with any number of differing sealed files.",
+      "when": "Any successful `--confirm` call is made.",
+      "then": "Exactly one amendments entry is appended and exactly one `sealed` value changes. Both refer to the same file, and that file is the one whose diff the matching first call displayed.",
+      "test": "hexa-cli/tests/adr_2611062141_spec.rs::part_1::s09_each_confirmation_amends_one_file"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "A correct --confirm appends an amendment and moves the seal.",
+      "given": "An accepted spec with one changed sealed file tests/a.rs, with sealed hash H0 and current hash H1, and git user.name set to \"Ada\".",
+      "when": "The user runs `hexa spec amend ADR-X --reason \"lifecycle/status required\" --confirm H1`.",
+      "then": "The spec JSON gains an amendments entry {file: tests/a.rs, from: H0, to: H1, by: \"Ada\", reason: \"lifecycle/status required\", at: <timestamp>, base_commit: <commit>}, and `sealed[tests/a.rs]` is H1.",
+      "test": "hexa-cli/tests/adr_2611062141_spec.rs::part_1::s10_correct_confirm_records_amendment"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "Amend refuses a --confirm hash that is not the file's current hash.",
+      "given": "An accepted spec with one changed sealed file whose current hash is H1.",
+      "when": "The user runs amend with `--confirm H2`, where H2 is not H1 (for example the hash shown before a further edit).",
+      "then": "The command is refused and the spec JSON is byte-identical.",
+      "test": "hexa-cli/tests/adr_2611062141_spec.rs::part_2::s11_amend_refuses_wrong_confirm_hash"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "Amend refuses an empty reason.",
+      "given": "An accepted spec with one changed sealed file whose current hash is H1.",
+      "when": "The user runs amend with `--reason \"\" --confirm H1`.",
+      "then": "The command is refused for an empty reason and the spec JSON is byte-identical.",
+      "test": "hexa-cli/tests/adr_2611062141_spec.rs::part_2::s12_amend_refuses_empty_reason"
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§4"
+      ],
+      "kind": "property",
+      "description": "The amendments list is append-only and records the hash that was shown.",
+      "given": "Any sequence of amend calls on any spec.",
+      "when": "Each call completes.",
+      "then": "The amendments list before the call is a prefix of the list after it. Each new entry's `to` equals the `--confirm` value and the file's sha256 at that moment, and its `from` equals the previous `sealed[file]`. A call whose `--confirm` differs from the current hash changes nothing.",
+      "test": "hexa-cli/tests/adr_2611062141_spec.rs::part_2::s13_amendments_append_only_and_record_shown_hash"
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "Amend refuses when the scenarios have changed since acceptance.",
+      "given": "A sealed spec whose scenarios were edited after acceptance, so that its accepted hash no longer matches.",
+      "when": "The user runs amend on a changed sealed file, with or without `--confirm`.",
+      "then": "The command is refused with a pointer to the spec route (amend scenarios, accept, regenerate the tests, seal). Nothing is written.",
+      "test": "hexa-cli/tests/adr_2611062141_spec.rs::part_2::s14_amend_refuses_changed_scenarios"
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "Amend refuses an unaccepted spec.",
+      "given": "Two repositories. In the first (the control), the spec is accepted and sealed and its sealed file has had a fixture edit with the scenarios unchanged. In the second, the spec has never been accepted.",
+      "when": "amend is run with a non-empty reason in the control repository, then in the unaccepted one.",
+      "then": "In the control it prints a unified diff and a confirm command. In the unaccepted one it is refused, the message says the spec is not accepted, and the spec JSON is byte-identical to before.",
+      "test": "hexa-cli/tests/adr_2611062141_spec.rs::part_2::s15_amend_refuses_unaccepted_spec"
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "Amend refuses when a scenario's test function has been removed.",
+      "given": "An accepted spec in which a scenario names test function t_s03, and the current tests/a.rs no longer contains t_s03.",
+      "when": "The user runs amend for tests/a.rs, with or without a correct `--confirm`.",
+      "then": "The command is refused, the message names t_s03, and nothing is written.",
+      "test": "hexa-cli/tests/adr_2611062141_spec.rs::part_2::s16_amend_refuses_removed_test_function"
+    },
+    {
+      "id": "S17",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "Amend refuses a file outside a tests/ directory.",
+      "given": "An accepted spec whose sealed entry refers to src/a.rs, a path outside any `tests/` directory, and that file has changed.",
+      "when": "The user runs `amend --file src/a.rs` with a correct `--confirm`.",
+      "then": "The command is refused under the seal rule and nothing is written.",
+      "test": "hexa-cli/tests/adr_2611062141_spec.rs::part_2::s17_amend_refuses_file_outside_tests_dir"
+    },
+    {
+      "id": "S18",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "Amend refuses when nothing differs from the seal.",
+      "given": "An accepted spec whose sealed files all match their seals.",
+      "when": "The user runs `hexa spec amend ADR-X --reason r`.",
+      "then": "The command is refused with \"nothing to amend\" and nothing is written.",
+      "test": "hexa-cli/tests/adr_2611062141_spec.rs::part_2::s18_amend_refuses_when_nothing_differs"
+    },
+    {
+      "id": "S19",
+      "decision": [
+        "§5"
+      ],
+      "kind": "example",
+      "description": "Amend accepts a valid fixture edit that keeps every test function.",
+      "given": "An accepted spec whose scenario hash matches, with a changed file under tests/ that still contains every named test function.",
+      "when": "The user runs amend with a reason and the correct `--confirm`.",
+      "then": "The amendment is recorded.",
+      "test": "hexa-cli/tests/adr_2611062141_spec.rs::part_2::s19_amend_accepts_valid_fixture_edit"
+    },
+    {
+      "id": "S20",
+      "decision": [
+        "§5"
+      ],
+      "kind": "property",
+      "description": "No refused call writes anything.",
+      "given": "Any input that meets one of the refusal conditions: not accepted, scenario hash mismatch, a missing test function, a file outside tests/, or no difference.",
+      "when": "amend is run with any flags, including a correct `--confirm`.",
+      "then": "The command exits non-zero and the spec JSON is byte-identical.",
+      "test": "hexa-cli/tests/adr_2611062141_spec.rs::part_2::s20_no_refused_call_writes_anything"
+    },
+    {
+      "id": "S21",
+      "decision": [
+        "§6"
+      ],
+      "kind": "example",
+      "description": "Verify passes an amended seal and reports the amendment count.",
+      "given": "An ADR whose sealed file was amended once and has not been edited since.",
+      "when": "The user runs `hexa spec verify ADR-X`, then `--verbose`, then `--ci`.",
+      "then": "The plain output shows `1 amendment` for ADR-X, `--verbose` lists the amendment with its reason, and `--ci` passes.",
+      "test": "hexa-cli/tests/adr_2611062141_spec.rs::part_3::s21_verify_passes_amended_seal_and_reports_count"
+    },
+    {
+      "id": "S22",
+      "decision": [
+        "§6"
+      ],
+      "kind": "negative",
+      "description": "Verify --ci fails when a file is edited after its amendment.",
+      "given": "An ADR whose sealed file tests/a.rs was amended to hash H1 and then edited again, so its current hash is H2.",
+      "when": "The user runs `hexa spec verify --ci`.",
+      "then": "Verification fails and reports tests/a.rs as changed since sealing or amendment.",
+      "test": "hexa-cli/tests/adr_2611062141_spec.rs::part_3::s22_verify_ci_fails_when_file_edited_after_amendment"
+    },
+    {
+      "id": "S23",
+      "decision": [
+        "§6"
+      ],
+      "kind": "property",
+      "description": "Verify --ci passes only when every amended file still matches its latest amendment.",
+      "given": "Any set of ADRs with any amendments.",
+      "when": "`verify --ci` runs.",
+      "then": "It passes only if every amended file's current sha256 equals the `to` of its latest amendment and `sealed[file]`. The printed count per ADR equals the number of entries in that ADR's amendments list.",
+      "test": "hexa-cli/tests/adr_2611062141_spec.rs::part_3::s23_verify_ci_passes_only_when_amended_files_match_latest_amendment"
+    },
+    {
+      "id": "S24",
+      "decision": [
+        "§7"
+      ],
+      "kind": "example",
+      "description": "Seal's refusal points to amend.",
+      "given": "A sealed file that has changed since sealing.",
+      "when": "The user runs `hexa spec seal ADR-X`.",
+      "then": "The refusal message contains \"A sealed test changes through the spec, not by re-sealing\" and \"if the scenarios are unchanged and the edit is deliberate, `hexa spec amend`\".",
+      "test": "hexa-cli/tests/adr_2611062141_spec.rs::part_3::s24_seal_refusal_points_to_amend"
+    },
+    {
+      "id": "S25",
+      "decision": [
+        "§7"
+      ],
+      "kind": "negative",
+      "description": "Seal still refuses to re-seal a changed file.",
+      "given": "A sealed file that has changed since sealing.",
+      "when": "The user runs `hexa spec seal ADR-X`.",
+      "then": "Seal refuses, and `sealed[file]` in the spec JSON is unchanged. Pointing to amend does not make seal re-seal the file.",
+      "test": "hexa-cli/tests/adr_2611062141_spec.rs::part_3::s25_seal_still_refuses_to_reseal_changed_file"
+    }
+  ]
+}

@@ -125,7 +125,12 @@ fn cargo_args(krate: &Path, file: &Path, f: &str) -> Option<Vec<String>> {
     };
     let mut args = vec!["test".to_string(), "--manifest-path".to_string(), manifest];
     args.extend(target);
-    args.extend(["--".to_string(), name, "--exact".to_string()]);
+    // A module ref (`…::`) selects every test under it; a fn ref exactly one.
+    let module = name.ends_with("::");
+    args.extend(["--".to_string(), name]);
+    if !module {
+        args.push("--exact".to_string());
+    }
     Some(args)
 }
 
@@ -134,9 +139,11 @@ fn cargo_args(krate: &Path, file: &Path, f: &str) -> Option<Vec<String>> {
 pub async fn run_test_alone(root: &Path, path_env: &str, r: &str, target_dir: Option<&Path>) -> TestRun {
     let Some((file, f)) = test_ref(r) else { return TestRun::NotFound(format!("{r} is not `<path>.rs::<test_fn>`")) };
     let abs = root.join(file);
-    let leaf = f.rsplit("::").next().unwrap_or(f);
+    let module = f.ends_with("::");
+    let leaf = f.trim_end_matches("::").rsplit("::").next().unwrap_or(f);
     let text = std::fs::read_to_string(&abs).unwrap_or_default();
-    if !text.contains(&format!("fn {leaf}(")) {
+    let declared = if module { format!("mod {leaf} ") } else { format!("fn {leaf}(") };
+    if !text.contains(&declared) {
         return TestRun::NotFound(format!("{leaf} not found in {file}"));
     }
     let Some(args) = crate_of(root, &abs).and_then(|k| cargo_args(&k, &abs, f)) else {
@@ -165,6 +172,8 @@ pub async fn run_test_alone(root: &Path, path_env: &str, r: &str, target_dir: Op
     match passed {
         0 => TestRun::Vacuous,
         1 => TestRun::Passed,
+        // A module scenario passes when every test in it ran and passed.
+        _ if module => TestRun::Passed,
         n => TestRun::Ambiguous(n),
     }
 }
@@ -276,31 +285,69 @@ fn refuse_an_agent(model: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// The fenced block in a reply, or the reply.
+/// The largest fenced block in a reply, or the reply when it has none. The
+/// largest, not the first: a short note in its own fence before the code was
+/// taken for the code.
 fn block(reply: &str) -> String {
     let t = reply.trim();
-    // A reply that opens a fence on its own line and closes one on its own
-    // line is one block, even when its body holds ``` inside a string: a test
-    // of a model reply carrying a code fence has one. Cutting at the first
-    // inner fence kept half a file.
-    let lines: Vec<&str> = t.lines().collect();
-    if let (Some(open), Some(close)) = (
-        lines.iter().position(|l| l.trim_start().starts_with("```")),
-        lines.iter().rposition(|l| l.trim() == "```"),
-    ) {
-        if close > open {
-            return lines[open + 1..close].join("\n").trim().to_string();
+    // Fences are lines: one opens on its own line and the next line that is
+    // only ``` closes it. A ``` inside a string in the body is neither, so a
+    // test of a model reply carrying a code fence stays one block, and a note
+    // in a fence of its own before the code is a second, smaller one.
+    let mut blocks: Vec<String> = Vec::new();
+    let mut open: Option<Vec<&str>> = None;
+    for line in t.lines() {
+        match open.as_mut() {
+            Some(body) if line.trim() == "```" => {
+                blocks.push(body.join("\n").trim().to_string());
+                open = None;
+            }
+            Some(body) => body.push(line),
+            None => {
+                let l = line.trim_start();
+                // A fence that opens and closes on one line is read below.
+                if l.starts_with("```") && !l[3..].contains("```") {
+                    open = Some(Vec::new());
+                }
+            }
         }
     }
-    let Some(start) = t.find("```") else { return t.to_string() };
-    let body = &t[start + 3..];
-    let fenced = body.split("```").next().unwrap_or(body);
-    let body = match fenced.split_once('\n') {
-        Some(_) => body.split_once('\n').map(|(_, rest)| rest).unwrap_or(body),
-        // One line, like ```json {...}```: the language tag is the word before the body.
-        None => fenced.trim_start_matches(|c: char| c.is_ascii_alphanumeric() || "_+-".contains(c)),
-    };
-    body.split("```").next().unwrap_or(body).trim().to_string()
+    if let Some(body) = open {
+        blocks.push(body.join("\n").trim().to_string());
+    }
+    if let Some(best) = blocks.into_iter().max_by_key(String::len) {
+        return best;
+    }
+    if !t.contains("```") {
+        return t.to_string();
+    }
+    // Segments alternate outside, inside, outside, ...; an unclosed last
+    // fence runs to the end of the reply.
+    t.split("```")
+        .skip(1)
+        .step_by(2)
+        .map(|inside| match inside.split_once('\n') {
+            Some((_tag, rest)) => rest.trim().to_string(),
+            // One line, like ```json {...}```: the language tag is the word before the body.
+            None => inside.trim_start_matches(|c: char| c.is_ascii_alphanumeric() || "_+-".contains(c)).trim().to_string(),
+        })
+        .max_by_key(String::len)
+        .unwrap_or_default()
+}
+
+/// Scenarios per test-writer call. One answer for 29 concrete scenarios kept
+/// only the last four (strata's SQLite storage spec, 2026-11-02), so a larger spec is written in
+/// batches, each a module of the one file.
+const TESTS_PER_CALL: usize = 10;
+
+/// Where a test writer's raw answer is kept, so a rejected one can be read.
+fn keep_answer(adr: &str, part: usize, answer: &str) -> Option<PathBuf> {
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let dir = std::env::temp_dir().join("hexa-spec-tests");
+    std::fs::create_dir_all(&dir).ok()?;
+    let path = dir.join(format!("{adr}-{nanos}-part{part}.txt"));
+    std::fs::write(&path, answer).ok()?;
+    Some(path)
 }
 
 const AUTHOR: &str = "You are the spec author. Turn an architecture decision record into behaviour: \
@@ -389,6 +436,63 @@ fn lib_name(manifest: &str) -> Option<String> {
     name("lib").or_else(|| name("package")).map(|v| v.replace('-', "_"))
 }
 
+/// The first line of every generated test file: it is sealed, so style lints
+/// on it can only block a gate, never be fixed.
+const GENERATED_HEADER: &str = "#![allow(unused, clippy::all)]";
+
+/// Format `path` with rustfmt for `edition`, and return the formatted text.
+/// `None` when rustfmt is missing or fails (the compile check that follows
+/// then reports the file as it is).
+fn rustfmt_in_place(path: &Path, edition: Option<&str>, path_env: &str) -> Option<String> {
+    let mut cmd = std::process::Command::new("rustfmt");
+    if let Some(e) = edition {
+        cmd.args(["--edition", e]);
+    }
+    if !path_env.is_empty() {
+        cmd.env("PATH", path_env);
+    }
+    let ok = cmd.arg(path).output().ok()?.status.success();
+    if !ok {
+        return None;
+    }
+    std::fs::read_to_string(path).ok()
+}
+
+/// The crate's Rust edition: inline, or inherited from the workspace root's
+/// `[workspace.package]`. A writer that does not know it writes 2021 code in a
+/// 2024 crate (`gen` is reserved there).
+fn crate_edition(root: &Path, manifest: &str) -> Option<String> {
+    let toml: toml::Value = toml::from_str(manifest).ok()?;
+    match toml.get("package")?.get("edition")? {
+        toml::Value::String(e) => Some(e.clone()),
+        toml::Value::Table(t) if t.get("workspace").and_then(|w| w.as_bool()) == Some(true) => {
+            let root_toml: toml::Value = toml::from_str(&std::fs::read_to_string(root.join("Cargo.toml")).ok()?).ok()?;
+            root_toml.get("workspace")?.get("package")?.get("edition")?.as_str().map(str::to_string)
+        }
+        _ => None,
+    }
+}
+
+/// The crates a test in this crate can name: its own library, its normal and
+/// dev dependencies (as `use` paths spell them, `-` as `_`, renames by their
+/// key), in order, without repeats.
+fn test_crates(lib: &str, manifest: &str) -> Vec<String> {
+    let mut out = vec![lib.to_string()];
+    if let Ok(toml) = toml::from_str::<toml::Value>(manifest) {
+        for table in ["dependencies", "dev-dependencies"] {
+            if let Some(deps) = toml.get(table).and_then(|t| t.as_table()) {
+                for name in deps.keys() {
+                    let n = name.replace('-', "_");
+                    if !out.contains(&n) {
+                        out.push(n);
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 /// The crate's `[[bin]]` names, from its manifest.
 fn bin_names(manifest: &str) -> Vec<String> {
     let Ok(toml) = toml::from_str::<toml::Value>(manifest) else { return Vec::new() };
@@ -447,6 +551,14 @@ fn tests_by_scenario(body: &str, ids: &[&str]) -> BTreeMap<String, String> {
             let name: String = rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
             if *is_test && !name.is_empty() {
                 out.insert(sid.clone(), name);
+            }
+        } else if let Some(at) = words.iter().position(|w| *w == "mod").filter(|&at| words[..at].iter().all(qualifier)) {
+            // A scenario that is a suite: every test in the module is its
+            // test. The trailing `::` marks the ref as a module.
+            let rest = words.get(at + 1).copied().unwrap_or("");
+            let name: String = rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+            if !name.is_empty() {
+                out.insert(sid.clone(), format!("{name}::"));
             }
         }
         pending = None;
@@ -729,6 +841,12 @@ pub async fn generate_tests_with(
         .filter(|s| options.only.as_ref().is_none_or(|only| only.iter().any(|o| *o == s.id)))
         .collect();
     let scenarios = serde_json::to_string_pretty(&targets).map_err(|e| e.to_string())?;
+    let crates: Vec<String> = test_crates(&lib, &manifest).iter().map(|c| format!("`{c}`")).collect();
+    let crates = format!("The tests may use only these crates: {}, std.\n", crates.join(", "));
+    let crates = match crate_edition(root, &manifest) {
+        Some(e) => format!("The crate is Rust edition {e}; write code valid in that edition.\n{crates}"),
+        None => crates,
+    };
     let paths: String = given
         .iter()
         .filter_map(|g| module_of(root, g).map(|m| format!("`{g}` is reached as `{m}`.\n")))
@@ -772,14 +890,22 @@ pub async fn generate_tests_with(
             out
         }
     };
-    let user = format!(
-        "The crate is `{lib}`; tests reach it as `{lib}::…`.\n{paths}{sig_paths}{bins}\n{siblings}The ADR:\n\n{text}\n\n\
-         The port and domain signatures:\n\n{}\nThe public API of the other files the ADR names:\n\n{}\n\
-         The accepted scenarios:\n\n{scenarios}\n",
-        given_block_from(&read, &given),
-        signature_block(&here, &signatures)
-    );
+    let prompt = |scenarios: &str, batch: &str| {
+        format!(
+            "The crate is `{lib}`; tests reach it as `{lib}::…`.\n{crates}{paths}{sig_paths}{bins}\n{siblings}The ADR:\n\n{text}\n\n\
+             The port and domain signatures:\n\n{}\nThe public API of the other files the ADR names:\n\n{}\n\
+             {batch}The accepted scenarios:\n\n{scenarios}\n",
+            given_block_from(&read, &given),
+            signature_block(&here, &signatures)
+        )
+    };
+    let user = prompt(&scenarios, "");
     let ids: Vec<&str> = targets.iter().map(|s| s.id.as_str()).collect();
+    // A spec of many scenarios is written in batches, each a module of the one
+    // file: one answer for 29 scenarios kept only the last four.
+    let parts: Vec<&[hexa_core::ports::spec::Scenario]> = targets.chunks(TESTS_PER_CALL).collect();
+    let batched = parts.len() > 1;
+    let edition = crate_edition(root, &manifest);
     let stem = format!("{}_spec", spec.adr.to_lowercase().replace('-', "_"));
     let file = match options.only {
         // A new file beside the sealed ones: the first free `<stem>_<n>.rs`.
@@ -809,27 +935,19 @@ pub async fn generate_tests_with(
     let mut ask = user.clone();
     let mut repairs = 0;
     let (body, names, red_commit) = loop {
-        let reply = hexa_infer::complete::complete_text_fresh_with(backends, model, WRITER, &ask, 8000).await?;
-        let body = block(&reply) + "\n";
-        let names = tests_by_scenario(&body, &ids);
-        let missing: Vec<&str> = ids.iter().copied().filter(|i| !names.contains_key(*i)).collect();
-        // A test that cannot pass is no gate (ADR-2610281442 §2).
-        let sites = hexa_core::domain::spec::unpassable_sites(&body);
-        let mendable = if !missing.is_empty() {
-            Some(format!(
-                "The tests name no test for {}: every scenario gets one, under a `/// <id>: <description>` line.",
-                missing.join(", ")
-            ))
-        } else if !sites.is_empty() {
-            let lines: Vec<&str> = body.lines().collect();
-            let named: Vec<String> = sites
-                .iter()
-                .map(|(l, t)| format!("line {l}: {t} — `{}`", lines.get(l - 1).map(|x| x.trim()).unwrap_or("")))
-                .collect();
-            Some(format!("A test that cannot pass is no gate; the file holds {}.", named.join("; ")))
+        let (reply, body, names, mendable) = if batched {
+            let (body, names) = write_batches(backends, model, &spec.adr, &parts, &prompt, REPAIRS).await?;
+            (String::new(), body, names, None)
         } else {
-            None
+            let reply = hexa_infer::complete::complete_text_fresh_with(backends, model, WRITER, &ask, 8000).await?;
+            let body = block(&reply) + "\n";
+            let names = tests_by_scenario(&body, &ids);
+            let mendable = unmendable_reason(&body, &ids, &names);
+            (reply, body, names, mendable)
         };
+        // Sealed, so written formatted and lint-exempt: `cargo fmt` is then a
+        // no-op on it, and a style lint can never fail a gate on it.
+        let body = sealed_form(&body, &spec.adr, edition.as_deref(), path_env);
         let outcome = match mendable {
             Some(why) => Err(Rejection::Mendable(why)),
             None => {
@@ -872,21 +990,17 @@ pub async fn generate_tests_with(
         };
         match outcome {
             Ok(red_commit) => break (body, names, red_commit),
-            Err(Rejection::Mendable(why)) if repairs < REPAIRS => {
+            Err(Rejection::Mendable(why)) if repairs < REPAIRS && !batched => {
                 repairs += 1;
                 ask = format!(
-                    "The crate is `{lib}`; tests reach it as `{lib}::…`.\n{bins}\nThe accepted scenarios:\n\n{scenarios}\n\n\
+                    "The crate is `{lib}`; tests reach it as `{lib}::…`.\n{crates}{bins}\nThe accepted scenarios:\n\n{scenarios}\n\n\
                      Your previous reply:\n\n{reply}\n\nIt was rejected. {why}\n\n\
                      Reply with the whole corrected test file, one fenced block."
                 );
             }
             Err(Rejection::Mendable(why)) => {
-                let kept = std::env::temp_dir().join(format!("{}-tests-reply.md", spec.adr));
-                let _ = std::fs::write(&kept, &reply);
-                return Err(format!(
-                    "generation rejected after {repairs} repair(s), nothing kept: {why} (the last reply is in {})",
-                    kept.display()
-                ));
+                let kept = keep_answer(&spec.adr, 1, &reply).map(|p| format!("\n  raw answer: {}", p.display())).unwrap_or_default();
+                return Err(format!("generation rejected after {repairs} repair(s), nothing kept: {why}{kept}"));
             }
             Err(Rejection::Final(r)) => return Err(format!("generation rejected, nothing kept:\n  {}", r.join("\n  "))),
         }
@@ -939,6 +1053,97 @@ pub async fn generate_tests_with(
         None => committed,
     };
     Ok(Generated { file, refs, red })
+}
+
+/// Why a reply's tests cannot be kept as they are, when the writer can mend it:
+/// a scenario with no test, or a test that cannot pass (ADR-2610281442 §2).
+fn unmendable_reason(body: &str, ids: &[&str], names: &BTreeMap<String, String>) -> Option<String> {
+    let missing: Vec<&str> = ids.iter().copied().filter(|i| !names.contains_key(*i)).collect();
+    let sites = hexa_core::domain::spec::unpassable_sites(body);
+    if !missing.is_empty() {
+        Some(format!(
+            "The tests name no test for {}: every scenario gets one, under a `/// <id>: <description>` line.",
+            missing.join(", ")
+        ))
+    } else if !sites.is_empty() {
+        let lines: Vec<&str> = body.lines().collect();
+        let named: Vec<String> = sites
+            .iter()
+            .map(|(l, t)| format!("line {l}: {t} — `{}`", lines.get(l - 1).map(|x| x.trim()).unwrap_or("")))
+            .collect();
+        Some(format!("A test that cannot pass is no gate; the file holds {}.", named.join("; ")))
+    } else {
+        None
+    }
+}
+
+/// The file as it is sealed: the lint-exempt header, then rustfmt for the
+/// crate's edition. Unformatted when rustfmt is missing or fails.
+fn sealed_form(body: &str, adr: &str, edition: Option<&str>, path_env: &str) -> String {
+    let body = format!("{GENERATED_HEADER}\n{body}\n");
+    // Unique per call: generations run side by side in one process.
+    static CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = std::env::temp_dir().join(format!("hexa-fmt-{}-{n}-{adr}.rs", std::process::id()));
+    if std::fs::write(&tmp, &body).is_err() {
+        return body;
+    }
+    let formatted = rustfmt_in_place(&tmp, edition, path_env).unwrap_or(body);
+    let _ = std::fs::remove_file(&tmp);
+    formatted
+}
+
+/// The tests of a spec too large for one answer: each batch written alone, a
+/// module `part_N` of the one file, with up to `repairs` follow-ups for a
+/// batch whose tests miss a scenario or cannot pass. Returns the file's text
+/// and the test path of every scenario.
+async fn write_batches(
+    backends: &dyn hexa_infer::ports::Backends,
+    model: &str,
+    adr: &str,
+    parts: &[&[hexa_core::ports::spec::Scenario]],
+    prompt: &dyn Fn(&str, &str) -> String,
+    repairs: usize,
+) -> Result<(String, BTreeMap<String, String>), String> {
+    let mut bodies = Vec::new();
+    let mut names: BTreeMap<String, String> = BTreeMap::new();
+    for (i, part) in parts.iter().enumerate() {
+        let n = i + 1;
+        let scenarios = serde_json::to_string_pretty(part).map_err(|e| e.to_string())?;
+        let note = format!(
+            "These are batch {n} of {} of the scenarios. Write a self-contained file for them only: it becomes \
+             `mod part_{n}` of the test file, so reach the crate by absolute paths and use no `#![...]` attribute \
+             other than `allow`.\n\n",
+            parts.len()
+        );
+        let mut ask = prompt(&scenarios, &note);
+        let ids: Vec<&str> = part.iter().map(|s| s.id.as_str()).collect();
+        let mut tried = 0;
+        let (body, found) = loop {
+            let reply = hexa_infer::complete::complete_text_fresh_with(backends, model, WRITER, &ask, 8000).await?;
+            let kept = keep_answer(adr, n, &reply).map(|p| format!("\n  raw answer: {}", p.display())).unwrap_or_default();
+            let body = block(&reply) + "\n";
+            let found = tests_by_scenario(&body, &ids);
+            match unmendable_reason(&body, &ids, &found) {
+                None => break (body, found),
+                Some(why) if tried < repairs => {
+                    tried += 1;
+                    ask = format!(
+                        "{}\n\nYour previous reply:\n\n{reply}\n\nIt was rejected. {why}\n\n\
+                         Reply with the whole corrected test file, one fenced block.",
+                        prompt(&scenarios, &note)
+                    );
+                }
+                Some(why) => return Err(format!("generation rejected after {tried} repair(s), nothing kept: {why}{kept}")),
+            }
+        };
+        for (sid, f) in found {
+            names.insert(sid, format!("part_{n}::{f}"));
+        }
+        bodies.push(body);
+    }
+    let body = bodies.iter().enumerate().map(|(i, b)| format!("mod part_{} {{\n{b}\n}}\n", i + 1)).collect::<Vec<_>>().join("\n");
+    Ok((body, names))
 }
 
 /// How `hexa spec tests` proves red and whether it replaces a sealed file.
@@ -1057,6 +1262,17 @@ async fn seal(unsealed: Unsealed, body: &str, msg: &str, removed: Option<&str>) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An inherited edition is read from the workspace root's
+    /// `[workspace.package]`; an inline one from the crate; none is `None`.
+    #[test]
+    fn the_edition_is_read_inline_or_from_the_workspace() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("Cargo.toml"), "[workspace]\nmembers = [\"c\"]\n[workspace.package]\nedition = \"2024\"\n").unwrap();
+        assert_eq!(crate_edition(d.path(), "[package]\nname = \"c\"\nedition.workspace = true\n").as_deref(), Some("2024"));
+        assert_eq!(crate_edition(d.path(), "[package]\nname = \"c\"\nedition = \"2021\"\n").as_deref(), Some("2021"));
+        assert_eq!(crate_edition(d.path(), "[package]\nname = \"c\"\n").as_deref(), None);
+    }
 
     #[test]
     fn only_port_and_domain_files_are_contracts() {
