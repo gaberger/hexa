@@ -151,7 +151,9 @@ pub async fn run_test_alone(root: &Path, path_env: &str, r: &str, target_dir: Op
     };
     let quoted: Vec<String> = args.iter().map(|a| format!("{a:?}")).collect();
     let target = target_dir.map(|t| format!(" CARGO_TARGET_DIR={:?}", t.display().to_string())).unwrap_or_default();
-    let shell = format!("export PATH={path_env:?} HEXA_NO_SKIP=1{target}; cargo {}", quoted.join(" "));
+    // CARGO_TERM_COLOR=never: this output is parsed, and an inherited
+    // `always` (CI sets it) wraps the lines read here in escape codes.
+    let shell = format!("export PATH={path_env:?} HEXA_NO_SKIP=1 CARGO_TERM_COLOR=never{target}; cargo {}", quoted.join(" "));
     let (ok, out) = crate::direct_exec::run_evidence(&shell, root).await;
     if let Some(line) = out.lines().find(|l| l.contains(NOT_PROVEN_HERE)) {
         let reason = line.split(NOT_PROVEN_HERE).nth(1).unwrap_or("").trim();
@@ -668,7 +670,9 @@ async fn compile_errors(wt: &Path, path_env: &str, target: &Path, file: &str) ->
     let stem = abs.file_stem()?.to_string_lossy().to_string();
     let manifest = krate.join("Cargo.toml").display().to_string();
     let shell = format!(
-        "export PATH={path_env:?} HEXA_NO_SKIP=1 CARGO_TARGET_DIR={:?}; cargo test --manifest-path {manifest:?} --test {stem:?} --no-run",
+        // CARGO_TERM_COLOR=never: these errors are matched by line and sent
+        // to the writer; an inherited `always` hid them behind escape codes.
+        "export PATH={path_env:?} HEXA_NO_SKIP=1 CARGO_TERM_COLOR=never CARGO_TARGET_DIR={:?}; cargo test --manifest-path {manifest:?} --test {stem:?} --no-run",
         target.display().to_string()
     );
     let (ok, out) = crate::direct_exec::run_evidence(&shell, wt).await;
@@ -705,8 +709,11 @@ async fn written_first(
 /// cargo's output when `file` holding `body` does not build on `commit`'s
 /// tree, else `None`.
 async fn builds_at(root: &Path, path_env: &str, commit: &str, file: &str, body: &str) -> Result<Option<String>, String> {
+    // Unique within the process as well as across it (see `red_at`).
+    static BUILDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = BUILDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-    let wt = std::env::temp_dir().join(format!("hexa-spec-head-{}-{nanos}", std::process::id()));
+    let wt = std::env::temp_dir().join(format!("hexa-spec-head-{}-{n}-{nanos}", std::process::id()));
     let wt_s = wt.to_string_lossy().to_string();
     git(root, &["worktree", "add", "-q", "--detach", &wt_s, commit]).await?;
     let target = std::env::var_os("CARGO_TARGET_DIR")
