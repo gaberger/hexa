@@ -319,7 +319,7 @@
     },
     {
       "at": "2026-11-08T15:12:17.629315234+00:00",
-      "base_commit": "48243e6940222fb86973ec6b61de1a15e610e66a",
+      "base_commit": "df6f338f88742df2bcb90d0dedbda02d210816c4",
       "by": "gary (run by Claude on gary's instruction)",
       "file": "hexa-cli/tests/adr_2610281516_spec.rs",
       "from": "5d44c3e50c21b2ad8c1f9d219538fc0512a60911fefea17cd32a32a8672727c6",

@@ -551,7 +551,7 @@
     },
     {
       "at": "2026-11-08T14:41:51.002960319+00:00",
-      "base_commit": "ea35d477deefa994a168c83c08b3002d6238ebf2",
+      "base_commit": "4b9b98383b981f0915b85c57311d0e575aafbcd7",
       "by": "gary (run by Claude on gary's instruction)",
       "file": "hexa-exec/tests/a_sealed_test_is_never_committed.rs",
       "from": "5a861c13851defd0dd2e3bdc7d99e5d6f26bf7a2688a85e66ccc2f281f723685",
