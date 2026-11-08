@@ -158,5 +158,16 @@
       "then": "It does not contain \"head\" and does not end in \"hexa loop\" or \"hexa loop show\".",
       "test": "hexa-cli/tests/adr_2610301330_spec.rs::s12_the_template_does_not_cut_the_report"
     }
+  ],
+  "amendments": [
+    {
+      "file": "hexa-cli/tests/adr_2610301330_spec.rs",
+      "from": "a2f1e526389ca0de204671a27e7030dc6112f5f4ab1bce66c25285af38b0665e",
+      "to": "1befc937a7736b60857b1579314643402a4da4b3782220c7f7777e7d541d659c",
+      "by": "gary (baseline run by Claude on gary's instruction)",
+      "reason": "baseline (ADR-2611081151 §1): this seal moved before every move was recorded; history and the record agree on both ends",
+      "at": "2026-11-08T18:02:25.490444+00:00",
+      "base_commit": "7c2037939731658d84d41c64805d6dcfebd8641e"
+    }
   ]
 }

@@ -279,5 +279,16 @@
       "then": "the failed step is printed as a warning carrying the error, and the command does not exit non-zero because of it",
       "test": "hexa-cli/tests/adr_2610301129_spec.rs::s22_failed_install_warns_without_failing"
     }
+  ],
+  "amendments": [
+    {
+      "file": "hexa-cli/tests/adr_2610301129_spec.rs",
+      "from": "29b56248db7734af993f8c3ad13b9bf49845f6add0d21b686d902dc07446c62d",
+      "to": "8c04f4a42929fe4b07faa6a0fb6f9acfe95a10f0e18e7b3c49c95758c8a3c2f5",
+      "by": "gary (baseline run by Claude on gary's instruction)",
+      "reason": "baseline (ADR-2611081151 §1): this seal moved before every move was recorded; history and the record agree on both ends",
+      "at": "2026-11-08T18:02:25.490444+00:00",
+      "base_commit": "7c2037939731658d84d41c64805d6dcfebd8641e"
+    }
   ]
 }

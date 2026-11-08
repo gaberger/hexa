@@ -532,6 +532,15 @@
       "to": "5a861c13851defd0dd2e3bdc7d99e5d6f26bf7a2688a85e66ccc2f281f723685"
     },
     {
+      "file": "hexa-exec/tests/a_spec_is_drafted_and_its_tests_generated_red.rs",
+      "from": "76ddf46cb96073e62b32b87d770a9175cde3c30139fcc08bc329c090de29cb8f",
+      "to": "d2182fb14f5fdfe79cd27ead3f597964590c1fd6335f170c65f3ee2ff70e2824",
+      "by": "gary (baseline run by Claude on gary's instruction)",
+      "reason": "baseline (ADR-2611081151 §1): this seal moved before every move was recorded; history and the record agree on both ends",
+      "at": "2026-11-08T18:02:25.490444+00:00",
+      "base_commit": "7c2037939731658d84d41c64805d6dcfebd8641e"
+    },
+    {
       "at": "2026-11-08T14:35:36.958417365+00:00",
       "base_commit": "dc5e8ce80fe9d4f6a78ce3dea0029e833654bb60",
       "by": "gary (run by Claude on gary's instruction)",
@@ -559,6 +568,15 @@
       "to": "27662fab3ef786aacfac9ba0e68edb55a31c976ffad56056d21ef681b5a9232e"
     },
     {
+      "file": "hexa-cli/tests/the_ledger_reads_every_gate_and_no_skip_passes.rs",
+      "from": "d2a78d3e0d614cf43e5611b97bd87c7355a23b47ce91d3fff5842211524bebbd",
+      "to": "415540a622855638be957774d035087bcee6ae85a7b1f7c5e3c1aebec6f6213c",
+      "by": "gary (baseline run by Claude on gary's instruction)",
+      "reason": "baseline (ADR-2611081151 §1): this seal moved before every move was recorded; history and the record agree on both ends",
+      "at": "2026-11-08T18:02:25.490444+00:00",
+      "base_commit": "7c2037939731658d84d41c64805d6dcfebd8641e"
+    },
+    {
       "at": "2026-11-08T17:57:11.743735050+00:00",
       "base_commit": "321e429e5f7cdc6d48d4eaa4e0e2e52a3ffb118c",
       "by": "gary (run by Claude on gary's instruction)",
@@ -566,6 +584,15 @@
       "from": "415540a622855638be957774d035087bcee6ae85a7b1f7c5e3c1aebec6f6213c",
       "reason": "ADR-2611081151 §5: a gate of `true` no longer passes; the fixtures use a recognised runner line instead. What each test checks (which span is the gate) is unchanged",
       "to": "c154b64a58eb4430c1026c5adfd531aa8ff1c1d9704c159c091b991c57d550c1"
+    },
+    {
+      "file": "hexa-cli/tests/a_decision_is_covered_by_a_sealed_spec.rs",
+      "from": "4549b5c9a5b791355fa39359da2ad2efb143950f75d88e1870db2e909d1a2083",
+      "to": "3adf53bd834631dc8bfc2f56b7b566db26826bdffaed93505cc36145ebefbaae",
+      "by": "gary (baseline run by Claude on gary's instruction)",
+      "reason": "baseline (ADR-2611081151 §1): this seal moved before every move was recorded; history and the record agree on both ends",
+      "at": "2026-11-08T18:02:25.490444+00:00",
+      "base_commit": "7c2037939731658d84d41c64805d6dcfebd8641e"
     },
     {
       "at": "2026-11-08T17:58:17.613979649+00:00",

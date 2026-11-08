@@ -466,6 +466,15 @@
   ],
   "amendments": [
     {
+      "file": "hexa-cli/tests/adr_2610271736_spec.rs",
+      "from": "7739f64763f65fa29b5b74bcfae26eb0def7dd2e74ab5777b4701d8f64e9629d",
+      "to": "962f284e727a3d7cb53d590ad01ab6cd896b2d9d3356cf17c2f67d652784c793",
+      "by": "gary (baseline run by Claude on gary's instruction)",
+      "reason": "baseline (ADR-2611081151 §1): this seal moved before every move was recorded; history and the record agree on both ends",
+      "at": "2026-11-08T18:02:25.490444+00:00",
+      "base_commit": "7c2037939731658d84d41c64805d6dcfebd8641e"
+    },
+    {
       "at": "2026-11-08T15:12:17.572839733+00:00",
       "base_commit": "06ba2fd6d2afc6c557cf832c8909f58485a5a00d",
       "by": "gary (run by Claude on gary's instruction)",
