@@ -20,6 +20,9 @@ pub mod direct_exec;
 pub mod direct_react;
 pub mod do_task;
 pub mod egm;
+pub mod forge_forgejo;
+pub mod forge_github;
+pub mod forge_filing;
 pub mod frontier;
 pub mod git_history;
 pub mod git_worktrees;
@@ -141,6 +144,36 @@ impl ports::SpendLog for InferSpend {
 /// The frontier agent, wired: the operator's logged-in `claude` CLI.
 pub fn frontier_agent() -> std::sync::Arc<dyn ports::Frontier> {
     std::sync::Arc::new(frontier::ClaudeCli::new(std::sync::Arc::new(InferSpend)))
+}
+
+/// The forge for `target`, wired (ADR-2611031914 §1): `gh` at `gh` for
+/// GitHub, the REST API v1 at `base_url` for Forgejo. Callers hold the port;
+/// only this file names the adapters.
+pub fn forge(
+    target: &hexa_core::ports::forge::ForgeTarget,
+    base_url: &str,
+    gh: &std::path::Path,
+) -> Result<Box<dyn ports::ForgeBoth>, hexa_core::ports::forge::ForgeError> {
+    use hexa_core::ports::forge::ForgeKind;
+    Ok(match target.kind {
+        ForgeKind::Github => Box::new(forge_github::ForgeGithub::new(target, gh)),
+        ForgeKind::Forgejo => Box::new(forge_forgejo::ForgeForgejo::new(target, base_url)?),
+    })
+}
+
+/// The forge hosts file, wired: `$HEXA_HOME/forges.json`.
+pub fn forge_hosts() -> impl ports::ForgeHosts {
+    local_store::LocalForgeHosts
+}
+
+/// The per-target filing lock, wired: flock files under `$HEXA_HOME/locks`.
+pub fn target_lock() -> impl ports::TargetLock {
+    local_store::LocalTargetLock
+}
+
+/// The gap log, wired: `~/.hexa/gaps.jsonl` (ADR-2610301500).
+pub fn gap_log() -> impl ports::GapLog {
+    local_store::LocalGaps
 }
 
 /// The run log, wired: the local runs file.

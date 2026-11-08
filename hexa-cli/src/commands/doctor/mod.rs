@@ -2,6 +2,7 @@
 //! there a path to a model. Every failure is listed in the summary, and the
 //! verdict is derived from the list.
 
+pub mod claude_memory;
 pub mod composition;
 
 use colored::Colorize;
@@ -78,6 +79,19 @@ pub async fn run_doctor(_verbose: bool, _fix: bool) -> anyhow::Result<()> {
                 failures.push(format!("{c} is missing, and a project gate runs it: rustup component add {c}"));
             }
         }
+    }
+    println!();
+
+    // Claude Code memory: advisory, never a failure (docs: code.claude.com/docs/en/memory).
+    println!("  {}", "Claude Code memory:".bold());
+    let config_dir = std::env::var("CLAUDE_CONFIG_DIR").ok();
+    for l in claude_memory::memory_lines(&cwd, config_dir.as_deref(), dirs::home_dir().as_deref()) {
+        let mark = match l.level {
+            claude_memory::Level::Ok => "\u{2713}".green(),
+            claude_memory::Level::Warn => "!".yellow(),
+            claude_memory::Level::Info => "\u{b7}".dimmed(),
+        };
+        println!("    {} {}", mark, l.text);
     }
     println!();
 

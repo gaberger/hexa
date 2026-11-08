@@ -58,7 +58,8 @@ async fn punch_list_run(json: bool) -> anyhow::Result<()> {
 
     let mut findings: Vec<serde_json::Value> = Vec::new();
 
-    let transcripts_root: Option<PathBuf> = dirs::home_dir().map(|h| h.join(".claude/projects"));
+    let config_dir = std::env::var("CLAUDE_CONFIG_DIR").ok();
+    let transcripts_root: Option<PathBuf> = crate::commands::claude_paths::claude_projects_root(config_dir.as_deref(), dirs::home_dir().as_deref());
     if let Some(root) = transcripts_root.filter(|r| r.is_dir()) {
         // Find recently-modified JSONL files across all project dirs.
         let cutoff = std::time::SystemTime::now()

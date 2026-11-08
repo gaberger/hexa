@@ -7,9 +7,12 @@ pub mod spec;
 // Which build a binary is, and whether it is behind (ADR-2610270853).
 pub mod project_floor;
 pub mod provenance;
+// The repository's forge: remote mapping, issue and PR texts, the secret scan (ADR-2611031914).
+pub mod forge;
 // Whether every ADR's gate passes, given what is declared unbuilt (ADR-2610271110).
 pub mod gate_ledger;
 // Which hexa verb a plain-English request names (ADR-2610271308).
+pub mod guide;
 pub mod intent;
 // What hexa needs from the Claude CLI to install its mods (ADR-2610301129).
 pub mod claude_mods;

@@ -137,6 +137,24 @@ pub fn recent_runs(limit: usize) -> Vec<Value> {
     read_tail(RUNS, limit)
 }
 
+// ── gaps (ADR-2610301500) ─────────────────────────────────────────────────────
+
+const GAPS: &str = "gaps.jsonl";
+
+/// Append one gap record: a guide printed (`{"id","project","at"}`) or a guide
+/// added by hand (`{"kind":"guide",…}`). The error is returned, not logged:
+/// `hexa gap add` must not say it recorded what it did not.
+fn record_gap(record: &Value) -> Result<(), String> {
+    append(GAPS, record)
+}
+
+/// Every gap record, oldest first.
+fn gap_records() -> Vec<Value> {
+    let mut all = read_tail(GAPS, usize::MAX);
+    all.reverse();
+    all
+}
+
 // ── token spend ───────────────────────────────────────────────────────────────
 
 const SPEND: &str = "inference-log.jsonl";
@@ -389,6 +407,18 @@ impl crate::ports::RunLog for LocalRuns {
     }
 }
 
+/// [`GapLog`](crate::ports::GapLog) on `~/.hexa/gaps.jsonl`.
+pub struct LocalGaps;
+
+impl crate::ports::GapLog for LocalGaps {
+    fn record(&self, record: &Value) -> Result<(), String> {
+        record_gap(record)
+    }
+    fn all(&self) -> Vec<Value> {
+        gap_records()
+    }
+}
+
 /// [`ToolLedger`](crate::ports::ToolLedger) on the local proposals and spend files.
 pub struct LocalLedger;
 
@@ -422,6 +452,91 @@ impl crate::ports::MemoryStore for LocalMemory {
     }
     fn delete(&self, scope: MemoryScope, key: &str) -> Result<bool, String> {
         memory_delete_scoped(scope, key)
+    }
+}
+
+// ── forges ────────────────────────────────────────────────────────────────────
+
+/// `$HEXA_HOME/forges.json`: a bare array of hosts, never a token (ADR-2611031914 §2).
+pub struct LocalForgeHosts;
+
+const FORGES: &str = "forges.json";
+
+fn forge_hosts_read(path: &Path) -> Result<Vec<hexa_core::ports::forge::ForgeHost>, String> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => serde_json::from_str(&text).map_err(|e| format!("{} does not parse ({e}); fix or remove it", path.display())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(format!("{}: {e}", path.display())),
+    }
+}
+
+/// Upsert into the hosts file in `dir`: locked, written aside, renamed over.
+fn forge_hosts_upsert_in(dir: &Path, h: hexa_core::ports::forge::ForgeHost) -> Result<(), String> {
+    create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let path = dir.join(FORGES);
+    let lock = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(dir.join("forges.json.lock"))
+        .map_err(|e| format!("{}: {e}", dir.display()))?;
+    lock.lock().map_err(|e| format!("could not lock {}: {e}", path.display()))?;
+    let mut hosts = forge_hosts_read(&path)?;
+    let host = hexa_core::ports::forge::ForgeHost { host: h.host.to_ascii_lowercase(), ..h };
+    hosts.retain(|x| !x.host.eq_ignore_ascii_case(&host.host));
+    hosts.push(host);
+    hosts.sort_by(|a, b| a.host.cmp(&b.host));
+    let text = serde_json::to_string_pretty(&hosts).map_err(|e| e.to_string())? + "\n";
+    let tmp = dir.join(format!("forges.json.tmp.{}", std::process::id()));
+    let write = || -> std::io::Result<()> {
+        let mut f = OpenOptions::new().create(true).truncate(true).write(true).open(&tmp)?;
+        f.write_all(text.as_bytes())?;
+        f.sync_all()?;
+        std::fs::rename(&tmp, &path)?;
+        if let Ok(d) = std::fs::File::open(dir) {
+            let _ = d.sync_all();
+        }
+        Ok(())
+    };
+    let r = write().map_err(|e| format!("{}: {e}", path.display()));
+    if r.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    r
+}
+
+impl crate::ports::ForgeHosts for LocalForgeHosts {
+    fn path(&self) -> PathBuf {
+        hexa_home().join(FORGES)
+    }
+    fn list(&self) -> Result<Vec<hexa_core::ports::forge::ForgeHost>, String> {
+        forge_hosts_read(&self.path())
+    }
+    fn upsert(&self, h: hexa_core::ports::forge::ForgeHost) -> Result<(), String> {
+        forge_hosts_upsert_in(&hexa_home(), h)
+    }
+}
+
+/// One flock file per forge target under `$HEXA_HOME/locks`. The files are
+/// never deleted: deleting one lets two processes each lock a different inode.
+pub struct LocalTargetLock;
+
+impl crate::ports::TargetLock for LocalTargetLock {
+    fn acquire(&self, t: &hexa_core::ports::forge::ForgeTarget, wait: std::time::Duration) -> Result<Box<dyn Send>, String> {
+        let dir = hexa_home().join("locks");
+        create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        let safe = |s: &str| s.chars().map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-' { c } else { '_' }).collect::<String>();
+        let path = dir.join(format!("forge-{}-{}-{}.lock", safe(&t.host), safe(&t.owner), safe(&t.repo)));
+        let f = OpenOptions::new().create(true).truncate(false).write(true).open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let start = std::time::Instant::now();
+        loop {
+            match f.try_lock() {
+                Ok(()) => return Ok(Box::new(f)),
+                Err(std::fs::TryLockError::WouldBlock) if start.elapsed() < wait => std::thread::sleep(std::time::Duration::from_millis(50)),
+                Err(std::fs::TryLockError::WouldBlock) => return Err(format!("another hexa is filing on {}/{}/{}", t.host, t.owner, t.repo)),
+                Err(std::fs::TryLockError::Error(e)) => return Err(format!("{}: {e}", path.display())),
+            }
+        }
     }
 }
 

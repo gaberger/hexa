@@ -70,3 +70,5 @@ _One gateway-mediated agent loop; code-graph context as the differentiator_
 | ADR-2609121843 | accepted | ADR-2609121843: `hexa build` must prove it built something |  |
 | ADR-2609122048 | accepted | ADR-2609122048: a tool that reports "nothing found" must prove it looked |  |
 
+| ADR-2611020815 | accepted | ADR-2611020815: A run does not replace the loop's gate |  |
+| ADR-2611031914 | accepted | ADR-2611031914: hexa files issues and opens pull requests on the repository's forge |  |

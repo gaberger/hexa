@@ -217,6 +217,26 @@ enum Commands {
         #[command(subcommand)]
         action: commands::api::ApiAction,
     },
+    /// The dead ends hexa knows: how often each is hit, and the pull request that closes one
+    Gap {
+        #[command(subcommand)]
+        action: commands::gap::GapAction,
+    },
+    /// The repository's forge: record a host, and check this repository's target (writes nothing)
+    Forge {
+        #[command(subcommand)]
+        action: commands::forge::ForgeAction,
+    },
+    /// File recorded `bug:`/`gap:` keys as issues on the repository's forge, once each. Sends nothing without --send
+    Issue {
+        #[command(subcommand)]
+        action: commands::issue::IssueAction,
+    },
+    /// Open a pull request for the current, pushed branch. Sends nothing without --send; never pushes
+    Pr {
+        #[command(subcommand)]
+        action: commands::pr::PrAction,
+    },
     /// Where this project's work stands: Design → Decide → Gate → Build → Harden
     Loop {
         #[command(subcommand)]
@@ -478,6 +498,10 @@ async fn run() -> anyhow::Result<()> {
             commands::memory::run(action, scope).await
         }
         Commands::Api { action } => commands::api::run(action).await,
+        Commands::Gap { action } => commands::gap::run(action).await,
+        Commands::Forge { action } => commands::forge::run(action).await,
+        Commands::Issue { action } => commands::issue::run(action).await,
+        Commands::Pr { action } => commands::pr::run(action).await,
         Commands::Loop { action } => commands::loop_cmd::run(action).await,
         Commands::Spend(args) => commands::spend_cmd::run(args).await,
         Commands::Adr { action } => commands::adr::run(action).await,
