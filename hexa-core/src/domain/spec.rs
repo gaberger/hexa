@@ -109,6 +109,50 @@ pub fn test_ref(r: &str) -> Option<(&str, &str)> {
     (path.len() > 3 && !f.is_empty()).then_some((path, f))
 }
 
+/// One reviewed edit to a sealed file, as `hexa spec amend` records it
+/// (ADR-2611062141 §4).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Amendment {
+    pub file: String,
+    pub from: String,
+    pub to: String,
+    pub by: String,
+    pub reason: String,
+    pub at: String,
+    pub base_commit: String,
+}
+
+/// Whether one sealed file still holds (ADR-2611081151 §1, §2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SealVerdict {
+    Holds,
+    /// The file's bytes differ from the expected hash.
+    Edited,
+    /// Listed, tracked at HEAD, and gone now.
+    Gone,
+    /// The `sealed` record differs from the expected hash: moved without an amendment.
+    Rewritten,
+    /// An amendment's `from` does not continue the chain; the index of the first such.
+    BrokenChain(usize),
+    /// No blob at the red commit to anchor to.
+    Unanchored,
+}
+
+/// Judge one sealed file. `at_red` is the sha256 of its blob at the red
+/// commit (None when history has none); `recorded` is the `sealed` map's
+/// hash; `current` is the file's sha256 now (None when absent);
+/// `amendments` are all of the spec's, oldest first: only those for `file`
+/// apply (ADR-2611081151 §1).
+pub fn judge_seal(
+    _file: &str,
+    _at_red: Option<&str>,
+    _amendments: &[Amendment],
+    _recorded: Option<&str>,
+    _current: Option<&str>,
+) -> SealVerdict {
+    unimplemented!("ADR-2611081151 §1")
+}
+
 /// The `§n` of each numbered item at the left margin of `## Decision`.
 pub fn numbered_decisions(adr_markdown: &str) -> Vec<String> {
     let Some(after) = adr_markdown.split("\n## Decision").nth(1) else { return Vec::new() };
