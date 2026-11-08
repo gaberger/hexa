@@ -55,14 +55,29 @@ impl ClaudeCli {
     }
 
     fn run(&self, args: &[&std::ffi::OsStr], deadline: Duration) -> Result<String, String> {
-        let mut child = Command::new(&self.bin)
-            .args(args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .process_group(0)
-            .spawn()
-            .map_err(|e| format!("cannot run {}: {e}", self.bin.display()))?;
+        // "Text file busy": another process still holds the executable open
+        // for writing, which passes in moments (a fork that inherited the
+        // write handle, an installer finishing). Retry briefly before failing.
+        let spawn = || {
+            Command::new(&self.bin)
+                .args(args)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .process_group(0)
+                .spawn()
+        };
+        let mut attempt = spawn();
+        for wait_ms in [10, 50, 200, 500] {
+            match &attempt {
+                Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                    std::thread::sleep(Duration::from_millis(wait_ms));
+                    attempt = spawn();
+                }
+                _ => break,
+            }
+        }
+        let mut child = attempt.map_err(|e| format!("cannot run {}: {e}", self.bin.display()))?;
         let stdout = drain(child.stdout.take());
         let stderr = drain(child.stderr.take());
         let status = wait_or_kill(&mut child, deadline);
