@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       # Full history: sealed spec tests read the commit at which they were red (ADR-2610221540 §5).
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       # Save the cache on a failing run too: while main was red, every run
@@ -45,12 +45,12 @@ jobs:
       # discovering tests and started trying to load the directory as a
       # module. Pin the runtime the scaffold declares (`engines.node >= 22`)
       # so this job tests what a user gets, not whatever the image ships.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
       # The Go scaffold gate and the generated net/http adapter's gate build
       # Go code; ServeMux method patterns need Go 1.22+ (ADR-2610100005).
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: '1.24'
           cache: false
@@ -117,7 +117,7 @@ jobs:
   lint:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true

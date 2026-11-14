@@ -34,7 +34,7 @@ jobs:
       version: ${{ steps.v.outputs.version }}
       tag: ${{ steps.v.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: v
         env:
           GIT_REF: ${{ github.ref }}
@@ -71,7 +71,7 @@ jobs:
       TARGET: ${{ matrix.target }}
       VERSION: ${{ needs.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: rustup target add "$TARGET"
       - uses: Swatinem/rust-cache@v2
         with:
@@ -85,7 +85,7 @@ jobs:
         if: matrix.target == 'x86_64-unknown-linux-gnu' || matrix.target == 'aarch64-apple-darwin' || matrix.target == 'aarch64-unknown-linux-gnu'
       - name: Tarball
         run: tar czf "hexa-${VERSION}-${TARGET}.tar.gz" -C "target/${TARGET}/release" hexa
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: hexa-${{ matrix.target }}
           path: hexa-${{ needs.version.outputs.version }}-${{ matrix.target }}.tar.gz
@@ -97,7 +97,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
@@ -118,7 +118,7 @@ jobs:
             echo
             echo "Each tarball holds the one binary, \`hexa\`, for its target; SHA256SUMS.txt covers all four."
           } > notes.md
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.version.outputs.tag }}
           name: hexa ${{ needs.version.outputs.tag }}
