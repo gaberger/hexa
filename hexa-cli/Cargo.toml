@@ -51,7 +51,7 @@ tabled = { version = "0.22", features = ["ansi"] }
 # WebSocket client for hexa inference watch (ADR-2026-04-01-1200)
 futures-util = { version = "0.3", features = ["sink"] }
 # SHA256 verification for self-update (ADR-2026-04-08-0929)
-sha2 = "0.10"
+sha2 = "0.11"
 # Symbol extraction regex for reconcile evidence (ADR-2026-04-14-2201)
 regex = "1"
 
