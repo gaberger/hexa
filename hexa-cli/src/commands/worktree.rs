@@ -236,7 +236,7 @@ async fn merge_order(json: bool) -> anyhow::Result<()> {
             } else {
                 eprintln!("{} {}\n  hint: {}", "\u{2717}".red(), e.message, e.hint);
             }
-            std::process::exit(1);
+            crate::commands::events::exit(1);
         }
     };
     let mut ready: Vec<&hexa_core::ports::ledger::Task> =

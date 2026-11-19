@@ -330,7 +330,7 @@ pub async fn run_validate_pipeline(
         for (stage, error) in &stages_failed {
             println!("      - {}: {}", stage, error);
         }
-        std::process::exit(1);
+        crate::commands::events::exit(1);
     }
 
     println!();

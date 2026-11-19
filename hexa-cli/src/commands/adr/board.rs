@@ -123,7 +123,7 @@ pub async fn run(
 
     let drift = main.summary.drift + others.iter().filter_map(|(_, b)| b.as_ref().ok()).map(|b| b.summary.drift).sum::<usize>();
     if strict && drift > 0 {
-        std::process::exit(1);
+        crate::commands::events::exit(1);
     }
     Ok(())
 }
@@ -630,5 +630,5 @@ fn refuse(as_json: bool, e: LedgerError) -> anyhow::Result<()> {
     } else {
         eprintln!("\u{2717} {}\n  hint: {}\n  code: {}", e.message, e.hint, e.code);
     }
-    std::process::exit(1);
+    crate::commands::events::exit(1);
 }

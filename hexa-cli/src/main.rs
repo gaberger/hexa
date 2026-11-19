@@ -5,7 +5,7 @@
     clippy::unnecessary_sort_by,
     clippy::literal_string_with_formatting_args
 )]
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
 use hexa_cli::commands;
@@ -478,10 +478,29 @@ async fn main() {
 }
 
 async fn run() -> anyhow::Result<()> {
-    let cli = Cli::parse();
-    let events = cli.events.clone().or_else(|| std::env::var("HEXA_EVENTS").ok().filter(|v| !v.is_empty() && v != "0").map(|v| if v == "1" { "-".to_string() } else { v }));
-    if let Some(dest) = events {
+    let matches = Cli::command().get_matches();
+    let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
+    // the verb's path, e.g. "analyze", "loop task add", "spec verify": every
+    // working verb is one run, and its own step names it (ADR-2611161830 §2-3)
+    let verb = {
+        let mut parts = Vec::new();
+        let mut m = &matches;
+        while let Some((name, sub)) = m.subcommand() {
+            parts.push(name.to_string());
+            m = sub;
+        }
+        if parts.is_empty() { "status".to_string() } else { parts.join(" ") }
+    };
+    let from_env = std::env::var("HEXA_EVENTS").ok().filter(|v| !v.is_empty() && v != "0").map(|v| if v == "1" { "-".to_string() } else { v });
+    // A hook's stdout belongs to the agent that runs it: HEXA_EVENTS exported
+    // in that agent's shell must not turn it into an event stream. `--events`
+    // given to a hook on purpose still works.
+    let from_env = from_env.filter(|_| verb != "hook" && !verb.starts_with("hook "));
+    if let Some(dest) = cli.events.clone().or(from_env) {
         commands::events::init(&dest)?;
+        // 26.11.13 opened a run only in `finish` and `do gate`, so every other
+        // verb left the stream empty; the run is opened here, for all of them
+        commands::events::start_verb(&std::env::current_dir().unwrap_or_default(), &verb);
     }
 
     let filter = if cli.verbose {

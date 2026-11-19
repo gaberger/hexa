@@ -326,7 +326,7 @@ pub async fn run(args: FinishArgs) -> anyhow::Result<()> {
     }
     crate::commands::events::finish(Some(Value::Object(content)));
     if args.exit_code && !items.is_empty() {
-        std::process::exit(1);
+        crate::commands::events::exit(1);
     }
     Ok(())
 }

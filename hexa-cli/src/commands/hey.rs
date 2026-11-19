@@ -274,7 +274,7 @@ fn classify_intent(text: &str) -> TaskIntent {
 const NO_ROUTE: &str = "`hexa status` says where the work stands and the next step; `hexa --help` lists every verb.";
 
 fn refuse() -> ! {
-    std::process::exit(1)
+    crate::commands::events::exit(1)
 }
 
 pub async fn run(args: HeyArgs) -> anyhow::Result<()> {

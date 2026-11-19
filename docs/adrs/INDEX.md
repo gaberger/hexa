@@ -6,7 +6,7 @@
 > [`ARCHITECTURE.md`](../../ARCHITECTURE.md); for *why* a decision was made,
 > read the ADR itself.
 
-**73 ADRs** across 1 epochs.
+**80 ADRs** across 1 epochs.
 
 ## Epoch: `single-agent` — **current**
 
@@ -14,6 +14,13 @@ _One gateway-mediated agent loop; code-graph context as the differentiator_
 
 | ADR | Status | Title | Superseded-By |
 |-----|--------|-------|---------------|
+| ADR-2611191500 | proposed | ADR-2611191500: What a `hexa harden` run costs, and how to cut it |  |
+| ADR-2611160730 | proposed | ADR-2611160730: Compliance by refusal, not by interface |  |
+| ADR-2611160750 | proposed | ADR-2611160750: Leases follow the architecture |  |
+| ADR-2611160910 | proposed | ADR-2611160910: An eval of how models use hexa |  |
+| ADR-2611161600 | accepted | ADR-2611161600: Spec acceptance is of committed Rust specs, and guard tests are kept apart |  |
+| ADR-2611161800 | proposed | ADR-2611161800: A plan ends on main |  |
+| ADR-2611161830 | proposed | ADR-2611161830: hexa speaks AG-UI |  |
 | ADR-2611151030 | proposed | ADR-2611151030: `hexa adr board` shows which decisions are done, how far each is, and who is on it |  |
 | ADR-2611151330 | proposed | ADR-2611151330: `hexa dev build-keys` catches a native build that recompiles depending on the command |  |
 | ADR-2611151645 | proposed | ADR-2611151645: `hexa harden` checks its gate before it hunts, and keeps what the gate said |  |

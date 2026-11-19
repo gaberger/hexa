@@ -98,8 +98,11 @@ pub fn emit(event: Event) {
 /// Open a run for `verb`. Its thread is the loop session, so one session's
 /// runs form one thread; its run id is new. The loop, when there is one,
 /// is the run's state.
+///
+/// `main` opens every verb's run before the verb starts, so a verb that calls
+/// this joins that run rather than opening a second one.
 pub fn start(cwd: &std::path::Path) {
-    if !enabled() {
+    if !enabled() || active() {
         return;
     }
     let thread = crate::commands::loop_cmd::session_id();
@@ -109,6 +112,36 @@ pub fn start(cwd: &std::path::Path) {
     if lp.get("recorded").and_then(|r| r.as_bool()) == Some(true) {
         emit(Event::StateSnapshot { snapshot: lp, subagent_run_id: None });
     }
+}
+
+/// Whether a run is open now.
+fn active() -> bool {
+    PRODUCER.lock().map(|p| p.as_ref().is_some_and(|p| p.stream.active())).unwrap_or(false)
+}
+
+/// From `main`, before the verb runs: open its run, with a step named for the
+/// verb (`analyze`, `loop task add`), closed when the run ends.
+pub fn start_verb(cwd: &std::path::Path, verb: &str) {
+    start(cwd);
+    step_start(verb);
+}
+
+/// Leave the process with `code`, ending an open run first: `RUN_FINISHED`
+/// on 0, else `RUN_ERROR` with code `exit_status`. A verb that calls
+/// `std::process::exit` directly skips `main`, and its stream would be left
+/// without a terminal event, which a consumer must read as a crash.
+pub fn exit(code: i32) -> ! {
+    with(|p| {
+        if !p.stream.active() {
+            return Vec::new();
+        }
+        if code == 0 {
+            p.stream.finish(None, None, None)
+        } else {
+            p.stream.fail(&format!("hexa exited with status {code}"), Some("exit_status"), None)
+        }
+    });
+    std::process::exit(code)
 }
 
 pub fn step_start(name: &str) {

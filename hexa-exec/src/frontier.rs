@@ -55,10 +55,22 @@ async fn run_claude(
     source: &str,
     spend: &dyn SpendLog,
 ) -> Result<String, FrontierError> {
+    run_claude_with(&claude_binary(), model, prompt, cwd, timeout, source, spend).await
+}
+
+/// [`run_claude`] on a named binary.
+async fn run_claude_with(
+    binary: &str,
+    model: Option<&str>,
+    prompt: &str,
+    cwd: &Path,
+    timeout: Duration,
+    source: &str,
+    spend: &dyn SpendLog,
+) -> Result<String, FrontierError> {
     // Refuse to spend when the project's daily budget is reached.
     spend.check_budget().map_err(FrontierError::OverBudget)?;
-    let binary = claude_binary();
-    let fut = tokio::process::Command::new(&binary)
+    let fut = tokio::process::Command::new(binary)
         .args(claude_args(model, prompt))
         // hexa's own prompt. The project's hooks run inside this claude and must
         // not treat it as a person's work: `route` once drafted workplans from the
@@ -73,6 +85,11 @@ async fn run_claude(
         .current_dir(cwd)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
+        // A call past its deadline is dropped by the timeout below; without
+        // this the agent kept running and spending, unrecorded, beside the
+        // retry that replaced it. Not a process group of its own: Ctrl-C at
+        // the terminal must still reach it.
+        .kill_on_drop(true)
         .output();
     match tokio::time::timeout(timeout, fut).await {
         // Its usage and cost are recorded either way: they were spent.
@@ -175,6 +192,47 @@ mod tests {
         let ident = std::fs::read_to_string(dir.path().join("ident.txt")).unwrap();
         assert_eq!(ident.trim(), format!("{HEXA_GIT_NAME}|{HEXA_GIT_EMAIL}|{HEXA_GIT_NAME}|{HEXA_GIT_EMAIL}"));
         assert_eq!((HEXA_GIT_NAME, HEXA_GIT_EMAIL), ("hexa-factory", "factory@hexa.local"), "the identity harden folds back");
+    }
+
+    /// A `claude` that runs past its timeout is stopped, not left running.
+    /// harden retries a timed-out call (DEFAULT_RETRIES), and every lens and
+    /// verifier has a 600 s deadline: an abandoned agent kept spending, with
+    /// nothing recorded, beside the retry that replaced it.
+    #[tokio::test]
+    async fn a_claude_past_its_timeout_is_killed_not_abandoned() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let fake = dir.path().join("claude-slow");
+        std::fs::write(&fake, "#!/bin/sh\necho $$ > pid.txt\nexec sleep 30\n").unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // A fork in a parallel test can briefly hold the script open for
+        // writing (ETXTBSY, "Text file busy"): that is the test's race, not
+        // the spawn under test, so try again.
+        let mut r = Err(FrontierError::Spawn(String::new()));
+        for _ in 0..20 {
+            r = run_claude_with(&fake.display().to_string(), None, "p", dir.path(), Duration::from_millis(1500), "test", &NoSpend).await;
+            if !matches!(&r, Err(FrontierError::Spawn(e)) if e.contains("os error 26")) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert!(matches!(r, Err(FrontierError::Timeout(_))), "{r:?}");
+        let pid = std::fs::read_to_string(dir.path().join("pid.txt")).unwrap().trim().to_string();
+        assert!(!pid.is_empty());
+        // gone, or a zombie waiting to be reaped: either way it runs no more
+        let running = || {
+            let o = std::process::Command::new("ps").args(["-o", "stat=", "-p", &pid]).output().unwrap();
+            let st = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            !st.is_empty() && !st.starts_with('Z')
+        };
+        for _ in 0..40 {
+            if !running() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let _ = std::process::Command::new("kill").args(["-9", &pid]).status();
+        panic!("the timed-out claude (pid {pid}) is still running");
     }
 
     #[test]

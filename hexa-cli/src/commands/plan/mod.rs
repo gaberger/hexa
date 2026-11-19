@@ -1228,7 +1228,7 @@ async fn execute_plan_local(_path: &std::path::Path, wp: &serde_json::Value) -> 
     // TODO: register execution in SpacetimeDB via nexus API so hexa plan report works
     // Remote agents should write through the SSH tunnel to the coordinator's nexus.
     if total_failed > 0 {
-        std::process::exit(1);
+        crate::commands::events::exit(1);
     }
     Ok(())
 }

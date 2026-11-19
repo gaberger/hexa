@@ -92,10 +92,10 @@ const EXIT_ERROR: i32 = 4;
 
 pub async fn run(args: VerifyArgs) -> Result<()> {
     match verify(args).await {
-        Ok(code) => std::process::exit(code),
+        Ok(code) => crate::commands::events::exit(code),
         Err(e) => {
             eprintln!("Error: {e:#}");
-            std::process::exit(EXIT_ERROR);
+            crate::commands::events::exit(EXIT_ERROR);
         }
     }
 }

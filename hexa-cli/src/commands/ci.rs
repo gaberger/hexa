@@ -44,7 +44,7 @@ pub async fn run() -> anyhow::Result<()> {
         Ok(())
     } else {
         println!("{} One or more gates failed", "\u{2717}".red().bold());
-        std::process::exit(1);
+        crate::commands::events::exit(1);
     }
 }
 
@@ -106,7 +106,7 @@ pub async fn run_standalone_gate() -> anyhow::Result<()> {
             "{} Standalone gate failed",
             "\u{2717}".red().bold()
         );
-        std::process::exit(1);
+        crate::commands::events::exit(1);
     }
 }
 

@@ -639,7 +639,7 @@ fn lease_gate(project_dir: &Path, file_path: &str) {
     }
     let refuse = |why: String| -> ! {
         eprintln!("\u{26d4} lease: {why}");
-        std::process::exit(2);
+        crate::commands::events::exit(2);
     };
     let ledger = match task_ledger::read(project_dir) {
         Ok(l) => l,
@@ -859,7 +859,7 @@ async fn pre_edit(project_dir: &Path) -> Result<()> {
                     );
                     if boundary_mode == "mandatory" {
                         eprintln!("{}", msg);
-                        std::process::exit(2);
+                        crate::commands::events::exit(2);
                     } else {
                         println!("WARNING: {}", msg);
                     }
@@ -925,7 +925,7 @@ async fn pre_agent() -> Result<()> {
         eprintln!(
             "\u{26d4} {who} blocked: it would edit on this branch. Give it its own worktree: isolation: \"worktree\" on the Agent call."
         );
-        std::process::exit(2);
+        crate::commands::events::exit(2);
     }
     println!(
         "\u{26a0}\u{fe0f} {who} has no worktree of its own; its edits and commits land on this branch. Add isolation: \"worktree\" to the Agent call."
@@ -956,7 +956,7 @@ async fn pre_bash() -> Result<()> {
                             "\u{26d4} {} refused: it rewrites the shared history of {}. `{shown}`. Push a branch and open a pull request instead.",
                             op.what, op.branch
                         );
-                        std::process::exit(2);
+                        crate::commands::events::exit(2);
                     }
                 }
                 let what: Vec<&str> = found.iter().map(|o| o.what).collect();
@@ -1019,7 +1019,7 @@ fn source_gate_check(project_dir: &Path, targets: &[PathBuf], mode: &str, what: 
             // stderr: on exit 2 it is the only stream Claude Code shows,
             // and a block with no reason reads as a crash.
             eprintln!("\u{26d4} {msg}");
-            std::process::exit(2);
+            crate::commands::events::exit(2);
         }
         println!("\u{26a0}\u{fe0f} {msg}");
     }
@@ -1084,7 +1084,7 @@ fn commit_gate_check(project_dir: &Path, command: &str, cwd: &Path, mode: &str) 
         );
         if mode == "mandatory" {
             eprintln!("\u{26d4} {msg}");
-            std::process::exit(2);
+            crate::commands::events::exit(2);
         }
         println!("\u{26a0}\u{fe0f} {msg}");
         return;
@@ -1460,7 +1460,7 @@ async fn validate_boundary_edit(project_dir: &Path, file_path: &str, input: &ser
     );
     if enforcement_mode(project_dir) == "mandatory" {
         eprintln!("\u{26d4} {msg}");
-        std::process::exit(2);
+        crate::commands::events::exit(2);
     }
     eprintln!("\u{26a0}\u{fe0f} {msg}");
     Ok(())
@@ -1533,7 +1533,7 @@ fn validate_workplan_boundary(project_dir: &Path, file_path: &str, workplan_id: 
                 rel,
                 &declared_files[..declared_files.len().min(5)]
             );
-            std::process::exit(2);
+            crate::commands::events::exit(2);
         } else {
             println!(
                 "WARNING: File '{}' is outside the active workplan's declared boundary.",

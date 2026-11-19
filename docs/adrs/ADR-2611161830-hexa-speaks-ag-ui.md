@@ -68,6 +68,28 @@ Slices, in order:
 3. `loop stage done`, harden and build: steps and subagents.
 4. Usage from the spend ledger.
 
+## Amendment (2026-11-19): every verb is a run
+
+**Reported by:** the strata lead. In 26.11.13, `HEXA_EVENTS=<path> hexa analyze .` and `--events=<path>` left an empty file, and `--events` printed no lines. `loop`, `spec verify` and `do` were silent too.
+
+**Cause:** slice 2 opened a run only inside `finish` and `do gate`. `main` turned the sink on for every verb, but only those two verbs ever sent `RUN_STARTED`. `close` ends only a run that is open, so every other verb wrote nothing. The CLI tests covered only those two verbs, so nothing failed.
+
+**Now:**
+
+- **Every verb is a run.** `main` opens it as soon as events are on, with one step named for the verb's path (`analyze`, `loop task add`, `spec verify`, `do gate`), closed when the run ends. A verb that opens its run itself (`finish`, `do gate`) joins this one. Its own steps, such as `gate` and `land`, nest inside the verb step.
+- **An early exit still ends the run.** A verb that leaves through `process::exit` now goes through `events::exit`. That ends the open run first: `RUN_FINISHED` on status 0, otherwise `RUN_ERROR` with code `exit_status`. Before, `analyze --exit-code` and similar exits skipped `main` and left a truncated stream.
+- **`hook` ignores `HEXA_EVENTS`.** Claude Code reads a hook's stdout, and `HEXA_EVENTS=1` exported in the agent's shell used to move that output to stderr. An explicit `--events` on a hook still works.
+
+**Gate:** `cargo test -p hexa-cli --test hexa_speaks_ag_ui`. It runs `analyze`, `analyze --exit-code`, `loop`, `loop task add`, `spec verify`, `do runs` and `do gate` with each of the four ways of turning events on: `--events`, `--events=<path>`, `HEXA_EVENTS=1` and `HEXA_EVENTS=<path>`. For each run it checks:
+
+- every line validates against the vendored schema;
+- the run has exactly one `RUN_STARTED` and one terminal event that matches the exit status;
+- the verb step is opened and closed inside the run;
+- every event carries a timestamp;
+- zero events fails the test.
+
+On 96b64b5 it was 8 failed and 2 passed; with the fix, 10 pass.
+
 ## References
 
 - AG-UI draft specification: https://docs.ag-ui.com/spec/draft (schema: `/spec/draft/schema.json`; transports: `/spec/draft/basic/transports`; lifecycle: `/spec/draft/events/lifecycle`).

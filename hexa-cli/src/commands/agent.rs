@@ -199,7 +199,7 @@ fn finish(r: Result<Value, LedgerError>, json: bool) -> anyhow::Result<()> {
                     e.retryable
                 );
             }
-            std::process::exit(1);
+            crate::commands::events::exit(1);
         }
     }
 }

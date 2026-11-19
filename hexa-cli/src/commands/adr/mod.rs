@@ -548,7 +548,7 @@ async fn doctor_run(
 
     let code = doctor::exit_code(&findings, strict);
     if code != 0 {
-        std::process::exit(code);
+        crate::commands::events::exit(code);
     }
     Ok(())
 }

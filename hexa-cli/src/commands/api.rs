@@ -92,7 +92,7 @@ pub async fn run(action: ApiAction) -> anyhow::Result<()> {
         ApiAction::Test { path, base_url, examples } => test(&root_of(&path)?, &base_url, examples.as_deref()).await?,
     };
     if code != 0 {
-        std::process::exit(code);
+        crate::commands::events::exit(code);
     }
     Ok(())
 }

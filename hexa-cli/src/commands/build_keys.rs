@@ -31,7 +31,7 @@ pub async fn run(selections: Vec<String>, json_out: bool, text: bool) -> anyhow:
                 print_text(&report);
             }
             if !report.stable {
-                std::process::exit(1);
+                crate::commands::events::exit(1);
             }
             Ok(())
         }
@@ -43,7 +43,7 @@ pub async fn run(selections: Vec<String>, json_out: bool, text: bool) -> anyhow:
             } else {
                 eprintln!("\u{2717} {}\n  hint: {}\n  code: {}", e.message, e.hint, e.code);
             }
-            std::process::exit(2);
+            crate::commands::events::exit(2);
         }
     }
 }

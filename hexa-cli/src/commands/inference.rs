@@ -223,7 +223,7 @@ pub async fn run(action: InferenceAction) -> anyhow::Result<()> {
             } else {
                 let url = url.unwrap_or_else(|| {
                     eprintln!("{} URL required for non-template provider type '{}'", "✗".red(), provider_type);
-                    std::process::exit(1);
+                    crate::commands::events::exit(1);
                 });
                 add_provider(&provider_type, &url, model.as_deref(), key.as_deref(), id.as_deref(), quantization.as_deref()).await
             }

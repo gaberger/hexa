@@ -666,12 +666,12 @@ pub async fn run(
     // tree that was never graded: "no violations" over nothing read is the
     // vacuous pass this flag exists to refuse.
     if exit_code && total_violations > 0 {
-        std::process::exit(1);
+        crate::commands::events::exit(1);
     }
     if exit_code && !adr_compliance_only && final_score.is_none() {
         println!();
         println!("  {} --exit-code: the tree was not graded, so nothing passed", "\u{2717}".red());
-        std::process::exit(1);
+        crate::commands::events::exit(1);
     }
 
     // --grade: the letter is a gate only when asked for. A grade with no
@@ -693,7 +693,7 @@ pub async fn run(
                         floor.bold(),
                         score
                     );
-                    std::process::exit(1);
+                    crate::commands::events::exit(1);
                 }
                 // The floor held, but a letter can hide a violation: one costs
                 // 10 points, and 90 is an A (ADR-2610261420). A pass that let
@@ -729,7 +729,7 @@ pub async fn run(
                 adr_violations.len(),
             );
         }
-        std::process::exit(1);
+        crate::commands::events::exit(1);
     }
 
     Ok(())
@@ -883,7 +883,7 @@ async fn run_single_file(
 
     if !abs_path.exists() {
         eprintln!("hexa analyze --file: file not found: {}", file_path);
-        std::process::exit(2);
+        crate::commands::events::exit(2);
     }
     // Determine relative path from root for layer detection
     let rel = abs_path
@@ -917,7 +917,7 @@ async fn run_single_file(
 
     // Single-file mode always exits 1 on violations (designed for hook use)
     let _ = exit_code; // acknowledged — single-file always exits 1 with violations
-    std::process::exit(1);
+    crate::commands::events::exit(1);
 }
 
 // ── Rust workspace walk ──────────────────────────────────────────────────────
@@ -2330,7 +2330,7 @@ async fn run_json(root: &Path, strict: bool, adr_compliance_only: bool, exit_cod
     println!("{}", serde_json::to_string_pretty(&result)?);
 
     if strict && !adr_violations.is_empty() {
-        std::process::exit(1);
+        crate::commands::events::exit(1);
     }
     // --exit-code means what it means without --json: any violation, any
     // rule error, or a tree that was never graded fails.
@@ -2339,7 +2339,7 @@ async fn run_json(root: &Path, strict: bool, adr_compliance_only: bool, exit_cod
             + result["violations"].as_array().map_or(0, |v| v.len() as u64);
         let ungraded = !adr_compliance_only && result["graded"] != serde_json::json!(true);
         if ungraded || boundary > 0 || error_count > 0 {
-            std::process::exit(1);
+            crate::commands::events::exit(1);
         }
     }
 

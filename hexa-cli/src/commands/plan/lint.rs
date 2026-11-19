@@ -43,7 +43,7 @@ pub(super) async fn run(file: Option<&str>, all: bool) -> anyhow::Result<()> {
             }
             Err(e) => {
                 eprintln!("{} {}: {}", "✗".red(), path.display(), e);
-                std::process::exit(2);
+                crate::commands::events::exit(2);
             }
         }
     }
@@ -64,7 +64,7 @@ pub(super) async fn run(file: Option<&str>, all: bool) -> anyhow::Result<()> {
             total_violations,
             files_with_violations
         );
-        std::process::exit(1);
+        crate::commands::events::exit(1);
     }
 }
 
