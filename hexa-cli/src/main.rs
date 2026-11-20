@@ -490,10 +490,17 @@ async fn run() -> anyhow::Result<()> {
         EnvFilter::new("info")
     };
 
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_target(false)
-        .init();
+    // `hexa do run --json` keeps stdout for its one result object (ADR-2610281500 §9).
+    let json_out = matches!(
+        cli.command,
+        Some(Commands::Do { action: commands::direct::DoAction::Run { json: true, .. } })
+    );
+    let logs = tracing_subscriber::fmt().with_env_filter(filter).with_target(false);
+    if json_out {
+        logs.with_writer(std::io::stderr).init();
+    } else {
+        logs.init();
+    }
 
     let command = match cli.command {
         Some(cmd) => cmd,

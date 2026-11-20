@@ -30,6 +30,10 @@ use std::path::{Path, PathBuf};
 /// do with that — there is no default model here on purpose, because guessing
 /// one would put a model name back in the code this module exists to remove.
 pub fn tier_model(tier: &str) -> Option<String> {
+    // Managed mode answers from its tier map alone (ADR-2610281500 §4).
+    if let Some(m) = crate::managed::active() {
+        return m.tier(tier).map(|t| t.model.clone());
+    }
     tier_model_in(&project_root(), tier)
 }
 
@@ -67,6 +71,9 @@ pub fn tool_less_default() -> String {
 
 /// The models the ReAct loop may use, in preference order.
 pub fn react_models() -> Vec<String> {
+    if let Some(m) = crate::managed::active() {
+        return m.tier("react").map(|t| vec![t.model.clone()]).unwrap_or_default();
+    }
     react_models_in(&project_root())
 }
 

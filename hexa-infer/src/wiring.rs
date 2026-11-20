@@ -119,6 +119,13 @@ mod compressor_config_tests {
 #[async_trait]
 impl Backends for RegistryBackends {
     async fn complete(&self, request: InferenceRequest) -> Result<InferenceResponse, InferenceError> {
+        // Managed mode (ADR-2610281500 §3): every completion goes to the harness's URL, and a bad
+        // setting stops here rather than falling through to another backend.
+        match crate::managed::active_or_error() {
+            Ok(Some(m)) => return m.complete(request).await,
+            Err(e) => return Err(InferenceError::ProviderUnavailable(format!("managed mode: {e}"))),
+            Ok(None) => {}
+        }
         // TOOLS MEAN /api/chat. The OllamaInferenceAdapter posts to /api/generate, which has no
         // `tools` parameter and whose `collapse_prompt` sends only the LAST USER MESSAGE — so a
         // multi-step loop got neither its tools nor its transcript. It did not fail loudly: the model

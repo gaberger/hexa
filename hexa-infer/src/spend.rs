@@ -17,8 +17,11 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-/// `~/.hexa`, or `$HEXA_HOME`.
+/// `~/.hexa`, or `$HEXA_HOME`; `HEXA_STATE_DIR` in managed mode (ADR-2610281500 §6).
 pub fn home() -> PathBuf {
+    if let Some(m) = crate::managed::active() {
+        return m.state_dir.clone();
+    }
     std::env::var("HEXA_HOME").map(PathBuf::from).unwrap_or_else(|_| {
         PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into())).join(".hexa")
     })

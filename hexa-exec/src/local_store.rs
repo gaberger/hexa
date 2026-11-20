@@ -31,8 +31,12 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-/// `~/.hexa`, or `$HEXA_HOME`. Created on demand.
+/// `~/.hexa`, or `$HEXA_HOME`. Created on demand. A managed run keeps it under
+/// `HEXA_STATE_DIR` (ADR-2610281500 §6).
 fn hexa_home() -> PathBuf {
+    if let Some(m) = hexa_infer::managed::active() {
+        return m.state_dir.clone();
+    }
     std::env::var("HEXA_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
@@ -204,6 +208,10 @@ const MEMORY: &str = "memory.jsonl";
 /// the crate want the file, which is [`memory_path`].
 fn memory_dir(scope: MemoryScope) -> PathBuf {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    // A managed run treats HEXA_HOME as HEXA_STATE_DIR (ADR-2610281500 §6).
+    if let Some(m) = hexa_infer::managed::active() {
+        return m.state_dir.clone();
+    }
     resolve_memory_dir(scope, &|k| std::env::var(k).ok().filter(|v| !v.is_empty()), &cwd)
 }
 

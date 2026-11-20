@@ -52,6 +52,32 @@ pub enum DoAction {
         /// --also, and commit or stash the rest (ADR-2611160730 §2).
         #[arg(long = "include-dirty")]
         include_dirty: bool,
+        /// Print one JSON result object on stdout at exit, and every other line on stderr:
+        /// {"ok", "commit", "attempts", "code", "message"} (ADR-2610281500 §9).
+        /// Exit status 0 when ok, 1 when not, 64 for code "config".
+        #[arg(long)]
+        json: bool,
+    },
+    /// Apply a unified diff with no model, gated like `run`: commit on evidence
+    /// exit 0, restore the tree otherwise (ADR-2610281700).
+    Apply {
+        /// What the change does; the commit subject is `feat(apply): <description>`.
+        description: String,
+        /// Repo-relative file the diff may touch.
+        #[arg(short, long)]
+        file: String,
+        /// Another file the diff may create, edit or delete (repeatable).
+        #[arg(long = "also", value_name = "ALSO")]
+        also: Vec<String>,
+        /// Shell command that must exit 0 for the change to be committed.
+        #[arg(short, long)]
+        evidence: String,
+        /// The diff to apply; read from stdin when absent.
+        #[arg(long)]
+        patch: Option<String>,
+        /// Print one JSON result object and nothing else.
+        #[arg(long)]
+        json: bool,
     },
     /// Gate the change already in your tree and commit ONLY the named files (ADR-2611160730 §3).
     /// No model is called: use it for a patch you wrote yourself. A failing or vacuous gate
@@ -170,8 +196,46 @@ pub async fn run(action: DoAction) -> anyhow::Result<()> {
     // the same binary.
 
     match action {
-        DoAction::Run { instruction, file, evidence, model, attempts, fast, max_steps, also, uncounted, include_dirty } => {
+        DoAction::Run { instruction, file, evidence, model, attempts, fast, max_steps, also, uncounted, include_dirty, json: as_json } => {
+            // Managed mode (ADR-2610281500 §2): a bad setting stops here, before any model
+            // call, lock, worktree or write.
+            let managed = if std::env::var("HEXA_MANAGED").as_deref() == Ok("1") {
+                match hexa_infer::managed::active_or_error() {
+                    Ok(m) => m,
+                    Err(e) => {
+                        eprintln!("hexa do run: managed mode: {e}");
+                        if as_json {
+                            emit_result(false, None, 0, Some("config"), &format!("managed mode: {e}"));
+                        }
+                        std::process::exit(64);
+                    }
+                }
+            } else {
+                None
+            };
             if let Err(e) = hexa_exec::direct_exec::validate_also_paths(&also) {
+                if as_json {
+                    eprintln!("{e}");
+                    emit_result(false, None, 0, Some("internal"), &e.to_string());
+                    std::process::exit(1);
+                }
+                anyhow::bail!("{e}");
+            }
+            // With --json, stdout carries only the result object; every human line goes to stderr.
+            let say = |line: String| {
+                if as_json {
+                    eprintln!("{line}");
+                } else {
+                    println!("{line}");
+                }
+            };
+            // Past the managed deadline (§8): stop before anything is called, run or written.
+            if let Some(e) = hexa_exec::direct_exec::managed_timeout() {
+                if as_json {
+                    eprintln!("{e}");
+                    emit_result(false, None, 0, Some("timeout"), &e);
+                    std::process::exit(1);
+                }
                 anyhow::bail!("{e}");
             }
             // Interactive operator run: commit on the operator's own branch
@@ -179,9 +243,14 @@ pub async fn run(action: DoAction) -> anyhow::Result<()> {
             // human owns their tree). Unset/autonomous callers isolate by default.
             // The evidence command becomes the loop's gate only if it has none
             // (ADR-2611020815): side work must not replace the work's gate.
-            crate::commands::loop_cmd::note_run_gate(&evidence, "build", None);
-            if uncounted {
-                crate::commands::loop_cmd::note_gate_uncounted(&evidence);
+            // A managed run records it under HEXA_STATE_DIR, never in the repository (ADR-2610281500 §6).
+            if let Some(m) = &managed {
+                let _ = crate::commands::loop_cmd::record_run_gate(&m.state_dir, &evidence, "build", None);
+            } else {
+                crate::commands::loop_cmd::note_run_gate(&evidence, "build", None);
+                if uncounted {
+                    crate::commands::loop_cmd::note_gate_uncounted(&evidence);
+                }
             }
             let mut body = json!({ "instruction": instruction, "file": file, "evidence": evidence, "fast": fast, "isolate": false, "also": also, "uncounted": uncounted, "include_dirty": include_dirty });
             if let Some(m) = model {
@@ -194,17 +263,19 @@ pub async fn run(action: DoAction) -> anyhow::Result<()> {
                 body["max_steps"] = json!(s);
             }
             let mode = if fast { "single-shot" } else { "react loop" };
-            println!("{} {} {}", "⬡ direct:".cyan().bold(), instruction, format!("[{}]", mode).dimmed());
-            println!("  {} {}  {} {}", "file".dimmed(), file, "evidence".dimmed(), evidence);
+            say(format!("{} {} {}", "⬡ direct:".cyan().bold(), instruction, format!("[{}]", mode).dimmed()));
+            say(format!("  {} {}  {} {}", "file".dimmed(), file, "evidence".dimmed(), evidence));
             if uncounted {
-                println!("  {} evidence uncounted: its exit status alone decides (ADR-2611081151 §6)", "!".yellow());
+                say(format!("  {} evidence uncounted: its exit status alone decides (ADR-2611081151 §6)", "!".yellow()));
             }
             if !also.is_empty() {
-                println!("  {} {}", "also".dimmed(), also.join(", "));
+                say(format!("  {} {}", "also".dimmed(), also.join(", ")));
             }
 
             let task: hexa_exec::direct_exec::DirectTask = serde_json::from_value(body)?;
-            let r = serde_json::to_value(hexa_exec::execute_direct(task).await)?;
+            let result = hexa_exec::execute_direct(task).await;
+            let code = result.code();
+            let r = serde_json::to_value(&result)?;
 
             let ok = r.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
             let ev = r.get("evidence_passed").and_then(|v| v.as_bool()).unwrap_or(false);
@@ -227,32 +298,41 @@ pub async fn run(action: DoAction) -> anyhow::Result<()> {
             };
             let restored = names("restored_unlisted");
             if !restored.is_empty() {
-                println!(
+                say(format!(
                     "  {} restored {} file(s) the run was not given: {}",
                     "!".yellow().bold(),
                     restored.len(),
                     restored.join(", ")
-                );
+                ));
             }
             let left = names("left_modified");
             if !left.is_empty() {
-                println!(
+                say(format!(
                     "  {} {} file(s) changed during the run that it was not given were left as they are (operator tree): {}",
                     "!".yellow().bold(),
                     left.len(),
                     left.join(", ")
-                );
+                ));
             }
 
             if ok {
-                println!(
+                say(format!(
                     "{} evidence {} · {} {} · commit {}",
                     "✓ done".green().bold(),
                     ev_label,
                     attempts_n,
                     step_word,
                     committed.unwrap_or("—").yellow()
-                );
+                ));
+                if as_json {
+                    let head = std::process::Command::new("git")
+                        .args(["rev-parse", "HEAD"])
+                        .output()
+                        .ok()
+                        .filter(|o| o.status.success())
+                        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+                    emit_result(true, head.as_deref(), attempts_n, None, "evidence passed; committed");
+                }
             } else {
                 let err = r.get("error").and_then(|v| v.as_str()).unwrap_or("unknown");
                 let output = r.get("evidence_output").and_then(|v| v.as_str()).unwrap_or("");
@@ -262,18 +342,18 @@ pub async fn run(action: DoAction) -> anyhow::Result<()> {
                     "evidence" | "commit" => format!("evidence {ev_label}"),
                     _ => "evidence not run".to_string(),
                 };
-                println!(
+                say(format!(
                     "{} {} · {} {}\n  {}",
                     format!("✗ failed at {stage}").red().bold(),
                     verdict,
                     attempts_n,
                     step_word,
                     err.dimmed()
-                );
+                ));
                 if let Some(out) = r.get("evidence_output").and_then(|v| v.as_str()) {
                     let tail: Vec<&str> = out.lines().rev().take(8).collect();
                     for line in tail.into_iter().rev() {
-                        println!("  {}", line.dimmed());
+                        say(format!("  {}", line.dimmed()));
                     }
                 }
                 // Name the half that actually failed. This said "did not pass
@@ -284,6 +364,10 @@ pub async fn run(action: DoAction) -> anyhow::Result<()> {
                     .get("evidence_passed")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
+                if as_json {
+                    emit_result(false, None, attempts_n, code, err);
+                    std::process::exit(1);
+                }
                 if evidence_passed {
                     anyhow::bail!("evidence passed; the run did not complete (see above)");
                 }
@@ -374,6 +458,51 @@ pub async fn run(action: DoAction) -> anyhow::Result<()> {
                 }
             }
         }
+        DoAction::Apply { description, file, also, evidence, patch, json: as_json } => {
+            let patch = match patch {
+                Some(p) => std::fs::read_to_string(&p).map_err(|e| anyhow::anyhow!("--patch {p}: {e}")),
+                None => {
+                    let mut s = String::new();
+                    std::io::Read::read_to_string(&mut std::io::stdin(), &mut s)
+                        .map(|_| s)
+                        .map_err(|e| anyhow::anyhow!("reading the diff from stdin: {e}"))
+                }
+            };
+            let o = match patch {
+                Ok(patch) => {
+                    let root = std::env::current_dir()?;
+                    hexa_exec::direct_apply::apply(&root, &description, &file, &also, &evidence, &patch).await
+                }
+                Err(e) => hexa_exec::direct_apply::ApplyOutcome {
+                    ok: false,
+                    commit: None,
+                    code: Some("config"),
+                    message: e.to_string(),
+                    exit: 2,
+                    evidence_output: String::new(),
+                },
+            };
+            if as_json {
+                println!(
+                    "{}",
+                    json!({ "ok": o.ok, "commit": o.commit, "attempts": 1, "code": o.code, "message": o.message })
+                );
+            } else if o.ok {
+                println!("{} {} · commit {}", "✓ applied".green().bold(), description, o.commit.as_deref().unwrap_or("—").yellow());
+            } else {
+                for line in o.evidence_output.lines().rev().take(8).collect::<Vec<_>>().into_iter().rev() {
+                    eprintln!("  {}", line.dimmed());
+                }
+                eprintln!("{} {}", "✗".red().bold(), o.message);
+            }
+            if o.exit != 0 {
+                if as_json {
+                    // The message is already in the JSON; keep stderr for humans.
+                    eprintln!("{}", o.message);
+                }
+                std::process::exit(o.exit);
+            }
+        }
         DoAction::Runs { all } => {
             let here = if all {
                 None
@@ -426,6 +555,14 @@ pub async fn run(action: DoAction) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// The one JSON object `hexa do run --json` prints on stdout (ADR-2610281500 §9).
+fn emit_result(ok: bool, commit: Option<&str>, attempts: u64, code: Option<&str>, message: &str) {
+    println!(
+        "{}",
+        json!({ "ok": ok, "commit": commit, "attempts": attempts, "code": code, "message": message })
+    );
 }
 
 #[cfg(test)]

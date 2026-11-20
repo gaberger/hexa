@@ -77,6 +77,9 @@ fn react_model_from_config() -> Option<String> {
 /// Run the ReAct loop end-to-end. Returns the result, the number of steps
 /// (tool calls) taken, and the model used, for the run feed.
 async fn react_execute(deps: &ExecDeps, task: DirectTask) -> (DirectResult, u32, String) {
+    if let Some(e) = direct_exec::managed_timeout() {
+        return (DirectResult::err(e), 0, resolve_react_model(&task).unwrap_or_default());
+    }
     // Serialize against every other run on this repository, in any process.
     let _tree_lock = match direct_exec::lock_tree(&direct_exec::repo_root()).await {
         Ok(l) => l,
@@ -102,7 +105,9 @@ async fn react_execute(deps: &ExecDeps, task: DirectTask) -> (DirectResult, u32,
     }
     let repo_root = workspace.workdir().to_path_buf();
     let factory = workspace.is_isolated();
+    let before = direct_exec::managed_snapshot(&repo_root, &task);
     let out = react_attempts(deps, &task, &repo_root, factory).await;
+    direct_exec::managed_restore(before, &out.0);
     workspace.finish(out.0.ok);
     out
 }
@@ -160,6 +165,11 @@ async fn react_attempts(
     let opts = CompressOpts::default();
 
     for _ in 0..max_steps {
+        // No model call past the managed deadline (ADR-2610281500 §8).
+        if let Some(e) = direct_exec::managed_timeout() {
+            result.error = Some(e);
+            break;
+        }
         // Compress the transcript before each call; LLM-summarize on overflow,
         // at most once. The `compression` envelope tells hexa-infer this
         // request is already compressed, so it does not compress it again.
@@ -212,6 +222,12 @@ async fn react_attempts(
             // Terminal action: apply the edit + evidence gate (+ commit on pass).
             if tu.name == "propose_edit" {
                 made_progress = true;
+                // No evidence past the managed deadline (§8).
+                if let Some(e) = direct_exec::managed_timeout() {
+                    result.error = Some(e);
+                    result.attempts = steps;
+                    return (result, steps, model);
+                }
                 tracing::info!(step = steps, args = %serde_json::to_string(&tu.input).unwrap_or_default().chars().take(300).collect::<String>(), "react: propose_edit");
                 match apply_and_verify(&abs_path, repo_root, task, &tu.input, factory, &start_dirty).await {
                     EditOutcome::Committed(hash) => {
@@ -367,7 +383,7 @@ async fn apply_and_verify(
                 // only valuable thing the run produced. Leave it in the working
                 // tree and unstage, so the operator finds a clean diff rather
                 // than a staged fix sitting behind a reverted file.
-                let _ = std::process::Command::new("git")
+                let _ = direct_exec::child_std("git")
                     .args(["reset", "-q", "--"])
                     .arg(&task.file)
                     .args(existing_also(repo_root, &task.also))
@@ -734,6 +750,10 @@ pub fn select_best_of_n(
 /// pair — the doc comment claimed one for long after the code stopped having
 /// one. (ADR-2606072044.)
 pub(crate) fn resolve_react_models(task: &DirectTask) -> Vec<String> {
+    // Managed mode answers from the harness's tier map alone (ADR-2610281500 §4).
+    if let Some(m) = hexa_infer::managed::active() {
+        return m.tier("react").map(|t| vec![t.model.clone()]).unwrap_or_default();
+    }
     let explicit = task
         .model
         .as_deref()
@@ -807,8 +827,10 @@ pub async fn react_execute_best_of_n(deps: &ExecDeps, task: DirectTask) -> (Dire
 /// A model the frontier CLI serves is an agent, so the whole task is delegated
 /// to it — the per-step loop cannot drive it, and sending it tool steps is
 /// refused by `hexa-infer`.
+///
+/// Never in managed mode: a managed run is not delegated to `claude -p` (ADR-2610281500 §1).
 pub(crate) fn is_claude_model(m: &str) -> bool {
-    hexa_infer::wiring::served_by_frontier_cli(m)
+    hexa_infer::managed::active().is_none() && hexa_infer::wiring::served_by_frontier_cli(m)
 }
 
 /// Frontier fallback: delegate the whole task to `claude -p` inside an isolated
@@ -959,7 +981,7 @@ pub async fn claude_attempts(
                 // Same rule as the ReAct path: a change that passed the gate is
                 // correct work, and git failing to record it is not a reason to
                 // delete it. Keep it, unstage it, say which half failed.
-                let _ = std::process::Command::new("git")
+                let _ = direct_exec::child_std("git")
                     .args(["reset", "-q", "--"])
                     .arg(&task.file)
                     .args(existing_also(repo_root, &task.also))

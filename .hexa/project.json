@@ -74,6 +74,7 @@
       "hexa-core/src/validation.rs": "domain",
       "hexa-exec/src/adversarial.rs": "usecases",
       "hexa-exec/src/compress.rs": "usecases",
+      "hexa-exec/src/direct_apply.rs": "usecases",
       "hexa-exec/src/direct_exec.rs": "usecases",
       "hexa-exec/src/direct_react.rs": "usecases",
       "hexa-exec/src/direct_workspace.rs": "usecases",
@@ -115,6 +116,7 @@
       "hexa-infer/src/spend.rs": "adapters/secondary",
       "hexa-infer/src/spend_report.rs": "usecases",
       "hexa-infer/src/tiers.rs": "adapters/secondary",
+      "hexa-infer/src/managed.rs": "composition-root",
       "hexa-infer/src/wiring.rs": "composition-root",
       "scripts/hooks": "adapters/primary"
     }

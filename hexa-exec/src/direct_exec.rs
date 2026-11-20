@@ -100,7 +100,7 @@ pub fn validate_also_paths(paths: &[String]) -> Result<(), String> {
 }
 
 /// `./a/b` → `a/b`, so a listed path matches git's own spelling.
-fn normalize_also(p: &str) -> String {
+pub(crate) fn normalize_also(p: &str) -> String {
     let mut s = p;
     while let Some(rest) = s.strip_prefix("./") {
         s = rest;
@@ -396,7 +396,7 @@ pub(crate) struct TreeLock {
 
 /// Where the tree lock lives for the repository at `main_root`.
 pub(crate) fn tree_lock_path(main_root: &std::path::Path) -> std::path::PathBuf {
-    let common = std::process::Command::new("git")
+    let common = child_std("git")
         .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
         .current_dir(main_root)
         .output()
@@ -719,6 +719,10 @@ pub struct ExecDeps {
 /// guessing, on purpose, so an unconfigured project fails with a message that
 /// names the missing key instead of silently running on a model nobody chose.
 pub(crate) fn resolve_model(task: &DirectTask) -> Option<String> {
+    // Managed mode answers from the harness's tier map alone (ADR-2610281500 §4).
+    if let Some(m) = hexa_infer::managed::active() {
+        return m.tier("t2").map(|t| t.model.clone());
+    }
     task.model
         .clone()
         .or_else(|| std::env::var("HEXA_DIRECT_MODEL").ok())
@@ -756,9 +760,118 @@ impl DirectResult {
             left_modified: Vec::new(),
         }
     }
+
+    /// The run's result code (ADR-2610281500 §9): `None` when it passed, else one of
+    /// `gate_failed`, `timeout`, `auth`, `budget`, `model_error` and `internal`.
+    ///
+    /// Read from the result rather than carried in a field, so the struct's shape (which
+    /// callers build literally) does not change.
+    pub fn code(&self) -> Option<&'static str> {
+        if self.ok {
+            return None;
+        }
+        let err = self.error.as_deref().unwrap_or("");
+        if err.starts_with(TIMEOUT_PREFIX) {
+            return Some("timeout");
+        }
+        let last = err.split_once(". last: ").map_or(err, |(_, l)| l);
+        if let Some(rest) = last.strip_prefix("inference: ") {
+            return Some(inference_code(rest));
+        }
+        if self.edit_applied && !self.evidence_passed {
+            return Some("gate_failed");
+        }
+        Some("internal")
+    }
+}
+
+/// The result code of an inference failure, from its message: `auth` (401), `budget` (402),
+/// else `model_error` (ADR-2610281500 §5).
+pub(crate) fn inference_code(msg: &str) -> &'static str {
+    let status = msg
+        .strip_prefix("API error: ")
+        .and_then(|r| r.split(|c: char| !c.is_ascii_digit()).next())
+        .and_then(|d| d.parse::<u16>().ok());
+    match status {
+        Some(status) => hexa_infer::managed::code_for(
+            &hexa_core::ports::inference::InferenceError::ApiError { status, body: String::new() },
+        ),
+        None => "model_error",
+    }
+}
+
+/// In managed mode, the pre-run state of the files a run may edit: a failed managed run
+/// leaves the tree as it found it (ADR-2610281500 §6).
+pub(crate) fn managed_snapshot(repo_root: &std::path::Path, task: &DirectTask) -> Option<AlsoSnapshot> {
+    hexa_infer::managed::active()?;
+    let mut paths = vec![task.file.clone()];
+    paths.extend(task.also.iter().cloned());
+    AlsoSnapshot::capture(repo_root, &paths).ok()
+}
+
+/// Put back what [`managed_snapshot`] saw, unless the run passed its gate: a passing edit
+/// is either committed or the only copy of a verified change.
+pub(crate) fn managed_restore(before: Option<AlsoSnapshot>, result: &DirectResult) {
+    if let Some(s) = before.filter(|_| !result.evidence_passed) {
+        s.restore();
+    }
+}
+
+/// A managed run stops at once on a 401 or a 402: no further attempt can succeed, and each
+/// one would spend (ADR-2610281500 §5).
+pub(crate) fn managed_stop(msg: &str) -> bool {
+    hexa_infer::managed::active().is_some() && matches!(inference_code(msg), "auth" | "budget")
+}
+
+/// The variables no child process of a managed run may see (ADR-2610281500 §7): the managed
+/// settings and every `ANTHROPIC_*` variable. Empty outside managed mode.
+pub(crate) fn managed_child_env_removals() -> Vec<String> {
+    if hexa_infer::managed::active().is_none() {
+        return Vec::new();
+    }
+    let mut v: Vec<String> =
+        ["HEXA_MANAGED_URL", "HEXA_MANAGED_TOKEN_FD", "HEXA_MANAGED_TIERS"].map(String::from).into();
+    v.extend(std::env::vars_os().filter_map(|(k, _)| k.into_string().ok()).filter(|k| k.starts_with("ANTHROPIC_")));
+    v
+}
+
+/// An async child process, with the managed settings removed from its environment (§7).
+pub(crate) fn child(program: &str) -> tokio::process::Command {
+    let mut c = tokio::process::Command::new(program);
+    for k in managed_child_env_removals() {
+        c.env_remove(k);
+    }
+    c
+}
+
+/// A blocking child process, with the managed settings removed from its environment (§7).
+pub(crate) fn child_std(program: &str) -> std::process::Command {
+    let mut c = std::process::Command::new(program);
+    for k in managed_child_env_removals() {
+        c.env_remove(k);
+    }
+    c
+}
+
+/// How long before the managed deadline a run stops, so it can still print its result (§8).
+const DEADLINE_MARGIN_SECS: u64 = 5;
+
+/// The prefix of a run's error when it stopped at the managed deadline (§8).
+const TIMEOUT_PREFIX: &str = "timeout: ";
+
+/// With `HEXA_MANAGED_DEADLINE` set and `now >= deadline - 5 s`, the error a managed run stops
+/// with before a model call, evidence or a worktree (ADR-2610281500 §8); `None` otherwise.
+pub fn managed_timeout() -> Option<String> {
+    let deadline = hexa_infer::managed::active()?.deadline?;
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    (now >= deadline.saturating_sub(DEADLINE_MARGIN_SECS))
+        .then(|| format!("{TIMEOUT_PREFIX}the managed deadline ({deadline}) is reached; no model call or evidence was run"))
 }
 
 pub(crate) async fn execute_direct_inner(deps: &ExecDeps, task: DirectTask) -> DirectResult {
+    if let Some(e) = managed_timeout() {
+        return DirectResult::err(e);
+    }
     // Serialize the whole acquire→read→edit→evidence→commit→finish section.
     let _tree_lock = match lock_tree(&repo_root()).await {
         Ok(l) => l,
@@ -779,7 +892,9 @@ pub(crate) async fn execute_direct_inner(deps: &ExecDeps, task: DirectTask) -> D
     }
     let repo_root = workspace.workdir().to_path_buf();
     let factory = workspace.is_isolated();
+    let before = managed_snapshot(&repo_root, &task);
     let mut result = exec_attempts(deps, &task, &repo_root, factory).await;
+    managed_restore(before, &result);
     settle_workspace(workspace, &mut result);
     result
 }
@@ -852,12 +967,20 @@ async fn exec_attempts(deps: &ExecDeps, task: &DirectTask, repo_root: &std::path
         };
         let grounded = ground_window(&content, &task.instruction);
 
-        // 2. ONE inference call for a precise edit.
+        // 2. ONE inference call for a precise edit — none past the managed deadline (§8).
+        if let Some(e) = managed_timeout() {
+            result.error = Some(e);
+            return result;
+        }
         let edit = match request_edit(&model, task, &grounded, &context_block, last_error.as_deref()).await {
             Ok(e) => e,
             Err(e) => {
                 last_error = Some(format!("inference: {}", e));
                 tracing::warn!(attempt, error = %e, "direct_exec: inference failed");
+                if managed_stop(&e) {
+                    result.error = last_error;
+                    return result;
+                }
                 continue;
             }
         };
@@ -871,7 +994,11 @@ async fn exec_attempts(deps: &ExecDeps, task: &DirectTask, repo_root: &std::path
         result.edit_applied = true;
         tracing::info!(attempt, file = %task.file, mode = %edit.mode, "direct_exec: edit applied");
 
-        // 4. Run the evidence command.
+        // 4. Run the evidence command — not past the managed deadline (§8).
+        if let Some(e) = managed_timeout() {
+            result.error = Some(e);
+            return result;
+        }
         let (passed, output) = run_evidence(&task.evidence, repo_root).await;
         result.evidence_output = output.chars().take(4000).collect();
         // Only a run the one reader calls a pass commits: zero tests, a reported
@@ -1370,8 +1497,13 @@ pub async fn run_evidence(cmd: &str, repo_root: &std::path::Path) -> (bool, Stri
     // like `cargo test … | tail` returns tail's 0 and a FAILING test reads as
     // passed — defeating the entire evidence gate (measured 2026-06-04: a failing
     // test got committed because of exactly this).
-    let wrapped = format!("set -o pipefail; {}", cmd);
-    let out = tokio::process::Command::new("bash")
+    let mut wrapped = format!("set -o pipefail; {}", cmd);
+    // A managed run's evidence starts with no descriptor beyond stdout and stderr: stdin is
+    // closed, so the lowest descriptor the evidence opens is never one hexa held (§7).
+    if hexa_infer::managed::active().is_some() {
+        wrapped = format!("exec 0<&-; {wrapped}");
+    }
+    let out = child("bash")
         .arg("-c")
         .arg(&wrapped)
         .current_dir(repo_root)
@@ -1392,7 +1524,7 @@ pub async fn run_evidence(cmd: &str, repo_root: &std::path::Path) -> (bool, Stri
 /// (a spec, a module registration) that the evidence depended on — without sweeping in
 /// anything that appears *concurrently* after the run begins.
 pub async fn dirty_paths(repo_root: &std::path::Path) -> Vec<String> {
-    let out = match tokio::process::Command::new("git")
+    let out = match child("git")
         .args(["status", "--porcelain", "--untracked-files=all"])
         .current_dir(repo_root)
         .output()
@@ -1525,7 +1657,7 @@ async fn restore_seal(repo_root: &std::path::Path, path: &str, start_dirty: &[St
     if start_dirty.iter().any(|p| p == path) {
         return false;
     }
-    let Ok(head) = tokio::process::Command::new("git")
+    let Ok(head) = child("git")
         .args(["cat-file", "blob", &format!("HEAD:{path}")])
         .current_dir(repo_root)
         .output()
@@ -1555,7 +1687,7 @@ async fn commit(
 
 /// Whether `path` is tracked in `HEAD` (so its absence now is a deletion).
 fn tracked_in_head(repo_root: &std::path::Path, path: &str) -> bool {
-    std::process::Command::new("git")
+    child_std("git")
         .args(["cat-file", "-e"])
         .arg(format!("HEAD:{path}"))
         .current_dir(repo_root)
@@ -1591,7 +1723,7 @@ pub async fn restore_unlisted(repo_root: &std::path::Path, paths: &[String]) -> 
     let mut kept = Vec::new();
     for p in paths {
         let ok = if tracked_in_head(repo_root, p) {
-            tokio::process::Command::new("git")
+            child("git")
                 .args(["checkout", "-q", "HEAD", "--"])
                 .arg(p)
                 .current_dir(repo_root)
@@ -1745,6 +1877,25 @@ pub async fn commit_with_also(
     start_dirty: &[String],
     also: &[String],
 ) -> Result<String, String> {
+    let subject = instruction.lines().next().unwrap_or("direct edit");
+    let msg = format!(
+        "feat(direct): {}\n\nProduced by the direct executor (ADR-2026-06-04-1740 Path A): \
+         one agent, one evidence-gated edit, no SOP pipeline.\n\n\
+         Co-Authored-By: hexa-direct <noreply@hexa.local>",
+        subject.chars().take(72).collect::<String>()
+    );
+    commit_with_also_message(repo_root, file, &msg, factory, start_dirty, also).await
+}
+
+/// [`commit_with_also`] with the whole commit message given.
+pub(crate) async fn commit_with_also_message(
+    repo_root: &std::path::Path,
+    file: &str,
+    msg: &str,
+    factory: bool,
+    start_dirty: &[String],
+    also: &[String],
+) -> Result<String, String> {
     // The code side may only make a sealed test pass, never change it
     // (ADR-2610221540 §6). Judged over the whole tree, not this commit's
     // paths: a test loosened and left uncommitted still made the gate pass.
@@ -1796,7 +1947,7 @@ pub async fn commit_with_also(
             paths.push(p);
         }
     }
-    let add = tokio::process::Command::new("git")
+    let add = child("git")
         .args(["add", "-A", "--"])
         .args(&paths)
         .current_dir(repo_root)
@@ -1806,17 +1957,10 @@ pub async fn commit_with_also(
     if !add.status.success() {
         return Err(format!("git add: {}", String::from_utf8_lossy(&add.stderr)));
     }
-    let subject = instruction.lines().next().unwrap_or("direct edit");
-    let msg = format!(
-        "feat(direct): {}\n\nProduced by the direct executor (ADR-2026-06-04-1740 Path A): \
-         one agent, one evidence-gated edit, no SOP pipeline.\n\n\
-         Co-Authored-By: hexa-direct <noreply@hexa.local>",
-        subject.chars().take(72).collect::<String>()
-    );
     // Isolated (autonomous) commits are authored by a distinct factory identity
     // (ADR-2606071323 §4) so they are attributable and never masquerade as the
     // operator's `hexa-coder`. `-c` keeps it commit-local (no global config change).
-    let mut cmd = tokio::process::Command::new("git");
+    let mut cmd = child("git");
     if factory {
         cmd.args([
             "-c",
@@ -1829,7 +1973,7 @@ pub async fn commit_with_also(
     // concurrently-changed file can't get swept in (the 2026-06-04 review swarm's fix,
     // generalized from one file to the captured set).
     let c = cmd
-        .args(["commit", "-m", &msg, "--"])
+        .args(["commit", "-m", msg, "--"])
         .args(&paths)
         .current_dir(repo_root)
         .output()
@@ -1844,7 +1988,7 @@ pub async fn commit_with_also(
     };
     // Unstage everything `git add` staged above, not just the target, so the
     // change is left in the working tree unstaged, as the hint says.
-    let _ = tokio::process::Command::new("git")
+    let _ = child("git")
         .args(["reset", "-q", "--"])
         .args(&paths)
         .current_dir(repo_root)

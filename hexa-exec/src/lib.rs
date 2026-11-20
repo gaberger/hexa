@@ -16,6 +16,7 @@ pub mod local_store;
 pub mod provenance;
 pub mod adversarial;
 pub mod compress;
+pub mod direct_apply;
 pub mod direct_exec;
 pub mod direct_react;
 pub mod do_task;

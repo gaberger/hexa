@@ -16,6 +16,7 @@ pub mod adapters;
 pub mod complete;
 pub mod endpoint;
 pub mod local_provider;
+pub mod managed;
 pub mod ports;
 pub mod reach;
 pub mod discover;
