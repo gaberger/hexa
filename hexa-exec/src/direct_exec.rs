@@ -1035,8 +1035,9 @@ async fn exec_attempts(deps: &ExecDeps, task: &DirectTask, repo_root: &std::path
         }
     }
 
+    // `edit_applied` stays true: an edit was made and the gate refused it, which is what
+    // `code()` reports as `gate_failed` (ADR-2610281500 §5). The restore is in the message.
     snapshot.restore();
-    result.edit_applied = false;
     result.error = Some(format!(
         "exhausted {} attempts without passing evidence; {} is restored as the run found it. last: {}",
         max_attempts,
