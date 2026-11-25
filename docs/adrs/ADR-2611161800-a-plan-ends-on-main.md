@@ -86,6 +86,17 @@ Slices, in order:
 4. The router stops drafting: already shipped in e5e91c5, and the test guards it.
 5. SubagentStop holds a subagent to its worktree, as the Stop hook holds a session.
 
+## Addendum, 2026-11-25: a pushed branch in review does not block a stop
+
+**Driver.** datum, 2026-11-24 and 25. Its main is protected and takes work only through pull requests. In a worktree whose branch was pushed and waiting on its pull request, or still being built by other agents, the Stop hook blocked every stop of every agent whose directory it was, including a subagent told not to touch that branch. It counted the branch against a local `main` that had not moved since the clone ("19 commits" for a branch one commit ahead of `origin/main`), and it named `hexa dev worktree merge <branch> --force` as the fix. Each agent had to refuse it, dozens of times; the owner asked for it to stop ("can we get rid of this error", "fix it").
+
+1. **A commit is on the base when the local base or origin's copy of it holds it.** `branch_items` counts a branch's commits that are on neither `refs/heads/<base>` nor `refs/remotes/origin/<base>`. A local base nobody moved after a fetch no longer makes merged work look unlanded.
+2. **A branch pushed as it stands is in review, and the Stop hook says so without sending the session back.** When the session's branch has an upstream other than the base and that upstream holds exactly the branch's head, §5's "its own branch, when that is not landed" is reported (`in-review`, with the upstream's name) and is not a reason to block. A merge can need someone's approval, as a push can. A branch never pushed, or with a commit its upstream does not hold, blocks as before.
+3. **`hexa finish` and `loop stage done` are unchanged by 2.** A pushed branch that is not on the base is still listed as `unlanded` and `Land on main` is still not done: the plan ends on main, and a pull request that is open has not ended.
+4. **A branch with an upstream is never told to merge by force.** Its `unlanded` item says to push and land through its pull request. Only a branch that exists nowhere else is offered `hexa dev worktree merge`.
+
+Gate: `cargo test -p hexa-cli --test stop_hook_pushed_branch --test a_plan_ends_on_main`.
+
 ## References
 
 - ADR-2611160730: compliance by refusal. Covers the hooks and `do gate`.

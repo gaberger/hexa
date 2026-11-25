@@ -768,7 +768,7 @@ fn stop_until_finished(project_dir: &Path) -> Result<()> {
             list(&open.blocking)
         );
         if !open.reported.is_empty() {
-            reason.push_str(&format!("\nAlso, not forced (a push can need someone's approval):\n{}", list(&open.reported)));
+            reason.push_str(&format!("\nAlso, said and not forced (a push or a pull request can need someone's approval):\n{}", list(&open.reported)));
         }
         println!("{}", serde_json::json!({ "decision": "block", "reason": reason }));
         return Ok(());

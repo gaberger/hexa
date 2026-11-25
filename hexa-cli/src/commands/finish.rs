@@ -129,6 +129,43 @@ fn same_dir(a: &Path, b: &Path) -> bool {
     }
 }
 
+/// Commits of `branch` that are on neither the local base nor origin's copy of
+/// it. A local base that was never moved after a fetch is stale; a commit the
+/// remote's base holds is on the base (ADR-2611161800, addendum 2026-11-25).
+fn ahead_of_base(dir: &Path, base: &str, branch: &str) -> usize {
+    let local = format!("refs/heads/{base}");
+    let remote = format!("refs/remotes/origin/{base}");
+    let known = |r: &str| git(dir, &["rev-parse", "--verify", "--quiet", r]).is_some();
+    let mut args = vec!["rev-list", "--count", branch, "--not"];
+    if known(&local) {
+        args.push(&local);
+    }
+    if known(&remote) {
+        args.push(&remote);
+    }
+    if args.len() == 4 {
+        return 0;
+    }
+    git(dir, &args).and_then(|n| n.parse().ok()).unwrap_or(0)
+}
+
+/// The upstream of `branch` (`origin/feature`), when it has one.
+fn upstream_of(dir: &Path, branch: &str) -> Option<String> {
+    git(dir, &["rev-parse", "--abbrev-ref", "--symbolic-full-name", &format!("{branch}@{{u}}")]).filter(|u| !u.is_empty())
+}
+
+/// The upstream of the branch checked out in `dir`, when that upstream is not
+/// the base and holds exactly the branch's head: the work is pushed as it
+/// stands and waits on its pull request.
+fn pushed_as_it_stands(dir: &Path, base: &str) -> Option<String> {
+    let branch = git(dir, &["rev-parse", "--abbrev-ref", "HEAD"])?;
+    let upstream = upstream_of(dir, &branch)?;
+    if upstream.rsplit('/').next() == Some(base) && upstream.split('/').count() == 2 {
+        return None;
+    }
+    (git(dir, &["rev-parse", "HEAD"])? == git(dir, &["rev-parse", &upstream])?).then_some(upstream)
+}
+
 /// Branches with commits not on the base, and branches already on it whose
 /// worktree is clean and could go. `only` limits it to one worktree.
 fn branch_items(dir: &Path, base: &str, only: Option<&Path>) -> Vec<Item> {
@@ -139,13 +176,20 @@ fn branch_items(dir: &Path, base: &str, only: Option<&Path>) -> Vec<Item> {
         if branch == base || only.is_some_and(|o| !same_dir(o, &path)) {
             continue;
         }
-        let ahead: usize = git(dir, &["rev-list", "--count", &format!("{base}..{branch}")]).and_then(|n| n.parse().ok()).unwrap_or(0);
+        let ahead = ahead_of_base(dir, base, &branch);
         let shown = path.display().to_string();
         if ahead > 0 {
+            // A branch with an upstream lands through it (a pull request); only a branch that exists
+            // nowhere else is landed by a local merge.
+            let fix = if upstream_of(dir, &branch).is_some() {
+                format!("push it (git push), then land it through its pull request into {base}")
+            } else {
+                format!("land it: hexa dev worktree merge {branch} --force")
+            };
             out.push(Item {
                 kind: "unlanded",
                 what: format!("{branch}: {ahead} commit{} not on {base} ({shown})", if ahead == 1 { "" } else { "s" }),
-                fix: format!("land it: hexa dev worktree merge {branch} --force"),
+                fix,
             });
         } else if only.is_none() && path.is_dir() && uncommitted_files(&path).is_empty() {
             landed.push(format!("{branch} ({shown})"));
@@ -287,7 +331,8 @@ pub fn not_on_main(dir: &Path) -> Vec<Item> {
 /// checklist, its own branch when it is not on the base, and its ADR's
 /// close-out (ADR-2611161800 §5). Commits not pushed are listed apart, in
 /// `reported`, because a push can need someone's approval and a hook must
-/// not force one.
+/// not force one. So is the session's branch when it is pushed as it stands
+/// and waits on its pull request (addendum 2026-11-25).
 pub struct SessionOpen {
     pub blocking: Vec<Item>,
     pub reported: Vec<Item>,
@@ -304,12 +349,26 @@ pub fn session_open(dir: &Path, session: &str) -> SessionOpen {
     blocking.extend(uncommitted_item(dir, &dirty));
     blocking.extend(task_items(&entry));
     let base = base_branch(dir);
-    blocking.extend(branch_items(dir, &base, Some(dir)));
+    let mut reported: Vec<Item> = unpushed_item(dir).into_iter().collect();
+    // A branch pushed as it stands waits on its pull request: a merge can need someone's approval, as a
+    // push can, so the hook says it and does not send the session back (addendum 2026-11-25). `hexa finish`
+    // and `loop stage done` still count it (`open_work`, `not_on_main`).
+    let in_review = pushed_as_it_stands(dir, &base);
+    for item in branch_items(dir, &base, Some(dir)) {
+        match (&in_review, item.kind) {
+            (Some(upstream), "unlanded") => reported.push(Item {
+                kind: "in-review",
+                what: format!("{}, pushed to {upstream}", item.what),
+                fix: format!("it lands through its pull request into {base}: open it, or merge it when its checks pass"),
+            }),
+            _ => blocking.push(item),
+        }
+    }
     let all_done = blocking.is_empty();
     if all_done {
         blocking.extend(adr_item(dir, &entry));
     }
-    SessionOpen { blocking, reported: unpushed_item(dir).into_iter().collect() }
+    SessionOpen { blocking, reported }
 }
 
 fn render(project: &str, items: &[Item]) -> String {
