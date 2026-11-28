@@ -79,7 +79,8 @@ fn endpoint_from_json(v: &serde_json::Value) -> Option<Endpoint> {
     let id = v.get("id")?.as_str()?.to_string();
     let url = v.get("url").and_then(|u| u.as_str()).unwrap_or_default().to_string();
     let provider = v.get("provider")?.as_str()?.to_string();
-    if url.is_empty() {
+    // An agent CLI is reached by its executable, not a URL (ADR-2611231735 §6).
+    if url.is_empty() && provider != crate::ports::codex_cli() {
         return None;
     }
     let models = models_of(v);

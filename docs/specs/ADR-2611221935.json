@@ -1,0 +1,184 @@
+{
+  "adr": "ADR-2611221935",
+  "feature": "Python project is a test home for spec draft and spec accept",
+  "description": "spec draft and spec accept accept a root pyproject.toml, setup.py or setup.cfg as a test home, name it and pytest when they refuse, and change nothing else",
+  "universal": [
+    "§1",
+    "§2",
+    "§3"
+  ],
+  "accepted": {
+    "by": "craigjohnson",
+    "sha256": "96fff833e87b3296aaa67bcb8b019d7a8fbdac20c2d3f63ac9662a341072e10a"
+  },
+  "sealed": {
+    "hexa-cli/tests/adr_2611221935_spec.rs": "5693d5e35b258c90c24e3e5853b508667adb8bd72ad4ce92964de85cb16d85a9"
+  },
+  "red": "161818b",
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A root pyproject.toml lets spec draft proceed",
+      "given": "a project root with a pyproject.toml, a tests/test_x.py pytest test, no Cargo.toml, no package.json and no test.runners entry in .hexa/project.json",
+      "when": "the user runs `hexa spec draft` for an ADR",
+      "then": "the command proceeds as it does under a Cargo.toml and is not refused for lacking a test home",
+      "test": "hexa-cli/tests/adr_2611221935_spec.rs::part_1::s01_pyproject_lets_spec_draft_proceed"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A root setup.py lets spec accept proceed",
+      "given": "a project root with a setup.py, no Cargo.toml, no package.json and no test.runners entry",
+      "when": "the user runs `hexa spec accept` for a drafted spec",
+      "then": "the command proceeds as it does under a package.json and is not refused for lacking a test home"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A root setup.cfg alone is a test home",
+      "given": "a project root whose only manifest is setup.cfg, with no test.runners entry",
+      "when": "the user runs `hexa spec draft`",
+      "then": "the command is not refused for lacking a test home",
+      "test": "hexa-cli/tests/adr_2611221935_spec.rs::part_1::s03_setup_cfg_alone_is_a_test_home"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A Python manifest below the root is not a test home",
+      "given": "a project whose root has no Cargo.toml, package.json, pyproject.toml, setup.py or setup.cfg and no test.runners entry, but which has sub/pyproject.toml",
+      "when": "the user runs `hexa spec draft`",
+      "then": "the command is refused for lacking a test home",
+      "test": "hexa-cli/tests/adr_2611221935_spec.rs::part_1::s04_python_manifest_below_root_is_not_a_test_home"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A Python file that is not one of the three manifests does not make a test home",
+      "given": "a project root with only requirements.txt and tests/test_x.py, no Cargo.toml, package.json, pyproject.toml, setup.py, setup.cfg or test.runners entry",
+      "when": "the user runs `hexa spec accept`",
+      "then": "the command is refused for lacking a test home",
+      "test": "hexa-cli/tests/adr_2611221935_spec.rs::part_1::s05_requirements_txt_is_not_a_test_home"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§1"
+      ],
+      "kind": "property",
+      "description": "Any one of the three Python manifests at the root suffices",
+      "given": "any project root that contains at least one of pyproject.toml, setup.py or setup.cfg, in any combination with other files, and no test.runners entry",
+      "when": "either `hexa spec draft` or `hexa spec accept` is run",
+      "then": "neither command refuses for lacking a test home",
+      "test": "hexa-cli/tests/adr_2611221935_spec.rs::part_1::s06_any_python_manifest_combination_suffices"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "The refusal message names a Python manifest and pytest",
+      "given": "a project root with no Cargo.toml, package.json, pyproject.toml, setup.py or setup.cfg and no test.runners entry",
+      "when": "the user runs `hexa spec draft`",
+      "then": "it refuses with a message that lists a Python manifest (pyproject.toml, setup.py or setup.cfg) among the test homes alongside Cargo.toml, package.json and test.runners, and names pytest among the runners `hexa spec red` uses for a hand-written test",
+      "test": "hexa-cli/tests/adr_2611221935_spec.rs::part_1::s07_refusal_names_python_manifest_and_pytest"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "The refusal no longer names only the three old test homes",
+      "given": "a project root with none of the test homes",
+      "when": "the user runs `hexa spec accept`",
+      "then": "the refusal message is not one that names only Cargo.toml, package.json and test.runners; it does not omit the Python manifest or pytest",
+      "test": "hexa-cli/tests/adr_2611221935_spec.rs::part_1::s08_refusal_not_only_old_test_homes"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§2"
+      ],
+      "kind": "property",
+      "description": "Every refusal from either command names a Python manifest and pytest",
+      "given": "any project root with none of Cargo.toml, package.json, pyproject.toml, setup.py, setup.cfg and no test.runners entry, whatever other files it holds",
+      "when": "`hexa spec draft` or `hexa spec accept` refuses for lacking a test home",
+      "then": "its message lists a Python manifest among the test homes and names pytest among the runners",
+      "test": "hexa-cli/tests/adr_2611221935_spec.rs::part_1::s09_every_refusal_names_python_manifest_and_pytest"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "Existing test homes pass as before",
+      "given": "three projects: one with a root Cargo.toml, one with a root package.json, and one with only a test.runners entry in .hexa/project.json",
+      "when": "`hexa spec draft` and `hexa spec accept` are run in each",
+      "then": "each command proceeds as before and is not refused for lacking a test home"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "A project with no test home is still refused",
+      "given": "a project root with no Cargo.toml, package.json, pyproject.toml, setup.py or setup.cfg and no test.runners entry",
+      "when": "the user runs `hexa spec draft` or `hexa spec accept`",
+      "then": "the command is refused, as it was before",
+      "test": "hexa-cli/tests/adr_2611221935_spec.rs::part_2::s11_a_project_with_no_test_home_is_still_refused"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "spec tests still generates Rust tests only",
+      "given": "a Python project with a root pyproject.toml and accepted specs",
+      "when": "the user runs `hexa spec tests`",
+      "then": "it generates no Python (.py) test files; any tests it generates are Rust tests"
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§3"
+      ],
+      "kind": "property",
+      "description": "Outcomes are unchanged for every project without a Python manifest",
+      "given": "any project root without pyproject.toml, setup.py or setup.cfg",
+      "when": "`hexa spec draft` or `hexa spec accept` is run",
+      "then": "whether it proceeds or refuses for lacking a test home is the same as before this change: it proceeds exactly when the root has a Cargo.toml or package.json or a test.runners entry is configured",
+      "test": "hexa-cli/tests/adr_2611221935_spec.rs::part_2::s13_outcomes_unchanged_without_a_python_manifest"
+    }
+  ],
+  "amendments": [
+    {
+      "at": "2026-11-23T13:07:04.417440334+00:00",
+      "base_commit": "161818b15b0e72ee701ea2495baa9de967f11078",
+      "by": "Claude Code agent",
+      "file": "hexa-cli/tests/adr_2611221935_spec.rs",
+      "from": "24b87a152f11d9ab043ef147a277d3ec817b1a778d73f97653343ee224a4e6f0",
+      "reason": "The fixtures ran spec accept with no drafted spec, so accept stopped at 'has no spec to accept' before its test-home check; both helpers now write a drafted spec before accept, as a person accepts one. No assertion changes",
+      "to": "5693d5e35b258c90c24e3e5853b508667adb8bd72ad4ce92964de85cb16d85a9"
+    }
+  ]
+}

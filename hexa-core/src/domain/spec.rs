@@ -58,6 +58,18 @@ pub struct Scenario {
 }
 
 impl Scenario {
+    /// Whether two revisions of a scenario say the same thing: everything a
+    /// person accepts, and nothing written after (ADR-2610281628 §1).
+    pub fn same_text(&self, other: &Scenario) -> bool {
+        self.id == other.id
+            && self.decision == other.decision
+            && self.kind == other.kind
+            && self.description == other.description
+            && self.given == other.given
+            && self.when == other.when
+            && self.then == other.then
+    }
+
     /// This scenario's red commit, else the spec's. Empty is none.
     pub fn red_commit<'a>(&'a self, spec: &'a Spec) -> Option<&'a str> {
         self.red.as_deref().or(spec.red.as_deref()).filter(|r| !r.trim().is_empty())
@@ -124,6 +136,60 @@ pub struct Amendment {
     pub base_commit: String,
 }
 
+/// One recorded change of the test a scenario is bound to (ADR-2611251652 §2).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Move {
+    pub scenario: String,
+    pub from: String,
+    pub to: String,
+    pub by: String,
+    pub reason: String,
+    pub at: String,
+    pub base_commit: String,
+}
+
+/// Whether one scenario's test binding still holds (ADR-2611251652 §2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BindingVerdict {
+    Holds,
+    /// The spec's ref is not the one the anchor and the moves reach.
+    Moved { expected: String },
+    /// A move's `from` does not continue the chain; the index of the first such.
+    BrokenChain(usize),
+}
+
+/// The anchor (ADR-2611251652 §1). `history` is the spec file's revisions,
+/// oldest first, each with whether its acceptance holds. `current` is the
+/// scenario now.
+pub fn binding_anchor(current: &Scenario, history: &[(bool, Spec)]) -> Option<String> {
+    let mut anchor = None;
+    for (_, spec) in history.iter().rev().filter(|(holds, _)| *holds) {
+        let Some(then) = spec.specs.iter().find(|s| s.id == current.id && s.same_text(current)) else { break };
+        if then.test.is_some() {
+            anchor = then.test.clone();
+        }
+    }
+    anchor
+}
+
+/// Judge one binding (ADR-2611251652 §2). `moves` are all of the spec's,
+/// oldest first: only those for `scenario` apply.
+pub fn judge_binding(scenario: &str, anchor: Option<&str>, moves: &[Move], current: Option<&str>) -> BindingVerdict {
+    let (Some(anchor), Some(current)) = (anchor, current) else { return BindingVerdict::Holds };
+    let mut expected = anchor;
+    for (i, m) in moves.iter().enumerate().filter(|(_, m)| m.scenario == scenario) {
+        if m.from != expected {
+            return BindingVerdict::BrokenChain(i);
+        }
+        expected = &m.to;
+    }
+    if current == expected {
+        BindingVerdict::Holds
+    } else {
+        BindingVerdict::Moved { expected: expected.to_string() }
+    }
+}
+
 /// Whether one sealed file still holds (ADR-2611081151 §1, §2).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SealVerdict {
@@ -136,7 +202,7 @@ pub enum SealVerdict {
     Rewritten,
     /// An amendment's `from` does not continue the chain; the index of the first such.
     BrokenChain(usize),
-    /// No blob at the red commit to anchor to.
+    /// No commit in the branch's history holds the file, so there is no blob to anchor to (ADR-2611081151 §1, §2).
     Unanchored,
 }
 
@@ -606,17 +672,9 @@ pub fn unpassable_sites(test_source: &str) -> Vec<(usize, String)> {
 /// The accepted spec with each unchanged scenario's `test` and `red` carried
 /// over from `previous` (ADR-2610281628 §1).
 pub fn rebind(previous: &Spec, accepted: &Spec) -> Spec {
-    let same = |a: &Scenario, b: &Scenario| {
-        a.decision == b.decision
-            && a.kind == b.kind
-            && a.description == b.description
-            && a.given == b.given
-            && a.when == b.when
-            && a.then == b.then
-    };
     let mut out = accepted.clone();
     for s in out.specs.iter_mut() {
-        match previous.specs.iter().find(|p| p.id == s.id && same(p, s)) {
+        match previous.specs.iter().find(|p| p.same_text(s)) {
             Some(p) if p.test.is_some() => {
                 s.test = p.test.clone();
                 // Proved at the spec-level red: that red, written onto it.
@@ -631,14 +689,31 @@ pub fn rebind(previous: &Spec, accepted: &Spec) -> Spec {
     out
 }
 
-/// `source` without the `#[test]` functions named, each with its doc
-/// comments and attributes (§2).
+/// Every item in `from..to`, and in the body of every inline `mod` among
+/// them, at any depth: a generation batched into `mod part_N { … }` puts its
+/// tests one module down.
+fn items_deep(src: &str, mask: &[bool], from: usize, to: usize) -> Vec<Item> {
+    let mut out = Vec::new();
+    for it in items(src, mask, from, to) {
+        if kind_of(&it.header) == "mod" {
+            if let Some((open, close)) = it.body {
+                out.extend(items_deep(src, mask, open + 1, close.saturating_sub(1)));
+            }
+        }
+        out.push(it);
+    }
+    out
+}
+
 /// The names of the `#[test]` functions in `source`, read as code: text in
 /// a string or a comment is not a test.
 pub fn test_fns(source: &str) -> Vec<String> {
     let mask = code_mask(source);
-    items(source, &mask, 0, source.len())
+    let mut found: Vec<(usize, Item)> = items_deep(source, &mask, 0, source.len()).into_iter().map(|it| (it.span.0, it)).collect();
+    found.sort_by_key(|(at, _)| *at);
+    found
         .into_iter()
+        .map(|(_, it)| it)
         .filter(|it| {
             kind_of(&it.header) == "fn"
                 && it.lead.iter().any(|a| {
@@ -653,13 +728,15 @@ pub fn test_fns(source: &str) -> Vec<String> {
         .collect()
 }
 
+/// `source` without the `#[test]` functions named, each with its doc
+/// comments and attributes (§2).
 pub fn without_tests(source: &str, names: &[String]) -> String {
     if names.is_empty() {
         return source.to_string();
     }
     let mask = code_mask(source);
     let mut cut: Vec<(usize, usize)> = Vec::new();
-    for it in items(source, &mask, 0, source.len()) {
+    for it in items_deep(source, &mask, 0, source.len()) {
         let is_test = it.lead.iter().any(|a| {
             let c: String = a.chars().filter(|c| !c.is_whitespace()).collect();
             c == "#[test]" || (c.starts_with("#[") && c.ends_with("::test]"))
@@ -675,9 +752,21 @@ pub fn without_tests(source: &str, names: &[String]) -> String {
             cut.push((it.span.0, end));
         }
     }
+    splice_out(source, cut)
+}
+
+/// `source` without the byte ranges `cut`. A range that starts before the
+/// previous one ended overlaps a range already cut: the cut extends to
+/// whichever of the two ends later.
+fn splice_out(source: &str, mut cut: Vec<(usize, usize)>) -> String {
+    cut.sort();
     let mut out = String::with_capacity(source.len());
     let mut at = 0;
     for (a, b) in cut {
+        if a < at {
+            at = at.max(b);
+            continue;
+        }
         out.push_str(&source[at..a]);
         at = b;
     }
@@ -688,6 +777,47 @@ pub fn without_tests(source: &str, names: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A generation batched into `mod part_N { … }` blocks puts its tests one
+    /// module down. A test that passed before the code is set aside as a guard
+    /// (ADR-2611161600 §3), which must reach it there: walking only the top
+    /// level left it in the file, and the whole generation was refused.
+    #[test]
+    fn tests_inside_a_module_are_found_and_set_aside() {
+        let src = "mod part_1 {\n    use super::*;\n\n    #[test]\n    fn s01_red() {\n        assert!(false);\n    }\n\n    #[test]\n    fn s02_green() {\n        assert!(true);\n    }\n}\n\nmod part_2 {\n    #[test]\n    fn s03_red() {}\n}\n";
+        let found = test_fns(src);
+        assert_eq!(found, ["s01_red", "s02_green", "s03_red"], "every test in every module");
+        let kept = without_tests(src, &["s02_green".to_string()]);
+        assert!(!kept.contains("fn s02_green("), "the named test inside part_1 is cut: {kept}");
+        assert!(kept.contains("fn s01_red(") && kept.contains("fn s03_red("), "the others stay: {kept}");
+        assert!(kept.contains("mod part_1 {") && kept.contains("mod part_2 {"), "the modules stay: {kept}");
+    }
+
+    /// Overlapping cuts must not panic: one that starts inside a cut already
+    /// made is part of it.
+    #[test]
+    fn overlapping_cuts_are_skipped_not_a_panic() {
+        assert_eq!(splice_out("abcdefgh", vec![(1, 5), (3, 4), (6, 7)]), "afh");
+        assert_eq!(splice_out("abcdef", vec![(1, 3), (3, 5)]), "af");
+    }
+
+    /// Every byte inside any cut is removed: a cut that starts inside an
+    /// earlier one but ends past it removes the rest of its range too.
+    #[test]
+    fn a_cut_that_overruns_an_earlier_cut_removes_its_whole_range() {
+        assert_eq!(splice_out("abcdefgh", vec![(1, 4), (2, 6)]), "agh");
+        assert_eq!(splice_out("abcdefgh", vec![(2, 6), (1, 4)]), "agh");
+        assert_eq!(splice_out("abcdefghij", vec![(1, 3), (2, 5), (4, 8)]), "aij");
+        // Against the rule itself: keep exactly the bytes no range covers.
+        let src = "0123456789abcdef";
+        let cuts = vec![(0, 2), (1, 7), (5, 9), (11, 12), (11, 14), (13, 15)];
+        let expect: String = src
+            .char_indices()
+            .filter(|(i, _)| !cuts.iter().any(|&(a, b)| (a..b).contains(i)))
+            .map(|(_, c)| c)
+            .collect();
+        assert_eq!(splice_out(src, cuts), expect);
+    }
 
     fn sc(id: &str, d: &[&str], kind: Kind) -> Scenario {
         Scenario {

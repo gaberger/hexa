@@ -15,7 +15,7 @@ pub use crate::domain::tools::{ToolDefinition, ToolInputSchema};
 
 
 /// A request to an inference engine.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct InferenceRequest {
     pub model: String,
     pub system_prompt: String,

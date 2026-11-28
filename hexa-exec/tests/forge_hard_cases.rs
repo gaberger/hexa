@@ -417,14 +417,20 @@ fn hexa_bin() -> PathBuf {
     }
     // Beside this test binary, in whichever profile it was built (CI tests
     // in release): target/<profile>/deps/<test> → target/<profile>/hexa.
+    // The test executable is in target/<profile>/deps/, or under target/<profile>/
+    // build/<crate>/<hash>/out/ from rustc 1.100 on: look in each directory above
+    // it, up to `target`, for the `hexa` the profile holds.
     let exe = std::env::current_exe().expect("current exe");
-    let mut dir = exe.parent().expect("test binary dir").to_path_buf();
-    if dir.ends_with("deps") {
-        dir.pop();
+    for dir in exe.ancestors().skip(1) {
+        let p = dir.join("hexa");
+        if p.is_file() {
+            return p;
+        }
+        if dir.file_name().is_some_and(|n| n == "target") {
+            break;
+        }
     }
-    let p = dir.join("hexa");
-    assert!(p.exists(), "build hexa-cli first (same profile as this test): {}", p.display());
-    p
+    panic!("build hexa-cli first (same profile as this test): no `hexa` above {}", exe.display());
 }
 
 /// Run hexa in `cwd` with HOME at `home`; `hexa_home` sets HEXA_HOME, `None` removes it.

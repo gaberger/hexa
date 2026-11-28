@@ -146,7 +146,7 @@ enum DevGroupAction {
         name: Option<String>,
         #[arg(long)]
         description: Option<String>,
-        /// Scaffold language: rust | go | ts
+        /// Scaffold language: rust | go | ts | python | js
         #[arg(long, default_value = "rust")]
         lang: String,
     },
@@ -450,7 +450,7 @@ ADRs are history and are not checked.")]
         name: Option<String>,
         #[arg(long)]
         description: Option<String>,
-        /// Scaffold language: rust | go | ts
+        /// Scaffold language: rust | go | ts | python | js
         #[arg(long, default_value = "rust")]
         lang: String,
     },
@@ -467,6 +467,15 @@ async fn main() {
     //
     // `{:#}` prints the whole cause chain on one line and no backtrace. A
     // genuine panic is unaffected — that is a different path, and still says so.
+    // Rust ignores SIGPIPE, so a write to a closed pipe (`hexa … | head`)
+    // panics, and with panic = "abort" leaves a core. The default disposition
+    // ends the process quietly instead (ADR-2611230831 §4).
+    #[cfg(unix)]
+    // SAFETY: setting a signal's disposition to the default at start, before
+    // any thread that could depend on it exists, is sound.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
     let result = run().await;
     // a run a verb left open is ended here, so an AG-UI stream always has its terminal event (ADR-2611161830 §8)
     let why = result.as_ref().err().map(|e| format!("{e:#}"));

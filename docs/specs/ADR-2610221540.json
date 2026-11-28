@@ -657,5 +657,17 @@
       "reason": "Rust 1.100 (CI stable from 2026-11-19) moved integration-test executables from target/<profile>/deps to target/<profile>/build/<pkg>/<hash>/out, so hexa() popping two dirs off current_exe found no binary and every test here failed with 'run hexa: NotFound' (PR #67 run 44582056521). hexa() now returns env!(\"CARGO_BIN_EXE_hexa\"), cargo's own path to the bin. Only the locator changes; no assertion changes.",
       "to": "be97aae783c89a28c4b54c8e0897653be253f0291ce746f1ca61a4364ac52fa3"
     }
+  ],
+  "moves": [
+    {
+      "at": "2026-11-26T02:14:27.325748475+00:00",
+      "base_commit": "9f7e6082648061c92ac123b10feafcc46b18fdf4",
+      "by": "Claude Code agent (baseline from history, for review)",
+      "from": "hexa-exec/tests/a_spec_is_drafted_and_its_tests_generated_red.rs::a_generation_that_skips_a_scenario_is_rejected",
+      "reason": "recorded from history (baseline for ADR-2611251652): this binding moved before moves were recorded",
+      "scenario": "S15b",
+      "sha256": "ddf32a1b7922de1066e06512da69034bcf847625bc45cf6a675b8be3e1bf2b0f",
+      "to": "hexa-exec/tests/adr_2610221540_spec_3.rs::a_generation_that_never_tests_s4_is_rejected_naming_s4"
+    }
   ]
 }

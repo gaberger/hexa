@@ -217,6 +217,10 @@ enum CorpusAction {
 pub async fn run(action: InferenceAction) -> anyhow::Result<()> {
     match action {
         InferenceAction::Add { provider_type, url, model, key, id, quantization } => {
+            // The Codex CLI is a logged-in agent, not an HTTP host: no URL, no key (ADR-2611231735 §6).
+            if provider_type == hexa_infer::ports::codex_cli() {
+                return add_codex(id.as_deref());
+            }
             // Check if provider_type is a known template name (ADR-2026-04-05-2125)
             if PROVIDER_TEMPLATES.contains(&provider_type.as_str()) && url.is_none() {
                 add_from_template(&provider_type, key.as_deref(), id.as_deref()).await
@@ -336,6 +340,30 @@ async fn gpu_check(model: &str, prompt: &str) -> anyhow::Result<()> {
             Ok(())
         }
     }
+}
+
+/// `hexa inference add codex` (ADR-2611231735 §6): refuse unless the CLI is logged in,
+/// else register an endpoint with no URL and no key reference.
+fn add_codex(id: Option<&str>) -> anyhow::Result<()> {
+    let cli = hexa_infer::ports::codex_cli();
+    let login = std::process::Command::new(cli)
+        .args(["login", "status"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("cannot run `{cli}`: {e}. Install it, then run `{cli} login`"))?;
+    if !login.status.success() {
+        anyhow::bail!("{cli} is not logged in; run `{cli} login`, then `hexa inference add {cli}` again");
+    }
+    let endpoint = hexa_infer::Endpoint {
+        id: id.unwrap_or(cli).to_string(),
+        provider: cli.to_string(),
+        model: cli.to_string(),
+        models: vec![cli.to_string()],
+        status: "unknown".to_string(),
+        ..Default::default()
+    };
+    hexa_infer::endpoints().upsert(endpoint).map_err(|e| anyhow::anyhow!(e))?;
+    println!("{} {} registered: an agent served through `{cli} exec`, no URL and no key", "✓".green(), id.unwrap_or(cli));
+    Ok(())
 }
 
 async fn add_provider(

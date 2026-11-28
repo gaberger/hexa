@@ -36,14 +36,18 @@ fn write(base: &std::path::Path, rel: &str, body: &str) {
     std::fs::write(p, body).expect("write");
 }
 
-/// A hexagonal-looking tree in a language hexa has no grammar for.
-fn python_tree() -> std::path::PathBuf {
+/// A hexagonal-looking tree hexa lists and does not parse: Python files in a
+/// project with no Python manifest, which the grade leaves out until the
+/// project says it is Python (ADR-2611251938). This was Python until hexa read
+/// Python (ADR-2611211324), then plain `.js` until hexa read JavaScript
+/// (ADR-2611270420).
+fn unparsed_tree() -> std::path::PathBuf {
     let dir = scratch("py");
     write(&dir, "src/domain/board.py", "class Board:\n    pass\n");
     write(&dir, "src/ports/store.py", "class Store:\n    pass\n");
-    write(&dir, "src/usecases/play.py", "from src.adapters.db import Db\n");
+    write(&dir, "src/usecases/play.py", "from adapters.db import Db\n");
     write(&dir, "src/adapters/db.py", "class Db:\n    pass\n");
-    write(&dir, "src/composition/main.py", "from src.usecases.play import *\n");
+    write(&dir, "src/composition/main.py", "from usecases.play import *\n");
     dir
 }
 
@@ -68,7 +72,7 @@ fn analyze(dir: &std::path::Path, extra: &[&str]) -> (String, bool) {
 /// The point. Files scanned, none parsed, no grade.
 #[test]
 fn a_tree_that_parses_to_nothing_is_not_graded() {
-    let dir = python_tree();
+    let dir = unparsed_tree();
     let (text, _) = analyze(&dir, &[]);
     let _ = std::fs::remove_dir_all(&dir);
     assert!(text.contains("NOT GRADED"), "a tree hexa cannot parse was graded anyway:\n{text}");
@@ -86,7 +90,7 @@ fn a_tree_that_parses_to_nothing_is_not_graded() {
 /// number nothing produced.
 #[test]
 fn the_grade_gate_fails_on_a_tree_that_parses_to_nothing() {
-    let dir = python_tree();
+    let dir = unparsed_tree();
     let (text, ok) = analyze(&dir, &["--grade", "F"]);
     let _ = std::fs::remove_dir_all(&dir);
     assert!(!ok, "`--grade F` passed on a tree that parsed to nothing:\n{text}");

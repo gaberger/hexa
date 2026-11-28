@@ -270,18 +270,18 @@ fn s02_an_unknown_ref_or_extension_is_refused() {
     for r in ["tests/a.ts", "noext::x", "::x"] {
         assert_eq!(parse_test_ref(r), None, "{r} is not a test reference");
     }
-    let t = parse_test_ref("tests/a.py::t").expect("parses");
-    assert_eq!(runner_for(t.ext(), &BTreeMap::new()), None, "no runner for .py");
+    let t = parse_test_ref("tests/a.rb::t").expect("parses");
+    assert_eq!(runner_for(t.ext(), &BTreeMap::new()), None, "no runner for .rb");
 
     let d = spec_repo(
-        &[("package.json", "{}\n"), ("tests/a.py", "def t(): pass\n"), ("tests/ok.sh", PASSES)],
-        Some("tests/a.py::t"),
+        &[("package.json", "{}\n"), ("tests/a.rb", "def t; end\n"), ("tests/ok.sh", PASSES)],
+        Some("tests/a.rb::t"),
         Some("tests/ok.sh"),
         true,
     );
     let r = run(d.path(), &["spec", "verify", &the_id()]);
     assert_ne!(r.code, 0, "{}", r.out);
-    assert!(r.out.contains(".py") && r.out.contains("test.runners"), "names the extension and the setting:\n{}", r.out);
+    assert!(r.out.contains(".rb") && r.out.contains("test.runners"), "names the extension and the setting:\n{}", r.out);
 }
 
 /// S03: A vitest scenario runs vitest from the package directory and passes when exactly the named test ran and passed

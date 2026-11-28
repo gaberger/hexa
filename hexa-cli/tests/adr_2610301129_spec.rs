@@ -406,6 +406,10 @@ exit 0
 }
 
 fn run_hexa(args: &[&str], home: &Path, extra_bin: Option<&Path>, cwd: &Path) -> Output {
+    run_hexa_with(args, home, extra_bin, cwd, &[])
+}
+
+fn run_hexa_with(args: &[&str], home: &Path, extra_bin: Option<&Path>, cwd: &Path, envs: &[(&str, &str)]) -> Output {
     let mut dirs: Vec<PathBuf> = Vec::new();
     if let Some(b) = extra_bin {
         dirs.push(b.to_path_buf());
@@ -416,6 +420,7 @@ fn run_hexa(args: &[&str], home: &Path, extra_bin: Option<&Path>, cwd: &Path) ->
         .args(args)
         .env("HOME", home)
         .env("PATH", path)
+        .envs(envs.iter().copied())
         .current_dir(cwd)
         .stdin(Stdio::null())
         .output()
@@ -839,7 +844,17 @@ fn s18_bootstrap_extracts_and_installs() {
     fs::create_dir_all(&home).unwrap();
     let (bin, log) = fake_claude(&root, false);
 
-    let out = run_hexa(&["bootstrap"], &home, Some(&bin), &home);
+    // This scenario is about the mods. bootstrap also checks the machine: Rust, Cargo and Bun
+    // (skipped by the flag meant for CI) and a path to a model, which it fails without (named
+    // here by a completion command). Left to the machine, the result would depend on what
+    // happens to be installed where the test runs.
+    let out = run_hexa_with(
+        &["bootstrap", "--skip-prereq"],
+        &home,
+        Some(&bin),
+        &home,
+        &[("HEXA_COMPLETION_COMMAND", "true")],
+    );
     let text = combined_output(&out);
 
     let mods_dir = assert_extracted(&home);

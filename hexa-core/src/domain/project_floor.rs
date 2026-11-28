@@ -45,6 +45,11 @@ pub fn gitignore_lines(lang: &str) -> Vec<&'static str> {
     let mut lines: Vec<&'static str> = match lang {
         "rust" => vec!["target/"],
         "ts" => vec!["node_modules/", "dist/"],
+        // Python's build output and environment (ADR-2611230850 §4).
+        "python" => vec!["__pycache__/", ".venv/"],
+        // JavaScript installs nothing and compiles nothing: only what a
+        // developer's own `npm install` would leave (ADR-2611271700 §4).
+        "js" => vec!["node_modules/"],
         _ => Vec::new(),
     };
     // One checkout's session state, never shared.

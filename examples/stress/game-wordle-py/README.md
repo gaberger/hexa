@@ -2,7 +2,7 @@
 
 A working game of Wordle, written in Python, laid out in the hexagonal
 structure hexa expects. **This is a stress fixture, not a showcase.** It exists
-to show what `hexa analyze` reports on a tree it cannot read.
+to show what `hexa analyze` reports on a Python tree with two planted violations.
 
 ## The game
 
@@ -58,97 +58,48 @@ type, and `InMemoryGameStore` really is the fallback store `start_game` uses
 when no store is passed. The game runs and all 59 tests pass with the
 violations in place. Removing them would change behaviour.
 
-A tree of this shape written in TypeScript, Go or Rust would be reported by
-`hexa analyze` as two boundary violations and graded down accordingly
-(−10 points each, so 80/100, a B).
+`hexa analyze` reports them as two boundary violations, −10 points each, and
+the cycle the first one closes, −15 (see below).
 
-## What hexa actually reports
+## What hexa reports
 
-Run on 2026-09-13 from the hexa repository root, against
-`hexa-analysis` as built in `target/release`:
+hexa reads Python since ADR-2611211324. Run on 2026-11-21 from this directory:
 
 ```
-$ ./target/release/hexa analyze examples/stress/game-wordle-py --grade A+ --exit-code
-⬡ Architecture analysis: /home/gary/projects/hexa/examples/stress/game-wordle-py
-
+$ hexa analyze .
   Project:
-    language:     unsupported (Python; hexa grades Rust, Go and TypeScript)
-    ✗ .hexa/ config
-    docs/adrs/:   none
-
-  Hex layers:
-    ✓ Domain (4 files)
-    ✓ Ports (4 files)
-    ✓ Use Cases (3 files)
-    ✓ Primary Adapters (2 files)
-    ✓ Secondary Adapters (3 files)
-    ✓ Composition root (detected)
+    language:     python (pyproject.toml)
 
   Boundary analysis:
     ‣ 19 source files scanned
-    ✓ Analysed 0 files, 0 import edges
-    ✓ 0 boundary violations
+    ⚠ Boundary violations: 2
+        src/domain/game.py → src/ports/ids.py (domain must not import from ports (use domain/value-objects))
+        src/usecases/start_game.py → src/adapters/secondary/memory_store.py (usecases may only import from domain and ports)
+    ✓ Analysed 19 files, 28 import edges
 
-  ⬡ Architecture grade: A+ — score 100/100
-    violations 0 · cycles 0 · dead exports 0 · unused ports 0
-    score = 100 − 10·violations − 15·cycles − dead exports (max 20) − unused ports (max 10)
-    A+ 95–100 · A 90–94 · B 80–89 · C 70–79 · D 60–69 · F below 60
-
-  Architectural health:
-    read next to the grade; none of these move the score
-    ✓ cohesion           0
-    ✓ duplication        0
-    ✓ god types          0
-    ✓ dead layers        0
-    ✓ orphans            0
-
-  ADR compliance:
-    ○ ADR rules NOT CHECKED — no .hexa/ADR-rules.toml — run `hexa init` to write the shipped rule set
-exit=0
+  ⬡ Architecture grade: D — score 65/100
+    violations 2 · cycles 1 · dead exports 0 · unused ports 0
+    coverage 18/19 files in a layer — score capped at 94
+      no layer      src/__init__.py
+      cycle         src/domain → src/ports
 ```
 
-## The finding
+The two violations are exactly the two planted ones, and nothing else is
+reported as one. The cycle is the first planted violation seen from the other
+side: `src/ports` imports the domain, as a port should, and the domain now
+imports `src/ports/ids.py` back. `src/__init__.py` is the package marker; it
+has no layer of its own, so the score is capped at the share of files that have
+one. Removing the two violations, and declaring `src/__init__.py` in
+`.hexa/project.json → analyze.layers`, is what an A+ would take.
 
-**A+ with `--exit-code 0` is the failure, not the pass.**
+`hexa-cli/tests/adr_2611211324_spec.rs` (S43) holds this: the example is
+graded, and its violations are exactly the two planted ones.
 
-Two real violations sit in this tree and hexa reports zero. The reason is in
-`hexa-analysis/src/domain.rs`: `Language::from_path` knows `.ts/.tsx/.js/.jsx`,
-`.go` and `.rs`, and maps everything else to `Language::Unknown`. The
-tree-sitter adapter then returns no imports for an unknown language, so the
-boundary checker in `hexa-analysis/src/boundary_checker.rs` has no edges to
-check — and "no edges checked" is printed in the same shape as "no violations
-found".
+## What hexa used to report
 
-The report is honest about two of the three facts and silent about the third:
-
-- It **does** say `language: unsupported (Python; hexa grades Rust, Go and TypeScript)`.
-- It **does** say `Analysed 0 files, 0 import edges`, next to `19 source files scanned`.
-- It **still** awards `A+ — score 100/100`, still prints `✓ 0 boundary violations`
-  with a green tick, and still **exits 0 against `--grade A+`**.
-
-So anything that consumes the exit code — a CI gate, a pre-merge hook, an agent
-checking its own work — reads a pass. The grade is computed from an empty edge
-set and presented identically to a grade computed from a complete one. That is
-silent degradation: *a gate that degrades silently is worse than no gate.* The
-claim on offer is "no boundary violations"; the claim actually earned is "no
-files were parsed".
-
-The layer counts make it worse, not better: `✓ Domain (4 files)`,
-`✓ Ports (4 files)`, `✓ Composition root (detected)` all pass, because they are
-directory-shape checks that need no parser. A reader skimming the report sees
-six green layer ticks and a green boundary line and concludes the architecture
-was verified. Only the `0 import edges` line says otherwise, and it is not the
-line the exit code comes from.
-
-### What would fix it
-
-Any of these would turn the silent pass into a loud failure:
-
-1. Refuse to grade a tree whose files are all `Language::Unknown` — exit
-   non-zero against `--grade`, the way an unreadable input should.
-2. Report the boundary line as *not checked* rather than *0 violations* when
-   `analysed files == 0` while `scanned files > 0`, and never mark it `✓`.
-3. Add a Python parser, at which point this fixture should report exactly two
-   violations and a B. That is this fixture's regression assertion.
-
-Until one of those lands, this directory is the reproduction.
+Before ADR-2611211324, the same run printed `language: unsupported (Python;
+hexa grades Rust, Go and TypeScript)` and `Analysed 0 files, 0 import edges`,
+then awarded `A+ — score 100/100` and exited 0 against `--grade A+`: a grade
+computed from an empty edge set, presented like one computed from a complete
+one. A later change withheld the grade (`NOT GRADED — 19 files scanned, 0
+parsed`); this one reads the files.

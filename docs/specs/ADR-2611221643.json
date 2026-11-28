@@ -1,0 +1,198 @@
+{
+  "adr": "ADR-2611221643",
+  "feature": "Go exports read whole by every reader",
+  "description": "Every name of a Go const or var spec is an export and a graph entity, grouped or not, and the API contract reader keeps struct fields by Go's Unicode export rule.",
+  "universal": [
+    "§1",
+    "§2",
+    "§3"
+  ],
+  "accepted": {
+    "by": "craigjohnson",
+    "sha256": "80a05c1a2ed59b71506348640aea5c0e3bbc14c4d5b8d8509e9fc5d8ecc9ec84"
+  },
+  "sealed": {
+    "hexa-cli/tests/adr_2611221643_spec_2.rs": "1eb504d4003546e79b8781a05027b648bbd6598f8c9bb5fb6214d79d001fd3b5"
+  },
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A multi-name const spec exports every name it declares, at the spec's line, as a value",
+      "given": "A Go file whose line 3 is `const A, B = 1, 2`",
+      "when": "The analyzer extracts the file's exports through AstPort::extract_exports with Language::Go",
+      "then": "There are two exports: `A` and `B`. Each is at line 3 and has kind Value",
+      "test": "hexa-cli/tests/adr_2611221643_spec_2.rs::part_1::s01_multi_name_const_spec_exports_every_name",
+      "red": "5e50cbb"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A grouped const spec with several names exports every name",
+      "given": "A Go file with `const (` on line 1, `X, Y = 1, 2` on line 2, `Z = 3` on line 3, and `)` on line 4",
+      "when": "The analyzer extracts the file's exports",
+      "then": "The exports are `X` at line 2, `Y` at line 2 and `Z` at line 3. All three have kind Value",
+      "test": "hexa-cli/tests/adr_2611221643_spec_2.rs::part_1::s02_grouped_const_spec_exports_every_name",
+      "red": "5e50cbb"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "The commas between names are not names",
+      "given": "A Go file with `const A, B, C = 1, 2, 3`",
+      "when": "The analyzer extracts the file's exports",
+      "then": "The export names are exactly `A`, `B` and `C`. No export has the name `,`, an empty name, or any name that is not one of the declared identifiers",
+      "test": "hexa-cli/tests/adr_2611221643_spec_2.rs::part_1::s03_commas_are_not_names",
+      "red": "5e50cbb"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "An unexported second name of a const spec is not an export",
+      "given": "A Go file with `const A, b = 1, 2`",
+      "when": "The analyzer extracts the file's exports",
+      "then": "`A` is an export and `b` is not"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "An unused second const name is a dead export, like the same name written alone",
+      "given": "A Go project where one file declares `const A, B = 1, 2`, and another file in the package names `A` but no file other than the declaring one names `B`",
+      "when": "The analyzer finds dead exports",
+      "then": "`B` is reported as a dead export at the spec's line, and `A` is not",
+      "test": "hexa-cli/tests/adr_2611221643_spec_2.rs::part_1::s05_unused_second_const_name_is_dead",
+      "red": "5e50cbb"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§1"
+      ],
+      "kind": "property",
+      "description": "Every exported name of every const spec is an export at the spec's line",
+      "given": "Any Go file of const specs, grouped or ungrouped, each declaring one or more identifiers on its line",
+      "when": "The analyzer extracts the file's exports",
+      "then": "The const exports are exactly the declared identifiers that Go exports, one per identifier. Each has kind Value and the line of its own spec. A const spec and a var spec with the same names produce the same set of names",
+      "test": "hexa-cli/tests/adr_2611221643_spec_2.rs::part_1::s06_every_exported_const_name_is_an_export",
+      "red": "5e50cbb"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "A struct field whose first letter is a non-ASCII upper-case letter is in the API contract",
+      "given": "A Go file declaring `type Report struct { Ärger string; Count int }` that the API contract reads",
+      "when": "The contract reader extracts the file's API facts through AstPort::extract_api",
+      "then": "The TypeDecl for `Report` has a Struct body with a field for `Ärger` and a field for `Count`",
+      "test": "hexa-cli/tests/adr_2611221643_spec_2.rs::part_1::s07_non_ascii_upper_field_is_in_contract",
+      "red": "5e50cbb"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "A field whose first character is not upper-case is not in the contract, ASCII or not",
+      "given": "A Go struct with the fields `ärger string`, `count int`, `_hidden int` and `Name string`",
+      "when": "The contract reader extracts the file's API facts",
+      "then": "The struct body has only the `Name` field. `ärger`, `count` and `_hidden` are absent"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§2"
+      ],
+      "kind": "property",
+      "description": "The contract reader and the analyzer agree on which names are exported",
+      "given": "Any Go struct field name",
+      "when": "The contract reader decides whether to keep the field",
+      "then": "It keeps the field exactly when the field's first character is a Unicode upper-case letter. This is the same verdict the analyzer gives for a top-level name spelled the same way",
+      "test": "hexa-cli/tests/adr_2611221643_spec_2.rs::part_1::s09_contract_reader_and_analyzer_agree",
+      "red": "5e50cbb"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "Grouped vars are code-graph entities",
+      "given": "A Go file with `var (` on line 1, `Alpha = 1` on line 2, `Beta = 2` on line 3, and `)` on line 4",
+      "when": "The code graph extracts the file's entities",
+      "then": "`Alpha` is an entity of kind Const at line 2, and `Beta` is an entity of kind Const at line 3",
+      "test": "hexa-cli/tests/adr_2611221643_spec_2.rs::part_1::s10_grouped_vars_are_graph_entities",
+      "red": "5e50cbb"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "Every name of a multi-name spec is a code-graph entity",
+      "given": "A Go file whose line 5 is `const P, Q = 1, 2` and whose line 6 is `var M, N = 3, 4`",
+      "when": "The code graph extracts the file's entities",
+      "then": "`P` and `Q` are entities of kind Const at line 5, and `M` and `N` are entities of kind Const at line 6",
+      "test": "hexa-cli/tests/adr_2611221643_spec_2.rs::part_1::s11_every_name_of_multi_name_spec_is_graph_entity",
+      "red": "5e50cbb"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "Graph consumers report the users of a grouped var",
+      "given": "A Go package where one file declares `Beta` inside a `var ( … )` group and another file uses `Beta`",
+      "when": "`hexa graph consumers` is asked about `Beta`",
+      "then": "The using file is listed as a consumer, and `Beta` is not reported safe to remove",
+      "test": "hexa-cli/tests/adr_2611221643_spec_2.rs::part_1::s12_graph_consumers_report_grouped_var_users",
+      "red": "5e50cbb"
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "The graph does not invent entities from separators or skip any declared name",
+      "given": "A Go file with `var (` and then `A, B = 1, 2` inside the group, closed by `)`",
+      "when": "The code graph extracts the file's entities",
+      "then": "The const/var entities are exactly `A` and `B`. There is no entity for `,`, for `var_spec_list`, or for an empty name, and neither `A` nor `B` is missing",
+      "test": "hexa-cli/tests/adr_2611221643_spec_2.rs::part_2::s13_graph_reads_every_name_of_a_grouped_var_spec_and_nothing_else",
+      "red": "5e50cbb"
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§3",
+        "§1"
+      ],
+      "kind": "property",
+      "description": "The code graph and the analyzer agree on what a Go const or var export is",
+      "given": "Any Go file of const and var declarations, grouped or not, with any number of names per spec",
+      "when": "The analyzer extracts exports and the code graph extracts entities",
+      "then": "For every exported name, the analyzer has an export of kind Value at a line L exactly when the graph has an entity of kind Const with the same name at line L",
+      "test": "hexa-cli/tests/adr_2611221643_spec_2.rs::part_2::s14_graph_and_analyzer_agree_on_go_const_and_var_exports",
+      "red": "5e50cbb"
+    }
+  ]
+}

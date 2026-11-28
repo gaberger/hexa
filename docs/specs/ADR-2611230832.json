@@ -1,0 +1,230 @@
+{
+  "adr": "ADR-2611230832",
+  "feature": "Built-in pytest runner uses the project's Python",
+  "description": "The built-in .py runner runs pytest through uv when a uv.lock is present, else through the project's virtualenv interpreter, else through python3. Nothing else about planning, judging or overrides changes.",
+  "universal": [
+    "§1",
+    "§2",
+    "§3",
+    "§4"
+  ],
+  "accepted": {
+    "by": "craigjohnson",
+    "sha256": "849ae748a376d60ed2fd22b77da5478c1ea9431b2f68da3090c1ade21e1ebeed"
+  },
+  "sealed": {
+    "hexa-exec/tests/adr_2611230832_spec.rs": "642c471529ed1a44deb901e043a63903741870fc0277893ba920368f92d9165a"
+  },
+  "red": "e2dcf5f",
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A uv project with uv.lock beside its pyproject.toml runs pytest through uv",
+      "given": "a repository whose sdk/ directory holds pyproject.toml and uv.lock, and a test sdk/tests/test_client.py defining test_connects; no test.runners.py is configured",
+      "when": "plan_test is called for sdk/tests/test_client.py::test_connects",
+      "then": "Planned::cmd runs `uv run python -m pytest` on the test file selected by `::test_connects` with `-q`, from sdk/",
+      "test": "hexa-exec/tests/adr_2611230832_spec.rs::part_1::s01_uv_project_runs_pytest_through_uv"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A uv.lock above the pytest directory, but inside the repository, still selects uv",
+      "given": "a repository whose root holds uv.lock, and whose packages/sdk/ holds pyproject.toml and a test tests/test_a.py defining test_a",
+      "when": "plan_test is called for packages/sdk/tests/test_a.py::test_a",
+      "then": "Planned::cmd uses `uv run python -m pytest`, and pytest still runs from packages/sdk/, the directory holding pyproject.toml",
+      "test": "hexa-exec/tests/adr_2611230832_spec.rs::part_1::s02_uv_lock_above_pytest_dir_within_repo_selects_uv"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A uv.lock only in a directory below or beside the pytest directory does not select uv",
+      "given": "a repository whose root holds pyproject.toml and no uv.lock, whose other/ subdirectory holds uv.lock, and a test tests/test_a.py defining test_a; there is no .venv or venv",
+      "when": "plan_test is called for tests/test_a.py::test_a",
+      "then": "Planned::cmd does not use uv. It is `python3 -m pytest …`, run from the repository root"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A uv.lock above the repository root is not looked at",
+      "given": "a repository root that has no uv.lock, no .venv and no venv, lying inside a parent directory that holds uv.lock; a test tests/test_a.py defines test_a",
+      "when": "plan_test is called with that root for tests/test_a.py::test_a",
+      "then": "Planned::cmd does not mention uv and uses python3"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§1"
+      ],
+      "kind": "property",
+      "description": "uv is used exactly when a uv.lock exists at or above the pytest directory, within the repository",
+      "given": "any repository layout and any .py test whose function is in its file, with no test.runners.py configured",
+      "when": "plan_test plans it",
+      "then": "Planned::cmd begins with `uv run python -m pytest` if and only if some directory from the pytest directory up to the repository root, inclusive, holds a uv.lock. The command runs from the same directory pytest would otherwise run from",
+      "test": "hexa-exec/tests/adr_2611230832_spec.rs::part_1::s05_uv_iff_uv_lock_in_range"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "A project with .venv/bin/python runs pytest on that interpreter",
+      "given": "a repository whose root holds pyproject.toml and .venv/bin/python, has no uv.lock anywhere at or above it, and has a test tests/test_a.py defining test_a",
+      "when": "plan_test is called for tests/test_a.py::test_a",
+      "then": "Planned::cmd invokes the .venv/bin/python interpreter with `-m pytest` on the test file selected by `::test_a` with `-q`, from the repository root, and does not invoke python3",
+      "test": "hexa-exec/tests/adr_2611230832_spec.rs::part_1::s06_dot_venv_interpreter_used"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "A venv/bin/python above the pytest directory selects that interpreter",
+      "given": "a repository whose root holds venv/bin/python, whose pkg/ holds pyproject.toml and a test tests/test_b.py defining test_b, and which has no uv.lock",
+      "when": "plan_test is called for pkg/tests/test_b.py::test_b",
+      "then": "Planned::cmd invokes the root's venv/bin/python with `-m pytest`, run from pkg/",
+      "test": "hexa-exec/tests/adr_2611230832_spec.rs::part_1::s07_root_venv_above_pytest_dir"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "uv.lock wins over a virtualenv",
+      "given": "a repository root holding pyproject.toml, uv.lock and .venv/bin/python, and a test tests/test_a.py defining test_a",
+      "when": "plan_test is called for tests/test_a.py::test_a",
+      "then": "Planned::cmd uses `uv run python -m pytest`, not .venv/bin/python",
+      "test": "hexa-exec/tests/adr_2611230832_spec.rs::part_1::s08_uv_lock_wins_over_venv"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "A .venv directory with no bin/python does not count, and neither does one below the pytest directory or above the repository root",
+      "given": "three repositories, each with pyproject.toml at its root and no uv.lock: one with a .venv/ that has no bin/python; one with tests/.venv/bin/python under its root; and one whose parent directory, outside the repository, holds .venv/bin/python",
+      "when": "plan_test is called in each for tests/test_a.py::test_a",
+      "then": "each Planned::cmd is `python3 -m pytest …`"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§2"
+      ],
+      "kind": "property",
+      "description": "A virtualenv interpreter is used exactly when there is no uv.lock and a .venv/bin/python or venv/bin/python exists at or above the pytest directory, within the repository",
+      "given": "any repository layout and any .py test whose function is in its file, with no test.runners.py configured",
+      "when": "plan_test plans it",
+      "then": "Planned::cmd runs `<dir>/bin/python -m pytest …`, for a .venv or venv directory found at or above the pytest directory, if and only if no uv.lock is found there and such an interpreter exists within the repository",
+      "test": "hexa-exec/tests/adr_2611230832_spec.rs::part_1::s10_venv_iff_no_uv_and_interpreter_in_range"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "A project with neither uv nor a virtualenv runs python3 as before",
+      "given": "a repository with pyproject.toml at its root, no uv.lock, no .venv and no venv, and a test tests/test_a.py defining test_a",
+      "when": "plan_test is called for tests/test_a.py::test_a",
+      "then": "Planned::cmd is `python3 -m pytest` on the test file selected by `::test_a` with `-q`, run from the repository root"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "python3 is not used when the project has its own environment",
+      "given": "a repository with pyproject.toml and .venv/bin/python at its root, and a test tests/test_a.py defining test_a",
+      "when": "plan_test is called for tests/test_a.py::test_a",
+      "then": "Planned::cmd does not invoke `python3 -m pytest`",
+      "test": "hexa-exec/tests/adr_2611230832_spec.rs::part_2::s12_venv_does_not_use_python3"
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§3"
+      ],
+      "kind": "property",
+      "description": "With no uv.lock and no virtualenv interpreter in reach, the command is the one ADR-2611211324 §8 built",
+      "given": "any repository layout with no uv.lock and no .venv/bin/python or venv/bin/python at or above the pytest directory within the repository, and any .py test whose function is in its file",
+      "when": "plan_test plans it",
+      "then": "Planned::cmd is `python3 -m pytest <file>::<name> -q`, run from the nearest directory holding pyproject.toml, pytest.ini, tox.ini or setup.cfg, or from the repository root if there is none"
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "A configured test.runners.py still wins over the built-in runner in a uv project",
+      "given": "a repository with uv.lock and pyproject.toml at its root, a TestConfig whose runners map has a non-empty `py` template, and a test tests/test_a.py defining test_a",
+      "when": "plan_test is called for tests/test_a.py::test_a",
+      "then": "Planned::cmd is the filled configured template and does not use `uv run python -m pytest`"
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "A missing uv fails the run with the command's own error, without falling back to python3",
+      "given": "a uv project whose sealed test tests/test_a.py::test_a would pass, run where `uv` is not on PATH",
+      "when": "the test is planned and run",
+      "then": "Planned::cmd is still the uv command, and the run is not a pass: it fails with the shell's command-not-found error for uv, and python3 is never invoked",
+      "test": "hexa-exec/tests/adr_2611230832_spec.rs::part_2::s15_missing_uv_fails_without_fallback"
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "A missing test function is still refused before any command is planned, whatever the environment",
+      "given": "a uv project whose tests/test_a.py does not define test_missing",
+      "when": "plan_test is called for tests/test_a.py::test_missing",
+      "then": "plan_test returns Err and no Planned command is produced"
+    },
+    {
+      "id": "S17",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "Judging is unchanged: two tests passing under uv is not a pass",
+      "given": "a uv project where the selected pytest run reports `2 passed`",
+      "when": "the run's output is judged",
+      "then": "the verdict is not Passed, because exactly one passing test is still required",
+      "test": "hexa-exec/tests/adr_2611230832_spec.rs::part_2::s17_two_passed_under_uv_is_not_pass"
+    },
+    {
+      "id": "S18",
+      "decision": [
+        "§4"
+      ],
+      "kind": "property",
+      "description": "Only the interpreter prefix depends on the environment; the directory, the selector, the judge and override precedence do not",
+      "given": "any repository layout and any .py test whose function is in its file, planned once as found and once with every uv.lock, .venv and venv removed",
+      "when": "plan_test plans both",
+      "then": "both plans run from the same directory, with the same `<file>::<name> -q` arguments, and are judged by the same pytest judge. When a test.runners.py template is configured, both plans are that template",
+      "test": "hexa-exec/tests/adr_2611230832_spec.rs::part_2::s18_only_interpreter_depends_on_environment"
+    }
+  ]
+}

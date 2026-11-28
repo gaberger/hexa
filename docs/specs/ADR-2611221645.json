@@ -1,0 +1,388 @@
+{
+  "adr": "ADR-2611221645",
+  "feature": "TypeScript path aliases are import edges",
+  "description": "An import specifier matching a tsconfig.json compilerOptions.paths pattern, inherited through relative extends, resolves to the project file it maps to, in both hexa analyze and the code graph; anything else is unchanged.",
+  "universal": [
+    "§1",
+    "§2",
+    "§3",
+    "§4"
+  ],
+  "accepted": {
+    "by": "craigjohnson",
+    "sha256": "872b980de78379ccebb226049e4c682e31699b12532dd6184f176b8e9de1ac3b"
+  },
+  "sealed": {
+    "hexa-cli/tests/adr_2611221645_spec.rs": "1397c3d8530a7223d5687f147dc3d241997b344e41cf2160397c37d87da3ee35",
+    "hexa-cli/tests/adr_2611221645_spec_2.rs": "615cce2c25a6115f1da9145c7f97e3ba6ff8e9006da0f4ee740d6137aff43aab"
+  },
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "An @/ alias resolves to the project file under src, and the edge is judged by that file's layer.",
+      "given": "A project whose root tsconfig.json has compilerOptions.paths {\"@/*\": [\"./src/*\"]} and no baseUrl; files src/domain/order.ts (domain) and src/adapters/secondary/http.ts (adapters/secondary); src/domain/order.ts contains `import { get } from \"@/adapters/secondary/http\"` on line 3",
+      "when": "hexa analyze runs on the project",
+      "then": "There is an ImportEdge from src/domain/order.ts to src/adapters/secondary/http.ts with from_layer domain, to_layer adapters_secondary, import_path \"@/adapters/secondary/http\" and line 3, and it is reported as a DependencyViolation",
+      "test": "hexa-cli/tests/adr_2611221645_spec.rs::s01_an_alias_resolves_to_the_project_file_and_is_judged_by_its_layer",
+      "red": "d71d65b"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "The resolved alias target tries the same extensions and index files a relative import tries.",
+      "given": "Root tsconfig.json paths {\"@/*\": [\"./src/*\"]}; the file src/lib/http/index.ts exists, and neither src/lib/http.ts nor src/lib/http.tsx exists; src/app/main.ts imports \"@/lib/http\"",
+      "when": "The imports of src/app/main.ts are resolved",
+      "then": "The import's resolved_path is src/lib/http/index.ts, which is the same file the relative import \"../lib/http\" from src/app/main.ts resolves to",
+      "test": "hexa-cli/tests/adr_2611221645_spec.rs::s02_an_alias_target_tries_the_same_extensions_and_index_files",
+      "red": "d71d65b"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "Targets are tried in order and the first that names a project file wins.",
+      "given": "Root tsconfig.json paths {\"@shared/*\": [\"./generated/*\", \"./src/shared/*\"]}; src/shared/money.ts exists, and nothing exists under generated/; src/app/a.ts imports \"@shared/money\"",
+      "when": "The import is resolved",
+      "then": "The edge's to_file is src/shared/money.ts",
+      "test": "hexa-cli/tests/adr_2611221645_spec.rs::s03_targets_are_tried_in_order_and_the_first_existing_wins",
+      "red": "d71d65b"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "When both targets name a project file, the earlier target wins.",
+      "given": "Root tsconfig.json paths {\"@shared/*\": [\"./generated/*\", \"./src/shared/*\"]}; both generated/money.ts and src/shared/money.ts exist; src/app/a.ts imports \"@shared/money\"",
+      "when": "The import is resolved",
+      "then": "The edge's to_file is generated/money.ts and not src/shared/money.ts",
+      "test": "hexa-cli/tests/adr_2611221645_spec.rs::s04_when_both_targets_exist_the_earlier_wins",
+      "red": "d71d65b"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "Targets are relative to baseUrl when it is set.",
+      "given": "Root tsconfig.json has compilerOptions {\"baseUrl\": \"./web\", \"paths\": {\"@/*\": [\"src/*\"]}}; web/src/lib/http.ts exists and src/lib/http.ts does not; web/src/app/a.ts imports \"@/lib/http\"",
+      "when": "The import is resolved",
+      "then": "The edge's to_file is web/src/lib/http.ts",
+      "test": "hexa-cli/tests/adr_2611221645_spec.rs::s05_targets_are_relative_to_base_url",
+      "red": "d71d65b"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A pattern with no wildcard matches only the exact specifier.",
+      "given": "Root tsconfig.json paths {\"config\": [\"./src/config/index.ts\"]}; src/config/index.ts exists; src/app/a.ts imports \"config\"",
+      "when": "The import is resolved",
+      "then": "The edge's to_file is src/config/index.ts",
+      "test": "hexa-cli/tests/adr_2611221645_spec.rs::s06_a_pattern_without_a_wildcard_matches_the_exact_specifier",
+      "red": "d71d65b"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "The portal reproducer reports every real violation.",
+      "given": "The fixture a local fixture, ts-path-aliases-portal, at commit b046c9f, with its tsconfig.json alias @/* -> ./src/* and the portal's layer map",
+      "when": "hexa analyze runs on the fixture",
+      "then": "5 violations are reported, among them the 3 whose import_path begins with \"@/\", where before this change 2 were reported",
+      "test": "hexa-cli/tests/adr_2611221645_spec.rs::s07_the_portal_reproducer_reports_every_real_violation",
+      "red": "d71d65b"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A relative path in baseUrl is resolved against the declaring tsconfig, not against the importing file.",
+      "given": "Root tsconfig.json paths {\"@/*\": [\"./src/*\"]}; files src/lib/http.ts and src/app/src/lib/http.ts both exist; src/app/a.ts imports \"@/lib/http\"",
+      "when": "The import is resolved",
+      "then": "The edge's to_file is src/lib/http.ts and not src/app/src/lib/http.ts",
+      "test": "hexa-cli/tests/adr_2611221645_spec.rs::s08_a_target_is_resolved_against_the_declaring_tsconfig_not_the_importer",
+      "red": "d71d65b"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A wildcard matches at most once, and a pattern's prefix must match literally.",
+      "given": "Root tsconfig.json paths {\"@/*\": [\"./src/*\"]}; src/lib/http.ts exists; src/app/a.ts imports \"@lib/http\" (no slash after @)",
+      "when": "The import is resolved",
+      "then": "No edge to src/lib/http.ts is created: the specifier does not match \"@/*\" and stays \"@lib/http\" as written",
+      "test": "hexa-cli/tests/adr_2611221645_spec.rs::s09_a_pattern_prefix_must_match_literally",
+      "red": "d71d65b"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A pattern's target that names no file is skipped, and is never taken as the edge's target.",
+      "given": "Root tsconfig.json paths {\"@/*\": [\"./missing/*\", \"./src/*\"]}; src/lib/http.ts exists and missing/lib/http.ts does not; src/app/a.ts imports \"@/lib/http\"",
+      "when": "The import is resolved",
+      "then": "The edge's to_file is src/lib/http.ts; no edge names missing/lib/http.ts or missing/lib/http",
+      "test": "hexa-cli/tests/adr_2611221645_spec.rs::s10_a_target_that_names_no_file_is_skipped",
+      "red": "d71d65b"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§1"
+      ],
+      "kind": "property",
+      "description": "An alias import and the relative import of the same file make the same edge.",
+      "given": "Any project whose root tsconfig.json maps a pattern to a target, and any importing file F and project file T such that a specifier S matches the pattern and the first target to name a project file names T, and R is a relative specifier from F that resolves to T",
+      "when": "F imports T once through S and, in a second copy of the project, once through R",
+      "then": "The two edges have the same from_file, to_file, from_layer and to_layer, and one is a violation exactly when the other is; only import_path differs",
+      "test": "hexa-cli/tests/adr_2611221645_spec.rs::s11_an_alias_import_and_the_relative_import_make_the_same_edge",
+      "red": "d71d65b"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "paths and baseUrl are inherited through a relative extends, and baseUrl is relative to the file that declares it.",
+      "given": "Root tsconfig.json is {\"extends\": \"./config/tsconfig.base.json\"} with no compilerOptions; config/tsconfig.base.json has compilerOptions {\"baseUrl\": \"..\", \"paths\": {\"@/*\": [\"src/*\"]}}; src/lib/http.ts exists; src/app/a.ts imports \"@/lib/http\"",
+      "when": "The import is resolved",
+      "then": "The edge's to_file is src/lib/http.ts, because baseUrl \"..\" is taken relative to config/",
+      "test": "hexa-cli/tests/adr_2611221645_spec.rs::s12_paths_and_base_url_are_inherited_through_a_relative_extends",
+      "red": "d71d65b"
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "Settings in the extending file win over the base.",
+      "given": "config/tsconfig.base.json has paths {\"@/*\": [\"./legacy/*\"]}; root tsconfig.json extends \"./config/tsconfig.base.json\" and has its own paths {\"@/*\": [\"./src/*\"]}; both legacy/lib/http.ts and src/lib/http.ts exist; src/app/a.ts imports \"@/lib/http\"",
+      "when": "The import is resolved",
+      "then": "The edge's to_file is src/lib/http.ts",
+      "test": "hexa-cli/tests/adr_2611221645_spec.rs::s13_settings_in_the_extending_file_win",
+      "red": "d71d65b"
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "extends is followed through more than one level.",
+      "given": "Root tsconfig.json extends \"./tsconfig.app.json\", which extends \"./tsconfig.base.json\", which declares paths {\"@/*\": [\"./src/*\"]}; src/lib/http.ts exists; src/app/a.ts imports \"@/lib/http\"",
+      "when": "The import is resolved",
+      "then": "The edge's to_file is src/lib/http.ts",
+      "test": "hexa-cli/tests/adr_2611221645_spec.rs::s14_extends_is_followed_through_more_than_one_level",
+      "red": "d71d65b"
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "An extends that names a package is not followed.",
+      "given": "Root tsconfig.json is {\"extends\": \"@tsconfig/strictest/tsconfig.json\"} with no paths of its own; node_modules/@tsconfig/strictest/tsconfig.json declares paths {\"@/*\": [\"./src/*\"]}; src/lib/http.ts exists; src/app/a.ts imports \"@/lib/http\"",
+      "when": "The import is resolved",
+      "then": "The specifier stays \"@/lib/http\" as written and no edge to src/lib/http.ts is created"
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "An inherited baseUrl is not rebased onto the extending file's directory.",
+      "given": "Root tsconfig.json extends \"./config/base.json\"; config/base.json has baseUrl \"./web\" and paths {\"@/*\": [\"src/*\"]}; both config/web/src/lib/http.ts and web/src/lib/http.ts exist; src/app/a.ts imports \"@/lib/http\"",
+      "when": "The import is resolved",
+      "then": "The edge's to_file is config/web/src/lib/http.ts, because baseUrl is taken relative to the file that declares it, and not web/src/lib/http.ts",
+      "test": "hexa-cli/tests/adr_2611221645_spec.rs::s16_an_inherited_base_url_is_not_rebased",
+      "red": "d71d65b"
+    },
+    {
+      "id": "S17",
+      "decision": [
+        "§2"
+      ],
+      "kind": "property",
+      "description": "Moving compilerOptions into a relatively extended file, with paths rewritten to the same locations, changes no edge.",
+      "given": "Any project P1 whose root tsconfig.json declares paths and baseUrl directly, and P2, identical except that the root extends a base file by relative path which declares paths and a baseUrl pointing to the same directory, and the root declares neither",
+      "when": "hexa analyze runs on P1 and on P2",
+      "then": "Both have the same set of edges (from_file, to_file, from_layer, to_layer, line) and the same violations",
+      "test": "hexa-cli/tests/adr_2611221645_spec.rs::s17_moving_compiler_options_into_an_extended_file_changes_no_edge",
+      "red": "d71d65b"
+    },
+    {
+      "id": "S18",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "A package import stays external.",
+      "given": "Root tsconfig.json paths {\"@/*\": [\"./src/*\"]}; src/app/a.ts imports \"react\" and \"@tanstack/react-query\"",
+      "when": "The imports are resolved",
+      "then": "Both resolved paths are the specifiers as written, they name no project file, and neither produces a violation"
+    },
+    {
+      "id": "S19",
+      "decision": [
+        "§3",
+        "§5"
+      ],
+      "kind": "example",
+      "description": "A project with no paths whose relative imports each name an existing .ts file as written grades exactly as before.",
+      "given": "A TypeScript project whose tsconfig.json has no compilerOptions.paths, with package imports and relative imports each of which names, with .ts added, a file that exists",
+      "when": "hexa analyze runs on it before and after this change",
+      "then": "violations, edge_count and health_score are identical"
+    },
+    {
+      "id": "S20",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "A matched alias whose targets name no project file is not invented into an edge.",
+      "given": "Root tsconfig.json paths {\"@/*\": [\"./src/*\"]}; src/lib/ghost.ts does not exist, nor any extension or index file at src/lib/ghost; src/domain/a.ts (domain) imports \"@/lib/ghost\"",
+      "when": "hexa analyze runs",
+      "then": "The specifier stays \"@/lib/ghost\" as written: no edge names src/lib/ghost.ts and no violation is reported for that import",
+      "test": "hexa-cli/tests/adr_2611221645_spec.rs::s20_an_alias_whose_targets_name_no_file_makes_no_edge",
+      "red": "d71d65b"
+    },
+    {
+      "id": "S21",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "A scoped package that only resembles an alias is not rewritten.",
+      "given": "Root tsconfig.json paths {\"@/*\": [\"./src/*\"]}; src/types/node.ts exists; src/app/a.ts imports \"@types/node\"",
+      "when": "The import is resolved",
+      "then": "The specifier stays \"@types/node\" and no edge to src/types/node.ts is created"
+    },
+    {
+      "id": "S22",
+      "decision": [
+        "§3"
+      ],
+      "kind": "property",
+      "description": "Only specifiers that resolve through a pattern change.",
+      "given": "Any project and any non-relative specifier that matches no paths pattern or whose targets name no project file",
+      "when": "It is resolved",
+      "then": "Its resolved path equals the resolution before this change"
+    },
+    {
+      "id": "S23",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "graph consumers counts files that import through an alias.",
+      "given": "Root tsconfig.json paths {\"@/*\": [\"./src/*\"]}; src/lib/http.ts; src/a.ts imports \"@/lib/http\", src/b/c.ts imports \"../lib/http\"",
+      "when": "hexa graph consumers src/lib/http.ts runs",
+      "then": "Both src/a.ts and src/b/c.ts are listed, a count of 2"
+    },
+    {
+      "id": "S24",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "The graph does not count unresolvable aliases or packages as consumers.",
+      "given": "Same tsconfig; src/x.ts imports \"@/lib/ghost\" (no such file) and \"react\"",
+      "when": "hexa graph consumers src/lib/http.ts runs",
+      "then": "src/x.ts is not listed"
+    },
+    {
+      "id": "S25",
+      "decision": [
+        "§4"
+      ],
+      "kind": "property",
+      "description": "The graph and analyze agree on every TypeScript import edge.",
+      "given": "Any TypeScript project with any tsconfig.json paths and extends",
+      "when": "hexa analyze and the code graph resolve all imports",
+      "then": "For every import, the graph's target file equals the analyze edge's to_file, so consumers of a file are exactly the from_files of edges to it",
+      "test": "hexa-cli/tests/adr_2611221645_spec.rs::s25_the_graph_and_analyze_agree_on_every_import_edge",
+      "red": "d71d65b"
+    },
+    {
+      "id": "S26",
+      "decision": [
+        "§5"
+      ],
+      "kind": "example",
+      "description": "A relative import of a .tsx file or a folder's index.ts resolves to that file.",
+      "given": "A project with no compilerOptions.paths, whose analyze.layers map the path prefix src/domain to domain and src/ui to adapters/primary; src/ui/Button.tsx and src/ui/index.ts exist and src/ui/Button.ts does not; src/domain/a.ts imports \"../ui/Button\" and src/domain/b.ts imports \"../ui\"",
+      "when": "hexa analyze runs on it",
+      "then": "The import from src/domain/a.ts has resolved_path src/ui/Button.tsx and the one from src/domain/b.ts has resolved_path src/ui/index.ts; both edges are domain to adapters/primary and both are violations",
+      "test": "hexa-cli/tests/adr_2611221645_spec_2.rs::s26_a_relative_import_of_a_tsx_file_or_a_folder_index_resolves_to_that_file",
+      "red": "b89d2c3"
+    },
+    {
+      "id": "S27",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "A relative import that names no project file is named as before.",
+      "given": "A project with no compilerOptions.paths; src/domain/a.ts imports \"../gone/thing\" and no file src/gone/thing, src/gone/thing.ts, src/gone/thing.tsx, src/gone/thing/index.ts or src/gone/thing/index.tsx exists",
+      "when": "hexa analyze runs on it",
+      "then": "The import's resolved_path is src/gone/thing.ts, as before this change, and it is not a violation"
+    },
+    {
+      "id": "S28",
+      "decision": [
+        "§5"
+      ],
+      "kind": "example",
+      "description": "A NodeNext .js specifier resolves to the .ts file of the same stem.",
+      "given": "A project with no compilerOptions.paths; src/domain/a.ts imports \"./b.js\"; src/domain/b.ts exists and src/domain/b.js does not",
+      "when": "hexa analyze runs on it",
+      "then": "The import's resolved_path is src/domain/b.ts"
+    }
+  ],
+  "amendments": [
+    {
+      "at": "2026-11-22T19:30:05.406183867+00:00",
+      "base_commit": "d71d65b28ef5eaada1c44c24d2e90f6d3c2b8037",
+      "by": "Claude (agent, in craigjohnson's session; for review)",
+      "file": "hexa-cli/tests/adr_2611221645_spec.rs",
+      "from": "ce8e6e0aedb502e2c877927a486e78b78e6a1f2b62b89c53fa88384f4cf0cd8f",
+      "reason": "S02's fixture put an alias import and a relative import of the same module in one file and expected two edges; an import edge joins two files, and hexa keeps one edge per file pair (sealed ADR-2611211324 S05 relies on it), so the builder had changed that rule for TypeScript only. The relative control moves to its own file, src/app/other.ts; the scenario (the alias tries the same extensions and index files a relative import does) and every assertion are unchanged. Agreed with craigjohnson's rule that architectural correctness comes first.",
+      "to": "1397c3d8530a7223d5687f147dc3d241997b344e41cf2160397c37d87da3ee35"
+    },
+    {
+      "at": "2026-11-22T22:50:51.286491027+00:00",
+      "base_commit": "1c57f8b07ca17f564432d725619ba85a7634bde1",
+      "by": "Claude Code agent (spec re-accepted by craigjohnson)",
+      "file": "hexa-cli/tests/adr_2611221645_spec_2.rs",
+      "from": "5151b8ccce42414db666c3d2ae0b3acb58167e12708e0f39383ef0b6d373b88c",
+      "reason": "S26's fixture named glob layer keys (src/ui/**), which analyze.layers does not read; the spec was corrected to path-prefix keys and re-accepted (339b228), and the test follows it",
+      "to": "615cce2c25a6115f1da9145c7f97e3ba6ff8e9006da0f4ee740d6137aff43aab"
+    }
+  ]
+}

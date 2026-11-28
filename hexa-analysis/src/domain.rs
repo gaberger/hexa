@@ -47,6 +47,8 @@ pub enum Language {
     TypeScript,
     Go,
     Rust,
+    /// Python, by `.py` and `.pyi` (ADR-2611211324 §1).
+    Python,
     Unknown,
 }
 
@@ -55,12 +57,15 @@ impl Language {
     pub fn from_path(path: &str) -> Self {
         if path.ends_with(".ts") || path.ends_with(".tsx")
             || path.ends_with(".js") || path.ends_with(".jsx")
+            || path.ends_with(".mjs") || path.ends_with(".cjs")
         {
             Self::TypeScript
         } else if path.ends_with(".go") {
             Self::Go
         } else if path.ends_with(".rs") {
             Self::Rust
+        } else if path.ends_with(".py") || path.ends_with(".pyi") {
+            Self::Python
         } else {
             Self::Unknown
         }
@@ -178,6 +183,10 @@ pub struct ArchAnalysisResult {
     /// naming what is wrong. Each is a rule error (ADR-2610271649 §3).
     #[serde(default)]
     pub config_errors: Vec<String>,
+    /// Python files left unread because the project does not say it is Python
+    /// (ADR-2611251938 §1). They have no findings and no part in the score.
+    #[serde(default)]
+    pub ungraded_python_files: usize,
 }
 
 /// The share of the graded files that have a layer. An import touching an
@@ -478,6 +487,9 @@ pub struct FieldDecl {
     /// Absent from the wire when empty: `omitempty`, `?:`.
     pub optional: bool,
     pub line: usize,
+    /// Why the contract cannot say what this field is, though its type reads:
+    /// an error at `line` wherever the field's class is used.
+    pub fault: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -501,6 +513,15 @@ pub enum TypeBody {
     /// Another name for a type: `pub use … as X`, `type X = Y`.
     Alias(TypeRef),
     Enum(Vec<VariantDecl>),
+    /// A schema class whose schema cannot be trusted, and why: an error at
+    /// its declaration wherever it is used (ADR-2611261303 §4).
+    Refused(String),
+    /// A name that declares no schema, and what it is: an error where it is
+    /// used.
+    Foreign(String),
+    /// A class with these bases that says it is no kind of schema class: a
+    /// refused one if a base is a schema class, and no schema otherwise.
+    Derived(Vec<String>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -518,6 +539,8 @@ pub struct ApiFacts {
     pub ports: Vec<ApiPortDecl>,
     pub types: Vec<TypeDecl>,
     pub stray_tags: Vec<usize>,
+    /// What the parser could not read of a tagged port: (line, why).
+    pub faults: Vec<(usize, String)>,
 }
 
 /// One thing wrong with the contract, where it is written.
@@ -770,7 +793,7 @@ pub struct AdapterMap {
 fn under_key(path: &str, key: &str) -> bool {
     let under = |k: &str| path == k || path.strip_prefix(k).is_some_and(|rest| rest.starts_with('/'));
     under(key)
-        || [".rs", ".ts", ".tsx", ".go"]
+        || [".rs", ".ts", ".tsx", ".go", ".py"]
             .iter()
             .find_map(|ext| key.strip_suffix(ext))
             .is_some_and(under)
@@ -845,7 +868,7 @@ impl AdapterMap {
             if let Some(i) = at {
                 let base = i + side.len();
                 let first = path[base..].split('/').next().unwrap_or("");
-                let first = [".rs", ".ts", ".tsx", ".go"]
+                let first = [".rs", ".ts", ".tsx", ".go", ".py"]
                     .iter()
                     .find_map(|ext| first.strip_suffix(ext))
                     .unwrap_or(first);

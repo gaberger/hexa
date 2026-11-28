@@ -1,0 +1,279 @@
+{
+  "adr": "ADR-2611270420",
+  "feature": "hexa grades JavaScript as it grades TypeScript",
+  "exempt": [
+    {
+      "decision": "§8",
+      "reason": "§8 says what the decision does not cover (a JavaScript scaffold and the type-based checks); it makes no behaviour to test"
+    }
+  ],
+  "accepted": {
+    "by": "craigjohnson",
+    "sha256": "45283305bafd8bcf2ffdf1fcce9f5223a83d6de9636a5cb26f9d0b064bfc485d"
+  },
+  "sealed": {
+    "hexa-cli/tests/adr_2611270420_spec.rs": "71a4933a0694ab0f3e47ea532e0348f98613c5152abc2f6fb8abf2a261af5d2c"
+  },
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A JavaScript file in domain/ that imports an adapter is a boundary violation in the grade.",
+      "given": "A TypeScript-style project (package.json) with src/domain/, src/adapters/secondary/ and src/usecases/; src/domain/order.js contains an ES import of ../adapters/secondary/http.js; src/adapters/secondary/http.js exists",
+      "when": "hexa analyze runs on the project",
+      "then": "The report names a boundary violation from src/domain/order.js to src/adapters/secondary/http.js, the violation count in the grade includes it, and src/domain/order.js counts in the graded and in-a-layer files.",
+      "test": "hexa-cli/tests/adr_2611270420_spec.rs::s01_a_js_file_in_domain_importing_an_adapter_is_a_boundary_violation",
+      "red": "eee153c"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A .mjs and a .cjs file are graded source.",
+      "given": "A TypeScript-style project (package.json) with src/domain/, src/adapters/secondary/ and src/usecases/; src/domain/a.mjs and src/domain/b.cjs each import ../adapters/secondary/http.js (src/adapters/secondary/http.js exists)",
+      "when": "hexa analyze runs on the project",
+      "then": "Both src/domain/a.mjs and src/domain/b.cjs are reported as boundary violations and are counted among the files in a layer.",
+      "test": "hexa-cli/tests/adr_2611270420_spec.rs::s02_a_mjs_and_a_cjs_file_are_graded_source",
+      "red": "eee153c"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A JavaScript file under node_modules, or one removed by analyze.exclude, is not graded.",
+      "given": "A TypeScript-style project (package.json) with src/domain/, src/adapters/secondary/ and src/usecases/; node_modules/pkg/x.js and src/domain/legacy.js each import an adapter; .hexa/project.json lists src/domain/legacy.js in analyze.exclude",
+      "when": "hexa analyze runs on the project",
+      "then": "Neither file is reported as a violation or counted as a graded file; the excluded file is counted as excluded, as for every language.",
+      "test": "hexa-cli/tests/adr_2611270420_spec.rs::s03_node_modules_and_excluded_javascript_are_not_graded",
+      "red": "eee153c"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "A CommonJS require with a string literal is an import edge.",
+      "given": "A TypeScript-style project (package.json) with src/domain/, src/adapters/secondary/ and src/usecases/; src/domain/order.js contains const h = require('../adapters/secondary/http.js'); src/adapters/secondary/http.js exists",
+      "when": "hexa analyze runs on the project",
+      "then": "There is an import edge from src/domain/order.js to src/adapters/secondary/http.js and it is reported as a boundary violation.",
+      "test": "hexa-cli/tests/adr_2611270420_spec.rs::s04_a_commonjs_require_with_a_string_literal_is_an_import_edge",
+      "red": "eee153c"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "A require whose argument is not a string literal makes no edge and is not guessed.",
+      "given": "A TypeScript-style project (package.json) with src/domain/, src/adapters/secondary/ and src/usecases/; src/domain/order.js contains const h = require(name) and const k = require('./' + dir + '/x')",
+      "when": "hexa analyze runs on the project",
+      "then": "No import edge is created from those calls, no violation is reported for them, and hexa does not fail.",
+      "test": "hexa-cli/tests/adr_2611270420_spec.rs::s05_a_non_literal_require_makes_no_edge",
+      "red": "eee153c"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "A relative specifier without an extension resolves across the six extensions and to a folder's index.",
+      "given": "A TypeScript-style project (package.json) with src/domain/, src/adapters/secondary/ and src/usecases/; src/domain/order.js imports ./item and ./pricing; src/domain/item.mjs and src/domain/pricing/index.cjs exist",
+      "when": "hexa analyze runs on the project",
+      "then": "There are import edges from src/domain/order.js to src/domain/item.mjs and to src/domain/pricing/index.cjs, and neither is reported as unresolved.",
+      "test": "hexa-cli/tests/adr_2611270420_spec.rs::s06_an_extensionless_specifier_resolves_across_extensions_and_index",
+      "red": "eee153c"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "A .js specifier resolves to the .ts file the compiler would map it to when that file exists, else to the .js file.",
+      "given": "A TypeScript-style project (package.json) with src/domain/, src/adapters/secondary/ and src/usecases/; src/usecases/a.ts imports ./b.js and ./c.js; src/usecases/b.ts exists and src/usecases/c.js exists",
+      "when": "hexa analyze runs on the project",
+      "then": "The edge for ./b.js goes to src/usecases/b.ts and the edge for ./c.js goes to src/usecases/c.js.",
+      "test": "hexa-cli/tests/adr_2611270420_spec.rs::s07_a_js_specifier_maps_to_the_ts_file_else_the_js_file",
+      "red": "eee153c"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "A specifier that names no project file is unchanged, and stays external.",
+      "given": "A TypeScript-style project (package.json) with src/domain/, src/adapters/secondary/ and src/usecases/; src/domain/order.js contains require('lodash') and import x from 'left-pad'; there is no project file of those names",
+      "when": "hexa analyze runs on the project",
+      "then": "No import edge to a project file is created and no violation is reported for them.",
+      "test": "hexa-cli/tests/adr_2611270420_spec.rs::s08_a_package_specifier_stays_external",
+      "red": "eee153c"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "A jsconfig.json paths map is read as a tsconfig.json one is.",
+      "given": "A TypeScript-style project (package.json) with src/domain/, src/adapters/secondary/ and src/usecases/; jsconfig.json has compilerOptions.paths {'@/*': ['./src/*']}; src/domain/order.js imports '@/adapters/secondary/http' and src/adapters/secondary/http.js exists",
+      "when": "hexa analyze runs on the project",
+      "then": "The import resolves to src/adapters/secondary/http.js and is reported as a boundary violation.",
+      "test": "hexa-cli/tests/adr_2611270420_spec.rs::s09_a_jsconfig_paths_map_is_read",
+      "red": "eee153c"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "A paths alias that matches a pattern but names no project file is left as written.",
+      "given": "A TypeScript-style project (package.json) with src/domain/, src/adapters/secondary/ and src/usecases/; jsconfig.json maps '@/*' to ./src/*; src/domain/order.js imports '@/missing/thing'; no such file exists",
+      "when": "hexa analyze runs on the project",
+      "then": "No edge to a project file is created and no violation is reported for that import.",
+      "test": "hexa-cli/tests/adr_2611270420_spec.rs::s10_an_alias_naming_no_project_file_is_left_as_written",
+      "red": "eee153c"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "module.exports and exports.x define the module's exports for dead-export detection.",
+      "given": "A TypeScript-style project (package.json) with src/domain/, src/adapters/secondary/ and src/usecases/; src/usecases/util.js contains module.exports = { used, unused } and exports.extra = 1; src/usecases/app.js requires ./util and reads only .used",
+      "when": "hexa analyze runs on the project",
+      "then": "unused and extra are reported as dead exports of src/usecases/util.js and used is not.",
+      "test": "hexa-cli/tests/adr_2611270420_spec.rs::s11_commonjs_exports_are_exports",
+      "red": "eee153c"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "An export another file imports is not dead, in any spelling.",
+      "given": "A TypeScript-style project (package.json) with src/domain/, src/adapters/secondary/ and src/usecases/; src/usecases/util.js has module.exports = { a } and export const b = 1; src/usecases/app.js does const { a } = require('./util') and src/usecases/main.js does import { b } from './util.js'",
+      "when": "hexa analyze runs on the project",
+      "then": "Neither a nor b is reported as a dead export.",
+      "test": "hexa-cli/tests/adr_2611270420_spec.rs::s12_an_imported_export_is_not_dead_in_any_spelling",
+      "red": "eee153c"
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§5"
+      ],
+      "kind": "example",
+      "description": "Test files in the four extensions and under __tests__ are test files, and entry points are not dead.",
+      "given": "A TypeScript-style project (package.json) with src/domain/, src/adapters/secondary/ and src/usecases/; src/usecases/x.test.js, src/usecases/y.spec.mjs and src/usecases/__tests__/z.cjs exist; src/usecases/index.js exports a name nothing imports",
+      "when": "hexa analyze runs on the project",
+      "then": "The three files are treated as test files, not as source with dead exports, and the export of src/usecases/index.js is not reported as dead.",
+      "test": "hexa-cli/tests/adr_2611270420_spec.rs::s13_test_files_and_entry_points",
+      "red": "eee153c"
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "A file whose name merely contains test is not a test file, and an ordinary file's unused export is dead.",
+      "given": "A TypeScript-style project (package.json) with src/domain/, src/adapters/secondary/ and src/usecases/; src/usecases/latest.js and src/usecases/contest.js exist; src/usecases/helper.js exports a name nothing imports",
+      "when": "hexa analyze runs on the project",
+      "then": "latest.js and contest.js are graded as source, and the unused export of helper.js is reported as dead.",
+      "test": "hexa-cli/tests/adr_2611270420_spec.rs::s14_a_name_containing_test_is_not_a_test_file",
+      "red": "eee153c"
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§6"
+      ],
+      "kind": "example",
+      "description": "An fs or node: import or require in domain/ is a policy violation under the shipped deny list.",
+      "given": "A TypeScript-style project (package.json) with src/domain/, src/adapters/secondary/ and src/usecases/; the shipped .hexa/ADR-rules.toml import policy; src/domain/order.js contains require('fs') and import cp from 'node:child_process'",
+      "when": "hexa analyze runs on the project",
+      "then": "Both are reported as import-policy violations of the domain.",
+      "test": "hexa-cli/tests/adr_2611270420_spec.rs::s15_fs_and_node_imports_in_the_domain_are_policy_violations",
+      "red": "eee153c"
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§6"
+      ],
+      "kind": "negative",
+      "description": "The same fs import in an adapter is allowed.",
+      "given": "A TypeScript-style project (package.json) with src/domain/, src/adapters/secondary/ and src/usecases/; the shipped .hexa/ADR-rules.toml import policy; src/adapters/secondary/store.js contains require('fs')",
+      "when": "hexa analyze runs on the project",
+      "then": "No import-policy violation is reported for it.",
+      "test": "hexa-cli/tests/adr_2611270420_spec.rs::s16_an_fs_import_in_an_adapter_is_allowed",
+      "red": "eee153c"
+    },
+    {
+      "id": "S17",
+      "decision": [
+        "§6"
+      ],
+      "kind": "example",
+      "description": "@hexa:public keeps a JavaScript export out of the dead-export check.",
+      "given": "A TypeScript-style project (package.json) with src/domain/, src/adapters/secondary/ and src/usecases/; src/usecases/api.js has a line comment @hexa:public above exports.entry = run, and nothing imports entry",
+      "when": "hexa analyze runs on the project",
+      "then": "entry is not reported as a dead export.",
+      "test": "hexa-cli/tests/adr_2611270420_spec.rs::s17_hexa_public_keeps_a_javascript_export_alive",
+      "red": "eee153c"
+    },
+    {
+      "id": "S18",
+      "decision": [
+        "§6"
+      ],
+      "kind": "negative",
+      "description": "Without the tag the same export is dead.",
+      "given": "A TypeScript-style project (package.json) with src/domain/, src/adapters/secondary/ and src/usecases/; src/usecases/api.js has exports.entry = run with no tag and nothing imports entry",
+      "when": "hexa analyze runs on the project",
+      "then": "entry is reported as a dead export.",
+      "test": "hexa-cli/tests/adr_2611270420_spec.rs::s18_without_the_tag_the_export_is_dead",
+      "red": "eee153c"
+    },
+    {
+      "id": "S19",
+      "decision": [
+        "§7"
+      ],
+      "kind": "example",
+      "description": "hexa analyze --file checks one JavaScript file.",
+      "given": "A TypeScript-style project (package.json) with src/domain/, src/adapters/secondary/ and src/usecases/; src/domain/order.js imports ../adapters/secondary/http.js (which exists)",
+      "when": "hexa analyze . --file src/domain/order.js runs",
+      "then": "It reports the boundary violation for that file and exits 1.",
+      "test": "hexa-cli/tests/adr_2611270420_spec.rs::s19_analyze_file_checks_one_javascript_file",
+      "red": "eee153c"
+    },
+    {
+      "id": "S20",
+      "decision": [
+        "§7"
+      ],
+      "kind": "negative",
+      "description": "A clean JavaScript file passes --file, and a JavaScript file is never reported clean without being read.",
+      "given": "A TypeScript-style project (package.json) with src/domain/, src/adapters/secondary/ and src/usecases/; src/domain/clean.js imports only ./item.js (src/domain/item.js exists); hexa analyze . --file src/domain/clean.js runs; and in the same project a JavaScript file in analyze.exclude is also present",
+      "when": "hexa analyze . and hexa analyze . --file src/domain/clean.js run",
+      "then": "--file exits 0 for the clean file; hexa analyze . counts the excluded JavaScript file as excluded, not as graded and not as clean.",
+      "test": "hexa-cli/tests/adr_2611270420_spec.rs::s20_a_clean_file_passes_and_an_excluded_one_is_not_graded",
+      "red": "eee153c"
+    }
+  ]
+}

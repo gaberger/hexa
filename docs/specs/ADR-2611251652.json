@@ -1,0 +1,356 @@
+{
+  "adr": "ADR-2611251652",
+  "feature": "anchored-test-binding",
+  "description": "A scenario's test binding is anchored in the spec's history and changes only by a recorded move.",
+  "universal": [
+    "§1",
+    "§2",
+    "§3",
+    "§4"
+  ],
+  "accepted": {
+    "by": "craigjohnson",
+    "sha256": "59e642ad27dc64a98ad0581f4bc276dfdf939ae6111ae848057d17a4cb99d27c"
+  },
+  "sealed": {
+    "hexa-cli/tests/adr_2611251652_spec.rs": "48ab15ffa2e67d50b505fbc00ccf1fb419357d0dbb00b2d1ad663ffd5d953f44"
+  },
+  "red": "a68a476",
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "The anchor is the oldest test ref recorded under the current accepted text.",
+      "given": "A history, oldest first, of revisions whose acceptance holds, all with the same text for scenario X: first X is unbound, then bound to `ci/a.sh`, then bound to `ci/b.sh`. The current X has that text and is bound to `ci/c.sh`.",
+      "when": "binding_anchor(current, history) is called.",
+      "then": "It returns Some(\"ci/a.sh\"). It returns neither the newer ref `ci/b.sh` nor the current ref `ci/c.sh`.",
+      "test": "hexa-cli/tests/adr_2611251652_spec.rs::part_1::s01_anchor_is_oldest_ref_under_current_text"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A revision in which the scenario is pending does not end the search.",
+      "given": "Revisions whose acceptance holds, with the same text for X, oldest first: bound to `ci/a.sh`, then pending (no test), then bound to `ci/b.sh`.",
+      "when": "binding_anchor is called for the current X with that text.",
+      "then": "It returns Some(\"ci/a.sh\").",
+      "test": "hexa-cli/tests/adr_2611251652_spec.rs::part_1::s02_pending_revision_does_not_end_the_search"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "The red commit is not part of a scenario's text.",
+      "given": "An older accepted revision binds X to `ci/a.sh`. A newer accepted revision and the current X bind it to `ci/b.sh`. All seven text fields are equal, but the scenario's `red` value differs between the revisions.",
+      "when": "binding_anchor is called.",
+      "then": "It returns Some(\"ci/a.sh\").",
+      "test": "hexa-cli/tests/adr_2611251652_spec.rs::part_1::s03_red_commit_is_not_part_of_the_text"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A ref recorded before the scenario last took its current accepted text is not the anchor.",
+      "given": "Revisions whose acceptance holds, oldest first: X has the current text and is bound to `ci/a.sh`; X has a different `then` and is bound to `ci/b.sh`; X has the current text again and is bound to `ci/c.sh`.",
+      "when": "binding_anchor is called for the current X.",
+      "then": "It returns Some(\"ci/c.sh\"). The accepted revision with different text ends the search, so `ci/a.sh` is not returned.",
+      "test": "hexa-cli/tests/adr_2611251652_spec.rs::part_1::s04_ref_before_the_current_text_was_last_taken_is_not_the_anchor"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "An unaccepted text edit that is later reverted does not move the anchor.",
+      "given": "Oldest first: an accepted revision binds X, with the current text, to `ci/a.sh`; a revision whose acceptance does not hold changes X's `then`; an accepted revision restores the text and binds X to `ci/b.sh`.",
+      "when": "binding_anchor is called for the current X.",
+      "then": "It returns Some(\"ci/a.sh\").",
+      "test": "hexa-cli/tests/adr_2611251652_spec.rs::part_1::s05_reverted_unaccepted_edit_does_not_move_the_anchor"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A scenario with no bound revision under its current text has no anchor.",
+      "given": "Three cases: an empty history; a history of accepted revisions in which X, with the current text, is always pending; and a history in which the only bound revision is an accepted one with different text for X, followed by a pending accepted revision with the current text. In every case the current X holds a test ref.",
+      "when": "binding_anchor is called for each case.",
+      "then": "Each call returns None. The current ref never becomes the anchor.",
+      "test": "hexa-cli/tests/adr_2611251652_spec.rs::part_1::s06_no_bound_revision_under_current_text_means_no_anchor"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§1"
+      ],
+      "kind": "property",
+      "description": "Only a change to a text field in an accepted revision ends the anchor search.",
+      "given": "Any history in which an accepted revision binds X to ref A, followed by any number of accepted revisions with the same text that are pending or bound to any refs, and any revisions whose acceptance does not hold, with any text for X.",
+      "when": "binding_anchor is called for the current X with that text, whatever its current test ref. It is then called again after appending an accepted revision that differs in any one of decision, kind, description, given, when or then, followed only by pending accepted revisions with the current text.",
+      "then": "The first call always returns Some(A). The second always returns None.",
+      "test": "hexa-cli/tests/adr_2611251652_spec.rs::part_1::s07_only_an_accepted_text_change_ends_the_search"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "Recorded moves carry the anchor to the current ref, oldest first.",
+      "given": "Anchor `a`; moves for X from `a` to `b` and then from `b` to `c`, with moves for other scenarios interleaved; current ref `c`.",
+      "when": "judge_binding(\"X\", Some(\"a\"), moves, Some(\"c\")) is called.",
+      "then": "It returns Holds. The other scenarios' moves have no effect.",
+      "test": "hexa-cli/tests/adr_2611251652_spec.rs::part_1::s08_recorded_moves_carry_the_anchor_to_the_current_ref"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "A scenario with no anchor holds, and so does a pending one.",
+      "given": "One scenario with no anchor and a current ref, and another with an anchor `a` and no current ref.",
+      "when": "judge_binding is called for each.",
+      "then": "Both return Holds.",
+      "test": "hexa-cli/tests/adr_2611251652_spec.rs::part_1::s09_no_anchor_and_pending_both_hold"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "A ref changed without a record is judged moved.",
+      "given": "Anchor `ci/t.sh`, current ref `ci/t3.sh`, and either no moves or only a move from `ci/t.sh` to `ci/t3.sh` recorded for a different scenario. In a second case, a recorded move reaches `ci/t2.sh` while the current ref is still `ci/t.sh`.",
+      "when": "judge_binding is called.",
+      "then": "The first case returns Moved { expected: \"ci/t.sh\" }. The second returns Moved { expected: \"ci/t2.sh\" }.",
+      "test": "hexa-cli/tests/adr_2611251652_spec.rs::part_1::s10_unrecorded_change_is_judged_moved"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "Refs are compared whole.",
+      "given": "Anchor `ci/t.sh::one` and current ref `ci/t.sh::two`, with the same file and no moves.",
+      "when": "judge_binding is called.",
+      "then": "It returns Moved { expected: \"ci/t.sh::one\" }.",
+      "test": "hexa-cli/tests/adr_2611251652_spec.rs::part_2::s11_refs_are_compared_whole"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "A move that does not continue the chain breaks it, even if it ends at the current ref.",
+      "given": "A moves list in which index 0 belongs to another scenario, index 1 moves X from `a` to `b`, and index 2 moves X from `z` to `c`. The anchor is `a` and the current ref is `c`.",
+      "when": "judge_binding is called for X.",
+      "then": "It returns BrokenChain(2), the index in the whole moves list.",
+      "test": "hexa-cli/tests/adr_2611251652_spec.rs::part_2::s12_a_discontinuous_move_breaks_the_chain"
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "Verify fails on a hand-moved binding in every mode.",
+      "given": "A repository with an accepted, sealed spec whose scenario X was committed bound to `ci/t.sh`. The test is moved to `ci/t3.sh` and weakened so that it passes now, and the spec's test ref and `sealed` entry are rewritten by hand with no move record. The change is committed.",
+      "when": "`hexa spec verify` is run plain, with --ci, with --prove, and with --prove --ci.",
+      "then": "Every run exits non-zero and names X, the expected ref `ci/t.sh` and the held ref `ci/t3.sh`.",
+      "test": "hexa-cli/tests/adr_2611251652_spec.rs::part_2::s13_verify_fails_on_a_hand_moved_binding"
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "Verify fails on a broken move chain.",
+      "given": "A spec whose history anchors X to ref `a`. A hand-written move for X has a `from` other than `a` and a `to` equal to X's current ref.",
+      "when": "`hexa spec verify` is run with and without --ci, and with and without --prove.",
+      "then": "Every run exits non-zero, reports a broken chain, and names X, the expected ref and the held ref.",
+      "test": "hexa-cli/tests/adr_2611251652_spec.rs::part_2::s14_verify_fails_on_a_broken_chain"
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "Verify reports the number of moves, and verbose output lists their reasons.",
+      "given": "A spec with a valid chain of two recorded moves with distinct reasons, whose tests and seals otherwise hold.",
+      "when": "`hexa spec verify` is run, then run again with --verbose.",
+      "then": "Both runs exit 0 and report 2 moves. The --verbose run lists each move with its reason.",
+      "test": "hexa-cli/tests/adr_2611251652_spec.rs::part_2::s15_verify_counts_moves_and_verbose_lists_reasons"
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§2"
+      ],
+      "kind": "property",
+      "description": "A binding holds only when the scenario's own moves form a chain from the anchor to the current ref.",
+      "given": "Any scenario id, any anchor, any list of moves for any scenarios, and any current ref.",
+      "when": "judge_binding is called.",
+      "then": "If the anchor or the current ref is absent, the result is Holds. Otherwise, apply only this scenario's moves in order, starting at the anchor. The first move whose `from` is not the ref reached gives BrokenChain with its index in the whole list. With no such move, the result is Holds if the current ref equals the ref reached, and otherwise Moved with the reached ref as `expected`. Adding, removing or changing other scenarios' moves never changes the verdict, apart from the index shift in BrokenChain.",
+      "test": "hexa-cli/tests/adr_2611251652_spec.rs::part_2::s16_binding_property"
+    },
+    {
+      "id": "S17",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "Re-proving named scenarios into a new file records their moves in the same commit.",
+      "given": "An accepted spec with anchored scenarios X and Y.",
+      "when": "`hexa spec tests --only` is run for X with --because \"<why>\", and it changes X's ref.",
+      "then": "The commit that changes the ref also adds exactly one move for X. Its `from` is the old whole ref, its `to` is the new whole ref, its reason is \"<why>\", and by, at and base_commit are filled in. No move is added for Y, and `hexa spec verify` reports no binding failure.",
+      "test": "hexa-cli/tests/adr_2611251652_spec.rs::part_2::s17_only_records_a_move_in_the_same_commit"
+    },
+    {
+      "id": "S18",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "Replacing a generated test records a move for each scenario whose ref changes.",
+      "given": "Several anchored scenarios whose refs will change when regenerated.",
+      "when": "`hexa spec tests --replace` is run with --because \"<why>\".",
+      "then": "The commit that changes the refs holds exactly one new move per changed ref, each with reason \"<why>\".",
+      "test": "hexa-cli/tests/adr_2611251652_spec.rs::part_2::s18_replace_records_a_move_per_changed_ref"
+    },
+    {
+      "id": "S19",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "Re-proving a scenario whose accepted text changed records no move.",
+      "given": "Scenario X was bound under earlier text. Its text has since been changed and accepted, so it has no anchor.",
+      "when": "X is re-proved and bound to a different ref.",
+      "then": "The binding is accepted, no move is added for X, and `hexa spec verify` reports no binding failure for X.",
+      "test": "hexa-cli/tests/adr_2611251652_spec.rs::part_2::s19_changed_text_has_no_anchor_and_records_no_move"
+    },
+    {
+      "id": "S20",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "Spec red cannot move an anchored binding.",
+      "given": "Scenario X is anchored to ref `a`. In one case the spec still holds `a`; in another X's ref has been cleared by hand, leaving it pending.",
+      "when": "`hexa spec red` is asked to bind X to a different ref `b`.",
+      "then": "In both cases the command refuses and names `hexa spec move`. X is not bound to `b`, and no move is written.",
+      "test": "hexa-cli/tests/adr_2611251652_spec.rs::part_2::s20_spec_red_cannot_move_an_anchored_binding"
+    },
+    {
+      "id": "S21",
+      "decision": [
+        "§3"
+      ],
+      "kind": "property",
+      "description": "Moving verbs write exactly one move for each scenario whose ref changes.",
+      "given": "Any set of anchored and unanchored scenarios processed by `hexa spec tests --only` or `--replace` with a reason, with any subset of refs ending up changed.",
+      "when": "The verb commits its result.",
+      "then": "Each anchored scenario whose ref changed gains exactly one move from its old ref to its new ref, with the given reason. Scenarios whose ref did not change, and scenarios with no anchor, gain none. Earlier moves keep their order and content.",
+      "test": "hexa-cli/tests/adr_2611251652_spec.rs::part_3::s21_moving_verbs_write_one_move_per_changed_ref"
+    },
+    {
+      "id": "S22",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "Without confirmation, spec move shows the diff and the confirm command and writes nothing.",
+      "given": "An accepted spec with X anchored to a ref in old file F, and a different new file G containing the target test. F has since been deleted from the working tree but has a version in history.",
+      "when": "`hexa spec move <ADR> --scenario X=<ref in G> --reason \"<why>\"` is run.",
+      "then": "It prints a unified diff from F's last version in history to G, then a command ending in `--confirm <sha256 of G>`. The spec JSON and every other file are unchanged.",
+      "test": "hexa-cli/tests/adr_2611251652_spec.rs::part_3::s22_preview_shows_diff_and_writes_nothing"
+    },
+    {
+      "id": "S23",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "Confirming with the current hash records one move and nothing else.",
+      "given": "The preview for moving X, where another scenario Y also needs a move and G is unchanged since the preview.",
+      "when": "The printed confirm command is run.",
+      "then": "Exactly one move is appended, for X, with `from` the ref the anchored chain reaches, `to` the requested whole ref and the given reason. No move is added for Y. No test file, `sealed` entry or acceptance is changed.",
+      "test": "hexa-cli/tests/adr_2611251652_spec.rs::part_3::s23_confirm_records_one_move_for_the_named_scenario"
+    },
+    {
+      "id": "S24",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "A move already present in history can be recorded afterwards.",
+      "given": "History anchors X to `a`. An earlier commit changed X's ref to `b` without a record, so verify fails.",
+      "when": "`hexa spec move` is run for X=`b` with a reason, then confirmed with the new file's hash. When the chain has several recorded moves, the diff starts from the file that the chain reaches.",
+      "then": "A move from the ref the chain reaches to `b` is recorded, with X's ref still `b`, and verify no longer reports a binding failure for X. Test files, seals and acceptance are unchanged.",
+      "test": "hexa-cli/tests/adr_2611251652_spec.rs::part_3::s24_a_move_already_in_history_can_be_recorded"
+    },
+    {
+      "id": "S25",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "A confirmation hash that does not match the new file now is refused.",
+      "given": "A move was previewed, then the new file was edited. A separate attempt uses an arbitrary wrong hash.",
+      "when": "`hexa spec move` is run with the stale hash, and with the wrong hash.",
+      "then": "Neither attempt records a move or changes the spec.",
+      "test": "hexa-cli/tests/adr_2611251652_spec.rs::part_3::s25_a_stale_or_wrong_hash_is_refused"
+    },
+    {
+      "id": "S26",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "Spec move refuses invalid requests, with or without confirmation.",
+      "given": "Each of these separately: an empty reason; a spec whose acceptance does not hold; a target ref whose test is not in the named file; an old file with no version in history; and a scenario whose anchored chain already reaches the requested ref.",
+      "when": "`hexa spec move` is run for each case, both without --confirm and with the new file's correct hash.",
+      "then": "Every run is refused, and no move or other change is written.",
+      "test": "hexa-cli/tests/adr_2611251652_spec.rs::part_3::s26_invalid_requests_are_refused"
+    },
+    {
+      "id": "S27",
+      "decision": [
+        "§4"
+      ],
+      "kind": "property",
+      "description": "Spec move writes only a correctly confirmed record for one scenario.",
+      "given": "Any otherwise valid move request and any confirmation value: absent, any string other than the new file's current SHA-256, or that hash.",
+      "when": "`hexa spec move` is run.",
+      "then": "The spec changes only if the value equals the current hash. In that case, the only change in behaviour or records is one appended move for the named scenario, which also takes the requested ref if it did not already hold it. No run changes a test file, a seal or the acceptance.",
+      "test": "hexa-cli/tests/adr_2611251652_spec.rs::part_3::s27_only_the_current_hash_writes_and_only_one_record"
+    }
+  ],
+  "amendments": [
+    {
+      "at": "2026-11-26T00:14:13.317662673+00:00",
+      "base_commit": "a68a476eb58f8ee22df130b920d37d2db8f1cc61",
+      "by": "Claude Code agent (for review)",
+      "file": "hexa-cli/tests/adr_2611251652_spec.rs",
+      "from": "f714e3278eed155afe0438826040c4d32f79efbdb0e0d408725d71b332413186",
+      "reason": "Fixture defects only, no assertion changed: the spec_red helper called `hexa spec red` without its required commit; S19 did not seal the newly bound file, as spec red asks; S21 read the committed spec after --replace without committing it",
+      "to": "48ab15ffa2e67d50b505fbc00ccf1fb419357d0dbb00b2d1ad663ffd5d953f44"
+    }
+  ]
+}

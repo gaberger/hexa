@@ -184,7 +184,8 @@ With the hooks installed, a session opens by printing where the work stands,
 a feature-sized edit with no recorded gate is stopped, and a code-writing
 subagent must run in its own worktree.
 
-It scaffolds Rust, Go and TypeScript. `hexa --help` lists every verb.
+It scaffolds and grades Rust, Go, TypeScript, Python and JavaScript.
+`hexa --help` lists every verb.
 [Getting started](docs/GETTING-STARTED.md) has the longer version.
 
 ---
@@ -304,6 +305,14 @@ The cost is real and it is measured below. Strictness makes the gate stronger
 and the task harder. Weaker models fail Rust and Go where they pass TypeScript.
 That trade is the point. A gate a model cannot pass is doing its job.
 
+Python is graded, not scaffolded (ADR-2611211324). `hexa analyze` reads its
+imports, exports and layers, the evidence reader counts pytest and unittest,
+and a `.py` test has a built-in pytest runner. What a static reader cannot see
+it does not grade: imports made at run time (`importlib`, Django's string-named
+apps, Nautobot's `register_jobs`). The API contract (`@hexa:api`) is not read in
+Python, and the Rust-only health detectors stay Rust-only. With no compiler, make the type checker part of the test run (`pytest --mypy`,
+with the `pytest-mypy` plugin and strict mypy); `/hexa-workflow` says how.
+
 ---
 
 ## Evidence
@@ -420,6 +429,7 @@ project, standard library, or external, per language:
 | Rust | `crate::`, `self::`, `super::`, the package's own name | `std`, `core`, `alloc` | any other first segment |
 | TypeScript | relative paths, `tsconfig` path aliases | `node:` specifiers and bare Node built-ins | any other bare specifier, `import type` included |
 | Go | paths under the module path in `go.mod` | first element contains no dot | everything else |
+| Python | relative imports, the project's own top-level packages and modules (at the root or under `src/`) | CPython 3.14's `sys.stdlib_module_names` and `__future__`, public modules only (a private one such as `_thread`, and one removed before 3.14 such as `distutils`, reads as external) | everything else |
 
 **What the grade trusts.** A composition root is exempt from the rules — that is
 what lets it wire adapters — so whatever a crate root exports is not checked.

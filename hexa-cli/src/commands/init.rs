@@ -49,7 +49,7 @@ pub struct InitArgs {
     #[arg(long)]
     pub scaffold: bool,
 
-    /// Scaffold language: rust | go | ts
+    /// Scaffold language: rust | go | ts | python | js
     #[arg(long, default_value = "rust")]
     pub lang: String,
 
@@ -156,6 +156,7 @@ pub async fn run(args: InitArgs) -> Result<()> {
     // ── 6. Scaffold (optional) ────────────────────────────────────
     if args.scaffold {
         written.extend(scaffold_files(&target, &args.lang, &project_name)?);
+        declare_package_root(&target, &args.lang, &project_name)?;
     }
 
     // ── 6b. .gitignore, before the first commit (ADR-2610281552 §3) ─
@@ -592,6 +593,10 @@ pub const SCAFFOLD_LANGS: &[(&str, &str)] = &[
     ("rust", "cargo test"),
     ("go", "go test ./..."),
     ("ts", "npm install && npm test"),
+    // The standard library's runner: no install, no network (ADR-2611230850 §2).
+    ("python", "python3 -m unittest discover -s tests -t ."),
+    // Node's own runner: no install, no network (ADR-2611271700 §2).
+    ("js", "node --test"),
 ];
 
 /// The gate command for a language, or `None` if it is not one we emit.
@@ -618,6 +623,26 @@ pub(crate) fn create_scaffold(target: &Path, lang: &str, project_name: &str) -> 
 }
 
 /// [`create_scaffold`], returning the files written, relative to `target`.
+/// A Python scaffold's package `__init__.py` is in no folder that names a layer, so
+/// the project declares it the package's root, as `lib.rs` is a crate's, under
+/// `analyze.layers` (ADR-2611230850 §1, amended). Other languages declare nothing.
+fn declare_package_root(target: &Path, lang: &str, project_name: &str) -> Result<()> {
+    if lang != "python" {
+        return Ok(());
+    }
+    let root = format!("{}/__init__.py", ScaffoldVars::from_name(project_name).name_snake);
+    let path = target.join(".hexa/project.json");
+    let mut v: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path)?)?;
+    if !v["analyze"].is_object() {
+        v["analyze"] = serde_json::json!({});
+    }
+    if !v["analyze"]["layers"].is_object() {
+        v["analyze"]["layers"] = serde_json::json!({});
+    }
+    v["analyze"]["layers"][root.as_str()] = serde_json::json!("composition-root");
+    fs::write(&path, serde_json::to_string_pretty(&v)? + "\n").with_context(|| format!("writing {}", path.display()))
+}
+
 fn scaffold_files(target: &Path, lang: &str, project_name: &str) -> Result<Vec<PathBuf>> {
     let Some(gate) = scaffold_gate(lang) else {
         anyhow::bail!(
@@ -644,6 +669,16 @@ fn scaffold_files(target: &Path, lang: &str, project_name: &str) -> Result<Vec<P
         // `.tmpl` marks a file whose *name* would otherwise be picked up by a
         // build tool sitting in the assets tree. The suffix is dropped here.
         let rel = rel.strip_suffix(".tmpl").unwrap_or(rel);
+        // A path is rendered as contents are, so a Python package directory
+        // can carry the project's name (ADR-2611230850 §3).
+        let rel = vars.render(rel);
+        // A rendered path stays inside the target: a name such as `../x`
+        // must not write elsewhere (CLAUDE.md: path-traversal protection on
+        // every file write).
+        if !rendered_path_stays_inside(&rel) {
+            anyhow::bail!("scaffold asset {path} renders to {rel}, which is outside the target directory");
+        }
+        let rel = rel.as_str();
         found += 1;
         rels.push(rel.to_string());
         let dest = target.join(rel);
@@ -731,6 +766,13 @@ impl ScaffoldVars {
     }
 }
 
+
+/// Whether a rendered asset path stays inside the target directory: relative,
+/// and with no `..` component.
+fn rendered_path_stays_inside(rel: &str) -> bool {
+    let p = Path::new(rel);
+    !p.is_absolute() && !p.components().any(|c| matches!(c, std::path::Component::ParentDir))
+}
 
 pub(crate) fn create_adr_rules_toml(target: &Path) -> Result<()> {
     let hexa_dir = target.join(".hexa");
@@ -958,7 +1000,15 @@ mod scaffold_tests {
 
     /// Every template must be embedded, and every one must render without
     /// leaving a placeholder behind — an unsubstituted `{{…}}` in emitted
-    /// source is a syntax error in all three languages.
+    /// source is a syntax error in every scaffolded language.
+    #[test]
+    fn a_rendered_asset_path_cannot_leave_the_target() {
+        assert!(rendered_path_stays_inside("demo_app/domain/count.py"));
+        assert!(!rendered_path_stays_inside("../x/domain/count.py"));
+        assert!(!rendered_path_stays_inside("a/../../b.py"));
+        assert!(!rendered_path_stays_inside("/etc/passwd"));
+    }
+
     #[test]
     fn no_template_leaves_a_placeholder() {
         let vars = ScaffoldVars::from_name("demo-app");

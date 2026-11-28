@@ -1,0 +1,235 @@
+{
+  "adr": "ADR-2611221934",
+  "feature": "Go doc comments read by whole line",
+  "description": "When finding a Go export's doc comment, a line of source is read whole: comments after code on a line belong to that code, and a line holding only comments is one line of the doc comment.",
+  "universal": [
+    "§1",
+    "§2",
+    "§3"
+  ],
+  "accepted": {
+    "by": "craigjohnson",
+    "sha256": "8ea0be0bafaabcca01df7b0b1bb8feb7f4388ed0bf5d88885648b78d48c1b66a"
+  },
+  "sealed": {
+    "hexa-analysis/tests/adr_2611221934_spec.rs": "c572d2eddf702392bcf675f9c8de9ee0e613502428b7f148fccfe004285faef2"
+  },
+  "red": "e970262",
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A tag in the second of two comments after code does not tag the next spec",
+      "given": "A Go file holding `const (`, then `A = 1 /* x */ // @hexa:public`, then `B = 2`, then `)`, with no other comments",
+      "when": "extract_exports is called on it with Language::Go",
+      "then": "the ExportDeclaration named `B` has hexa_public false",
+      "test": "hexa-analysis/tests/adr_2611221934_spec.rs::part_1::s01_tag_in_second_of_two_trailing_comments_does_not_tag_next_spec"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "Three comments after code all belong to that code's line",
+      "given": "A Go file whose line 3 is `var A = 1 /* x */ /* y */ // @hexa:public` and whose line 4 is `func F() {}`, with no other comments",
+      "when": "extract_exports is called on it with Language::Go",
+      "then": "the ExportDeclaration named `F` has hexa_public false",
+      "test": "hexa-analysis/tests/adr_2611221934_spec.rs::part_1::s02_three_trailing_comments_belong_to_code_line"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A tag in the first of two comments after code does not tag what follows",
+      "given": "A Go file holding `const (`, then `A = 1 /* @hexa:public */ /* y */`, then `B = 2`, then `)`",
+      "when": "extract_exports is called on it with Language::Go",
+      "then": "the ExportDeclaration named `B` has hexa_public false"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A line of code with comments breaks the doc run of the declaration below it, so a tag above that line does not pass through",
+      "given": "A Go file holding `const (`, then `// @hexa:public`, then `X = 1 /* a */ // b`, then `Y = 2`, then `)`",
+      "when": "extract_exports is called on it with Language::Go",
+      "then": "the ExportDeclaration named `Y` has hexa_public false"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "Code on an earlier line does not make a comment on its own line a line comment",
+      "given": "A Go file holding `const (`, then `A = 1`, then `// @hexa:public` on a line of its own, then `B = 2`, then `)`",
+      "when": "extract_exports is called on it with Language::Go",
+      "then": "the ExportDeclaration named `B` has hexa_public true"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§1"
+      ],
+      "kind": "property",
+      "description": "Comments after code on a line never tag the declaration on the next line, whatever their number or kind",
+      "given": "Any Go file where line L holds code followed by n ≥ 1 comments, each `/* … */` or a final `// …`, at least one containing `@hexa:public`, line L+1 declares an exported name D, and D has no other comments above it",
+      "when": "extract_exports is called on it with Language::Go",
+      "then": "the ExportDeclaration named D has hexa_public false",
+      "test": "hexa-analysis/tests/adr_2611221934_spec.rs::part_1::s06_trailing_comments_never_tag_next_declaration"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "A comment-only line of two comments, tag in the first, tags the function below",
+      "given": "A Go file whose line 3 is `/* @hexa:public */ // note` and whose line 4 is `func F() {}`",
+      "when": "extract_exports is called on it with Language::Go",
+      "then": "the ExportDeclaration named `F` has hexa_public true",
+      "test": "hexa-analysis/tests/adr_2611221934_spec.rs::part_1::s07_comment_only_line_tag_in_first_tags_function"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "A comment-only line of two comments, tag in the second, tags the function below",
+      "given": "A Go file whose line 3 is `/* note */ // @hexa:public` and whose line 4 is `func F() {}`",
+      "when": "extract_exports is called on it with Language::Go",
+      "then": "the ExportDeclaration named `F` has hexa_public true"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "A line of two comments counts as one line, so the run continues to the line above it",
+      "given": "A Go file whose line 2 is `// @hexa:public`, line 3 is `/* a */ /* b */`, and line 4 is `func F() {}`",
+      "when": "extract_exports is called on it with Language::Go",
+      "then": "the ExportDeclaration named `F` has hexa_public true",
+      "test": "hexa-analysis/tests/adr_2611221934_spec.rs::part_1::s09_two_comment_line_counts_once_run_continues"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "A blank line between a comment-only line and the declaration still ends the run",
+      "given": "A Go file whose line 3 is `/* @hexa:public */ // note`, line 4 is blank, and line 5 is `func F() {}`",
+      "when": "extract_exports is called on it with Language::Go",
+      "then": "the ExportDeclaration named `F` has hexa_public false"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "A blank line above a line of several comments ends the run there",
+      "given": "A Go file whose line 2 is `// @hexa:public`, line 3 is blank, line 4 is `/* a */ // b`, and line 5 is `func F() {}`",
+      "when": "extract_exports is called on it with Language::Go",
+      "then": "the ExportDeclaration named `F` has hexa_public false"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "A comment-only line of several comments, none carrying the tag, does not tag",
+      "given": "A Go file whose line 3 is `/* a */ /* b */ // c` and whose line 4 is `func F() {}`",
+      "when": "extract_exports is called on it with Language::Go",
+      "then": "the ExportDeclaration named `F` has hexa_public false"
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§2"
+      ],
+      "kind": "property",
+      "description": "On a comment-only line directly above a declaration, the tag is read whatever the position and number of the comments",
+      "given": "Any Go file where line L holds only k ≥ 1 comments, each `/* … */` or a final `// …`, line L+1 is `func F() {}`, and there are no other comments in the file",
+      "when": "extract_exports is called on it with Language::Go",
+      "then": "the ExportDeclaration named `F` has hexa_public true exactly when at least one of the k comments contains `@hexa:public`",
+      "test": "hexa-analysis/tests/adr_2611221934_spec.rs::part_2::s13_tag_read_from_any_comment_on_comment_only_line"
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "A one-comment-per-line doc comment still tags",
+      "given": "A Go file whose line 2 is `// Package docs`, line 3 is `// @hexa:public`, and line 4 is `func F() {}`",
+      "when": "extract_exports is called on it with Language::Go",
+      "then": "the ExportDeclaration named `F` has hexa_public true"
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "A group's doc comment still covers its specs",
+      "given": "A Go file holding `// @hexa:public`, then `const (`, then `A = 1`, then `B = 2`, then `)`",
+      "when": "extract_exports is called on it with Language::Go",
+      "then": "the ExportDeclarations named `A` and `B` both have hexa_public true"
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "Another language reads the tag as before",
+      "given": "A Rust file holding `/// @hexa:public` directly above `pub fn f() {}`",
+      "when": "extract_exports is called on it with Language::Rust",
+      "then": "the ExportDeclaration named `f` has hexa_public true"
+    },
+    {
+      "id": "S17",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "A blank line still ends a one-comment-per-line run",
+      "given": "A Go file whose line 2 is `// @hexa:public`, line 3 is blank, and line 4 is `func F() {}`",
+      "when": "extract_exports is called on it with Language::Go",
+      "then": "the ExportDeclaration named `F` has hexa_public false"
+    },
+    {
+      "id": "S18",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "A single line comment after code still does not tag the next spec",
+      "given": "A Go file holding `const (`, then `A = 1 // @hexa:public`, then `B = 2`, then `)`",
+      "when": "extract_exports is called on it with Language::Go",
+      "then": "the ExportDeclaration named `B` has hexa_public false"
+    },
+    {
+      "id": "S19",
+      "decision": [
+        "§3"
+      ],
+      "kind": "property",
+      "description": "Where every comment is alone on its line, the tag is read from the unbroken run of comment lines directly above",
+      "given": "Any Go file of top-level `func` declarations in which every comment is a `//` comment alone on its own line, separated by any mix of blank lines",
+      "when": "extract_exports is called on it with Language::Go",
+      "then": "each function's ExportDeclaration has hexa_public true exactly when some comment in the unbroken run of comment lines ending on the line directly above it contains `@hexa:public`"
+    }
+  ]
+}

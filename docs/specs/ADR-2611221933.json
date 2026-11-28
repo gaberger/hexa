@@ -1,0 +1,313 @@
+{
+  "adr": "ADR-2611221933",
+  "feature": "Go deny entries match exactly one package",
+  "description": "For Go imports, a deny entry denies only the import path equal to it. The scaffolded Go deny list names each I/O package it used to reach by prefix, so pure packages like net/netip and net/url are allowed.",
+  "universal": [
+    "§1"
+  ],
+  "accepted": {
+    "by": "craigjohnson",
+    "sha256": "4ed043c9229dad6f2fc78a8e1b87a5efbb0805bea290d46ffa60c280741287fd"
+  },
+  "sealed": {
+    "hexa-analysis/tests/adr_2611221933_spec.rs": "fffd8fd10c0fad3e2ab4048b1c58bb5ee27e6f6fa4bdad2579552dfc24077c1e",
+    "hexa-analysis/tests/adr_2611221933_spec_2.rs": "739e774882e4249272d02cccde578b69fd9b660af0931078ddd29bb6dd09c5cb"
+  },
+  "red": "fa061f2",
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A Go deny entry denies the package it names",
+      "given": "Language Go, deny = [\"net\"], allow empty",
+      "when": "judge is called for the Go import \"net\"",
+      "then": "The verdict is denied"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A Go deny entry does not deny a pure package whose path starts with it",
+      "given": "Language Go, deny = [\"net\"], allow empty",
+      "when": "judge is called for the standard-library Go import \"net/netip\"",
+      "then": "The verdict is not denied, and the import is let through as standard library",
+      "test": "hexa-analysis/tests/adr_2611221933_spec.rs::part_1::s02_go_deny_net_does_not_deny_net_netip",
+      "red": "fa061f2"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "Go net/url is not denied by a deny entry of net",
+      "given": "Language Go, deny = [\"net\"], allow empty",
+      "when": "judge is called for the standard-library Go import \"net/url\"",
+      "then": "The verdict is not denied",
+      "test": "hexa-analysis/tests/adr_2611221933_spec.rs::part_1::s03_go_deny_net_does_not_deny_net_url",
+      "red": "fa061f2"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A Go deny entry does not reach a package below it on a / boundary, even an I/O one",
+      "given": "Language Go, deny = [\"net\"], allow empty",
+      "when": "judge is called for the Go import \"net/http\"",
+      "then": "The verdict is not denied by the \"net\" entry, because it names only net",
+      "test": "hexa-analysis/tests/adr_2611221933_spec.rs::part_1::s04_go_deny_net_does_not_deny_net_http",
+      "red": "fa061f2"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A Go deny entry of os does not deny os/user or os/signal",
+      "given": "Language Go, deny = [\"os\"], allow empty",
+      "when": "judge is called for the Go imports \"os/user\" and \"os/signal\"",
+      "then": "Neither verdict is denied",
+      "test": "hexa-analysis/tests/adr_2611221933_spec.rs::part_1::s05_go_deny_os_does_not_deny_os_user_or_os_signal",
+      "red": "fa061f2"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A deny entry naming a deeper path does not deny its parent",
+      "given": "Language Go, deny = [\"net/http\"], allow empty",
+      "when": "judge is called for the Go import \"net\"",
+      "then": "The verdict is not denied"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A Go deny entry does not match a path that only shares its leading characters",
+      "given": "Language Go, deny = [\"net\"], allow empty",
+      "when": "judge is called for a Go import \"network\"",
+      "then": "The verdict is not denied by the \"net\" entry"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "Rust deny entries still match below the path",
+      "given": "Language Rust, deny = [\"std::fs\"], allow empty",
+      "when": "judge is called for the Rust import \"std::fs::File\"",
+      "then": "The verdict is denied, as before"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "Rust std::net still covers std::net::IpAddr",
+      "given": "Language Rust, deny = [\"std::net\"], allow empty",
+      "when": "judge is called for the Rust import \"std::net::IpAddr\"",
+      "then": "The verdict is denied"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "TypeScript deny entries still match below the path",
+      "given": "Language TypeScript, deny = [\"node:fs\"], allow empty",
+      "when": "judge is called for the TypeScript import \"node:fs/promises\"",
+      "then": "The verdict is denied, as before"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "Python deny entries match as they did before this ADR",
+      "given": "Language Python, a deny entry and an import below it that the previous rule denied",
+      "when": "judge is called for that Python import",
+      "then": "The verdict is the same as under the previous rule"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "Go allow entries still match below the path",
+      "given": "Language Go, allow = [\"example.com/lib\"], deny empty, and a non-standard-library import \"example.com/lib/sub\"",
+      "when": "judge is called for \"example.com/lib/sub\"",
+      "then": "The verdict is allowed, as before"
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "An exact Go deny match still beats an allow",
+      "given": "Language Go, deny = [\"net\"], allow = [\"net\"]",
+      "when": "judge is called for the Go import \"net\"",
+      "then": "The verdict is denied"
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§1"
+      ],
+      "kind": "property",
+      "description": "A Go standard-library deny entry denies exactly the path equal to it; a module deny entry covers the packages below it",
+      "given": "Any Go deny list D, an empty allow list, and any Go import path p",
+      "when": "judge is called for p",
+      "then": "The deny rule denies p if and only if p equals some entry of D, or some entry of D whose first path element has a dot is a prefix of p on a / boundary. No standard-library entry denies a path that merely starts with it.",
+      "test": "hexa-analysis/tests/adr_2611221933_spec_2.rs::s14_go_standard_library_deny_is_exact_while_module_deny_covers_subpackages",
+      "red": "7889528"
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§1"
+      ],
+      "kind": "property",
+      "description": "Non-Go deny entries and all allow entries keep their behaviour",
+      "given": "Any non-Go language (Rust, TypeScript, Python) with any import, allow and deny, or any Go import judged only against allow entries",
+      "when": "judge is called",
+      "then": "The verdict equals the verdict under the previous below-the-path matching"
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "The scaffolded Go deny names each I/O package explicitly",
+      "given": "The scaffolded rules template ADR-rules.toml",
+      "when": "Its Go deny entries are read",
+      "then": "They are os, os/exec, os/signal, os/user, net, net/http, net/http/httptest, net/http/httputil, net/http/pprof, net/rpc, net/rpc/jsonrpc, net/smtp, database/sql, io/ioutil, plugin and http",
+      "test": "hexa-analysis/tests/adr_2611221933_spec.rs::part_2::s16_template_go_deny_names_each_io_package",
+      "red": "fa061f2"
+    },
+    {
+      "id": "S17",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "A scaffolded domain is still denied I/O packages once reached by prefix",
+      "given": "A project scaffolded from the template, judging a Go domain import",
+      "when": "judge is called for \"net/smtp\", \"os/user\", \"net/http/pprof\" and \"net/rpc/jsonrpc\"",
+      "then": "Each verdict is denied"
+    },
+    {
+      "id": "S18",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "A scaffolded domain may use pure network-name packages",
+      "given": "A project scaffolded from the template, judging a Go domain import",
+      "when": "judge is called for \"net/netip\", \"net/url\", \"net/mail\" and \"net/textproto\"",
+      "then": "None is denied. Each is let through as standard library.",
+      "test": "hexa-analysis/tests/adr_2611221933_spec.rs::part_2::s18_scaffolded_domain_may_use_pure_packages",
+      "red": "fa061f2"
+    },
+    {
+      "id": "S19",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "The scaffolded Go deny does not list the pure packages",
+      "given": "The scaffolded rules template",
+      "when": "Its Go deny entries are read",
+      "then": "They contain none of net/netip, net/url, net/mail or net/textproto",
+      "test": "hexa-analysis/tests/adr_2611221933_spec.rs::part_2::s19_template_does_not_list_pure_packages",
+      "red": "fa061f2"
+    },
+    {
+      "id": "S20",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "The template keeps the bare http entry",
+      "given": "The scaffolded rules template",
+      "when": "Its deny entries are read",
+      "then": "\"http\" is still present and has not been dropped",
+      "test": "hexa-analysis/tests/adr_2611221933_spec.rs::part_2::s20_template_keeps_bare_http",
+      "red": "fa061f2"
+    },
+    {
+      "id": "S21",
+      "decision": [
+        "§2"
+      ],
+      "kind": "property",
+      "description": "The new template denies every Go I/O package the old template denied by prefix",
+      "given": "Each of os, net, http, net/http, database/sql, os/exec, io/ioutil, plugin, os/signal, os/user, net/http/httptest, net/http/httputil, net/http/pprof, net/rpc, net/rpc/jsonrpc and net/smtp",
+      "when": "judge is called for that Go import under the scaffolded rules",
+      "then": "The verdict is denied"
+    },
+    {
+      "id": "S22",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A Go module deny entry still covers the packages below it",
+      "given": "A domain policy with deny = [\"github.com/jackc/pgx/v5\"]",
+      "when": "A Go domain file imports github.com/jackc/pgx/v5/pgxpool",
+      "then": "The verdict is denied"
+    },
+    {
+      "id": "S23",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A Go module deny entry does not match a path that only shares its leading characters",
+      "given": "A domain policy with deny = [\"github.com/jackc/pgx/v5\"]",
+      "when": "A Go domain file imports github.com/jackc/pgx/v5x/pool",
+      "then": "The verdict is not denied by that entry"
+    }
+  ],
+  "amendments": [
+    {
+      "at": "2026-11-24T22:21:46.587848498+00:00",
+      "base_commit": "0d0a1fa1fba43115df8105df09059b89d1ed8019",
+      "by": "craigjohnson",
+      "file": "hexa-analysis/tests/adr_2611221933_spec.rs",
+      "from": "83999d07bcf7cc3266edb1eae8ad9b6be9768036194fac44f56be62a92e9729f",
+      "reason": "S14 re-proved in adr_2611221933_spec_2.rs after the spec was re-accepted (a standard-library deny entry is exact; a module entry covers its subpackages); the other tests are unchanged",
+      "to": "fffd8fd10c0fad3e2ab4048b1c58bb5ee27e6f6fa4bdad2579552dfc24077c1e"
+    }
+  ],
+  "moves": [
+    {
+      "at": "2026-11-26T02:14:34.041885712+00:00",
+      "base_commit": "9f7e6082648061c92ac123b10feafcc46b18fdf4",
+      "by": "Claude Code agent (baseline from history, for review)",
+      "from": "hexa-analysis/tests/adr_2611221933_spec.rs::part_2::s14_go_stdlib_deny_exact_and_module_deny_prefix",
+      "reason": "recorded from history (baseline for ADR-2611251652): this binding moved before moves were recorded",
+      "scenario": "S14",
+      "sha256": "739e774882e4249272d02cccde578b69fd9b660af0931078ddd29bb6dd09c5cb",
+      "to": "hexa-analysis/tests/adr_2611221933_spec_2.rs::s14_go_standard_library_deny_is_exact_while_module_deny_covers_subpackages"
+    }
+  ]
+}

@@ -165,9 +165,16 @@ fn score_takes_exactly_one_scenario() {
 fn a_run_without_claude_on_path_stops_before_building_anything() {
     let h = here();
     let dir = scenarios();
+    // A PATH that holds git and nothing else. `/usr/bin:/bin` is not "no claude":
+    // a machine with a system-wide claude installed there has one.
+    let bin = tempfile::tempdir().unwrap();
+    let git = std::env::var_os("PATH")
+        .and_then(|p| std::env::split_paths(&p).map(|d| d.join("git")).find(|g| g.is_file()))
+        .expect("git on PATH");
+    std::os::unix::fs::symlink(&git, bin.path().join("git")).unwrap();
     let (code, out) = h.hexa_with(
         &["eval", "run", "--dir", dir.to_str().unwrap(), "--scenario", "small-fix"],
-        &[("PATH", "/usr/bin:/bin".to_string())],
+        &[("PATH", bin.path().display().to_string())],
     );
     assert_ne!(code, 0, "{out}");
     assert!(out.contains("`claude` is not on PATH"), "{out}");

@@ -10,7 +10,7 @@
     "sha256": "e80b72124d136b799012b903a918b3f3c9bd576f7295243f21183c91772565eb"
   },
   "sealed": {
-    "hexa-cli/tests/adr_2611191120_spec.rs": "2970ea78bd8ac4241f3cd5965bc6a8067036c39084f3b6110e0532beb4be44a6"
+    "hexa-cli/tests/adr_2611191120_spec.rs": "82074ad4167c40700e366e9ca230045b726307e94940a3d57dac1beeb45e5b71"
   },
   "red": "2e257e2",
   "specs": [
@@ -369,6 +369,15 @@
       "from": "ea742bfa39eb909303ec7718aff3239e9de8beb3fb47806cde2fb6f10593a342",
       "reason": "CodeQL rust/hardcoded-crypto-value flagged S14 and S16 (PR #67, check run 135765326867): a literal bound to a variable named nonce reads as a hard-coded cryptographic nonce. It is a batch-marker tag, never a secret; batch_script/split_batch now call it a tag. The tests rename the variable and its literal; no assertion changes.",
       "to": "2970ea78bd8ac4241f3cd5965bc6a8067036c39084f3b6110e0532beb4be44a6"
+    },
+    {
+      "at": "2026-11-21T21:40:57.109947990+00:00",
+      "base_commit": "998403b5507785820d9775aabf939f781fec29ac",
+      "by": "Claude (agent, in craigjohnson's session; for review)",
+      "file": "hexa-cli/tests/adr_2611191120_spec.rs",
+      "from": "2970ea78bd8ac4241f3cd5965bc6a8067036c39084f3b6110e0532beb4be44a6",
+      "reason": "S02's 'extension with no runner' was .py; ADR-2611211324 §8 gives .py a built-in pytest runner, so the fixture now uses .rb, which still has none. The scenario and assertions are unchanged.",
+      "to": "82074ad4167c40700e366e9ca230045b726307e94940a3d57dac1beeb45e5b71"
     }
   ]
 }

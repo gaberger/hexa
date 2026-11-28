@@ -1,0 +1,292 @@
+{
+  "adr": "ADR-2611230833",
+  "feature": "Verbose go test counted once",
+  "description": "A Go ok package line counts as one passed test only when no --- PASS or --- FAIL line for that package was read before it, so a run with -v counts each test once.",
+  "universal": [
+    "§1",
+    "§3"
+  ],
+  "accepted": {
+    "by": "craigjohnson",
+    "sha256": "7888b542d0c1c7a0615c04002a8a60f8ab9bbb0671b9e29fdf6dd25f9b204fa2"
+  },
+  "sealed": {
+    "hexa-core/tests/adr_2611230833_spec.rs": "0eb47d169fed36113bd5ae4e7bc38820ff3b65940a86044aa449435ddb034614"
+  },
+  "red": "cdfaf18",
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A -v run of one passing test is one test",
+      "given": "output \"=== RUN   TestX\\n--- PASS: TestX (0.00s)\\nPASS\\nok  \\tdemo/pkg\\t0.01s\\n\" from a run that exited 0",
+      "when": "read_evidence(true, output, false) is called",
+      "then": "it returns Evidence::Passed { tests: 1 }",
+      "test": "hexa-core/tests/adr_2611230833_spec.rs::part_1::s01_verbose_run_of_one_passing_test_is_one_test",
+      "red": "cdfaf18"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A -v run of N passing tests in one package is N",
+      "given": "output with three lines \"--- PASS: TestA (0.00s)\", \"--- PASS: TestB (0.00s)\" and \"--- PASS: TestC (0.00s)\", then \"PASS\" and \"ok  \\tdemo/pkg\\t0.02s\", from a run that exited 0",
+      "when": "read_evidence(true, output, false) is called",
+      "then": "it returns Evidence::Passed { tests: 3 }",
+      "test": "hexa-core/tests/adr_2611230833_spec.rs::part_1::s02_verbose_run_of_n_passing_tests_is_n",
+      "red": "cdfaf18"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A run without -v is counted as before: the package line is one test",
+      "given": "output \"ok  \\tdemo/pkg\\t0.01s\\n\" from a run that exited 0",
+      "when": "read_evidence(true, output, false) is called",
+      "then": "it returns Evidence::Passed { tests: 1 }"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "The tab-only form of the package line follows the same rule",
+      "given": "output \"--- PASS: TestX (0.00s)\\nok\\tdemo/pkg\\t0.01s\\n\" from a run that exited 0",
+      "when": "read_evidence(true, output, false) is called",
+      "then": "it returns Evidence::Passed { tests: 1 }",
+      "test": "hexa-core/tests/adr_2611230833_spec.rs::part_1::s04_tab_only_package_line_follows_same_rule",
+      "red": "cdfaf18"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A sealed Go test bound to a verbose configured runner is judged as one passing test",
+      "given": "a configured runner whose run of one passing test exits 0 and prints \"=== RUN   TestX\\n--- PASS: TestX (0.00s)\\nPASS\\nok  \\tdemo/pkg\\t0.01s\\n\"",
+      "when": "judge_counted(true, output) is called",
+      "then": "it returns Verdict::Passed",
+      "test": "hexa-core/tests/adr_2611230833_spec.rs::part_1::s05_verbose_configured_runner_judged_as_one_passing_test",
+      "red": "cdfaf18"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "Each package is judged on its own lines since the previous package line",
+      "given": "output \"--- PASS: TestA\\n--- PASS: TestB\\nok  \\tdemo/p1\\t0.01s\\nok  \\tdemo/p2\\t0.01s\\n\" from a run that exited 0, where p1 listed two tests and p2 listed none",
+      "when": "read_evidence(true, output, false) is called",
+      "then": "it returns Evidence::Passed { tests: 3 }",
+      "test": "hexa-core/tests/adr_2611230833_spec.rs::part_1::s06_each_package_judged_on_its_own_lines",
+      "red": "cdfaf18"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "Two verbose packages each count only their listed tests",
+      "given": "output \"--- PASS: TestA\\nok  \\tdemo/p1\\t0.01s\\n--- PASS: TestB\\nok  \\tdemo/p2\\t0.01s\\n\" from a run that exited 0",
+      "when": "read_evidence(true, output, false) is called",
+      "then": "it returns Evidence::Passed { tests: 2 }",
+      "test": "hexa-core/tests/adr_2611230833_spec.rs::part_1::s07_two_verbose_packages_count_only_listed_tests",
+      "red": "cdfaf18"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "The package line of a verbose run is not counted as another test",
+      "given": "output \"--- PASS: TestX (0.00s)\\nok  \\tdemo/pkg\\t0.01s\\n\" from a run that exited 0",
+      "when": "read_evidence(true, output, false) is called",
+      "then": "it does not return Evidence::Passed { tests: 2 }",
+      "test": "hexa-core/tests/adr_2611230833_spec.rs::part_1::s08_verbose_package_line_not_counted_as_another_test",
+      "red": "cdfaf18"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A verbose run of one correct test is not refused as matching two tests",
+      "given": "a configured runner whose run exits 0 and prints \"--- PASS: TestX (0.00s)\\nPASS\\nok  \\tdemo/pkg\\t0.01s\\n\"",
+      "when": "judge_counted(true, output) is called",
+      "then": "it does not return Verdict::Ambiguous(2), or any Verdict::Ambiguous",
+      "test": "hexa-core/tests/adr_2611230833_spec.rs::part_1::s09_verbose_run_of_one_test_not_ambiguous",
+      "red": "cdfaf18"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "Lines listed for one package do not stop a later unlisted package line from counting",
+      "given": "output \"--- PASS: TestA\\nok  \\tdemo/p1\\t0.01s\\nok  \\tdemo/p2\\t0.01s\\n\" from a run that exited 0",
+      "when": "read_evidence(true, output, false) is called",
+      "then": "it does not return Evidence::Passed { tests: 1 }; it returns Evidence::Passed { tests: 2 }",
+      "test": "hexa-core/tests/adr_2611230833_spec.rs::part_1::s10_listed_lines_do_not_stop_later_unlisted_package_counting",
+      "red": "cdfaf18"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§1"
+      ],
+      "kind": "property",
+      "description": "Over all sequences of passing Go packages, each listed test counts once and each unlisted package line counts once",
+      "given": "any sequence of packages, each printing k ≥ 0 lines \"--- PASS: T…\" followed by its \"ok  \\t<pkg>\\t<t>s\" line, from a run that exited 0, with at least one package",
+      "when": "read_evidence(true, output, false) is called",
+      "then": "it returns Evidence::Passed { tests: Σ over packages of (k if k > 0 else 1) }",
+      "test": "hexa-core/tests/adr_2611230833_spec.rs::part_2::s11_each_listed_test_counts_once_and_each_unlisted_package_line_once",
+      "red": "cdfaf18"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "A Go package without test files is still recognised with no tests",
+      "given": "output \"?   \\tdemo/internal/ports\\t[no test files]\\n\" from a run that exited 0",
+      "when": "read_evidence(true, output, false) is called",
+      "then": "it returns Evidence::Vacuous"
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "A Go run that matched no test is still vacuous",
+      "given": "output \"ok  \\tdemo/pkg\\t0.01s [no tests to run]\\n\" from a run that exited 0",
+      "when": "read_evidence(true, output, false) is called",
+      "then": "it returns Evidence::Vacuous"
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "Other runners' output is read as before",
+      "given": "cargo output \"running 3 tests\\ntest result: ok. 3 passed; 0 failed\\n\" from a run that exited 0",
+      "when": "read_evidence(true, output, false) is called",
+      "then": "it returns Evidence::Passed { tests: 3 }"
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "A failed verbose Go test still fails the run",
+      "given": "output \"--- FAIL: TestX (0.00s)\\nFAIL\\nFAIL\\tdemo/pkg\\t0.01s\\n\"",
+      "when": "read_evidence(true, output, false) is called",
+      "then": "it returns Evidence::Failed and never Evidence::Passed"
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "A failure in one package is not hidden by a passing package line elsewhere",
+      "given": "output \"--- FAIL: TestA\\nFAIL\\tdemo/p1\\t0.01s\\n--- PASS: TestB\\nok  \\tdemo/p2\\t0.01s\\n\" from a run that exited 0",
+      "when": "read_evidence(true, output, false) is called",
+      "then": "it returns Evidence::Failed"
+    },
+    {
+      "id": "S17",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "A run that exited non-zero is not passed by any Go lines",
+      "given": "output \"--- PASS: TestX\\nok  \\tdemo/pkg\\t0.01s\\n\" from a run that exited non-zero",
+      "when": "read_evidence(false, output, false) is called",
+      "then": "it returns Evidence::Failed { reason: \"the gate exited non-zero\" }"
+    },
+    {
+      "id": "S18",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "A zero-test marker line is not counted as a test",
+      "given": "output \"?   \\tdemo/p1\\t[no test files]\\nok  \\tdemo/p2\\t0.01s\\n\" from a run that exited 0",
+      "when": "read_evidence(true, output, false) is called",
+      "then": "it returns Evidence::Passed { tests: 1 }, not 2"
+    },
+    {
+      "id": "S19",
+      "decision": [
+        "§3"
+      ],
+      "kind": "property",
+      "description": "Over all Go outputs, any failure line fails the run whether or not it is verbose",
+      "given": "any output from a run that exited 0 that contains at least one line starting \"--- FAIL\", a line \"FAIL\", or a line starting \"FAIL\\t\", in any position among any \"--- PASS\" and ok package lines",
+      "when": "read_evidence(true, output, false) is called",
+      "then": "it returns Evidence::Failed"
+    },
+    {
+      "id": "S20",
+      "decision": [
+        "§3"
+      ],
+      "kind": "property",
+      "description": "Over all outputs with no Go ok package line, the count is the same as the count of the --- PASS and other runners' lines",
+      "given": "any output from a run that exited 0 that contains no line starting \"ok  \\t\" or \"ok\\t\" and no failure lines",
+      "when": "read_evidence(true, output, false) is called",
+      "then": "its result equals the result for the same output read under the reading rules in force before this ADR"
+    },
+    {
+      "id": "S21",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "A test with passing subtests is one test",
+      "given": "A go test -v run of one test TestS03 with two t.Run subtests, printing --- PASS: TestS03/fixture, --- PASS: TestS03/real_tree, --- PASS: TestS03 and the ok package line",
+      "when": "read_evidence reads it",
+      "then": "It is Passed with tests: 1"
+    },
+    {
+      "id": "S22",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "A failing subtest still fails the run",
+      "given": "A go test -v run of one test whose subtest fails: --- FAIL: TestS03/fixture, --- FAIL: TestS03, FAIL pkg",
+      "when": "read_evidence reads it",
+      "then": "It is Failed"
+    },
+    {
+      "id": "S23",
+      "decision": [
+        "§2"
+      ],
+      "kind": "property",
+      "description": "Subtest lines never add to the count",
+      "given": "Any go test -v output of passing tests in one package, where each top-level test may have any number of passing t.Run subtests",
+      "when": "read_evidence reads it",
+      "then": "It is Passed with tests equal to the number of top-level --- PASS lines (names without a /)"
+    }
+  ]
+}

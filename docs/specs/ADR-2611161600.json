@@ -7,7 +7,7 @@
     "sha256": "5598bf838b349d0df7408b1473e5ce6ac2dfb8bdb7bde941e896a2789a896b8c"
   },
   "sealed": {
-    "hexa-cli/tests/a_verb_reports_only_the_success_it_earned.rs": "71fd053cdb0b43aaaaf8d339e327e9f335754960796d99ec3bc5682cef7c859d",
+    "hexa-cli/tests/a_verb_reports_only_the_success_it_earned.rs": "c5ca99fbf8b8d72ac26ccb6a68c044530df2a0e48d86f4a1b0f43447fcca3dfe",
     "hexa-cli/tests/an_amended_spec_keeps_its_unchanged_proof.rs": "96e97e93027df65605c7b08ca171d7c213305328437384f30fd886dee3c02ea4"
   },
   "specs": [
@@ -152,6 +152,24 @@
       "from": "e9ef16b22bf122a3c096afae9145ea3b3783d34829455a0c1a552c5dbc7eb0a0",
       "reason": "The file was added by the false-success fixes (ADR-2611160730 §5) and extended at de4be6f with ADR-2611161600's tests, written first and red there; accepted by gary on 2026-11-16.",
       "to": "71fd053cdb0b43aaaaf8d339e327e9f335754960796d99ec3bc5682cef7c859d"
+    },
+    {
+      "at": "2026-11-21T21:40:57.061976465+00:00",
+      "base_commit": "de4be6f6d2f556c70c738f878ae1fc1c960c3954",
+      "by": "Claude (agent, in craigjohnson's session; for review)",
+      "file": "hexa-cli/tests/a_verb_reports_only_the_success_it_earned.rs",
+      "from": "71fd053cdb0b43aaaaf8d339e327e9f335754960796d99ec3bc5682cef7c859d",
+      "reason": "The fixture's 'tree hexa never parsed' was a Python file (src/a.py); hexa reads Python since ADR-2611211324, so the fixture is now a plain .js file, which hexa lists and does not parse. The scenarios and assertions are unchanged.",
+      "to": "0f4f60db88451161fcb59b2547ae48afd16a35002de22a6d72a8ee72685ba465"
+    },
+    {
+      "at": "2026-11-27T14:11:59.467593336+00:00",
+      "base_commit": "bdf80f1b5c1399b756552fc032ab75cf6a7bbbdb",
+      "by": "craigjohnson",
+      "file": "hexa-cli/tests/a_verb_reports_only_the_success_it_earned.rs",
+      "from": "0f4f60db88451161fcb59b2547ae48afd16a35002de22a6d72a8ee72685ba465",
+      "reason": "fixture only: the three trees that stood for 'a tree hexa cannot parse' were plain .js files; JavaScript is graded now (ADR-2611270420), so they become Python with no Python manifest, which is still not graded; no assertion changes",
+      "to": "c5ca99fbf8b8d72ac26ccb6a68c044530df2a0e48d86f4a1b0f43447fcca3dfe"
     }
   ]
 }

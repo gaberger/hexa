@@ -509,6 +509,21 @@ fn tests_json(t: Option<hexa_core::ports::evidence::TestCounts>, uncounted: bool
 
 /// End a gate that did not finish: the human lines, the result object, the
 /// AG-UI failure, and a non-zero exit (ADR-2611231400 §1).
+/// Whether git holds `p`: in the index, or in HEAD. A `git mv` or `git rm`
+/// takes the old path out of the index, so only HEAD still names it, and it is
+/// a deletion to commit, not a mistake.
+fn git_knows(root: &std::path::Path, p: &str) -> bool {
+    let ok = |args: &[&str]| {
+        std::process::Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    };
+    ok(&["ls-files", "--error-unmatch", p]) || ok(&["cat-file", "-e", &format!("HEAD:{p}")])
+}
+
 fn gate_failed(mut base: serde_json::Value, f: hexa_exec::direct_exec::GateFailure, uncounted: bool, started: bool) -> anyhow::Result<()> {
     if let Some(out) = &f.output {
         println!("  {} the gate's output (last lines):", "\u{2192}".cyan());
@@ -581,7 +596,7 @@ async fn gate(
     for f in &files {
         match repo_relative(&root, &cwd, f) {
             // a path that is neither in the tree nor tracked (a deletion) is a mistake, not "no change": `--files a,b` used to report nothing to commit
-            Some(p) if !root.join(&p).exists() && std::process::Command::new("git").args(["ls-files", "--error-unmatch", &p]).current_dir(&root).output().map(|o| !o.status.success()).unwrap_or(true) => {
+            Some(p) if !root.join(&p).exists() && !git_knows(&root, &p) => {
                 let hint = if f.contains(',') { "give several files separated by spaces, not commas" } else { "name a file that is in the tree, or a tracked file you deleted" };
                 return gate_failed(base, *GateFailure::new("refused", format!("{f}: no such file in the tree or in git"), hint, Some("--files"), false), uncounted, false);
             }

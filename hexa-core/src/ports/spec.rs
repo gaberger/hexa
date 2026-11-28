@@ -5,6 +5,6 @@
 //! contract, and they reach it here rather than in the domain.
 
 pub use crate::domain::spec::{
-    coverage, judge_seal, numbered_decisions, rebind, test_fns, test_ref, without_tests, Acceptance, Amendment, Exemption, Finding,
-    Kind, Scenario, SealVerdict, Spec,
+    binding_anchor, coverage, judge_binding, judge_seal, numbered_decisions, rebind, test_fns, test_ref, without_tests, Acceptance,
+    Amendment, BindingVerdict, Exemption, Finding, Kind, Move, Scenario, SealVerdict, Spec,
 };

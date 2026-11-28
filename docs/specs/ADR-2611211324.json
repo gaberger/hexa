@@ -1,0 +1,631 @@
+{
+  "adr": "ADR-2611211324",
+  "feature": "Python support: grade, evidence and test runner",
+  "description": "hexa parses Python imports and exports, grades Python projects, counts pytest and unittest output, refuses a grade over zero parsed files, and runs a single Python test by a built-in runner.",
+  "universal": [
+    "§1",
+    "§2",
+    "§3",
+    "§4",
+    "§5",
+    "§6",
+    "§7",
+    "§8"
+  ],
+  "accepted": {
+    "by": "craigjohnson",
+    "sha256": "a785ae50101aa7f4e7873c1409b619af3f0fcfd09d159305bd0574ba023e2a35"
+  },
+  "sealed": {
+    "hexa-cli/tests/adr_2611211324_spec.rs": "7eb109add3d5518331884e2bc436680602f5bf38a79aa7e95761520bdeba9391"
+  },
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A .py or .pyi path is Python.",
+      "given": "the paths `pkg/ports/repo.py` and `pkg/ports/repo.pyi`",
+      "when": "`Language::from_path` is called on each",
+      "then": "each returns `Language::Python`, in both `hexa-analysis` and `hexa-graph`",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s01_a_py_or_pyi_path_is_python",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "Near-miss extensions are not Python.",
+      "given": "the paths `notes.pyc`, `script.py.bak`, `pyproject.toml` and `README.py.md`",
+      "when": "`Language::from_path` is called on each",
+      "then": "none returns `Language::Python`",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s02_near_miss_extensions_are_not_python",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "No crate other than the two analysis crates names the Python grammar.",
+      "given": "the workspace's Cargo.toml files",
+      "when": "each crate's dependencies are listed",
+      "then": "`tree-sitter-python` appears only in `hexa-analysis` and `hexa-graph`; any other crate naming it fails the check",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s03_only_the_two_analysis_crates_name_the_python_grammar",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§1"
+      ],
+      "kind": "property",
+      "description": "Extension decides the Python language.",
+      "given": "any path",
+      "when": "`Language::from_path` is called on it",
+      "then": "the result is `Language::Python` exactly when the path ends in `.py` or `.pyi`, and the TypeScript, Go and Rust results are unchanged for every other path",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s04_the_extension_decides_python",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "Absolute, from- and relative imports resolve to project files.",
+      "given": "a project with `nautobot_ssot/__init__.py`, `nautobot_ssot/ports.py` and `nautobot_ssot/usecases/sync.py`, where `sync.py` holds `import nautobot_ssot.ports` and `from ..ports import Repo`",
+      "when": "the imports of `sync.py` are extracted",
+      "then": "both are `ImportStatement`s whose `resolved_path` is `nautobot_ssot/ports.py`, and each is an import edge",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s05_absolute_from_and_relative_imports_resolve_to_project_files",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "`from a import b` prefers the submodule, else the package.",
+      "given": "project A has `a/__init__.py` and `a/b.py`; project B has only `a/__init__.py`, which defines `b`",
+      "when": "`from a import b` is resolved in each project",
+      "then": "it resolves to `a/b.py` in A and to `a/__init__.py` in B",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s06_from_a_import_b_prefers_the_submodule_else_the_package",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "A package under src/ resolves.",
+      "given": "a project with `src/app/__init__.py` and `src/app/domain.py`, and a file importing `from app.domain import Order`",
+      "when": "the import is resolved",
+      "then": "its `resolved_path` is `src/app/domain.py`",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s07_a_package_under_src_resolves",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "An import under `if TYPE_CHECKING:` is an edge.",
+      "given": "`app/domain/order.py` holds `if TYPE_CHECKING:` followed by `from app.adapters.db import Session`, and `app/adapters/db.py` exists",
+      "when": "the project is analyzed with `app/domain` as domain and `app/adapters` as a secondary adapter",
+      "then": "the import is an edge from domain to adapters and is reported as a boundary violation",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s08_an_import_under_type_checking_is_an_edge",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "Stdlib and third-party imports are neither edges nor violations.",
+      "given": "a domain file holding `import os`, `from django.db import models` and `import requests`, none of which is a project file",
+      "when": "the project is analyzed",
+      "then": "none of the three is an import edge, and none is reported as a violation",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s09_stdlib_and_third_party_imports_are_neither_edges_nor_violations",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§2"
+      ],
+      "kind": "property",
+      "description": "An edge exists exactly when the import names a project file.",
+      "given": "any Python import statement in any project",
+      "when": "it is resolved",
+      "then": "it is an edge if and only if its `resolved_path` is an existing project file of the form `<module path>.py` or `<module path>/__init__.py` under the project root or a package root; an unresolved import is never a violation",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s10_an_edge_exists_exactly_when_the_import_names_a_project_file",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "Without `__all__`, public top-level names are exports.",
+      "given": "a module with `def load()`, `class Repo`, `LIMIT = 5`, `def _helper()` and `_cache = {}` at top level, and a nested `def inner()` inside `load`",
+      "when": "its exports are extracted",
+      "then": "the exports are exactly `load`, `Repo` and `LIMIT`",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s11_without_all_public_top_level_names_are_exports",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "`__all__` defines the exports.",
+      "given": "a module assigning `__all__ = [\"Repo\"]` and also defining public `def load()`",
+      "when": "its exports are extracted",
+      "then": "the only export is `Repo`",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s12_all_defines_the_exports",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "A name re-exported through `__init__.py` is not dead.",
+      "given": "`pkg/x.py` defines `y`, `pkg/__init__.py` holds `from .x import y`, and no other file imports `y`",
+      "when": "dead exports are computed",
+      "then": "`y` in `pkg/x.py` is not reported as a dead export",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s13_a_name_re_exported_through_init_is_not_dead",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "Private and nested names are never exports.",
+      "given": "a module whose only top-level names start with `_`, and which assigns no `__all__`",
+      "when": "its exports are extracted",
+      "then": "there are no exports and no dead export is reported for it",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s14_private_and_nested_names_are_never_exports",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§3"
+      ],
+      "kind": "property",
+      "description": "The export set is `__all__` or the public top-level names.",
+      "given": "any Python module",
+      "when": "its exports are extracted",
+      "then": "they equal the names in `__all__` when the module assigns one, and otherwise the top-level `def`, `class` and assignment names not starting with `_`; dead-export detection applies the same rule it applies to TypeScript, Go and Rust",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s15_the_export_set_is_all_or_the_public_top_level_names",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "A Django project with a tooling-only package.json is read as Python.",
+      "given": "a repository with `manage.py`, `pyproject.toml`, a package directory at the root holding `__init__.py` and Python files, and a `package.json` that is the only JavaScript tooling",
+      "when": "`hexa analyze .` runs",
+      "then": "it names the language `python`, parses the package's `.py` files, does not report the language as TypeScript, and does not print the 'unsupported' line",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s16_a_django_project_with_a_tooling_only_package_json_is_read_as_python",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S17",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "Several languages are all named and graded.",
+      "given": "a repository with `pyproject.toml` and Python sources, and `package.json` with TypeScript sources",
+      "when": "`hexa analyze .` runs",
+      "then": "it names both `python` and `typescript`, and each language's files are graded",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s17_several_languages_are_all_named_and_graded",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S18",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "Python files outside the convention need a declared layer.",
+      "given": "a package with `models.py`, `jobs.py` and `views.py` and no `analyze.layers` entry for them",
+      "when": "`hexa analyze .` runs",
+      "then": "the three files are listed as unclassified and the grade is capped below A+; with `analyze.layers` entries for them, they are classified",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s18_python_files_outside_the_convention_need_a_declared_layer",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S19",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "Excluded directories and test code are not graded as layers.",
+      "given": "a project with Python files under `migrations/`, `.venv/`, `venv/`, `site-packages/`, `node_modules/`, `__pycache__/`, `tests/`, and a file `pkg/test_sync.py`",
+      "when": "`hexa analyze .` runs",
+      "then": "none of those files is counted in the layer coverage or reported as unclassified, and none adds an edge, dead export or violation",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s19_excluded_directories_and_test_code_are_not_graded_as_layers",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S20",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "The language is not chosen by manifest order alone.",
+      "given": "a repository with both `requirements.txt` and `package.json`, and Python sources only",
+      "when": "`hexa analyze .` runs",
+      "then": "the language is not reported as TypeScript only, and the Python files are graded",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s20_the_language_is_not_chosen_by_manifest_order_alone",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S21",
+      "decision": [
+        "§4"
+      ],
+      "kind": "property",
+      "description": "Every detected language is graded and the layer scan covers package directories.",
+      "given": "any repository",
+      "when": "`hexa analyze .` runs",
+      "then": "every language whose manifest and sources are present is named and its files graded; for Python, the layer scan covers every package directory, not only `src/`, and never the default-excluded directories",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s21_every_detected_language_is_graded_and_the_scan_covers_package_directories",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S22",
+      "decision": [
+        "§5"
+      ],
+      "kind": "example",
+      "description": "pytest's summary is counted.",
+      "given": "exit status 0 and output `== 5 passed in 0.12s ==`, and separately `5 passed in 0.12s` (the `-q` form)",
+      "when": "`read_evidence(true, output, false)` runs",
+      "then": "each is `Evidence::Passed { tests: 5 }`",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s22_pytests_summary_is_counted",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S23",
+      "decision": [
+        "§5"
+      ],
+      "kind": "example",
+      "description": "A pytest failure line fails.",
+      "given": "exit status 0 and output `== 3 failed, 5 passed, 1 skipped in 0.31s ==`",
+      "when": "`read_evidence(true, output, false)` runs",
+      "then": "the result is `Evidence::Failed` naming 3 failed tests",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s23_a_pytest_failure_line_fails",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S24",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "Zero-test and skip-only pytest runs are vacuous.",
+      "given": "exit status 0 and output, in turn, `no tests ran in 0.01s`, `collected 0 items`, `== 4 skipped in 0.02s ==`, and `== 2 xfailed in 0.02s ==`",
+      "when": "`read_evidence(true, output, false)` runs",
+      "then": "each is `Evidence::Vacuous`, never `Passed` and never `Unrecognised`",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s24_zero_test_and_skip_only_pytest_runs_are_vacuous",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S25",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "`KNOWN_RUNNERS` names the new runners.",
+      "given": "the constant `KNOWN_RUNNERS`",
+      "when": "it is read",
+      "then": "it names both pytest and unittest; a value naming neither fails",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s25_known_runners_names_pytest_and_unittest",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S26",
+      "decision": [
+        "§5"
+      ],
+      "kind": "property",
+      "description": "A pytest summary passes only with passed tests and no failures.",
+      "given": "any pytest summary with counts p passed, f failed, s skipped and x xfailed, and exit status 0",
+      "when": "it is read",
+      "then": "the result is `Failed` when f > 0, otherwise `Passed { tests: p }` when p > 0, otherwise `Vacuous`; skipped and xfailed never add to the passed count",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s26_a_pytest_summary_passes_only_with_passed_tests_and_no_failures",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S27",
+      "decision": [
+        "§6"
+      ],
+      "kind": "example",
+      "description": "Zero parsed files is 'not graded'.",
+      "given": "a directory with no source file hexa parses",
+      "when": "`hexa analyze .` runs",
+      "then": "it prints \"not graded\" and prints no letter grade and no score out of 100",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s27_zero_parsed_files_is_not_graded",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S28",
+      "decision": [
+        "§6"
+      ],
+      "kind": "negative",
+      "description": "An empty grade never exits green under a gate.",
+      "given": "a directory in which hexa parses zero files",
+      "when": "`hexa analyze . --exit-code`, and separately `hexa analyze . --grade A`, run",
+      "then": "each exits non-zero; printing A+ 100/100 with exit 0 is the refused outcome",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s28_an_empty_grade_never_exits_green_under_a_gate",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S29",
+      "decision": [
+        "§6"
+      ],
+      "kind": "property",
+      "description": "No letter without parsed files, in any language.",
+      "given": "any project, in any language or none",
+      "when": "`hexa analyze` parses zero files",
+      "then": "the output contains no letter grade, says \"not graded\", and `--exit-code` and `--grade` both exit non-zero",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s29_no_letter_without_parsed_files_in_any_language",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S30",
+      "decision": [
+        "§7"
+      ],
+      "kind": "example",
+      "description": "unittest's OK counts the run minus the skipped.",
+      "given": "exit status 0 and output `Ran 40 tests in 1.2s` followed by `OK (skipped=33)`",
+      "when": "`read_evidence(true, output, false)` runs",
+      "then": "the result is `Evidence::Passed { tests: 7 }`",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s30_unittests_ok_counts_the_run_minus_the_skipped",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S31",
+      "decision": [
+        "§7"
+      ],
+      "kind": "example",
+      "description": "A plain unittest OK counts every test.",
+      "given": "exit status 0 and output `Ran 5 tests in 0.002s` followed by `OK`",
+      "when": "`read_evidence(true, output, false)` runs",
+      "then": "the result is `Evidence::Passed { tests: 5 }`",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s31_a_plain_unittest_ok_counts_every_test",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S32",
+      "decision": [
+        "§7"
+      ],
+      "kind": "example",
+      "description": "A framework wrapper is read by its output.",
+      "given": "a gate `nautobot-server test` (or `invoke unittest`) that exits 0 and prints `Ran 12 tests in 3.4s` followed by `OK`",
+      "when": "the gate's evidence is read",
+      "then": "the result is `Evidence::Passed { tests: 12 }`, read from the output and not from the command name",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s32_a_framework_wrapper_is_read_by_its_output",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S33",
+      "decision": [
+        "§7"
+      ],
+      "kind": "negative",
+      "description": "Failures, errors and zero-test runs do not pass.",
+      "given": "exit status 0 and output, in turn, `Ran 5 tests` followed by `FAILED (failures=1, errors=2)`, then `Ran 0 tests in 0.000s` followed by `OK`, then `Ran 3 tests` followed by `OK (skipped=3)`",
+      "when": "`read_evidence(true, output, false)` runs",
+      "then": "the first is `Evidence::Failed`, and the second and third are `Evidence::Vacuous`",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s33_failures_errors_and_zero_test_runs_do_not_pass",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S34",
+      "decision": [
+        "§7"
+      ],
+      "kind": "property",
+      "description": "The unittest count is N minus skipped.",
+      "given": "any unittest output `Ran N tests` followed by `OK` or `OK (skipped=k)` with k ≤ N, and exit status 0",
+      "when": "it is read",
+      "then": "the result is `Passed { tests: N − k }` when N − k > 0 and `Vacuous` otherwise; any `FAILED (...)` line makes it `Failed` whatever N is",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s34_the_unittest_count_is_n_minus_skipped",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S35",
+      "decision": [
+        "§8"
+      ],
+      "kind": "example",
+      "description": "`py` has a built-in pytest runner.",
+      "given": "no `test.runners.py` entry, and the reference `pkg/tests/test_sync.py::test_one` with a `pyproject.toml` in `pkg/`",
+      "when": "`runner_for(\"py\", {})` is called and the test is run",
+      "then": "a Python runner is returned, and it runs `python3 -m pytest pkg/tests/test_sync.py::test_one -q` (with the file path as seen from that directory) from `pkg/`, the nearest directory at or above the file holding `pyproject.toml`, `pytest.ini`, `tox.ini` or `setup.cfg`",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s35_py_has_a_built_in_pytest_runner",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S36",
+      "decision": [
+        "§8"
+      ],
+      "kind": "example",
+      "description": "Python test files are recognised for sealing.",
+      "given": "the paths `app/tests/models.py`, `app/test_sync.py` and `app/sync_test.py`",
+      "when": "`is_test_file` is called on each",
+      "then": "each returns true",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s36_python_test_files_are_recognised_for_sealing",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S37",
+      "decision": [
+        "§8"
+      ],
+      "kind": "negative",
+      "description": "A configured runner wins over the built-in.",
+      "given": "`test.runners.py` is set to `nautobot-server test {name}`",
+      "when": "`runner_for(\"py\", configured)` is called",
+      "then": "it returns `Runner::Configured` with that template, not the built-in Python runner",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s37_a_configured_runner_wins_over_the_built_in",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S38",
+      "decision": [
+        "§8"
+      ],
+      "kind": "negative",
+      "description": "Zero or several tests do not pass a single-test run.",
+      "given": "a built-in Python test run whose output reports `no tests ran`, and another reporting `3 passed`",
+      "when": "each is judged",
+      "then": "the first is `Vacuous` and the second `Ambiguous(3)`; neither is `Passed`",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s38_zero_or_several_tests_do_not_pass_a_single_test_run",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S39",
+      "decision": [
+        "§8"
+      ],
+      "kind": "negative",
+      "description": "Ordinary Python modules are not test files.",
+      "given": "the paths `app/models.py`, `app/contest.py` and `app/testing_utils.py`",
+      "when": "`is_test_file` is called on each",
+      "then": "each returns false",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s39_ordinary_python_modules_are_not_test_files",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S40",
+      "decision": [
+        "§8"
+      ],
+      "kind": "property",
+      "description": "A Python test passes only when exactly one test ran and passed.",
+      "given": "any run of the built-in Python runner",
+      "when": "it is judged",
+      "then": "it is `Passed` if and only if the output reports exactly one test that ran and passed and none failed; zero is `Vacuous`, more than one is `Ambiguous`",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s40_a_python_test_passes_only_when_exactly_one_ran_and_passed",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S41",
+      "decision": [
+        "§9"
+      ],
+      "kind": "example",
+      "description": "The out-of-scope items are named as not done.",
+      "given": "this ADR marked built",
+      "when": "its Built line and status are read",
+      "then": "generating Python tests by `hexa spec tests` and `hexa spec red`, Python output from `hexa scaffold` and `hexa init --scaffold`, and `hexa init` explaining that `lifecycle_enforcement` defaults to \"mandatory\" are each listed as outside this ADR, with a separate ADR or gap for each",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s41_the_out_of_scope_items_are_named_as_not_done",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S42",
+      "decision": [
+        "§9"
+      ],
+      "kind": "negative",
+      "description": "This ADR is not cited as having delivered the out-of-scope items.",
+      "given": "a change log, Built line or gap closure that cites ADR-2611211324 as delivering Python test generation, Python scaffolding, or the `hexa init` lifecycle message",
+      "when": "it is reviewed against this ADR",
+      "then": "the claim is refused; those items remain open until their own ADR or gap closes them",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s42_this_adr_is_not_cited_as_having_delivered_the_out_of_scope_items",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S43",
+      "decision": [
+        "§10"
+      ],
+      "kind": "example",
+      "description": "The Python example is graded.",
+      "given": "`examples/stress/game-wordle-py`",
+      "when": "`hexa analyze examples/stress/game-wordle-py` runs",
+      "then": "it reports a letter grade of A+, or a grade whose violations are exactly the planted ones, and the example's README says so",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s43_the_python_example_is_graded",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S44",
+      "decision": [
+        "§10"
+      ],
+      "kind": "example",
+      "description": "The two target repositories are measured and recorded.",
+      "given": "`netbox-plugin` and `nautobot-ssot-plugin`",
+      "when": "`hexa analyze` runs on each and this ADR is marked built",
+      "then": "the Built line records, for each repository, its grade, the number of files with a layer, and the `analyze.layers` entries it needed",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s44_the_two_target_repositories_are_measured_and_recorded",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S45",
+      "decision": [
+        "§10"
+      ],
+      "kind": "negative",
+      "description": "This ADR is not built while the README or Built line is unchanged.",
+      "given": "the game-wordle-py README still calls it \"a tree it cannot read\", or the Built line lacks either target repository's grade, layered-file count or `analyze.layers`",
+      "when": "this ADR is checked as built",
+      "then": "it is not built",
+      "test": "hexa-cli/tests/adr_2611211324_spec.rs::s45_not_built_while_the_readme_or_built_line_is_unchanged",
+      "red": "3b2a9ef"
+    },
+    {
+      "id": "S46",
+      "decision": [
+        "§10"
+      ],
+      "kind": "negative",
+      "description": "hexa's own grade is unchanged.",
+      "given": "the hexa repository after the change",
+      "when": "`hexa analyze .` runs",
+      "then": "it stays A+ 100/100; any lower result fails the final phase"
+    }
+  ],
+  "amendments": [
+    {
+      "at": "2026-11-21T19:47:34.217907402+00:00",
+      "base_commit": "3b2a9ef9c0a066ed957276879161bd63d573a80f",
+      "by": "Claude (agent, in craigjohnson's session; for review)",
+      "file": "hexa-cli/tests/adr_2611211324_spec.rs",
+      "from": "28c1825a3b6459b56bccacb302e560f33ebf14a8b8214cc1e7c9cb2650c6558e",
+      "reason": "S05 asserted two violations for two import lines of one module from one file; the grade counts one edge per target (one_edge_per_target: one crossing costs ten points once), so the fixture now checks each import form alone. The scenario is unchanged: both forms resolve to nautobot_ssot/ports.py and each is an edge.",
+      "to": "7eb109add3d5518331884e2bc436680602f5bf38a79aa7e95761520bdeba9391"
+    }
+  ]
+}

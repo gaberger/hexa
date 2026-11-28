@@ -10,7 +10,8 @@
 //! contract builder sees only [`TypeRef`]s and resolves names across files.
 //!
 //! A tag is a comment line that *begins* with the tag. A sentence that
-//! mentions one, like this module's, is prose.
+//! mentions one, like this module's, is prose. Python is read in its own
+//! module, [`python`] (ADR-2611261303).
 
 use tree_sitter::Node;
 
@@ -18,6 +19,9 @@ use super::ports::{
     AnalysisError, ApiFacts, ApiMethodDecl, ApiPortDecl, ErrorChannel,
     FieldDecl, Language, TypeBody, TypeDecl, TypeRef, VariantDecl, WrittenParam,
 };
+
+mod python;
+mod python_types;
 
 const API_TAG: &str = "@hexa:api";
 const STATUS_TAG: &str = "@hexa:status";
@@ -35,6 +39,7 @@ pub fn extract(source: &str, lang: Language) -> Result<ApiFacts, AnalysisError> 
         Language::Rust => tree_sitter_rust::LANGUAGE.into(),
         Language::Go => tree_sitter_go::LANGUAGE.into(),
         Language::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+        Language::Python => tree_sitter_python::LANGUAGE.into(),
         Language::Unknown => return Ok(ApiFacts::default()),
     };
     let mut parser = tree_sitter::Parser::new();
@@ -47,12 +52,16 @@ pub fn extract(source: &str, lang: Language) -> Result<ApiFacts, AnalysisError> 
         return Err(AnalysisError::Other(format!("syntax tree nests deeper than {MAX_TREE_DEPTH} levels")));
     }
     let mut x = Extractor { src: source, facts: ApiFacts::default(), consumed: Vec::new() };
-    x.walk(root, lang);
+    if lang == Language::Python {
+        python::read(&mut x, root);
+    } else {
+        x.walk(root, lang);
+    }
 
     // Every comment line that starts with the tag and was not read as part
     // of a port is a tag in the wrong place.
     let mut tagged = Vec::new();
-    collect_tag_comments(root, source, &mut tagged);
+    collect_tag_comments(root, source, lang, &mut tagged);
     x.facts.stray_tags = tagged
         .into_iter()
         .filter(|(start, _)| !x.consumed.contains(start))
@@ -89,6 +98,7 @@ fn mentions_a_type(source: &str, lang: Language) -> bool {
         Language::Rust => ["struct ", "enum ", "type ", " as "].iter().any(|k| source.contains(k)),
         Language::Go => source.contains("type "),
         Language::TypeScript => ["interface ", "type ", " as "].iter().any(|k| source.contains(k)),
+        Language::Python => python::mentions_a_type(source),
         Language::Unknown => false,
     }
 }
@@ -122,9 +132,14 @@ fn tag_rest<'a>(line: &'a str, tag: &str) -> Option<&'a str> {
     (rest.is_empty() || rest.starts_with(char::is_whitespace)).then(|| rest.trim())
 }
 
-fn collect_tag_comments(n: Node, src: &str, out: &mut Vec<(usize, usize)>) {
+fn collect_tag_comments(n: Node, src: &str, lang: Language, out: &mut Vec<(usize, usize)>) {
     if is_comment(n.kind()) {
-        for (i, l) in comment_lines(&src[n.byte_range()]).iter().enumerate() {
+        let text = &src[n.byte_range()];
+        let lines = match lang {
+            Language::Python => vec![python::comment_text(text)],
+            _ => comment_lines(text),
+        };
+        for (i, l) in lines.iter().enumerate() {
             if tag_rest(l, API_TAG).is_some() {
                 out.push((n.start_byte(), n.start_position().row + 1 + i));
             }
@@ -133,7 +148,7 @@ fn collect_tag_comments(n: Node, src: &str, out: &mut Vec<(usize, usize)>) {
     }
     let mut c = n.walk();
     for ch in n.children(&mut c) {
-        collect_tag_comments(ch, src, out);
+        collect_tag_comments(ch, src, lang, out);
     }
 }
 
@@ -383,6 +398,7 @@ impl<'s> Extractor<'s> {
                                 wire_name,
                                 ty: lower_rust(ty, self.src),
                                 optional: false,
+                                fault: None,
                                 line: line_of(ch),
                             });
                         }
@@ -486,11 +502,11 @@ impl<'s> Extractor<'s> {
                             Some((w, o)) if !w.is_empty() => (w, lower_go(fty, self.src), o),
                             _ => (base.to_string(), TypeRef::Unsupported(format!("embedded {written}")), false),
                         };
-                        fields.push(FieldDecl { wire_name: wire, ty, optional, line: line_of(f) });
+                        fields.push(FieldDecl { wire_name: wire, ty, optional, fault: None, line: line_of(f) });
                         continue;
                     }
                     for fname in names {
-                        if !fname.starts_with(|ch: char| ch.is_ascii_uppercase()) {
+                        if !fname.starts_with(|ch: char| ch.is_uppercase()) {
                             continue;
                         }
                         let (wire, omitempty) = match go_json_tag(tag) {
@@ -503,6 +519,7 @@ impl<'s> Extractor<'s> {
                             wire_name: wire,
                             ty: lower_go(fty, self.src),
                             optional: omitempty,
+                            fault: None,
                             line: line_of(f),
                         });
                     }
@@ -919,6 +936,7 @@ fn ts_fields(body: Node, src: &str) -> Vec<FieldDecl> {
                 wire_name: name.trim_matches(|q| q == '"' || q == '\'').to_string(),
                 ty: ts_annotation(p, src),
                 optional,
+                fault: None,
                 line: line_of(p),
             })
         })

@@ -114,6 +114,31 @@ pub enum SpecAction {
         /// Who amends; defaults to `git config user.name`
         #[arg(long)]
         by: Option<String>,
+        /// Record steps of the sealed file's chain that went unrecorded, instead
+        /// of an edit to it: a commit of this branch holding the file as it was
+        /// after each step, oldest first, ending at the version the chain next
+        /// needs. Needs --file; the first call shows the diffs, --confirm
+        /// records them
+        #[arg(long = "at")]
+        at: Vec<String>,
+    },
+    /// Record a move of a scenario's test to another ref: the first call shows
+    /// the diff, `--confirm` records it. Also records a move history already
+    /// holds (ADR-2611251652 §4)
+    Move {
+        adr: String,
+        /// `<scenario>=<file>::<name>`: the scenario, and the ref it moves to
+        #[arg(long)]
+        scenario: String,
+        /// Why the binding moves
+        #[arg(long)]
+        reason: String,
+        /// The sha256 of the new file as the first call showed it
+        #[arg(long)]
+        confirm: Option<String>,
+        /// Who moves it; defaults to `git config user.name`
+        #[arg(long)]
+        by: Option<String>,
     },
     /// Run each scenario's sealed test alone; drift fails (ADR-2610221540 §8)
     Verify {
@@ -126,7 +151,7 @@ pub enum SpecAction {
         /// exist and fail there; a test green there is a mirror (§5)
         #[arg(long)]
         prove: bool,
-        /// List each amendment with its reason
+        /// List each amendment and move with its reason
         #[arg(long)]
         verbose: bool,
         /// Run the tests on this machine even when .hexa/project.json sets
@@ -153,9 +178,16 @@ pub async fn run(action: SpecAction) -> anyhow::Result<()> {
         }
         SpecAction::Check { adr } => super::spec_ledger::check(adr.as_deref()),
         SpecAction::Accept { adr, by } => super::spec_ledger::accept(&adr, by.as_deref()),
-        SpecAction::Seal { adr } => super::spec_ledger::seal(&adr),
-        SpecAction::Amend { adr, reason, file, confirm, by } => {
-            super::spec_ledger::amend(&adr, &reason, file.as_deref(), confirm.as_deref(), by.as_deref())
+        SpecAction::Seal { adr } => super::spec_ledger::seal_verb(&adr),
+        SpecAction::Amend { adr, reason, file, confirm, by, at } => {
+            if at.is_empty() {
+                super::spec_ledger::amend(&adr, &reason, file.as_deref(), confirm.as_deref(), by.as_deref())
+            } else {
+                super::spec_ledger::amend_history(&adr, &reason, file.as_deref(), &at, confirm.as_deref(), by.as_deref())
+            }
+        }
+        SpecAction::Move { adr, scenario, reason, confirm, by } => {
+            super::spec_ledger::move_binding(&adr, &scenario, &reason, confirm.as_deref(), by.as_deref())
         }
         SpecAction::Verify { adr, ci, prove, verbose, local } => {
             super::spec_ledger::verify(adr.as_deref(), ci, prove, verbose, local).await

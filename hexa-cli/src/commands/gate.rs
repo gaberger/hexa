@@ -48,6 +48,11 @@ fn erased_by_the_compiler(rows: &[Coverage]) -> Vec<String> {
         .collect()
 }
 
+/// Whether `ext` is a source extension deletion coverage reads.
+fn is_measured_extension(ext: &str) -> bool {
+    matches!(ext, "ts" | "tsx" | "js" | "rs" | "go" | "py")
+}
+
 /// The files worth deleting one at a time. Source only; never the composition
 /// root, which is wiring rather than a subject; never a test, which is the gate
 /// itself and would make the measurement circular.
@@ -55,7 +60,7 @@ pub(crate) fn candidate_modules(files: &[PathBuf], composition_root: &str) -> Ve
     let mut out = Vec::new();
     for f in files {
         let ext = f.extension().and_then(|e| e.to_str()).unwrap_or("");
-        if !matches!(ext, "ts" | "tsx" | "js" | "rs" | "go") {
+        if !is_measured_extension(ext) {
             continue;
         }
         let rel = f.to_string_lossy().replace('\\', "/");
@@ -63,7 +68,9 @@ pub(crate) fn candidate_modules(files: &[PathBuf], composition_root: &str) -> Ve
             continue;
         }
         let name = f.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        if name.contains(".test.") || name.ends_with("_test.go") {
+        // pytest's discovery names, and its shared fixtures.
+        let python_test = ext == "py" && (name.starts_with("test_") || name.ends_with("_test.py") || name == "conftest.py");
+        if name.contains(".test.") || name.ends_with("_test.go") || python_test {
             continue;
         }
         if f.components().any(|c| {
@@ -75,6 +82,64 @@ pub(crate) fn candidate_modules(files: &[PathBuf], composition_root: &str) -> Ve
         out.push(rel);
     }
     out
+}
+
+/// [`candidate_modules`] under `root`, less each Python file with nothing to
+/// run. Deleting an empty `__init__.py` leaves the package importable, so no
+/// gate could notice it.
+fn measurable_modules(root: &Path, files: &[PathBuf], composition_root: &str) -> Vec<String> {
+    let mut out = candidate_modules(files, composition_root);
+    out.retain(|m| !is_python_wiring_or_tooling(m));
+    out.retain(|m| !(m.ends_with(".py") && std::fs::read_to_string(root.join(m)).is_ok_and(|s| is_blank_python(&s))));
+    out
+}
+
+/// Python files a gate does not import to use: the composition root and the
+/// program entry wherever the package holds them (the names the analyzer reads
+/// as entry points), packaging and task scripts, and generated migrations.
+fn is_python_wiring_or_tooling(module: &str) -> bool {
+    let name = module.rsplit('/').next().unwrap_or(module);
+    matches!(name, "composition_root.py" | "__main__.py" | "setup.py" | "manage.py" | "noxfile.py")
+        || (module.ends_with(".py") && format!("/{module}").contains("/migrations/"))
+}
+
+/// Whether `source` holds only blank lines, comments and a module docstring.
+fn is_blank_python(source: &str) -> bool {
+    let mut rest = source.trim_start_matches('\u{feff}');
+    let mut docstring_read = false;
+    loop {
+        rest = rest.trim_start();
+        if rest.is_empty() {
+            return true;
+        }
+        if rest.starts_with('#') {
+            rest = rest.split_once('\n').map_or("", |(_, after)| after);
+            continue;
+        }
+        if docstring_read {
+            return false;
+        }
+        match after_docstring(rest) {
+            Some(after) => {
+                docstring_read = true;
+                rest = after;
+            }
+            None => return false,
+        }
+    }
+}
+
+/// What follows the string literal `source` starts with, if it starts with one
+/// and nothing but a comment shares its last line.
+fn after_docstring(source: &str) -> Option<&str> {
+    let body = source.strip_prefix(['r', 'R', 'u', 'U']).unwrap_or(source);
+    let quote = [r#"""""#, "'''", "\"", "'"].into_iter().find(|q| body.starts_with(q))?;
+    let (text, after) = body[quote.len()..].split_once(quote)?;
+    if quote.len() == 1 && text.contains('\n') {
+        return None;
+    }
+    let line_end = after.split('\n').next().unwrap_or("").trim();
+    (line_end.is_empty() || line_end.starts_with('#')).then_some(after)
 }
 
 /// True when every statement in `source` is erased before the program runs:
@@ -181,8 +246,8 @@ fn starts_a_type_alias(line: &str) -> bool {
 
 /// Braces opened minus braces closed on one line.
 fn brace_delta(line: &str) -> i32 {
-    line.chars().filter(|c| *c == '{').count() as i32
-        - line.chars().filter(|c| *c == '}').count() as i32
+    let count = |b: char| i32::try_from(line.chars().filter(|c| *c == b).count()).unwrap_or(i32::MAX);
+    count('{') - count('}')
 }
 
 /// Restores a deleted file when it goes out of scope, however it goes out of
@@ -191,6 +256,20 @@ fn brace_delta(line: &str) -> i32 {
 struct Restore {
     path: PathBuf,
     bytes: Vec<u8>,
+    /// What stood at `path`: its mode, and where it pointed if it was a link.
+    /// Writing the bytes alone made a script no longer executable and a
+    /// symlink a copy.
+    permissions: std::fs::Permissions,
+    link: Option<PathBuf>,
+}
+
+impl Restore {
+    /// What it takes to put `path`, which holds `bytes`, back.
+    fn of(path: PathBuf, bytes: Vec<u8>) -> std::io::Result<Self> {
+        let link = std::fs::read_link(&path).ok();
+        let permissions = std::fs::metadata(&path)?.permissions();
+        Ok(Self { path, bytes, permissions, link })
+    }
 }
 
 impl Drop for Restore {
@@ -198,14 +277,27 @@ impl Drop for Restore {
         if let Some(parent) = self.path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        let _ = std::fs::write(&self.path, &self.bytes);
+        #[cfg(unix)]
+        if let Some(target) = &self.link {
+            // Deleting removed the link, not what it points at.
+            let _ = std::fs::remove_file(&self.path);
+            if std::os::unix::fs::symlink(target, &self.path).is_ok() {
+                return;
+            }
+        }
+        if std::fs::write(&self.path, &self.bytes).is_ok() {
+            let _ = std::fs::set_permissions(&self.path, self.permissions.clone());
+        }
     }
 }
 
 /// Collect every file under `root`, skipping the directories that hold build
 /// output rather than source.
 fn collect_files(root: &Path, out: &mut Vec<PathBuf>) -> anyhow::Result<()> {
-    const SKIP: [&str; 6] = ["target", "node_modules", ".git", "dist", "build", "graph-out"];
+    // With Python's environments and caches: installed code is not the
+    // project's, and one holding a `.rs` file refused the whole measurement.
+    const SKIP: [&str; 10] =
+        ["target", "node_modules", ".git", "dist", "build", "graph-out", ".venv", "venv", "site-packages", "__pycache__"];
     let entries = match std::fs::read_dir(root) {
         Ok(e) => e,
         Err(_) => return Ok(()),
@@ -242,7 +334,7 @@ pub(crate) async fn measure(
         .collect();
 
     let mut rows = Vec::new();
-    for module in candidate_modules(&relative, composition_root) {
+    for module in measurable_modules(root, &relative, composition_root) {
         let path = root.join(&module);
         let bytes = match std::fs::read(&path) {
             Ok(b) => b,
@@ -258,7 +350,7 @@ pub(crate) async fn measure(
             std::str::from_utf8(&bytes).map(is_type_only).unwrap_or(false)
         };
 
-        let guard = Restore { path: path.clone(), bytes };
+        let guard = Restore::of(path.clone(), bytes)?;
         std::fs::remove_file(&path)?;
         let (ok, out) = hexa_exec::direct_exec::run_evidence(gate, root).await;
         drop(guard);
@@ -326,7 +418,7 @@ pub(crate) fn resolve_composition_root(target: &Path, repo_root: &Path, given: O
         }),
         // A library crate's `lib.rs` is its composition root, as a binary's
         // `main.rs` is (CLAUDE.md: each crate's lib.rs wires its adapters).
-        None => Ok(["src/main.ts", "src/main.rs", "main.go", "src/index.ts", "src/lib.rs", "main.ts", "index.ts", "lib.rs", "main.rs"]
+        None => Ok(["src/main.ts", "src/main.rs", "main.go", "src/index.ts", "src/lib.rs", "main.ts", "index.ts", "lib.rs", "main.rs", "src/composition_root.py", "composition_root.py", "src/main.py", "main.py"]
             .iter()
             .find_map(|c| lookup(c))
             .unwrap_or_default()),
@@ -352,8 +444,13 @@ pub async fn run(
     let mut files = Vec::new();
     collect_files(&root, &mut files)?;
     let relative: Vec<PathBuf> = files.iter().map(|f| f.strip_prefix(&root).unwrap_or(f).to_path_buf()).collect();
-    let candidates = candidate_modules(&relative, &composition_root);
-    if let Some(why) = not_measurable_by_deletion(&candidates) {
+    let candidates = measurable_modules(&root, &relative, &composition_root);
+    // Coverage of nothing is not coverage: "0 of 0" passed a tree whose
+    // language was never read. A tree that is only wiring or tests was read,
+    // and has no module to hold to the gate (ADR-2611081151 §7's scenarios).
+    let readable = relative.iter().any(|f| f.extension().and_then(|e| e.to_str()).is_some_and(is_measured_extension));
+    let nothing = (!readable).then(|| format!("no source to measure under {target}: hexa reads .ts, .tsx, .js, .rs, .go and .py here"));
+    if let Some(why) = nothing.or_else(|| not_measurable_by_deletion(&candidates)) {
         println!("{} {}", "deletion coverage of".bold(), gate.cyan());
         println!("  {} {why}", "✗".red());
         println!("  nothing was deleted and no coverage is reported");

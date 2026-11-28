@@ -349,16 +349,46 @@ impl ClaudeCodeInferenceAdapter {
         if result.exit_code != 0 {
             return Err(InferenceError::ApiError {
                 status: http_like_status(result.exit_code),
-                body: format!(
-                    "claude-text exited with {}: {}",
-                    result.exit_code,
-                    String::from_utf8_lossy(&result.stderr)
-                ),
+                body: failure_body(result.exit_code, &result.stdout, &result.stderr),
             });
         }
         Ok(TextReply::read(&String::from_utf8_lossy(&result.stdout)))
     }
 }
+
+/// The error body of a failed `claude-text` call (ADR-2611221646 §1): the
+/// reason the CLI wrote into its stdout JSON (`result`, else
+/// `terminal_reason`) and whatever it wrote to stderr.
+fn failure_body(exit_code: i32, stdout: &[u8], stderr: &[u8]) -> String {
+    let reason = serde_json::from_slice::<serde_json::Value>(stdout).ok().and_then(|v| {
+        ["result", "terminal_reason"].iter().find_map(|k| {
+            v.get(*k).and_then(|x| x.as_str()).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string)
+        })
+    });
+    let stderr = String::from_utf8_lossy(stderr).trim().to_string();
+    let detail = match (reason, stderr.is_empty()) {
+        (Some(r), true) => r,
+        (Some(r), false) => format!("{r}; stderr: {stderr}"),
+        (None, false) => stderr,
+        // No reason and no stderr: what it printed, shortened, so nothing
+        // after the colon is never the whole report.
+        (None, true) => {
+            let out = String::from_utf8_lossy(stdout);
+            let out = out.trim();
+            if out.is_empty() {
+                "no output on stdout or stderr".to_string()
+            } else {
+                let short: String = out.chars().take(STDOUT_IN_ERROR).collect();
+                if short.len() < out.len() { format!("stdout: {short}…") } else { format!("stdout: {short}") }
+            }
+        }
+    };
+    format!("claude-text exited with {exit_code}: {detail}")
+}
+
+/// How many characters of stdout a failure body carries when it has nothing
+/// else to say.
+const STDOUT_IN_ERROR: usize = 500;
 
 impl ClaudeCodeInferenceAdapter {
     /// A `claude-text` completion and the cost the CLI reported for it

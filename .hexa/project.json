@@ -34,6 +34,8 @@
       "hexa-cli/assets/scaffold",
       "hexa-cli/assets/claude-mods",
       "bench/fixtures",
+      "scripts/build-diagrams.py",
+      "scripts/diagram_lib.py",
       "evals"
     ],
     "adapters": {

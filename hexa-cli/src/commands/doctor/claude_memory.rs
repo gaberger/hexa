@@ -92,11 +92,26 @@ pub(crate) fn memory_lines(project_root: &Path, config_dir: Option<&str>, home: 
     }
 
     if project_root.join(".claude").join("worktrees").is_dir() {
-        let ignore = std::fs::read_to_string(project_root.join(".gitignore")).unwrap_or_default();
-        if worktrees_ignored(&ignore) {
+        // Git's own answer, so `.git/info/exclude` and the global excludes
+        // file count as `.gitignore` does (ADR-2611230831 §1); outside a
+        // repository, `.gitignore` alone, as before.
+        let by_git = std::process::Command::new("git")
+            .args(["check-ignore", "-q", ".claude/worktrees"])
+            .current_dir(project_root)
+            .output()
+            .ok()
+            .and_then(|o| match o.status.code() {
+                Some(0) => Some(true),
+                Some(1) => Some(false),
+                _ => None,
+            });
+        let ignored = by_git.unwrap_or_else(|| {
+            worktrees_ignored(&std::fs::read_to_string(project_root.join(".gitignore")).unwrap_or_default())
+        });
+        if ignored {
             out.push(line(Level::Ok, ".claude/worktrees is ignored by git".to_string()));
         } else {
-            out.push(line(Level::Warn, ".claude/worktrees exists and is not in .gitignore (agent worktrees are full copies of the tree)".to_string()));
+            out.push(line(Level::Warn, ".claude/worktrees exists and is not ignored by git (agent worktrees are full copies of the tree)".to_string()));
         }
     }
 

@@ -2517,6 +2517,11 @@ async fn run_gates(ci: bool, dry_run: bool) -> anyhow::Result<()> {
         "\n  {passed} passed · {failed} failed · {unrunnable} unrunnable · {here} cannot run here · {unproven} not proven here · {declared} unbuilt (declared) · {none} without a gate"
     );
     let unproven_fails = if ci { unproven } else { 0 };
+    // A --ci run that judged no gate checked nothing, and a vacuous gate is a
+    // failed gate (ADR-2611230830 §1).
+    if ci && passed + failed + unrunnable + here + unproven + declared == 0 && declaration.is_empty() {
+        anyhow::bail!("`hexa adr gates --ci`: no ADR records a gate, so nothing was checked");
+    }
     if failed + unrunnable + here + unproven_fails + declaration.len() > 0 {
         let mut parts = Vec::new();
         if unproven_fails > 0 {

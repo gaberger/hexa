@@ -318,7 +318,7 @@ pub fn parse_transcript(text: &str) -> Result<Transcript, String> {
             "result" => {
                 t.result = Some(RunResult {
                     subtype: str_at(&v, "subtype").to_string(),
-                    turns: v.get("num_turns").and_then(Value::as_u64).map(|x| x as u32),
+                    turns: v.get("num_turns").and_then(Value::as_u64).and_then(|x| u32::try_from(x).ok()),
                     cost_usd: v.get("total_cost_usd").and_then(Value::as_f64),
                     is_error: v.get("is_error").and_then(Value::as_bool).unwrap_or(false),
                 });
@@ -538,7 +538,7 @@ pub fn score(s: &Scenario, t: &Transcript, outcome: Option<bool>, is_match: &dyn
     Score {
         outcome,
         process,
-        bypasses: bypass_calls.len() as u32,
+        bypasses: u32::try_from(bypass_calls.len()).unwrap_or(u32::MAX),
         refusals: t.refusals,
         turns: t.result.as_ref().and_then(|r| r.turns),
         cost_usd: t.result.as_ref().and_then(|r| r.cost_usd),

@@ -48,6 +48,10 @@ pub struct ProjectNames {
     /// key is the name code writes: `pg = { package = "tokio-postgres" }` is
     /// referenced as `pg::`.
     pub rust_dependencies: Vec<String>,
+    /// The project's own top-level Python packages and modules: each package
+    /// directory (one holding `__init__.py`) and each `.py` module at the root
+    /// or under `src/`, by the name an `import` writes.
+    pub python_packages: Vec<String>,
 }
 
 /// Does this first path segment name something outside the project?
@@ -104,6 +108,7 @@ pub fn rust_child_modules(source: &str) -> Vec<String> {
 fn separator(lang: Language) -> &'static str {
     match lang {
         Language::Rust => "::",
+        Language::Python => ".",
         _ => "/",
     }
 }
@@ -129,6 +134,36 @@ fn covers(path: &str, prefix: &str, lang: Language) -> bool {
     lang == Language::TypeScript && path.starts_with(&format!("{prefix}:"))
 }
 
+/// CPython's standard library, top-level modules only: `sys.stdlib_module_names`
+/// of Python 3.14, less the private `_` ones (`_thread` reads as external), plus
+/// `__future__`. Sorted, for `binary_search`.
+const PYTHON_STDLIB: &[&str] = &[
+    "__future__", "abc", "annotationlib", "antigravity", "argparse", "array", "ast", "asyncio", "atexit",
+    "base64", "bdb", "binascii", "bisect", "builtins", "bz2", "cProfile", "calendar", "cmath",
+    "cmd", "code", "codecs", "codeop", "collections", "colorsys", "compileall", "compression",
+    "concurrent", "configparser", "contextlib", "contextvars", "copy", "copyreg", "csv",
+    "ctypes", "curses", "dataclasses", "datetime", "dbm", "decimal", "difflib", "dis",
+    "doctest", "email", "encodings", "ensurepip", "enum", "errno", "faulthandler", "fcntl",
+    "filecmp", "fileinput", "fnmatch", "fractions", "ftplib", "functools", "gc", "genericpath",
+    "getopt", "getpass", "gettext", "glob", "graphlib", "grp", "gzip", "hashlib", "heapq",
+    "hmac", "html", "http", "idlelib", "imaplib", "importlib", "inspect", "io", "ipaddress",
+    "itertools", "json", "keyword", "linecache", "locale", "logging", "lzma", "mailbox",
+    "marshal", "math", "mimetypes", "mmap", "modulefinder", "msvcrt", "multiprocessing",
+    "netrc", "nt", "ntpath", "nturl2path", "numbers", "opcode", "operator", "optparse", "os",
+    "pathlib", "pdb", "pickle", "pickletools", "pkgutil", "platform", "plistlib", "poplib",
+    "posix", "posixpath", "pprint", "profile", "pstats", "pty", "pwd", "py_compile", "pyclbr",
+    "pydoc", "pydoc_data", "pyexpat", "queue", "quopri", "random", "re", "readline", "reprlib",
+    "resource", "rlcompleter", "runpy", "sched", "secrets", "select", "selectors", "shelve",
+    "shlex", "shutil", "signal", "site", "smtplib", "socket", "socketserver", "sqlite3",
+    "sre_compile", "sre_constants", "sre_parse", "ssl", "stat", "statistics", "string",
+    "stringprep", "struct", "subprocess", "symtable", "sys", "sysconfig", "syslog", "tabnanny",
+    "tarfile", "tempfile", "termios", "textwrap", "this", "threading", "time", "timeit",
+    "tkinter", "token", "tokenize", "tomllib", "trace", "traceback", "tracemalloc", "tty",
+    "turtle", "turtledemo", "types", "typing", "unicodedata", "unittest", "urllib", "uuid",
+    "venv", "warnings", "wave", "weakref", "webbrowser", "winreg", "winsound", "wsgiref", "xml",
+    "xmlrpc", "zipapp", "zipfile", "zipimport", "zlib", "zoneinfo"
+];
+
 /// Node's built-in modules, in their bare form. The `node:` prefix is
 /// recognised separately, so only the forms that can be written without it
 /// are listed.
@@ -149,6 +184,7 @@ const NODE_BUILTINS: &[&str] = &[
 /// | Rust | `crate::`, `self::`, `super::`, the package's own name | `std`, `core`, `alloc` | any other first segment |
 /// | TypeScript | relative, `tsconfig` path aliases | `node:` specifiers and bare Node built-ins | any other bare specifier |
 /// | Go | paths under the module path in `go.mod` | first element contains no dot | everything else |
+/// | Python | relative, the project's own top-level packages and modules | [`PYTHON_STDLIB`] | everything else |
 pub fn classify(lang: Language, raw: &str, names: &ProjectNames) -> Origin {
     let raw = raw.trim();
     match lang {
@@ -194,6 +230,19 @@ pub fn classify(lang: Language, raw: &str, names: &ProjectNames) -> Origin {
                 Origin::StandardLibrary
             }
         }
+        Language::Python => {
+            if raw.starts_with('.') {
+                return Origin::Internal;
+            }
+            let head = raw.split('.').next().unwrap_or(raw);
+            if names.python_packages.iter().any(|p| p == head) {
+                Origin::Internal
+            } else if PYTHON_STDLIB.binary_search(&head).is_ok() {
+                Origin::StandardLibrary
+            } else {
+                Origin::External
+            }
+        }
         Language::Unknown => Origin::External,
     }
 }
@@ -226,7 +275,15 @@ pub fn judge(
     if origin == Origin::Internal {
         return Verdict::OutOfScope;
     }
-    if deny.iter().any(|d| covers(raw, d, lang)) {
+    // A Go standard-library package is one package: `net` is not
+    // `net/netip`. A Go `deny` entry naming one (no dot in its first path
+    // element) denies that package only; one naming a module covers the
+    // packages below it, as every other match does (ADR-2611221933 §1).
+    let go_stdlib = |d: &str| !d.split('/').next().unwrap_or("").contains('.');
+    let denies = |d: &String| {
+        if lang == Language::Go && go_stdlib(d) { raw == d } else { covers(raw, d, lang) }
+    };
+    if deny.iter().any(denies) {
         return Verdict::DeniedByDeny;
     }
     if origin == Origin::StandardLibrary {
@@ -248,7 +305,39 @@ mod tests {
             go_module: Some("github.com/acme/app".to_string()),
             ts_aliases: vec!["@app".to_string()],
             rust_dependencies: vec!["sqlx".to_string(), "tokio".to_string(), "serde".to_string()],
+            ..Default::default()
         }
+    }
+
+    // ── Python (ADR-2611211324 §2) ────────────────────────────────────────
+
+    #[test]
+    fn a_python_import_is_the_projects_the_standard_librarys_or_a_dependencys() {
+        let n = ProjectNames { python_packages: vec!["pkg".to_string(), "manage".to_string()], ..Default::default() };
+        for (raw, want) in [
+            (".ports", Origin::Internal),
+            ("..domain.order", Origin::Internal),
+            (".", Origin::Internal),
+            ("pkg.domain", Origin::Internal),
+            ("manage", Origin::Internal),
+            ("os", Origin::StandardLibrary),
+            ("__future__", Origin::StandardLibrary),
+            ("os.path", Origin::StandardLibrary),
+            ("collections.abc", Origin::StandardLibrary),
+            ("django.db", Origin::External),
+            ("requests", Origin::External),
+            ("pkgx", Origin::External),
+        ] {
+            assert_eq!(classify(Language::Python, raw, &n), want, "{raw}");
+        }
+        assert!(covers("os.path", "os", Language::Python));
+        assert!(!covers("osx", "os", Language::Python));
+        assert_eq!(judge(Language::Python, "socket", Origin::StandardLibrary, &[], &["socket".to_string()]), Verdict::DeniedByDeny);
+    }
+
+    #[test]
+    fn the_python_standard_library_list_is_sorted_for_its_search() {
+        assert!(PYTHON_STDLIB.windows(2).all(|w| w[0] < w[1]));
     }
 
     // ── which inline paths may be judged at all ───────────────────────────

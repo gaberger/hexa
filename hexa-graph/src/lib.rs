@@ -143,6 +143,13 @@ pub async fn build(
     let mut id_file: HashMap<String, String> = HashMap::new();
     // set of known relative file paths, for import resolution.
     let mut file_set: HashSet<String> = HashSet::new();
+    // Go file → its package clause, and the Go method entity ids: the
+    // same-package links are keyed by (directory, package) and never target
+    // a method.
+    let mut go_package: HashMap<String, String> = HashMap::new();
+    let mut go_method_ids: HashSet<String> = HashSet::new();
+    // Go file → the (type, key) of each bare key of a literal of a named type.
+    let mut go_literal_keys: HashMap<String, Vec<(String, String)>> = HashMap::new();
     // collected (file_rel, raw_path, names, kind) imports to resolve after all files seen.
     let mut pending_imports: Vec<(String, String, Vec<String>, ImportKind)> = Vec::new();
     // prose chunks for the deep semantic pass: (file_rel, prose).
@@ -238,6 +245,15 @@ pub async fn build(
                         .push(eid);
                 }
             }
+            if let Some(pkg) = fx.go_package {
+                go_package.insert(rel_lossy.clone(), pkg);
+            }
+            for m in &fx.go_methods {
+                go_method_ids.insert(id_for(NodeKind::Function, &rel_lossy, m));
+            }
+            if !fx.go_literal_keys.is_empty() {
+                go_literal_keys.insert(rel_lossy.clone(), fx.go_literal_keys);
+            }
             for imp in fx.imports {
                 pending_imports.push((rel_lossy.clone(), imp.raw_path, imp.names, imp.kind));
             }
@@ -277,9 +293,23 @@ pub async fn build(
 
     // ── Resolve import + reference edges (now that all files/entities are known).
     let crate_roots = crate_roots(root, &file_set);
+    let ts_paths = load_ts_paths(root);
+    let id_label: HashMap<String, String> =
+        graph.nodes.iter().map(|n| (n.id.clone(), n.label.clone())).collect();
     for (from_rel, raw_path, names, kind) in &pending_imports {
         let from_file_id = id_for(NodeKind::File, from_rel, from_rel);
-        let resolved = resolve_import(from_rel, raw_path, &file_set, &crate_roots);
+        // A Python `from` import can reach one file per name it takes
+        // (`from pkg import a, b`); the first is the one names resolve
+        // against, and every one is an import edge (ADR-2611211324 §2).
+        let (resolved, also): (Option<String>, Vec<String>) = if is_python(from_rel) {
+            let mut t = python_targets(from_rel, raw_path, names, &file_set).into_iter();
+            (t.next(), t.collect())
+        } else if is_typescript(from_rel) && !raw_path.starts_with('.') && !ts_paths.is_empty() {
+            let aliased = resolve_ts_alias(&ts_paths, raw_path, &file_set).filter(|t| t != from_rel);
+            (aliased.or_else(|| resolve_import(from_rel, raw_path, &file_set, &crate_roots)), Vec::new())
+        } else {
+            (resolve_import(from_rel, raw_path, &file_set, &crate_roots), Vec::new())
+        };
 
         match kind {
             // `mod x;` wires a module in. It is not a use of its items.
@@ -335,11 +365,66 @@ pub async fn build(
                 }
                 continue;
             }
+            // A Go file names its package's entities without an import: link
+            // each name to the entity of exactly that name another Go file of
+            // the same directory and package clause defines. A method is not
+            // a target: a bare name never denotes one.
+            ImportKind::SamePackage => {
+                let dir = std::path::Path::new(from_rel).parent();
+                let pkg = go_package.get(from_rel.as_str());
+                let in_package = |f: &str| {
+                    f.ends_with(".go") && std::path::Path::new(f).parent() == dir && go_package.get(f) == pkg
+                };
+                // A literal's bare key is a field name when the package
+                // declares its type a struct; for any other named type it is
+                // an expression, and may be a use (over-report when unsure).
+                let is_package_struct = |ty: &str| {
+                    label_index.get(&ty.to_ascii_lowercase()).is_some_and(|ids| {
+                        ids.iter().any(|tid| {
+                            id_file.get(tid.as_str()).is_some_and(|f| {
+                                in_package(f) && *tid == id_for(NodeKind::Struct, f, ty)
+                            })
+                        })
+                    })
+                };
+                let mut names = names.clone();
+                for (ty, key) in go_literal_keys.get(from_rel.as_str()).into_iter().flatten() {
+                    if !is_package_struct(ty) && !names.contains(key) {
+                        names.push(key.clone());
+                    }
+                }
+                for name in &names {
+                    let Some(targets) = label_index.get(&name.to_ascii_lowercase()) else {
+                        continue;
+                    };
+                    for tid in targets {
+                        let Some(f) = id_file.get(tid.as_str()) else { continue };
+                        if f == from_rel
+                            || !f.ends_with(".go")
+                            || std::path::Path::new(f).parent() != dir
+                            || go_package.get(f.as_str()) != pkg
+                            || go_method_ids.contains(tid.as_str())
+                            || id_label.get(tid.as_str()) != Some(name)
+                        {
+                            continue;
+                        }
+                        add_edge(
+                            &mut graph,
+                            &mut edge_ids,
+                            EdgeKind::References,
+                            &from_file_id,
+                            tid,
+                            Confidence::Extracted,
+                        );
+                    }
+                }
+                continue;
+            }
             ImportKind::Use => {}
         }
 
         // File→file import edge when the path resolves inside the project.
-        if let Some(target_rel) = &resolved {
+        for target_rel in resolved.iter().chain(also.iter()) {
             let to_file_id = id_for(NodeKind::File, target_rel, target_rel);
             add_edge(
                 &mut graph,
@@ -745,6 +830,109 @@ fn root_crate_name(root: &Path) -> Option<String> {
     }
 }
 
+fn is_typescript(rel: &str) -> bool {
+    [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"].iter().any(|e| rel.ends_with(e))
+}
+
+fn is_python(rel: &str) -> bool {
+    rel.ends_with(".py") || rel.ends_with(".pyi")
+}
+
+/// The project files one Python import reaches, in the order its names are
+/// written, never the importing file itself. `names` is `["*"]` for a plain
+/// `import a.b`. Importing `a.b` runs `a/__init__.py` first, so each package
+/// above a target is reached too.
+fn python_targets(from_rel: &str, module: &str, names: &[String], files: &HashSet<String>) -> Vec<String> {
+    let mut out = python_named_targets(from_rel, module, names, files);
+    let mut parents: Vec<String> = Vec::new();
+    for t in &out {
+        let mut dir: Vec<&str> = t.split('/').collect();
+        dir.pop();
+        if t.ends_with("/__init__.py") {
+            dir.pop();
+        }
+        while !dir.is_empty() {
+            let pkg = dir.join("/");
+            let init = format!("{pkg}/__init__.py");
+            // A module inside the package does not import its own package by
+            // importing a sibling: `from .x import y` in `a/b.py` runs nothing
+            // new, and an edge to `a/__init__.py` would be a loop of noise.
+            let inside = from_rel.starts_with(&format!("{pkg}/"));
+            if files.contains(&init) && !inside {
+                parents.push(init);
+            }
+            dir.pop();
+        }
+    }
+    for p in parents {
+        if p != from_rel && !out.contains(&p) {
+            out.push(p);
+        }
+    }
+    out
+}
+
+/// The files the names of one Python import resolve to, first one first.
+fn python_named_targets(from_rel: &str, module: &str, names: &[String], files: &HashSet<String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let taken: Vec<Option<&str>> = if names.is_empty() { vec![None] } else { names.iter().map(|n| Some(n.as_str())).collect() };
+    for name in taken {
+        if let Some(t) = resolve_python(from_rel, module, name.filter(|n| *n != "*"), files) {
+            if t != from_rel && !out.contains(&t) {
+                out.push(t);
+            }
+        }
+    }
+    out
+}
+
+/// The project file a Python import names, or `None` for the standard library,
+/// a third-party package or a module that does not exist. The rule is
+/// `hexa_analysis::path_normalizer::resolve_python_import`'s (ADR-2611211324
+/// §2), restated because this crate does not depend on that one; the two are
+/// held together by the graph and analysis tests over the same import forms.
+/// `from a import b` is the submodule `a/b.py` when there is one, else the
+/// package; a relative import starts from the importing file's package, an
+/// absolute one from the root, then `src/`.
+fn resolve_python(from_rel: &str, module: &str, name: Option<&str>, files: &HashSet<String>) -> Option<String> {
+    let dots = module.chars().take_while(|c| *c == '.').count();
+    let parts: Vec<&str> = module[dots..].split('.').filter(|s| !s.is_empty()).collect();
+    let bases: Vec<Vec<&str>> = if dots > 0 {
+        let mut dir: Vec<&str> = from_rel.split('/').collect();
+        dir.pop();
+        for _ in 1..dots {
+            dir.pop()?;
+        }
+        vec![dir]
+    } else if parts.is_empty() {
+        return None;
+    } else {
+        vec![Vec::new(), vec!["src"]]
+    };
+    let file_of = |segs: &[&str]| -> Option<String> {
+        if segs.is_empty() {
+            return None;
+        }
+        let stem = segs.join("/");
+        [format!("{stem}.py"), format!("{stem}/__init__.py")].into_iter().find(|c| files.contains(c))
+    };
+    for base in bases {
+        let mut module_path = base;
+        module_path.extend(&parts);
+        if let Some(n) = name {
+            let mut sub = module_path.clone();
+            sub.push(n);
+            if let Some(f) = file_of(&sub) {
+                return Some(f);
+            }
+        }
+        if let Some(f) = file_of(&module_path) {
+            return Some(f);
+        }
+    }
+    None
+}
+
 fn resolve_import(
     from_rel: &str,
     raw: &str,
@@ -827,18 +1015,203 @@ fn resolve_relative_ts(from_rel: &str, raw: &str, files: &HashSet<String>) -> Op
         .or_else(|| raw.strip_suffix(".jsx"))
         .unwrap_or(raw);
     let joined = normalize_join(&base_dir, raw_noext)?;
+    ts_file_in(&joined, files)
+}
 
-    let candidates = [
-        joined.clone(),
-        format!("{joined}.ts"),
-        format!("{joined}.tsx"),
-        format!("{joined}.js"),
-        format!("{joined}.jsx"),
-        format!("{joined}/index.ts"),
-        format!("{joined}/index.tsx"),
-        format!("{joined}/index.js"),
-    ];
+/// The file a TypeScript module path names, by the extensions and index
+/// files an import tries.
+fn ts_file_in(joined: &str, files: &HashSet<String>) -> Option<String> {
+    let joined = joined.strip_suffix(".js").or_else(|| joined.strip_suffix(".jsx")).unwrap_or(joined);
+    // A TypeScript file wins a tie with its JavaScript namesake, as the
+    // compiler's mapping of `./a.js` to `a.ts` does (ADR-2611270420 §3).
+    const EXTS: [&str; 6] = ["ts", "tsx", "js", "jsx", "mjs", "cjs"];
+    let mut candidates = vec![joined.to_string()];
+    candidates.extend(EXTS.iter().map(|e| format!("{joined}.{e}")));
+    candidates.extend(EXTS.iter().map(|e| format!("{joined}/index.{e}")));
     candidates.into_iter().find(|c| files.contains(c))
+}
+
+// ── TypeScript path aliases (ADR-2611221645 §4) ──────────
+//
+// The same resolution `hexa-analysis` makes (`path_normalizer::TsPaths`), so
+// `graph consumers` counts the files that import through an alias. hexa-graph
+// does not depend on hexa-analysis, so the pure resolver is repeated here;
+// adr_2611221645_spec::s25 holds the two to the same edges.
+
+/// The root `tsconfig.json`'s `compilerOptions.paths`, `extends` followed,
+/// each target project-relative: (pattern, targets in order).
+fn load_ts_paths(root: &Path) -> Vec<(String, Vec<String>)> {
+    let read = |rel: &str| std::fs::read_to_string(root.join(rel)).ok();
+    let (mut chain, mut budget) = (Vec::new(), TSCONFIG_READ_BUDGET);
+    let (paths, base) = tsconfig_settings("tsconfig.json", &read, &mut chain, &mut budget);
+    let Some((map, decl_dir)) = paths else { return Vec::new() };
+    let base_dir = base.unwrap_or(decl_dir);
+    map.into_iter()
+        .map(|(pattern, targets)| {
+            let targets = targets.iter().filter(|t| !t.starts_with('/')).filter_map(|t| normalize_join(&base_dir, t)).collect();
+            (pattern, targets)
+        })
+        .collect()
+}
+
+type TsPathsMap = Vec<(String, Vec<String>)>;
+
+/// How many tsconfig files one load may read (as `path_normalizer`).
+const TSCONFIG_READ_BUDGET: usize = 256;
+
+/// `chain` is the `extends` path from the root to `rel`: only a file already
+/// on it is a cycle, so a base shared by two branches is read for both.
+fn tsconfig_settings(
+    rel: &str,
+    read: &dyn Fn(&str) -> Option<String>,
+    chain: &mut Vec<String>,
+    budget: &mut usize,
+) -> (Option<(TsPathsMap, String)>, Option<String>) {
+    if chain.iter().any(|s| s == rel) || chain.len() > 32 || *budget == 0 {
+        return (None, None);
+    }
+    *budget -= 1;
+    chain.push(rel.to_string());
+    let out = tsconfig_settings_of(rel, read, chain, budget);
+    chain.pop();
+    out
+}
+
+fn tsconfig_settings_of(
+    rel: &str,
+    read: &dyn Fn(&str) -> Option<String>,
+    chain: &mut Vec<String>,
+    budget: &mut usize,
+) -> (Option<(TsPathsMap, String)>, Option<String>) {
+    let Some(text) = read(rel) else { return (None, None) };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&strip_jsonc(&text)) else { return (None, None) };
+    let dir = parent_dir(rel);
+    let (mut paths, mut base) = (None, None);
+    let extends: Vec<&str> = match v.get("extends") {
+        Some(serde_json::Value::String(s)) => vec![s.as_str()],
+        Some(serde_json::Value::Array(a)) => a.iter().filter_map(|x| x.as_str()).collect(),
+        _ => Vec::new(),
+    };
+    for ext in extends {
+        // A package-name extends is not followed (ADR-2611221645 §2).
+        if !(ext.starts_with("./") || ext.starts_with("../")) {
+            continue;
+        }
+        let Some(target) = normalize_join(&dir, ext) else { continue };
+        let target = if read(&target).is_none() && !target.ends_with(".json") { format!("{target}.json") } else { target };
+        let (p, b) = tsconfig_settings(&target, read, chain, budget);
+        if p.is_some() {
+            paths = p;
+        }
+        if b.is_some() {
+            base = b;
+        }
+    }
+    let opts = v.get("compilerOptions");
+    if let Some(b) = opts.and_then(|o| o.get("baseUrl")).and_then(|b| b.as_str()) {
+        base = normalize_join(&dir, b);
+    }
+    if let Some(map) = opts.and_then(|o| o.get("paths")).and_then(|p| p.as_object()) {
+        let map = map
+            .iter()
+            .map(|(k, t)| (k.clone(), t.as_array().into_iter().flatten().filter_map(|x| x.as_str().map(str::to_string)).collect()))
+            .collect();
+        paths = Some((map, dir));
+    }
+    (paths, base)
+}
+
+/// The project file a bare TypeScript specifier names through an alias: an
+/// exact pattern first, else the longest matching prefix; its targets in
+/// order, the first that names a file.
+fn resolve_ts_alias(paths: &[(String, Vec<String>)], spec: &str, files: &HashSet<String>) -> Option<String> {
+    let mut best: Option<(&Vec<String>, &str, usize)> = None;
+    for (pattern, targets) in paths {
+        match pattern.split_once('*') {
+            None => {
+                if pattern == spec {
+                    best = Some((targets, "", usize::MAX));
+                    break;
+                }
+            }
+            Some((pre, post)) => {
+                if post.contains('*') || spec.len() < pre.len() + post.len() {
+                    continue;
+                }
+                if spec.starts_with(pre) && spec.ends_with(post) && best.is_none_or(|b| pre.len() > b.2) {
+                    best = Some((targets, &spec[pre.len()..spec.len() - post.len()], pre.len()));
+                }
+            }
+        }
+    }
+    let (targets, capture, _) = best?;
+    targets.iter().find_map(|t| ts_file_in(&t.replacen('*', capture, 1), files))
+}
+
+/// `tsconfig.json` text as plain JSON: comments outside strings removed, a
+/// trailing comma before `}` or `]` dropped.
+fn strip_jsonc(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let skip_comment = |j: &mut usize| -> bool {
+        if chars.get(*j) == Some(&'/') && chars.get(*j + 1) == Some(&'/') {
+            while *j < chars.len() && chars[*j] != '\n' {
+                *j += 1;
+            }
+            true
+        } else if chars.get(*j) == Some(&'/') && chars.get(*j + 1) == Some(&'*') {
+            *j += 2;
+            while *j < chars.len() && !(chars[*j] == '*' && chars.get(*j + 1) == Some(&'/')) {
+                *j += 1;
+            }
+            *j += 2;
+            true
+        } else {
+            false
+        }
+    };
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '"' {
+            out.push(c);
+            i += 1;
+            while i < chars.len() {
+                out.push(chars[i]);
+                if chars[i] == '\\' && i + 1 < chars.len() {
+                    out.push(chars[i + 1]);
+                    i += 2;
+                    continue;
+                }
+                i += 1;
+                if chars[i - 1] == '"' {
+                    break;
+                }
+            }
+            continue;
+        }
+        if skip_comment(&mut i) {
+            continue;
+        }
+        if c == ',' {
+            let mut j = i + 1;
+            loop {
+                while j < chars.len() && chars[j].is_whitespace() {
+                    j += 1;
+                }
+                if !skip_comment(&mut j) {
+                    break;
+                }
+            }
+            if matches!(chars.get(j), Some('}') | Some(']')) {
+                i += 1;
+                continue;
+            }
+        }
+        out.push(c);
+        i += 1;
+    }
+    out
 }
 
 fn resolve_rust_mod(from_rel: &str, modname: &str, files: &HashSet<String>) -> Option<String> {

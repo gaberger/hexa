@@ -46,13 +46,15 @@ pub async fn run_doctor(_verbose: bool, _fix: bool) -> anyhow::Result<()> {
     let has_package_json = cwd.join("package.json").is_file();
     let has_go_mod = cwd.join("go.mod").is_file();
     let project_type = if has_cargo {
-        "rust (Cargo.toml)"
+        "rust (Cargo.toml)".to_string()
     } else if has_go_mod {
-        "go (go.mod)"
+        "go (go.mod)".to_string()
     } else if has_package_json {
-        "typescript (package.json)"
+        format!("{} (package.json)", hexa_analysis::analyzer::package_language(&cwd))
+    } else if let Some(manifest) = python_manifest(&cwd) {
+        format!("python ({manifest})")
     } else {
-        "unknown"
+        "unknown".to_string()
     };
     println!("    type:         {}", project_type);
     let config = cwd.join(".hexa").join("project.json").is_file();
@@ -71,7 +73,7 @@ pub async fn run_doctor(_verbose: bool, _fix: bool) -> anyhow::Result<()> {
     // A gate needs the tool that runs it (ADR-2609132018). clippy and
     // rustfmt are optional rustup components, and their absence is silent
     // until a push.
-    for c in required_components(project_type) {
+    for c in required_components(&project_type) {
         match component_present(c) {
             true => println!("    {} {:<12} present", "\u{2713}".green(), c),
             false => {
@@ -358,6 +360,11 @@ pub async fn run_validate_pipeline(
     Ok(())
 }
 
+/// The manifest that makes `dir` a Python project, if it has one.
+fn python_manifest(dir: &std::path::Path) -> Option<&'static str> {
+    hexa_analysis::analyzer::PYTHON_MANIFESTS.into_iter().find(|m| dir.join(m).is_file())
+}
+
 async fn run_build(cwd: &std::path::Path) -> anyhow::Result<()> {
     // Check for package.json -> run npm build
     if cwd.join("package.json").is_file() {
@@ -400,9 +407,35 @@ async fn run_build(cwd: &std::path::Path) -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // Python has no build; a module that does not compile is what a build
+    // would catch. The bytecode goes to a temporary directory, not the tree.
+    if python_manifest(cwd).is_some() {
+        let cache = std::env::temp_dir().join(format!("hexa-validate-pycache-{}", std::process::id()));
+        let command = format!(
+            "{} -m compileall -q -x '(^|/)(\\.venv|venv|\\.tox|\\.nox|build|site-packages|node_modules|__pycache__|\\.git)/' .",
+            hexa_exec::test_exec::project_python(cwd, cwd)
+        );
+        let output = tokio::process::Command::new("sh")
+            .args(["-c", &command])
+            .env("PYTHONPYCACHEPREFIX", &cache)
+            .current_dir(cwd)
+            .output()
+            .await;
+        let _ = std::fs::remove_dir_all(&cache);
+        let output = output?;
+        if !output.status.success() {
+            return Err(anyhow::anyhow!(
+                "python build failed: {}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        return Ok(());
+    }
+
     // No build system detected
     Err(anyhow::anyhow!(
-        "no build system detected (package.json, Cargo.toml, or go.mod required)"
+        "no build system detected (package.json, Cargo.toml, go.mod or a Python manifest required)"
     ))
 }
 
@@ -459,6 +492,20 @@ async fn run_tests(cwd: &std::path::Path) -> anyhow::Result<()> {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(anyhow::anyhow!("go test failed: {}", stderr));
+        }
+        return Ok(());
+    }
+
+    if python_manifest(cwd).is_some() {
+        // pytest exits non-zero when it collects no test, so an empty run fails.
+        let command = format!("{} -m pytest -q", hexa_exec::test_exec::project_python(cwd, cwd));
+        let output = tokio::process::Command::new("sh").args(["-c", &command]).current_dir(cwd).output().await?;
+        if !output.status.success() {
+            return Err(anyhow::anyhow!(
+                "pytest failed: {}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            ));
         }
         return Ok(());
     }

@@ -256,6 +256,11 @@ mod tests {
 /// cycle lives; `mod.rs` and its submodules importing each other is how
 /// Rust modules are built and is not one.
 fn module_key(path: &str) -> String {
+    // A Python import names a file (ADR-2611211324 §2): the file is the node.
+    // So does a JavaScript one, as a TypeScript one does (ADR-2611270420 §1).
+    if path.ends_with(".py") || path.ends_with(".pyi") || super::path_normalizer::is_js_file(path) {
+        return path.to_string();
+    }
     if path.ends_with(".go") {
         return match path.rfind('/') {
             Some(i) => path[..i].to_string(),
@@ -283,6 +288,16 @@ fn module_key(path: &str) -> String {
 #[cfg(test)]
 mod module_key_tests {
     use super::module_key;
+
+    /// A Python import names a file (ADR-2611211324 §2), so a Python node is
+    /// the file, in a `src/` layout too: folding `src/app/...` into one node
+    /// made every in-package cycle a self-edge, dropped without a word.
+    #[test]
+    fn python_nodes_are_files_in_a_src_layout_too() {
+        assert_eq!(module_key("src/app/domain/x.py"), "src/app/domain/x.py");
+        assert_eq!(module_key("src/app/ports/y.pyi"), "src/app/ports/y.pyi");
+        assert_eq!(module_key("app/domain/x.py"), "app/domain/x.py");
+    }
 
     #[test]
     fn go_nodes_are_package_directories() {

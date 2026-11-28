@@ -13,7 +13,7 @@
     "sha256": "70a7e2c76a37fcc400e8d85cf2cc9fd411c621b6e9d32e3052d0053a2479859e"
   },
   "sealed": {
-    "hexa-exec/tests/adr_2611031914_spec.rs": "1426a710f87d12804b954a30f3d8fbe770381db86ec50b66899f207f58a6833e"
+    "hexa-exec/tests/adr_2611031914_spec.rs": "73b2b11a6e4715843632af10f5f93a47985bb607b9f3f75d76fac17113f10b85"
   },
   "red": "f2d7357",
   "specs": [
@@ -400,6 +400,17 @@
       "when": "`hexa forge add git.local --kind forgejo --token-env STRATA_TOKEN` is run",
       "then": "the host is written to $HEXA_HOME/forges.json and ~/.hexa/forges.json is unchanged",
       "test": "hexa-exec/tests/adr_2611031914_spec.rs::part_4::s32_hosts_file_follows_hexa_home_and_leaves_home_alone"
+    }
+  ],
+  "amendments": [
+    {
+      "at": "2026-11-27T16:44:01.527014625+00:00",
+      "base_commit": "f2d73571a0fa31f08f8b557942e86cf25c0c1521",
+      "by": "craigjohnson",
+      "file": "hexa-exec/tests/adr_2611031914_spec.rs",
+      "from": "1426a710f87d12804b954a30f3d8fbe770381db86ec50b66899f207f58a6833e",
+      "reason": "test harness only: two hexa_bin() helpers looked for the hexa binary beside the test executable in target/<profile>/deps; rustc 1.100 puts it under target/<profile>/build/<crate>/<hash>/out/, so they now look in each directory above it up to target. No assertion changes.",
+      "to": "73b2b11a6e4715843632af10f5f93a47985bb607b9f3f75d76fac17113f10b85"
     }
   ]
 }

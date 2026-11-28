@@ -1540,11 +1540,20 @@ pub async fn dirty_paths(repo_root: &std::path::Path) -> Vec<String> {
     };
     String::from_utf8_lossy(&out)
         .lines()
-        .filter_map(|l| {
-            let path = l.get(3..)?; // drop the "XY " porcelain status prefix
-            let path = path.rsplit(" -> ").next().unwrap_or(path); // renames: keep new path
-            let p = path.trim().trim_matches('"');
-            (!p.is_empty()).then(|| p.to_string())
+        .flat_map(|l| {
+            let Some(path) = l.get(3..) else { return Vec::new() }; // drop the "XY " porcelain status prefix
+            // A rename is two dirty paths: the new one, and the old one that
+            // is now gone. Keeping only the new left the old one "unchanged",
+            // so a rename could not be committed whole.
+            let both: Vec<&str> = match path.split_once(" -> ") {
+                Some((old, new)) => vec![old, new],
+                None => vec![path],
+            };
+            both.into_iter()
+                .map(|p| p.trim().trim_matches('"'))
+                .filter(|p| !p.is_empty())
+                .map(str::to_string)
+                .collect()
         })
         .collect()
 }
@@ -1950,15 +1959,33 @@ pub async fn gate_patch_local(
     // A gate that is one bash script counts as one test (ADR-2611191120 §7).
     let judged = judge_gate(evidence, passed, &output, uncounted, expect, false)?;
     let git_fail = |what: &str, e: String| GateFailure::new("refused", format!("{what}: {e}"), "read the git error, fix it, then run again", None, true);
-    let add = tokio::process::Command::new("git")
-        .args(["add", "-A", "--"])
-        .args(&paths)
-        .current_dir(repo_root)
-        .output()
-        .await
-        .map_err(|e| git_fail("git add", e.to_string()))?;
-    if !add.status.success() {
-        return Err(git_fail("git add", String::from_utf8_lossy(&add.stderr).to_string()));
+    // A path `git mv` or `git rm` already staged away is in neither the tree nor
+    // the index, and `git add` refuses to name it; its deletion is staged and
+    // the commit below takes it by path.
+    let mut stageable: Vec<&String> = Vec::new();
+    for p in &paths {
+        let in_index = tokio::process::Command::new("git")
+            .args(["ls-files", "--error-unmatch", "--", p])
+            .current_dir(repo_root)
+            .output()
+            .await
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if repo_root.join(p).exists() || in_index {
+            stageable.push(p);
+        }
+    }
+    if !stageable.is_empty() {
+        let add = tokio::process::Command::new("git")
+            .args(["add", "-A", "--"])
+            .args(&stageable)
+            .current_dir(repo_root)
+            .output()
+            .await
+            .map_err(|e| git_fail("git add", e.to_string()))?;
+        if !add.status.success() {
+            return Err(git_fail("git add", String::from_utf8_lossy(&add.stderr).to_string()));
+        }
     }
     let adr = if expect == Expect::Red { "ADR-2611231400 §4" } else { "ADR-2611160730 §3" };
     let msg = format!("{}\n\nGate: {evidence} ({}; hexa do gate, {adr})", message.trim(), gate_how(uncounted, expect));

@@ -1,0 +1,380 @@
+{
+  "adr": "ADR-2611230831",
+  "feature": "hexa says what is true (II)",
+  "description": "Doctor asks git whether .claude/worktrees is ignored, spec draft says to commit before accepting, a library word in the objective outranks an API word, and a closed pipe ends hexa quietly; nothing else changes.",
+  "universal": [
+    "§1",
+    "§3",
+    "§4",
+    "§5"
+  ],
+  "accepted": {
+    "by": "craigjohnson",
+    "sha256": "f20e297be1234a97e840094980dba5e80501cc84ccb9a131482e263b3fe8dfe3"
+  },
+  "sealed": {
+    "hexa-cli/tests/adr_2611230831_spec.rs": "a7d28c464b813011467cbd7c30d2378fd85320263e6c389a2fa817fff946a8f5"
+  },
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "An ignore entry in .git/info/exclude counts",
+      "given": "A git repository with a .claude/worktrees directory, no mention of it in the root .gitignore, and the line `.claude/worktrees` in .git/info/exclude",
+      "when": "`hexa doctor` is run in the repository",
+      "then": "Doctor does not warn that .claude/worktrees is not ignored",
+      "test": "hexa-cli/tests/adr_2611230831_spec.rs::part_1::s01_git_info_exclude_counts",
+      "red": "0eada88"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "An ignore entry in the global excludes file counts",
+      "given": "A git repository with a .claude/worktrees directory, no mention of it in .gitignore or .git/info/exclude, and core.excludesFile pointing at a file that lists `.claude/worktrees`",
+      "when": "`hexa doctor` is run",
+      "then": "Doctor does not warn that .claude/worktrees is not ignored",
+      "test": "hexa-cli/tests/adr_2611230831_spec.rs::part_1::s02_global_excludes_counts",
+      "red": "0eada88"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A path ignored by the root .gitignore is still accepted",
+      "given": "A git repository whose root .gitignore lists `.claude/worktrees`",
+      "when": "`hexa doctor` is run",
+      "then": "Doctor does not warn that .claude/worktrees is not ignored"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A path git does not ignore is still reported",
+      "given": "A git repository with a .claude/worktrees directory that no .gitignore, .git/info/exclude or global excludes file ignores, so `git check-ignore .claude/worktrees` exits non-zero",
+      "when": "`hexa doctor` is run",
+      "then": "Doctor warns that .claude/worktrees is not ignored"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A negation that un-ignores the path is respected",
+      "given": "A git repository whose .git/info/exclude lists `.claude/worktrees` but whose root .gitignore contains `!.claude/worktrees`, so `git check-ignore .claude/worktrees` reports it is not ignored",
+      "when": "`hexa doctor` is run",
+      "then": "Doctor warns that .claude/worktrees is not ignored"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "Outside a git repository only .gitignore is read",
+      "given": "A directory that is not a git repository, with a .claude/worktrees directory and a .gitignore that does not list it",
+      "when": "`hexa doctor` is run",
+      "then": "Doctor warns that .claude/worktrees is not ignored, as it did before this ADR, and does not fail because git has no repository"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "Outside a git repository a .gitignore entry is honoured",
+      "given": "A directory that is not a git repository, whose .gitignore lists `.claude/worktrees`",
+      "when": "`hexa doctor` is run",
+      "then": "Doctor does not warn that .claude/worktrees is not ignored"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§1"
+      ],
+      "kind": "property",
+      "description": "Doctor's verdict agrees with git",
+      "given": "Any git repository and any combination of .gitignore, .git/info/exclude and global excludes contents",
+      "when": "`hexa doctor` is run",
+      "then": "Doctor warns that .claude/worktrees is not ignored if and only if `git check-ignore .claude/worktrees` reports it is not ignored",
+      "test": "hexa-cli/tests/adr_2611230831_spec.rs::part_1::s08_doctor_agrees_with_git",
+      "red": "0eada88"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "The draft's closing line names the file, says to commit, then says to accept",
+      "given": "A repository with an ADR that has no spec yet",
+      "when": "`hexa spec draft <ADR>` completes successfully",
+      "then": "Its closing output names the written spec file's path, tells the user to commit that file, and after that names `hexa spec accept <ADR>`",
+      "test": "hexa-cli/tests/adr_2611230831_spec.rs::part_1::s09_draft_closing_line_names_file_commit_accept",
+      "red": "0eada88"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "Following the instruction succeeds",
+      "given": "A spec just written by `hexa spec draft <ADR>`",
+      "when": "The user commits the named spec file as instructed and then runs `hexa spec accept <ADR>`",
+      "then": "`hexa spec accept` does not refuse on the grounds that the spec is untracked or modified",
+      "test": "hexa-cli/tests/adr_2611230831_spec.rs::part_1::s10_following_instruction_accept_not_refused_as_uncommitted",
+      "red": "0eada88"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "The draft no longer tells the user to accept an uncommitted spec directly",
+      "given": "A repository with an ADR that has no spec yet",
+      "when": "`hexa spec draft <ADR>` completes",
+      "then": "Its closing output does not tell the user to run `hexa spec accept <ADR>` without first committing the spec",
+      "test": "hexa-cli/tests/adr_2611230831_spec.rs::part_2::s11_draft_closing_says_commit_before_accept",
+      "red": "0eada88"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§2",
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "Accept still refuses an uncommitted first acceptance",
+      "given": "A spec written by `hexa spec draft <ADR>` that has not been committed",
+      "when": "`hexa spec accept <ADR>` is run",
+      "then": "It refuses, as ADR-2611161600 §1 requires, and names `git add` and `git commit`"
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "An SDK for an API is a library",
+      "given": "A project with no detected web framework and the objective \"a Python SDK for the Example API\"",
+      "when": "Its output type is inferred",
+      "then": "The output type is library, and no constraint such as \"Return JSON responses with appropriate HTTP status codes\" appears in session context",
+      "test": "hexa-cli/tests/adr_2611230831_spec.rs::part_2::s13_sdk_for_an_api_is_a_library",
+      "red": "0eada88"
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "Each library word outranks API words",
+      "given": "A project with no detected web framework whose objective names one of library, crate, package, SDK or framework together with one of api, server, rest, http or endpoint, and no CLI word",
+      "when": "Its output type is inferred",
+      "then": "The output type is library",
+      "test": "hexa-cli/tests/adr_2611230831_spec.rs::part_2::s14_each_library_word_outranks_each_api_word",
+      "red": "0eada88"
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "A detected web framework still wins",
+      "given": "A project in which a web framework is detected and whose objective reads \"a client library for the HTTP API\"",
+      "when": "Its output type is inferred",
+      "then": "The output type is a web API, as before, not a library",
+      "test": "hexa-cli/tests/adr_2611230831_spec.rs::part_2::s15_detected_web_framework_still_wins",
+      "red": "0eada88"
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "The CLI check still comes first",
+      "given": "A project with no detected web framework whose objective names a command-line tool and also names an SDK and an API",
+      "when": "Its output type is inferred",
+      "then": "The output type is whatever the CLI check yields today, not library",
+      "test": "hexa-cli/tests/adr_2611230831_spec.rs::part_2::s16_cli_check_still_comes_first",
+      "red": "0eada88"
+    },
+    {
+      "id": "S17",
+      "decision": [
+        "§3",
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "An API objective with no library word is still a web API",
+      "given": "A project with no detected web framework and the objective \"a REST server exposing HTTP endpoints\"",
+      "when": "Its output type is inferred",
+      "then": "The output type is a web API, as before",
+      "test": "hexa-cli/tests/adr_2611230831_spec.rs::part_2::s17_api_objective_without_library_word_is_web_api",
+      "red": "0eada88"
+    },
+    {
+      "id": "S18",
+      "decision": [
+        "§3"
+      ],
+      "kind": "property",
+      "description": "Library words outrank API words for every objective",
+      "given": "Any objective containing at least one library word, with no web framework detected and the CLI check not matching",
+      "when": "Its output type is inferred",
+      "then": "The output type is library, whatever API words the objective also contains",
+      "test": "hexa-cli/tests/adr_2611230831_spec.rs::part_2::s18_library_words_outrank_api_words_for_every_objective",
+      "red": "0eada88"
+    },
+    {
+      "id": "S19",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "Piping analyze into head leaves no core",
+      "given": "A Unix system with core dumps enabled and a project whose `hexa analyze .` output is longer than ten lines",
+      "when": "`hexa analyze . | head` is run",
+      "then": "head prints its lines, hexa prints no panic message on stderr, and no core file appears in the working directory",
+      "test": "hexa-cli/tests/adr_2611230831_spec.rs::part_2::s19_analyze_into_head_leaves_no_core",
+      "red": "0eada88"
+    },
+    {
+      "id": "S20",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "Piping spec show into head leaves no core",
+      "given": "A Unix system with core dumps enabled and an ADR whose `hexa spec show <ADR>` output is longer than ten lines",
+      "when": "`hexa spec show <ADR> | head` is run",
+      "then": "hexa prints no panic message and no core file appears in the working directory",
+      "test": "hexa-cli/tests/adr_2611230831_spec.rs::part_2::s20_spec_show_into_head_leaves_no_core",
+      "red": "0eada88"
+    },
+    {
+      "id": "S21",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "A closed pipe does not produce a panic",
+      "given": "A Unix system and a hexa command writing to a pipe whose reader has closed",
+      "when": "hexa writes to the pipe",
+      "then": "hexa does not report a panic, does not abort and does not leave a core file; it ends by the default SIGPIPE disposition",
+      "test": "hexa-cli/tests/adr_2611230831_spec.rs::part_3::s21_closed_pipe_does_not_panic",
+      "red": "0eada88"
+    },
+    {
+      "id": "S22",
+      "decision": [
+        "§4",
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "A full read of the pipe is unaffected",
+      "given": "A hexa command whose reader consumes all output, for example `hexa analyze . | cat`",
+      "when": "The command runs to completion",
+      "then": "All output is delivered and the exit status is the same as when run without a pipe"
+    },
+    {
+      "id": "S23",
+      "decision": [
+        "§4"
+      ],
+      "kind": "property",
+      "description": "Every hexa command ends quietly on a closed pipe",
+      "given": "Any hexa subcommand that writes to stdout on Unix, and a reader that closes the pipe after any number of bytes",
+      "when": "hexa next writes",
+      "then": "The process ends with no panic message and no core file",
+      "test": "hexa-cli/tests/adr_2611230831_spec.rs::part_3::s23_every_command_ends_quietly_on_closed_pipe",
+      "red": "0eada88"
+    },
+    {
+      "id": "S24",
+      "decision": [
+        "§5"
+      ],
+      "kind": "example",
+      "description": "Other doctor checks report as before",
+      "given": "A repository in which a doctor check other than the .claude/worktrees ignore check fails",
+      "when": "`hexa doctor` is run",
+      "then": "That check reports the same result as before this ADR",
+      "test": "hexa-cli/tests/adr_2611230831_spec.rs::part_3::s24_other_doctor_checks_report_as_before",
+      "red": "0eada88"
+    },
+    {
+      "id": "S25",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "Accept refuses a modified first acceptance as before",
+      "given": "A spec that was committed and then modified in the working tree, never accepted",
+      "when": "`hexa spec accept <ADR>` is run",
+      "then": "It refuses, as it did before this ADR"
+    },
+    {
+      "id": "S26",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "Failing commands keep their exit status",
+      "given": "A hexa command that fails for a reason other than a closed pipe, such as `hexa spec show` for an ADR that does not exist",
+      "when": "It is run with stdout attached to a terminal or a fully read pipe",
+      "then": "It exits with the same non-zero status as before this ADR",
+      "test": "hexa-cli/tests/adr_2611230831_spec.rs::part_3::s26_failing_commands_keep_exit_status",
+      "red": "0eada88"
+    },
+    {
+      "id": "S27",
+      "decision": [
+        "§5"
+      ],
+      "kind": "property",
+      "description": "Objectives with no library word keep their output type",
+      "given": "Any objective that contains none of library, crate, package, SDK or framework",
+      "when": "Its output type is inferred",
+      "then": "The output type is the same as before this ADR",
+      "test": "hexa-cli/tests/adr_2611230831_spec.rs::part_3::s27_objectives_without_library_word_keep_output_type",
+      "red": "0eada88"
+    },
+    {
+      "id": "S28",
+      "decision": [
+        "§5"
+      ],
+      "kind": "property",
+      "description": "No exit status except a closed pipe's changes",
+      "given": "Any hexa invocation whose output is not written to a closed pipe",
+      "when": "It runs",
+      "then": "Its exit status is the same as before this ADR"
+    }
+  ],
+  "amendments": [
+    {
+      "at": "2026-11-23T15:14:03.661667036+00:00",
+      "base_commit": "0eada884acb91051e2260e3f699dce53d7cbb5f1",
+      "by": "Claude Code agent",
+      "file": "hexa-cli/tests/adr_2611230831_spec.rs",
+      "from": "0232bc6277dd3d0034662ecff2995cc16a87ca95de98a63e99c51a7f8b60b586",
+      "reason": "Fixture defects only, no assertion changed: the fingerprint fixtures wrote the workplan objective under 'objective', which the extractor never reads (it reads 'description'); S26 used 'spec show' of a missing ADR as its failing command, which exits 0 before and after this ADR ('spec verify' of one fails); S09/S10's repository had no test home, and ran a real model call: it now has a Cargo.toml and a fake claude on PATH replying with a complete spec, as other spec draft tests do. 13 fail without the fix, 19 pass with it",
+      "to": "a7d28c464b813011467cbd7c30d2378fd85320263e6c389a2fa817fff946a8f5"
+    }
+  ]
+}

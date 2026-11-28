@@ -1,0 +1,388 @@
+{
+  "adr": "ADR-2611221646",
+  "feature": "hexa reports what it actually saw",
+  "description": "Failed claude-text calls carry the CLI's stated reason, the agentic bench refuses up front when its evidence program is missing, the Hex layers tally honours the grade's exclusions, the session context recognises Python, and subagents whose definitions grant no writing tool run without a worktree.",
+  "universal": [
+    "§1",
+    "§2",
+    "§3",
+    "§4",
+    "§5"
+  ],
+  "accepted": {
+    "by": "craigjohnson",
+    "sha256": "5ff31694280d7c2e17cd4733ad31159575212e6e2d6d6e4e8c4e8ad298f18cd5"
+  },
+  "sealed": {
+    "hexa-cli/tests/adr_2611221646_spec_2.rs": "d3d7fc624aa1b29aa7c06bb1005286703504386520d4dc9e143b7c3018f7af26",
+    "hexa-cli/tests/adr_2611221646_spec_3.rs": "f26a1375222cd4d7049f0b6d901762eb910f96659eb59f8737d2aa7bf242f6fc"
+  },
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A non-zero exit with a `result` on stdout surfaces that result",
+      "given": "the claude CLI exits with status 1, writes `{\"result\":\"AWS SSO token expired\",\"terminal_reason\":\"auth\"}` to stdout, and writes nothing to stderr",
+      "when": "hexa makes a `claude-text` call",
+      "then": "the call fails with an error that contains \"exited with 1\" and \"AWS SSO token expired\"",
+      "test": "hexa-cli/tests/adr_2611221646_spec_2.rs::part_1::s01_nonzero_exit_surfaces_result",
+      "red": "abdefbb"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "With no `result`, the error falls back to `terminal_reason`",
+      "given": "the claude CLI exits with status 2, writes `{\"terminal_reason\":\"rate_limited\"}` to stdout, and writes nothing to stderr",
+      "when": "hexa makes a `claude-text` call",
+      "then": "the call fails with an error that contains \"exited with 2\" and \"rate_limited\"",
+      "test": "hexa-cli/tests/adr_2611221646_spec_2.rs::part_1::s02_falls_back_to_terminal_reason",
+      "red": "abdefbb"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "Stderr is still reported alongside the stdout reason",
+      "given": "the claude CLI exits with status 1, writes `{\"result\":\"model unavailable\"}` to stdout, and writes \"warning: retry exhausted\" to stderr",
+      "when": "hexa makes a `claude-text` call",
+      "then": "the error contains both \"model unavailable\" and \"warning: retry exhausted\"",
+      "test": "hexa-cli/tests/adr_2611221646_spec_2.rs::part_1::s03_stderr_reported_alongside_stdout_reason",
+      "red": "abdefbb"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A non-zero exit is never reported with nothing after the colon when the CLI said why",
+      "given": "the claude CLI exits with status 1, writes `{\"result\":\"AWS SSO token expired\"}` to stdout, and leaves stderr empty",
+      "when": "hexa makes a `claude-text` call",
+      "then": "the error message is not \"claude-text exited with 1: \" with only whitespace or nothing after the colon",
+      "test": "hexa-cli/tests/adr_2611221646_spec_2.rs::part_1::s04_never_nothing_after_colon",
+      "red": "abdefbb"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "`result` takes precedence over `terminal_reason`",
+      "given": "the claude CLI exits with status 1 and writes `{\"result\":\"token expired\",\"terminal_reason\":\"error\"}` to stdout",
+      "when": "hexa makes a `claude-text` call",
+      "then": "the error names \"token expired\" as the reason, and is not built from \"error\" alone",
+      "test": "hexa-cli/tests/adr_2611221646_spec_2.rs::part_1::s05_result_takes_precedence",
+      "red": "abdefbb"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§1"
+      ],
+      "kind": "property",
+      "description": "Every non-zero exit carries what the CLI wrote",
+      "given": "any non-zero exit status, any stderr text, and any stdout JSON whose `result` or `terminal_reason` is a non-empty string",
+      "when": "hexa makes a `claude-text` call that receives them",
+      "then": "the error contains the exit status, the stdout `result` if it is present (otherwise the `terminal_reason`), and the stderr text whenever stderr is non-empty",
+      "test": "hexa-cli/tests/adr_2611221646_spec_2.rs::part_1::s06_every_nonzero_exit_carries_cli_output",
+      "red": "abdefbb"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "A missing evidence program stops the bench before any fixture runs",
+      "given": "five selected fixtures whose evidence commands all start with `bun`, and no `bun` on PATH",
+      "when": "the user runs `hexa bench agentic`",
+      "then": "the command refuses with an error that names `bun` and all five fixtures, no fixture runs, no model is invoked, and no pass rate is reported",
+      "test": "hexa-cli/tests/adr_2611221646_spec_3.rs::s07_missing_bun_refuses_before_any_fixture",
+      "red": "796f3c4"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "When every evidence program is present, the bench runs",
+      "given": "selected fixtures whose evidence commands start with `cargo` and `bun`, and both programs on PATH",
+      "when": "the user runs `hexa bench agentic`",
+      "then": "the pre-flight check passes and the fixtures run"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "One missing program refuses the whole run and names only the fixtures that need it",
+      "given": "selected fixtures A and B whose evidence starts with `cargo`, which is on PATH, and fixture C whose evidence starts with `pytest`, which is not on PATH",
+      "when": "the user runs `hexa bench agentic`",
+      "then": "the bench refuses, the refusal names `pytest` and fixture C but not A or B, and none of A, B or C runs",
+      "test": "hexa-cli/tests/adr_2611221646_spec_3.rs::s09_one_missing_program_refuses_whole_run",
+      "red": "796f3c4"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "A fixture that is not selected does not trigger a refusal",
+      "given": "selected fixtures whose evidence programs are all on PATH, and an unselected fixture whose evidence starts with `bun`, which is not on PATH",
+      "when": "the user runs `hexa bench agentic` for the selected fixtures",
+      "then": "the bench does not refuse because of `bun`, and the selected fixtures run"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§2"
+      ],
+      "kind": "property",
+      "description": "The bench runs nothing unless every evidence program resolves",
+      "given": "any set of selected fixtures and any PATH",
+      "when": "the user runs `hexa bench agentic`",
+      "then": "if the first program of any selected fixture's evidence command is not found on PATH, no fixture runs and the refusal lists each missing program with the fixtures that need it; otherwise the bench proceeds",
+      "test": "hexa-cli/tests/adr_2611221646_spec_3.rs::s11_runs_nothing_unless_every_program_resolves",
+      "red": "796f3c4"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "A file excluded by `analyze.exclude` is left out of the layer tally",
+      "given": "a project with 70 graded source files, 27 more files under a directory listed in `analyze.exclude`, and all 97 files classifying as Use Cases",
+      "when": "the user runs `hexa analyze`",
+      "then": "the Hex layers tally shows Use Cases (70 files)"
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "A file excluded by the built-in patterns is left out of the layer tally",
+      "given": "a project with one adapter file that the grade reads and one adapter-classified file that matches a built-in exclusion pattern",
+      "when": "the user runs `hexa analyze`",
+      "then": "the tally counts exactly one file for that layer"
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "An excluded file is counted in no layer at all",
+      "given": "a file that `analyze.exclude` excludes from the grade",
+      "when": "the user runs `hexa analyze`",
+      "then": "the file adds to no layer's count, including Unclassified, Domain, Ports, Use Cases and Adapters"
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§3"
+      ],
+      "kind": "property",
+      "description": "The tally total equals the number of files graded",
+      "given": "any project and any `analyze.exclude` configuration",
+      "when": "the user runs `hexa analyze`",
+      "then": "the per-layer counts add up to the number of files the grade analysed, and every counted file is one the grade read"
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "`pyproject.toml` alone means Python",
+      "given": "a project root that contains `pyproject.toml` and none of `Cargo.toml`, `go.mod` or `package.json`",
+      "when": "the session context is injected",
+      "then": "it shows Language: python",
+      "test": "hexa-cli/tests/adr_2611221646_spec_2.rs::part_1::s16_pyproject_alone_means_python",
+      "red": "abdefbb"
+    },
+    {
+      "id": "S17",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "`setup.py` or `setup.cfg` alone also means Python",
+      "given": "one project root that contains only `setup.py` and another that contains only `setup.cfg`, among the manifests named",
+      "when": "the session context is injected for each",
+      "then": "both show Language: python",
+      "test": "hexa-cli/tests/adr_2611221646_spec_2.rs::part_2::s17_setup_py_or_setup_cfg_alone_means_python",
+      "red": "abdefbb"
+    },
+    {
+      "id": "S18",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "A Python manifest does not override a Rust, Go or JS manifest",
+      "given": "a project root that contains both `pyproject.toml` and `Cargo.toml`",
+      "when": "the session context is injected",
+      "then": "it does not show Language: python"
+    },
+    {
+      "id": "S19",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "No manifest is not guessed as Python",
+      "given": "a project root that contains none of `pyproject.toml`, `setup.py`, `setup.cfg`, `Cargo.toml`, `go.mod` or `package.json`",
+      "when": "the session context is injected",
+      "then": "it does not show Language: python"
+    },
+    {
+      "id": "S20",
+      "decision": [
+        "§4"
+      ],
+      "kind": "property",
+      "description": "Python is shown exactly when a Python manifest is present and the others are absent",
+      "given": "any subset of {`pyproject.toml`, `setup.py`, `setup.cfg`, `Cargo.toml`, `go.mod`, `package.json`} present at a project root",
+      "when": "the session context is injected",
+      "then": "it shows Language: python if and only if the subset contains at least one Python manifest and none of `Cargo.toml`, `go.mod` or `package.json`",
+      "test": "hexa-cli/tests/adr_2611221646_spec_2.rs::part_2::s20_python_iff_python_manifest_and_no_others",
+      "red": "abdefbb"
+    },
+    {
+      "id": "S21",
+      "decision": [
+        "§5"
+      ],
+      "kind": "example",
+      "description": "A project definition with only read tools runs in place",
+      "given": "`.claude/agents/code-reviewer.md` in the project, with tools Read, Grep and Glob, on a branch where an editing agent would be blocked",
+      "when": "a code-reviewer subagent is launched without `isolation: \"worktree\"`",
+      "then": "the pre-agent hook allows it, as it does for the fixed read-only types",
+      "test": "hexa-cli/tests/adr_2611221646_spec_2.rs::part_2::s21_project_definition_with_read_tools_runs_in_place",
+      "red": "abdefbb"
+    },
+    {
+      "id": "S22",
+      "decision": [
+        "§5"
+      ],
+      "kind": "example",
+      "description": "The user's home definition is used when the project has none",
+      "given": "no `.claude/agents/auditor.md` in the project, and `~/.claude/agents/auditor.md` with tools Read and Grep",
+      "when": "an auditor subagent is launched without a worktree",
+      "then": "the pre-agent hook allows it",
+      "test": "hexa-cli/tests/adr_2611221646_spec_2.rs::part_2::s22_home_definition_used_when_project_has_none",
+      "red": "abdefbb"
+    },
+    {
+      "id": "S23",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "A definition that grants Bash, every tool (`*`), or a tool not known to be read-only is still blocked",
+      "given": "`.claude/agents/reviewer.md` with tools Read, Grep and Bash (and, separately, one with `tools: \"*\"` and one with Read and an MCP write tool), on a branch where editing agents are blocked",
+      "when": "a reviewer subagent is launched without a worktree",
+      "then": "the pre-agent hook blocks it as before"
+    },
+    {
+      "id": "S24",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "A definition with no tools list, or no definition at all, is treated as before",
+      "given": "one subagent type whose `.claude/agents/<type>.md` has no `tools` list, and another type that has no definition in the project or in the user's home, neither type in the fixed read-only list",
+      "when": "each is launched without a worktree on a branch where editing agents are blocked",
+      "then": "the pre-agent hook blocks both"
+    },
+    {
+      "id": "S25",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "The project definition takes precedence over the home definition",
+      "given": "a project `.claude/agents/helper.md` with tools Read and Edit, and a home `~/.claude/agents/helper.md` with tools Read only",
+      "when": "a helper subagent is launched without a worktree on a branch where editing agents are blocked",
+      "then": "the pre-agent hook blocks it"
+    },
+    {
+      "id": "S26",
+      "decision": [
+        "§5"
+      ],
+      "kind": "property",
+      "description": "A definition is exempt exactly when it lists tools and every one is a read-only tool",
+      "given": "any subagent type not in the fixed read-only list, launched without `isolation: \"worktree\"`, and any definition state: absent, no `tools` list, or any `tools` list",
+      "when": "the pre-agent hook evaluates it",
+      "then": "it is allowed as read-only if and only if the governing definition (the project's, else the home's) has a `tools` list every entry of which is one of Read, Grep, Glob, LS, NotebookRead, WebFetch or WebSearch; otherwise the hook blocks or warns exactly as it did before this ADR"
+    }
+  ],
+  "amendments": [
+    {
+      "at": "2026-11-22T20:33:47.205128284+00:00",
+      "base_commit": "7e997fd8738760ac4ac53c8c018a4c3471e0ea16",
+      "by": "Claude (agent, in craigjohnson's session; for review)",
+      "file": "hexa-cli/tests/adr_2611221646_spec_3.rs",
+      "from": "f105418a60467e76dcaa8aebdb36bc27e1021dbef59a9201056f62b77327e249",
+      "reason": "The fixture writer guessed the task field as prompt/description; hexa bench fixtures name it instruction (docs/benchmarks/fixtures/*.json: id, instruction, oracle, provenance, status, target_file, tier), so every fixture was skipped and S07/S09/S11 tested an empty corpus. The field is renamed; scenarios and assertions are unchanged.",
+      "to": "f26a1375222cd4d7049f0b6d901762eb910f96659eb59f8737d2aa7bf242f6fc"
+    },
+    {
+      "at": "2026-11-22T20:47:29.550915545+00:00",
+      "base_commit": "f1b4ae3203357b2c8aa8314f7cc262ff99c31f1f",
+      "by": "Claude (agent, in craigjohnson's session; for review)",
+      "file": "hexa-cli/tests/adr_2611221646_spec_2.rs",
+      "from": "b6f7739dc968338b19b5bbd786d6c7cad874be7600f5a544528f00bb28fc23d9",
+      "reason": "S07, S09 and S11 moved to hexa-cli/tests/adr_2611221646_spec_3.rs, re-proved against the JSON fixtures hexa bench reads (hexa spec tests --only --red-at f1b4ae3 --because, red at 796f3c4): their tests here invented a YAML fixture format. Only those three tests leave this file; the scenarios and every other test are unchanged. The re-prove resealed the file without recording this amendment (gap:reaccept-reseal-amend-catch22).",
+      "to": "d3d7fc624aa1b29aa7c06bb1005286703504386520d4dc9e143b7c3018f7af26"
+    }
+  ],
+  "moves": [
+    {
+      "at": "2026-11-26T02:14:33.300084729+00:00",
+      "base_commit": "9f7e6082648061c92ac123b10feafcc46b18fdf4",
+      "by": "Claude Code agent (baseline from history, for review)",
+      "from": "hexa-cli/tests/adr_2611221646_spec_2.rs::part_1::s07_missing_bun_stops_bench",
+      "reason": "recorded from history (baseline for ADR-2611251652): this binding moved before moves were recorded",
+      "scenario": "S07",
+      "sha256": "f26a1375222cd4d7049f0b6d901762eb910f96659eb59f8737d2aa7bf242f6fc",
+      "to": "hexa-cli/tests/adr_2611221646_spec_3.rs::s07_missing_bun_refuses_before_any_fixture"
+    },
+    {
+      "at": "2026-11-26T02:14:33.550357382+00:00",
+      "base_commit": "9f7e6082648061c92ac123b10feafcc46b18fdf4",
+      "by": "Claude Code agent (baseline from history, for review)",
+      "from": "hexa-cli/tests/adr_2611221646_spec_2.rs::part_1::s09_one_missing_program_refuses_whole_run",
+      "reason": "recorded from history (baseline for ADR-2611251652): this binding moved before moves were recorded",
+      "scenario": "S09",
+      "sha256": "f26a1375222cd4d7049f0b6d901762eb910f96659eb59f8737d2aa7bf242f6fc",
+      "to": "hexa-cli/tests/adr_2611221646_spec_3.rs::s09_one_missing_program_refuses_whole_run"
+    },
+    {
+      "at": "2026-11-26T02:14:33.806324101+00:00",
+      "base_commit": "9f7e6082648061c92ac123b10feafcc46b18fdf4",
+      "by": "Claude Code agent (baseline from history, for review)",
+      "from": "hexa-cli/tests/adr_2611221646_spec_2.rs::part_1::s11_bench_runs_nothing_unless_all_programs_resolve",
+      "reason": "recorded from history (baseline for ADR-2611251652): this binding moved before moves were recorded",
+      "scenario": "S11",
+      "sha256": "f26a1375222cd4d7049f0b6d901762eb910f96659eb59f8737d2aa7bf242f6fc",
+      "to": "hexa-cli/tests/adr_2611221646_spec_3.rs::s11_runs_nothing_unless_every_program_resolves"
+    }
+  ]
+}

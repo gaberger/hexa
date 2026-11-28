@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use hexa_core::ports::inference::{IInferencePort, InferenceError, InferenceRequest, InferenceResponse};
 
 use crate::adapters::secondary::{
-    command, AnthropicAdapter, ClaudeCodeInferenceAdapter, CommandCompletionAdapter, FileCompletionCache,
+    command, AnthropicAdapter, ClaudeCodeInferenceAdapter, CodexInferenceAdapter, CommandCompletionAdapter, FileCompletionCache,
     OllamaInferenceAdapter,
     OpenAiCompatAdapter,
     semantic_compressor::{CompressorConfig, SemanticCompressor},
@@ -26,7 +26,7 @@ pub struct RegistryBackends;
 /// The registry-backed [`PromptCompressor`]: a [`SemanticCompressor`] whose
 /// cheap model is tier `t1`, resolved through the tier configuration as every
 /// other cheap call is, and whose budget and verbatim window come from
-/// `.hexa/project.json` (see [`compressor_config_in`]).
+/// `.hexa/project.json` (`inference.compression`).
 pub struct RegistryCompressor;
 
 impl RegistryCompressor {
@@ -208,13 +208,14 @@ pub fn served_by_frontier_cli(model: &str) -> bool {
 /// serves the model, otherwise the same prefix rule [`adapter_for`] uses.
 pub fn served_by_frontier_cli_in(endpoints: &[Endpoint], model: &str) -> bool {
     if let Some(endpoint) = registry::serving(endpoints, model) {
-        return matches!(endpoint.provider.to_ascii_lowercase().as_str(), "claude-code" | "claude_code");
+        return matches!(endpoint.provider.to_ascii_lowercase().as_str(), "claude-code" | "claude_code" | "codex");
     }
     // A completion, not an agent (ADR-2610270901 §3).
     if claude_text_model(model).is_some() {
         return false;
     }
-    model.to_lowercase().starts_with("claude")
+    let lower = model.to_lowercase();
+    lower.starts_with("claude") || lower.starts_with("codex")
 }
 
 /// A `claude-text` id (ADR-2610270901 §4): `None` when `model` is not one,
@@ -275,6 +276,8 @@ fn adapter_for(model: &str) -> Box<dyn IInferencePort> {
         Box::new(ClaudeCodeInferenceAdapter::text(text_model))
     } else if model.to_lowercase().starts_with("claude") {
         Box::new(ClaudeCodeInferenceAdapter::new(None))
+    } else if model.to_lowercase().starts_with("codex") {
+        Box::new(CodexInferenceAdapter::new(Some(model.to_string())))
     } else {
         Box::new(OllamaInferenceAdapter::new(None))
     }
@@ -293,6 +296,7 @@ pub fn adapter_for_endpoint(endpoint: &Endpoint) -> Box<dyn IInferencePort> {
         "ollama" => Box::new(OllamaInferenceAdapter::new(Some(endpoint.url.clone()))),
         "anthropic" => Box::new(AnthropicAdapter::new(key, endpoint.model.clone())),
         "claude-code" | "claude_code" => Box::new(ClaudeCodeInferenceAdapter::new(None)),
+        "codex" => Box::new(CodexInferenceAdapter::new(Some(endpoint.model.clone()))),
         "claude-text" | "claude_text" => {
             Box::new(ClaudeCodeInferenceAdapter::text(claude_text_model(&endpoint.model).flatten()))
         }

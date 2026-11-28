@@ -1,0 +1,317 @@
+{
+  "adr": "ADR-2611230810",
+  "feature": "Python file names in the entry-point, layer-key and init-rule lists",
+  "description": "Python entry-point files, `__main__.py`/`main.py` layers, `.py` layer keys covering their packages, and the language-neutral `hexa init` rules are read for Python as for Rust, Go and TypeScript, and nothing else changes.",
+  "universal": [
+    "§1",
+    "§2",
+    "§3",
+    "§5"
+  ],
+  "accepted": {
+    "by": "craigjohnson",
+    "sha256": "d7fe54c35a89d93cf0ddaa8e29b0512669b19d026a84d846df678f3a1261b1da"
+  },
+  "sealed": {
+    "hexa-analysis/tests/adr_2611230810_spec.rs": "b919db046ea17b7abb7e996d1a87550c4b9ee526d238aa45fd48efffbbd96bfd"
+  },
+  "red": "899c41c",
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A `__main__.py` at the project root keeps its exports alive.",
+      "given": "A Python project whose root holds `__main__.py`, which exports a function `run` that no other file names",
+      "when": "Dead exports are found for the project",
+      "then": "`run` in `__main__.py` is not reported as a dead export",
+      "test": "hexa-analysis/tests/adr_2611230810_spec.rs::part_1::s01_root_dunder_main_keeps_exports_alive"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "Each named Python entry-point file under a nested directory keeps its exports alive.",
+      "given": "A Python project with `pkg/app/main.py`, `pkg/app/cli.py` and `pkg/app/composition_root.py`, each exporting a function that no other file names",
+      "when": "Dead exports are found for the project",
+      "then": "None of the three functions is reported as a dead export",
+      "test": "hexa-analysis/tests/adr_2611230810_spec.rs::part_1::s02_nested_python_entry_points_keep_exports_alive"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1",
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "A package's `__init__.py` is not an entry point, so its unused exports are still dead.",
+      "given": "A Python project with `app/store/__init__.py`, which exports a function `open_store` that no other file names",
+      "when": "Dead exports are found for the project",
+      "then": "`open_store` in `app/store/__init__.py` is reported as a dead export"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "An ordinary Python module that is not an entry-point file is not exempted.",
+      "given": "A Python project with `app/helpers.py`, which exports a function `slugify` that no other file names",
+      "when": "Dead exports are found for the project",
+      "then": "`slugify` in `app/helpers.py` is reported as a dead export"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A file whose name only ends in an entry-point name is not an entry-point file.",
+      "given": "A Python project with `app/domain.py` and `app/mycli.py`, each exporting a function that no other file names",
+      "when": "Dead exports are found for the project",
+      "then": "Both functions are reported as dead exports, because neither file is named `main.py` or `cli.py`"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§1"
+      ],
+      "kind": "property",
+      "description": "An exported name in a Python entry-point file is never dead, wherever the file is.",
+      "given": "Any project path whose last segment is `__main__.py`, `main.py`, `cli.py` or `composition_root.py`, at the root or under any number of directories, and any set of exports in that file",
+      "when": "Dead exports are found for the project",
+      "then": "No reported dead export names that file",
+      "test": "hexa-analysis/tests/adr_2611230810_spec.rs::part_1::s06_python_entry_point_exports_never_dead_anywhere"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "`__main__.py` takes the entry-point layer.",
+      "given": "A Python project with `app/__main__.py` and no `analyze.layers` key covering it",
+      "when": "The file is classified",
+      "then": "Its layer is `HexLayer::EntryPoint`",
+      "test": "hexa-analysis/tests/adr_2611230810_spec.rs::part_1::s07_dunder_main_is_entry_point_layer"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "`main.py` takes the entry-point layer, as `main.go` does.",
+      "given": "A project with `main.py` at its root and `cmd/main.go`, neither covered by an `analyze.layers` key",
+      "when": "Both files are classified",
+      "then": "Both have layer `HexLayer::EntryPoint`",
+      "test": "hexa-analysis/tests/adr_2611230810_spec.rs::part_1::s08_main_py_is_entry_point_like_main_go"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "Python's other entry-point files are not given the entry-point layer.",
+      "given": "A Python project with `app/cli.py` and `app/composition_root.py`, neither covered by an `analyze.layers` key",
+      "when": "Both files are classified",
+      "then": "`app/cli.py` is not `HexLayer::EntryPoint`, and `app/composition_root.py` is `HexLayer::CompositionRoot`"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§2",
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "`__init__.py` does not take the entry-point layer.",
+      "given": "A Python project with `app/__init__.py`, not covered by an `analyze.layers` key",
+      "when": "The file is classified",
+      "then": "Its layer is not `HexLayer::EntryPoint`"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§2"
+      ],
+      "kind": "property",
+      "description": "Every `__main__.py` and every `main.py` is an entry point by name.",
+      "given": "Any project path whose last segment is `__main__.py` or `main.py`, in any directory that no `analyze.layers` key covers and that sits under no layer directory",
+      "when": "The file is classified",
+      "then": "Its layer is `HexLayer::EntryPoint`",
+      "test": "hexa-analysis/tests/adr_2611230810_spec.rs::part_2::s11_main_py_and_dunder_main_py_are_entry_points"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "A layer key naming a `.py` file covers the package of the same name.",
+      "given": "`analyze.layers` maps `app/store.py` to `adapters/secondary`, and the project holds `app/store/__init__.py` and `app/store/disk.py`",
+      "when": "Those files are classified",
+      "then": "Both have layer `HexLayer::AdaptersSecondary`, as `app/store.rs` would give `app/store/x.rs`",
+      "test": "hexa-analysis/tests/adr_2611230810_spec.rs::part_2::s12_py_layer_key_covers_same_named_package"
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "Under `analyze.adapters`, a group path naming a `.py` file covers its package.",
+      "given": "`analyze.adapters` declares group `storage` with path `app/store.py`, and `app/store/disk.py` is in an adapter layer",
+      "when": "The adapter of `app/store/disk.py` is asked for",
+      "then": "It is `storage`",
+      "test": "hexa-analysis/tests/adr_2611230810_spec.rs::part_2::s13_adapters_group_py_path_covers_package"
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "An adapter named from its `.py` file is the same adapter as its package.",
+      "given": "Files `src/adapters/secondary/db.py` and `src/adapters/secondary/db/conn.py`, both in `HexLayer::AdaptersSecondary`, with no `analyze.adapters` group or layer key covering them",
+      "when": "The adapter of each file is asked for, and an import edge from `db.py` to `db/conn.py` is checked",
+      "then": "Both files belong to adapter `src/adapters/secondary/db`, and the edge does not cross adapters",
+      "test": "hexa-analysis/tests/adr_2611230810_spec.rs::part_2::s14_py_adapter_file_and_its_package_are_one_adapter"
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "A `.py` key covers its package on whole path segments only.",
+      "given": "`analyze.layers` maps `app/store.py` to `adapters/secondary`, and the project holds `app/storefront/__init__.py` and `app/stores/x.py`",
+      "when": "Those files are classified",
+      "then": "Neither file takes its layer from the `app/store.py` key",
+      "test": "hexa-analysis/tests/adr_2611230810_spec.rs::part_2::s15_py_key_covers_whole_segments_only"
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "Two different Python adapter files are two adapters.",
+      "given": "Files `src/adapters/secondary/db.py` and `src/adapters/secondary/cache.py`, both in `HexLayer::AdaptersSecondary`, with no `analyze.adapters` group or layer key covering them",
+      "when": "An import edge from `db.py` to `cache.py` is checked",
+      "then": "The edge crosses adapters (`src/adapters/secondary/db` and `src/adapters/secondary/cache`)",
+      "test": "hexa-analysis/tests/adr_2611230810_spec.rs::part_2::s16_two_python_adapter_files_are_two_adapters"
+    },
+    {
+      "id": "S17",
+      "decision": [
+        "§3"
+      ],
+      "kind": "property",
+      "description": "A `.py` key covers its module directory exactly as the other languages' keys do.",
+      "given": "Any key `K.py`, the same key spelled `K.rs`, and any path `P`",
+      "when": "Coverage of `P` by `K.py` is compared with coverage of `P` by `K.rs`, with the file suffix of `P` disregarded",
+      "then": "`K.py` covers `P` exactly when `P` is `K.py`, or `P` is under `K/` on whole path segments, which is the same set of directory paths that `K.rs` covers",
+      "test": "hexa-analysis/tests/adr_2611230810_spec.rs::part_2::s17_py_key_covers_like_rs_key"
+    },
+    {
+      "id": "S18",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "A new project's absolute-path rule reads Python.",
+      "given": "A project initialised with `hexa init`, and `app/config.py` holding a hardcoded absolute path that `no-hardcoded-absolute-path`'s violation pattern matches",
+      "when": "The project's rules are run",
+      "then": "`no-hardcoded-absolute-path` reports `app/config.py` at that line",
+      "test": "hexa-analysis/tests/adr_2611230810_spec.rs::part_2::s18_absolute_path_rule_reads_python"
+    },
+    {
+      "id": "S19",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "All three language-neutral rules in the written template list `.py`, and nothing else in them changes.",
+      "given": "The rules file `hexa init` writes",
+      "when": "`no-hardcoded-absolute-path`, `no-hardcoded-host-port` and `no-model-name-outside-inference` are read",
+      "then": "Each has `file_patterns` `[\".rs\", \".go\", \".ts\", \".tsx\", \".py\"]`, and each `violation_patterns` and `exclude_patterns` equals what it was before this ADR",
+      "test": "hexa-analysis/tests/adr_2611230810_spec.rs::part_2::s19_three_rules_list_py_and_keep_their_patterns"
+    },
+    {
+      "id": "S20",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "Adding `.py` widens which files are read, not what counts as a violation.",
+      "given": "A project initialised with `hexa init`, and `app/client.py` holding a host:port literal inside text that `no-hardcoded-host-port`'s `exclude_patterns` exclude, plus a line no violation pattern matches",
+      "when": "The project's rules are run",
+      "then": "`no-hardcoded-host-port` reports nothing in `app/client.py`",
+      "test": "hexa-analysis/tests/adr_2611230810_spec.rs::part_2::s20_py_widens_files_read_not_violations"
+    },
+    {
+      "id": "S21",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "Rules other than the three language-neutral ones do not gain `.py`.",
+      "given": "The rules file `hexa init` writes",
+      "when": "Every rule other than the three is read",
+      "then": "Its `file_patterns` are exactly those it had before this ADR",
+      "test": "hexa-analysis/tests/adr_2611230810_spec.rs::part_3::s21_other_rules_do_not_gain_py"
+    },
+    {
+      "id": "S22",
+      "decision": [
+        "§5"
+      ],
+      "kind": "example",
+      "description": "Rust, Go and TypeScript files are read as before.",
+      "given": "A project with `src/main.rs`, `src/lib.rs`, `cmd/main.go`, `web/index.ts` and `web/cli.ts`, whose exports no other file names, and a layer key `src/store.rs` with file `src/store/x.rs`",
+      "when": "The project is analysed",
+      "then": "None of those exports is dead; `src/main.rs`, `cmd/main.go` and `main.ts` files take `HexLayer::EntryPoint`; and `src/store/x.rs` takes the layer of the `src/store.rs` key, all as before this ADR",
+      "test": "hexa-analysis/tests/adr_2611230810_spec.rs::part_3::s22_rust_go_typescript_read_as_before"
+    },
+    {
+      "id": "S23",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "A rules file written before this ADR is not rewritten.",
+      "given": "A project whose rules file was written by `hexa init` before this ADR, with `no-hardcoded-absolute-path` at `file_patterns = [\".rs\", \".go\", \".ts\", \".tsx\"]`, and `app/config.py` holding a hardcoded absolute path",
+      "when": "The project is analysed with the new hexa",
+      "then": "The rules file's `file_patterns` are unchanged, and `no-hardcoded-absolute-path` reports nothing in `app/config.py`",
+      "test": "hexa-analysis/tests/adr_2611230810_spec.rs::part_3::s23_old_rules_file_is_not_rewritten"
+    },
+    {
+      "id": "S24",
+      "decision": [
+        "§5"
+      ],
+      "kind": "property",
+      "description": "No non-Python file is classified or judged differently.",
+      "given": "Any project tree with any layer config, rules file and set of Rust, Go and TypeScript files",
+      "when": "It is analysed before and after this ADR",
+      "then": "For every non-`.py` file, the layer, its adapter, whether each export is dead, and each rule finding are identical",
+      "test": "hexa-analysis/tests/adr_2611230810_spec.rs::part_3::s24_non_python_files_unchanged"
+    }
+  ],
+  "amendments": [
+    {
+      "at": "2026-11-23T14:22:53.368646931+00:00",
+      "base_commit": "899c41cf53912ee2861e50664e194e46fde10345",
+      "by": "Claude Code agent",
+      "file": "hexa-analysis/tests/adr_2611230810_spec.rs",
+      "from": "25fe7b776d1628733a86bdaa788fbcccd317b02186ecb710107b1fffba70141c",
+      "reason": "The tests used cmd/main.go as the Go example of an entry point, but hexa classifies a file under cmd/ by its folder (a primary adapter), before this ADR and after; a top-level main.go is the entry point S08 and S22 mean. No assertion changes. All 19 still fail without the fix",
+      "to": "b919db046ea17b7abb7e996d1a87550c4b9ee526d238aa45fd48efffbbd96bfd"
+    }
+  ]
+}

@@ -11,8 +11,9 @@
 //!   **frozen**.
 //!
 //! Who imports what is read by a direct scan of the current files — Rust
-//! `crate::` paths (including grouped `use crate::{…}`) and TS/JS relative
-//! specifiers — not from `graph-out/graph.json`. That file carries no
+//! `crate::` paths (including grouped `use crate::{…}`), TS/JS relative
+//! specifiers, Go package imports inside the module (a package is its non-test files), and Python `import`/`from … import` statements (absolute, from
+//! the repo root or any directory above the file; and relative) — not from `graph-out/graph.json`. That file carries no
 //! freshness signal, so a contract check read from it could pass on a graph
 //! built before the import existed. A scan of the files on disk cannot be
 //! stale, and a file it cannot read is a refusal, never a skip.
@@ -72,7 +73,13 @@ fn list_files(root: &Path) -> Vec<String> {
     let git = std::process::Command::new("git")
         .arg("-C")
         .arg(root)
-        .args(["ls-files", "-z", "--cached", "--others", "--exclude-standard"])
+        .args([
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+        ])
         .output()
         .ok()
         .filter(|o| o.status.success());
@@ -96,7 +103,9 @@ fn list_files(root: &Path) -> Vec<String> {
 }
 
 fn walk(root: &Path, dir: &Path, out: &mut Vec<String>) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     for e in rd.flatten() {
         let name = e.file_name().to_string_lossy().to_string();
         if name.starts_with('.') || name == "target" || name == "node_modules" {
@@ -149,7 +158,7 @@ pub fn merge_rank(l: HexLayer) -> u8 {
     }
 }
 
-const SOURCE_EXTS: &[&str] = &["rs", "ts", "tsx", "mts", "js", "jsx", "mjs", "cjs"];
+const SOURCE_EXTS: &[&str] = &["rs", "py", "go", "ts", "tsx", "mts", "js", "jsx", "mjs", "cjs"];
 const TS_EXTS: &[&str] = &["ts", "tsx", "mts", "js", "jsx", "mjs", "cjs"];
 
 impl Arch {
@@ -201,7 +210,8 @@ impl Arch {
                     let c = comps[i + k];
                     let last_of_file = k == n - 1 && i + k == comps.len() - 1;
                     c == parts[k]
-                        || (last_of_file && c.rsplit_once('.').is_some_and(|(stem, _)| stem == parts[k]))
+                        || (last_of_file
+                            && c.rsplit_once('.').is_some_and(|(stem, _)| stem == parts[k]))
                 })
             });
             if let Some(i) = hit {
@@ -248,11 +258,24 @@ impl Arch {
         let text = std::fs::read_to_string(&abs).map_err(|e| scan_failed(&abs, e))?;
         let mut out = Vec::new();
         if ext == "rs" {
-            let Some(src) = self.crate_src(file) else { return Ok(out) };
+            let Some(src) = self.crate_src(file) else {
+                return Ok(out);
+            };
             for path in rust_crate_paths(&strip_rust_comments(&text)) {
                 if let Some(t) = self.resolve_rust(&src, &path) {
                     out.push(t);
                 }
+            }
+        } else if ext == "go" {
+            if let Some((module, root)) = self.go_module(file) {
+                for path in go_import_paths(&text) {
+                    out.extend(self.resolve_go(&module, &root, &path));
+                }
+            }
+        } else if ext == "py" {
+            let dir = file.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+            for imp in python_imports(&text) {
+                out.extend(self.resolve_python(dir, &imp));
             }
         } else {
             let dir = file.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
@@ -271,11 +294,27 @@ impl Arch {
     fn crate_src(&self, file: &str) -> Option<String> {
         let mut dir = file.rsplit_once('/').map(|(d, _)| d.to_string());
         while let Some(d) = dir {
-            let manifest = if d.is_empty() { "Cargo.toml".to_string() } else { format!("{d}/Cargo.toml") };
+            let manifest = if d.is_empty() {
+                "Cargo.toml".to_string()
+            } else {
+                format!("{d}/Cargo.toml")
+            };
             if self.exists(&manifest) {
-                return Some(if d.is_empty() { "src".into() } else { format!("{d}/src") });
+                return Some(if d.is_empty() {
+                    "src".into()
+                } else {
+                    format!("{d}/src")
+                });
             }
-            dir = if d.is_empty() { None } else { Some(d.rsplit_once('/').map(|(p, _)| p.to_string()).unwrap_or_default()) };
+            dir = if d.is_empty() {
+                None
+            } else {
+                Some(
+                    d.rsplit_once('/')
+                        .map(|(p, _)| p.to_string())
+                        .unwrap_or_default(),
+                )
+            };
         }
         None
     }
@@ -293,8 +332,133 @@ impl Arch {
         None
     }
 
+    /// The repo files a Python import names. A relative import (`level` dots)
+    /// starts at the importing file's package; an absolute one is tried from
+    /// the repo root and from every directory above the file, which covers
+    /// `src/` layouts. `from pkg import name` names the submodule
+    /// `pkg/name.py` when there is one, else the package itself.
+    fn resolve_python(&self, dir: &str, imp: &PyImport) -> Vec<String> {
+        let mut roots: Vec<String> = Vec::new();
+        if imp.level > 0 {
+            let mut parts: Vec<&str> = if dir.is_empty() {
+                Vec::new()
+            } else {
+                dir.split('/').collect()
+            };
+            for _ in 1..imp.level {
+                if parts.pop().is_none() {
+                    return Vec::new();
+                }
+            }
+            roots.push(parts.join("/"));
+        } else {
+            roots.push(String::new());
+            let mut acc = String::new();
+            for seg in dir.split('/').filter(|s| !s.is_empty()) {
+                acc = if acc.is_empty() {
+                    seg.to_string()
+                } else {
+                    format!("{acc}/{seg}")
+                };
+                roots.push(acc.clone());
+            }
+        }
+        let module_file = |root: &str, mods: &[&str]| -> Option<String> {
+            let m = mods.join("/");
+            let base = match (root.is_empty(), m.is_empty()) {
+                (true, _) => m,
+                (false, true) => root.to_string(),
+                (false, false) => format!("{root}/{m}"),
+            };
+            if base.is_empty() {
+                return None;
+            }
+            [format!("{base}.py"), format!("{base}/__init__.py")]
+                .into_iter()
+                .find(|c| self.exists(c))
+        };
+        let segs: Vec<&str> = imp.module.split('.').filter(|s| !s.is_empty()).collect();
+        let mut out = Vec::new();
+        for root in &roots {
+            let before = out.len();
+            if imp.names.is_empty() {
+                // `import a.b.c`: the longest prefix that is a module
+                if let Some(f) = (1..=segs.len())
+                    .rev()
+                    .find_map(|k| module_file(root, &segs[..k]))
+                {
+                    out.push(f);
+                }
+            } else {
+                let mut package_named = false;
+                for n in &imp.names {
+                    let mut full = segs.clone();
+                    full.push(n);
+                    match module_file(root, &full) {
+                        Some(f) => out.push(f),
+                        None => package_named = true,
+                    }
+                }
+                if package_named {
+                    out.extend(module_file(root, &segs));
+                }
+            }
+            if out.len() > before && imp.level == 0 {
+                break;
+            }
+        }
+        out
+    }
+
+    /// The module path and directory of the nearest `go.mod` above `file`.
+    fn go_module(&self, file: &str) -> Option<(String, String)> {
+        let mut dir = file.rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or_default();
+        loop {
+            let manifest = if dir.is_empty() { "go.mod".to_string() } else { format!("{dir}/go.mod") };
+            if self.exists(&manifest) {
+                let text = std::fs::read_to_string(self.root.join(&manifest)).ok()?;
+                let module = text.lines().find_map(|l| l.trim().strip_prefix("module"))?.trim().trim_matches('"').to_string();
+                return Some((module, dir));
+            }
+            if dir.is_empty() {
+                return None;
+            }
+            dir = dir.rsplit_once('/').map(|(p, _)| p.to_string()).unwrap_or_default();
+        }
+    }
+
+    /// A Go import is a package, a directory: its non-test `.go` files, when the
+    /// path is inside `module`.
+    fn resolve_go(&self, module: &str, root: &str, path: &str) -> Vec<String> {
+        let rest = if path == module {
+            ""
+        } else if let Some(r) = path.strip_prefix(&format!("{module}/")) {
+            r
+        } else {
+            return Vec::new();
+        };
+        let pkg = match (root.is_empty(), rest.is_empty()) {
+            (true, _) => rest.to_string(),
+            (false, true) => root.to_string(),
+            (false, false) => format!("{root}/{rest}"),
+        };
+        self.files
+            .iter()
+            .filter(|f| {
+                f.ends_with(".go")
+                    && !f.ends_with("_test.go")
+                    && f.rsplit_once('/').map(|(d, _)| d).unwrap_or("") == pkg
+            })
+            .cloned()
+            .collect()
+    }
+
     fn resolve_ts(&self, dir: &str, spec: &str) -> Option<String> {
-        let mut parts: Vec<&str> = if dir.is_empty() { Vec::new() } else { dir.split('/').collect() };
+        let mut parts: Vec<&str> = if dir.is_empty() {
+            Vec::new()
+        } else {
+            dir.split('/').collect()
+        };
         for c in spec.split('/') {
             match c {
                 "" | "." => {}
@@ -338,7 +502,8 @@ impl Arch {
 
     /// Does `lease` hold contract files (or name a contract path that does not exist yet)?
     fn is_contract_lease(&self, lease: &str) -> bool {
-        is_contract(self.layer(lease)) || self.files_under(lease).any(|f| is_contract(self.layer(f)))
+        is_contract(self.layer(lease))
+            || self.files_under(lease).any(|f| is_contract(self.layer(f)))
     }
 }
 
@@ -370,7 +535,10 @@ pub fn check_contracts(
             }
         }
     }
-    let contracts: Vec<&String> = leases.iter().filter(|l| here.is_contract_lease(l)).collect();
+    let contracts: Vec<&String> = leases
+        .iter()
+        .filter(|l| here.is_contract_lease(l))
+        .collect();
     if contracts.is_empty() {
         return Ok(());
     }
@@ -382,7 +550,11 @@ pub fn check_contracts(
                 if key != here.root && !archs.contains_key(&key) {
                     archs.insert(key.clone(), Arch::load(w)?);
                 }
-                if key == here.root { here } else { &archs[&key] }
+                if key == here.root {
+                    here
+                } else {
+                    &archs[&key]
+                }
             }
             None => here,
         };
@@ -509,6 +681,73 @@ fn parse_tree(s: &str, mut prefix: Vec<String>, out: &mut Vec<Vec<String>>) -> u
     }
 }
 
+/// The quoted paths of a Go file's `import` declarations, single or grouped.
+fn go_import_paths(text: &str) -> Vec<String> {
+    use std::sync::OnceLock;
+    static DECL: OnceLock<regex::Regex> = OnceLock::new();
+    static QUOTED: OnceLock<regex::Regex> = OnceLock::new();
+    let decl = DECL.get_or_init(|| {
+        regex::Regex::new(r#"(?m)^[ \t]*import[ \t]*(\([^)]*\)|[^\n]*)"#).unwrap()
+    });
+    let quoted = QUOTED.get_or_init(|| regex::Regex::new(r#""([^"\n]+)""#).unwrap());
+    let mut out = Vec::new();
+    for d in decl.captures_iter(text) {
+        for q in quoted.captures_iter(&d[1]) {
+            out.push(q[1].to_string());
+        }
+    }
+    out
+}
+
+/// One Python import statement: `import a.b` has no names; `from .a import b, c`
+/// has level 1, module `a`, names `b` and `c`.
+struct PyImport {
+    level: usize,
+    module: String,
+    names: Vec<String>,
+}
+
+fn python_imports(text: &str) -> Vec<PyImport> {
+    use std::sync::OnceLock;
+    static IMPORT: OnceLock<regex::Regex> = OnceLock::new();
+    static FROM: OnceLock<regex::Regex> = OnceLock::new();
+    let import =
+        IMPORT.get_or_init(|| regex::Regex::new(r"(?m)^[ \t]*import[ \t]+([^\n#;]+)").unwrap());
+    let from = FROM.get_or_init(|| {
+        regex::Regex::new(
+            r"(?m)^[ \t]*from[ \t]+(\.*)([\w.]*)[ \t]+import[ \t]+(\([^)]*\)|[^\n#;]*)",
+        )
+        .unwrap()
+    });
+    let mut out = Vec::new();
+    for c in import.captures_iter(text) {
+        for item in c[1].split(',') {
+            if let Some(m) = item.split_whitespace().next() {
+                out.push(PyImport {
+                    level: 0,
+                    module: m.to_string(),
+                    names: Vec::new(),
+                });
+            }
+        }
+    }
+    for c in from.captures_iter(text) {
+        let names = c[3]
+            .trim_matches(|ch: char| ch == '(' || ch == ')' || ch.is_whitespace())
+            .split(',')
+            .filter_map(|n| n.split_whitespace().next())
+            .filter(|n| *n != "*")
+            .map(str::to_string)
+            .collect();
+        out.push(PyImport {
+            level: c[1].len(),
+            module: c[2].to_string(),
+            names,
+        });
+    }
+    out
+}
+
 /// Relative specifiers in `import … from '…'`, `import '…'`, `export … from '…'`,
 /// `import('…')` and `require('…')`.
 fn ts_relative_specs(text: &str) -> Vec<String> {
@@ -526,32 +765,60 @@ mod tests {
     use super::*;
 
     fn paths(text: &str) -> Vec<String> {
-        rust_crate_paths(text).into_iter().map(|p| p.join("::")).collect()
+        rust_crate_paths(text)
+            .into_iter()
+            .map(|p| p.join("::"))
+            .collect()
     }
 
     #[test]
     fn rust_paths_expand_groups_drop_self_and_ignore_other_crates() {
-        assert_eq!(paths("use crate::ports::billing::Billing;"), vec!["ports::billing::Billing"]);
+        assert_eq!(
+            paths("use crate::ports::billing::Billing;"),
+            vec!["ports::billing::Billing"]
+        );
         assert_eq!(
             paths("use crate::{ports::billing::{self, Billing}, domain::invoice::Invoice};"),
-            vec!["ports::billing", "ports::billing::Billing", "domain::invoice::Invoice"]
+            vec![
+                "ports::billing",
+                "ports::billing::Billing",
+                "domain::invoice::Invoice"
+            ]
         );
         assert!(paths("use mycrate::ports::x; use other_crate::y;").is_empty());
-        assert_eq!(paths("fn f() { crate::domain::x::run() }"), vec!["domain::x::run"]);
-        assert!(paths(&strip_rust_comments("// use crate::ports::x;\n/* crate::domain::y */")).is_empty());
+        assert_eq!(
+            paths("fn f() { crate::domain::x::run() }"),
+            vec!["domain::x::run"]
+        );
+        assert!(paths(&strip_rust_comments(
+            "// use crate::ports::x;\n/* crate::domain::y */"
+        ))
+        .is_empty());
     }
 
     #[test]
     fn ts_specs_are_the_relative_ones() {
         let t = "import { A } from '../ports/a.js';\nimport type B from \"./b\";\nimport 'x';\nexport * from './c.js';\nconst d = require('../d');\nconst e = await import('./e.js');";
-        assert_eq!(ts_relative_specs(t), vec!["../ports/a.js", "./b", "./c.js", "../d", "./e.js"]);
+        assert_eq!(
+            ts_relative_specs(t),
+            vec!["../ports/a.js", "./b", "./c.js", "../d", "./e.js"]
+        );
     }
 
     #[test]
     fn merge_rank_runs_inner_to_outer() {
         use HexLayer::*;
-        let order = [Domain, Ports, Usecases, AdaptersSecondary, CompositionRoot, Unknown];
-        assert!(order.windows(2).all(|w| merge_rank(w[0]) < merge_rank(w[1])));
+        let order = [
+            Domain,
+            Ports,
+            Usecases,
+            AdaptersSecondary,
+            CompositionRoot,
+            Unknown,
+        ];
+        assert!(order
+            .windows(2)
+            .all(|w| merge_rank(w[0]) < merge_rank(w[1])));
         assert_eq!(merge_rank(AdaptersPrimary), merge_rank(AdaptersSecondary));
     }
 }

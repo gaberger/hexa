@@ -1,0 +1,156 @@
+{
+  "adr": "ADR-2611231735",
+  "feature": "Codex agent backend",
+  "description": "hexa runs Codex as an agent backend through a new inference adapter and configuration",
+  "accepted": {
+    "by": "craigjohnson",
+    "sha256": "1f60d51562220ed4e4aa88b5af95c240def4c9fe6a15d2387e884301ae8fccd9"
+  },
+  "sealed": {
+    "hexa-cli/tests/adr_2611231735_spec.rs": "d0a46bcb16812d06c51e63df4d0d4263596558714fdf7b5376b8f0b3c82ff0af"
+  },
+  "red": "afebbe2",
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A provider named codex is served by a CodexInferenceAdapter built by adapter_for_endpoint",
+      "given": "an inference endpoint registered with provider name codex",
+      "when": "adapter_for_endpoint builds the inference adapter",
+      "then": "a CodexInferenceAdapter implementing IInferencePort is returned",
+      "test": "hexa-cli/tests/adr_2611231735_spec.rs::part_1::test_s01_codex_provider_adapter_wiring"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "An unregistered or unknown provider name is never served by a CodexInferenceAdapter",
+      "given": "an inference endpoint registered with an unknown provider name unknown-provider",
+      "when": "adapter_for_endpoint builds the inference adapter",
+      "then": "it refuses to build a CodexInferenceAdapter and returns an unknown provider error"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "Every complete call passes the hardcoded permission-bypass flag to the process spawner",
+      "given": "a CodexInferenceAdapter initialized with an injectable ProcessSpawner",
+      "when": "complete() is called on the adapter",
+      "then": "the spawner receives arguments containing --dangerously-bypass-approvals-and-sandbox",
+      "test": "hexa-cli/tests/adr_2611231735_spec.rs::part_1::test_s03_complete_passes_bypass_flag"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "A complete call never omits the permission-bypass flag even if requested",
+      "given": "a CodexInferenceAdapter and a request attempting to suppress permission bypassing",
+      "when": "complete() is called on the adapter",
+      "then": "it refuses to execute without --dangerously-bypass-approvals-and-sandbox in the spawner arguments",
+      "test": "hexa-cli/tests/adr_2611231735_spec.rs::part_1::test_s04_complete_never_omits_bypass_flag"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "The reply is successfully extracted from the last message output file",
+      "given": "a codex execution that exits with zero and writes a last message to the designated temp file",
+      "when": "complete() finishes executing",
+      "then": "the adapter returns the file contents as the inference response text",
+      "test": "hexa-cli/tests/adr_2611231735_spec.rs::part_1::test_s05_reply_extracted_from_output_file"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "A non-zero exit or an empty output file is never treated as an empty success",
+      "given": "a codex execution that exits with a non-zero status or leaves the output file empty",
+      "when": "complete() processes the result",
+      "then": "it refuses to return a success and returns an InferenceError instead"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "A model other than the bare id codex passes the model flag",
+      "given": "an InferenceRequest specifying model custom-gpt-model",
+      "when": "complete() builds the codex command arguments",
+      "then": "the spawner arguments contain -m custom-gpt-model",
+      "test": "hexa-cli/tests/adr_2611231735_spec.rs::part_1::test_s07_custom_model_passes_m_flag"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "The bare model id codex never passes a model flag",
+      "given": "an InferenceRequest specifying the bare model id codex",
+      "when": "complete() builds the codex command arguments",
+      "then": "it refuses to include the -m flag, relying on Codex's default model"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§5"
+      ],
+      "kind": "example",
+      "description": "Codex-served models are treated as agents and refused by spec ledger commands",
+      "given": "a project configured with a model served by the codex provider",
+      "when": "hexa spec tests or hexa spec draft is executed",
+      "then": "it refuses the operation with the rule message naming ADR-2610221540 §2",
+      "test": "hexa-cli/tests/adr_2611231735_spec.rs::part_1::test_s09_codex_models_treated_as_agents"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "A Codex-served model is never permitted to act as the test writer",
+      "given": "a Codex-served model attempting to write or execute spec tests",
+      "when": "hexa spec tests checks the test author identity",
+      "then": "it refuses to allow the agent CLI to write the specification tests",
+      "test": "hexa-cli/tests/adr_2611231735_spec.rs::part_1::test_s10_codex_model_refused_as_test_writer"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§6"
+      ],
+      "kind": "example",
+      "description": "hexa inference add codex checks login status and writes an endpoint without key references",
+      "given": "an operator running hexa inference add codex while logged in",
+      "when": "the command executes successfully",
+      "then": "it writes an endpoint with provider codex, no URL, and no key reference",
+      "test": "hexa-cli/tests/adr_2611231735_spec.rs::part_2::test_inference_add_codex_success"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§6"
+      ],
+      "kind": "negative",
+      "description": "hexa inference add codex refuses when not logged in",
+      "given": "an operator running hexa inference add codex while not logged in",
+      "when": "codex login status fails",
+      "then": "it refuses to register the endpoint and reports the command to run for logging in",
+      "test": "hexa-cli/tests/adr_2611231735_spec.rs::part_2::test_inference_add_codex_refuses_when_not_logged_in"
+    }
+  ]
+}

@@ -95,6 +95,12 @@ pub const fn frontier_cli() -> &'static str {
     "claude"
 }
 
+/// The provider name and executable of the Codex CLI (ADR-2611231735), asked for
+/// here so no file outside hexa-infer names it (founding goal G1).
+pub const fn codex_cli() -> &'static str {
+    "codex"
+}
+
 impl LocalProvider {
     /// `http://127.0.0.1:<port>` — the base URL for a default install.
     pub fn default_base_url(&self) -> String {

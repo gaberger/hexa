@@ -105,13 +105,16 @@ fn root_of(path: &str) -> anyhow::Result<PathBuf> {
 
 fn build(root: &Path) -> anyhow::Result<ApiBuild> {
     let ast = hexa_analysis::default_ast();
-    let files = hexa_analysis::analyzer::source_files_sync(root);
+    let files = hexa_analysis::analyzer::api_files_sync(root)?;
     Ok(api_contract::from_project(root, &files, ast.as_ref())?)
 }
 
 /// Build the contract, or say why there is none and return the exit code.
 fn contract(root: &Path) -> anyhow::Result<Result<ApiBuild, i32>> {
     let built = build(root)?;
+    if built.contract.operations.is_empty() {
+        say_ungraded(root)?;
+    }
     if !built.errors.is_empty() {
         eprintln!("{} the API contract has {} error(s):", "✗".red(), built.errors.len());
         for e in &built.errors {
@@ -128,6 +131,21 @@ fn contract(root: &Path) -> anyhow::Result<Result<ApiBuild, i32>> {
         return Ok(Err(NO_CONTRACT));
     }
     Ok(Ok(built))
+}
+
+/// With no operation found, say which files were not looked in: a Python
+/// project that does not say it is Python reads as one with no tags
+/// (ADR-2611261303 §5).
+fn say_ungraded(root: &Path) -> anyhow::Result<()> {
+    let count = hexa_analysis::analyzer::ungraded_python_count(root)?;
+    if count > 0 {
+        eprintln!(
+            "{} {count} Python file(s) were left ungraded, so no `@hexa:api` tag in them was read. To have them graded, add a Python manifest ({}) at the project root, or give them a layer in .hexa/project.json under analyze.layers.",
+            "⚠".yellow(),
+            hexa_analysis::analyzer::PYTHON_MANIFESTS.join(", ")
+        );
+    }
+    Ok(())
 }
 
 fn generator() -> String {
@@ -390,7 +408,7 @@ fn adapter(root: &Path, port: Option<&str>, out: Option<&str>, force: bool) -> a
         Language::Rust => "src/adapters/primary/http.rs",
         Language::Go => "adapters/primary/httpapi/handler.go",
         Language::TypeScript => "src/adapters/primary/http-handler.ts",
-        Language::Unknown => anyhow::bail!("{port_file}: no adapter for this language"),
+        Language::Python | Language::Unknown => anyhow::bail!("{port_file}: no adapter for this language"),
     };
     let Some(rel) = inside(out.unwrap_or(default_out)) else {
         eprintln!("{} --out must be a path inside the project, without `..`", "✗".red());

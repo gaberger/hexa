@@ -178,6 +178,170 @@ fn is_read_only_agent(kind: &str) -> bool {
     READ_ONLY_AGENTS.iter().any(|t| kind.eq_ignore_ascii_case(t))
 }
 
+/// Tools that only read (ADR-2611221646 §5). A definition is read-only when
+/// its `tools` names nothing else: `*`, any other tool, or one hexa does not
+/// know is assumed to write.
+const READ_TOOLS: &[&str] = &["Read", "Grep", "Glob", "LS", "NotebookRead", "WebFetch", "WebSearch"];
+
+/// Whether a subagent type is read-only: a fixed read-only type, or one whose
+/// definition lists `tools` and every one of them only reads
+/// (ADR-2611221646 §5). The definition is found as Claude Code finds it, by
+/// its frontmatter `name:` (see [`find_definition`]).
+fn agent_is_read_only(kind: &str, project_dir: &Path) -> bool {
+    if is_read_only_agent(kind) {
+        return true;
+    }
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    definition_grants_only_reads(kind, project_dir, home.as_deref())
+}
+
+/// What one agents folder holds for a subagent type.
+enum Definition {
+    /// No file in the folder has that `name:`.
+    Absent,
+    /// Exactly one file does: its parsed frontmatter.
+    One(serde_yaml::Value),
+    /// More than one file claims the name: no definition hexa can trust.
+    Ambiguous,
+}
+
+/// The `*.md` file in `dir` whose frontmatter `name:` is `kind`. Claude Code
+/// names an agent by that field, not by the file's name, so a file without a
+/// `name:` matches nothing.
+fn find_definition(dir: &Path, kind: &str) -> Definition {
+    let Ok(entries) = std::fs::read_dir(dir) else { return Definition::Absent };
+    let mut found = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("md") || !path.is_file() {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        let Some(front) = frontmatter(&text) else { continue };
+        if front.get("name").and_then(|n| n.as_str()).map(str::trim) == Some(kind) {
+            found.push(front);
+        }
+    }
+    match found.len() {
+        0 => Definition::Absent,
+        1 => found.pop().map_or(Definition::Absent, Definition::One),
+        _ => Definition::Ambiguous,
+    }
+}
+
+/// A project definition is final: the home folder is read only when no
+/// project file claims the name. An ambiguous name is no definition.
+fn definition_grants_only_reads(kind: &str, project_dir: &Path, home: Option<&Path>) -> bool {
+    if kind.trim().is_empty() {
+        return false;
+    }
+    let front = match find_definition(&project_dir.join(".claude/agents"), kind) {
+        Definition::One(f) => f,
+        Definition::Ambiguous => return false,
+        Definition::Absent => match home.map(|h| find_definition(&h.join(".claude/agents"), kind)) {
+            Some(Definition::One(f)) => f,
+            _ => return false,
+        },
+    };
+    match definition_tools(&front) {
+        Some(tools) => tools.iter().all(|t| is_read_tool(t)),
+        None => false,
+    }
+}
+
+/// Whether one `tools` entry, such as `Read` or `WebFetch(domain:x.com)`,
+/// names a tool that only reads. The name matches exactly (`read` is not
+/// `Read`), and a specifier's brackets must balance and close at the end of
+/// the entry. `*` anywhere is every tool. Anything else is unknown, and an
+/// unknown tool writes.
+fn is_read_tool(entry: &str) -> bool {
+    if entry.contains('*') {
+        return false;
+    }
+    let name = match entry.find('(') {
+        None if entry.contains(')') => return false,
+        None => entry,
+        Some(open) if closes_at_end(&entry[open..]) => &entry[..open],
+        Some(_) => return false,
+    };
+    READ_TOOLS.contains(&name)
+}
+
+/// Whether the bracket that opens `s` closes at its last character, so the
+/// brackets balance and nothing follows them.
+fn closes_at_end(s: &str) -> bool {
+    let mut depth = 0usize;
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return i + c.len_utf8() == s.len();
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Split a `tools` string on commas and whitespace outside parentheses:
+/// `Read, Grep`, `Read Grep` and `WebFetch(domain: x.com) Read` each name
+/// their tools.
+fn split_tools(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut depth = 0usize;
+    for c in s.chars() {
+        match c {
+            '(' => {
+                depth += 1;
+                cur.push(c);
+            }
+            ')' => {
+                depth = depth.saturating_sub(1);
+                cur.push(c);
+            }
+            c if depth == 0 && (c == ',' || c.is_whitespace()) => {
+                out.push(std::mem::take(&mut cur));
+            }
+            c => cur.push(c),
+        }
+    }
+    out.push(cur);
+    out.into_iter().map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect()
+}
+
+/// A definition's YAML frontmatter, or `None` when it has none hexa can read.
+fn frontmatter(text: &str) -> Option<serde_yaml::Value> {
+    let mut lines = text.lines();
+    if lines.next()?.trim() != "---" {
+        return None;
+    }
+    let front: Vec<&str> = lines.take_while(|l| l.trim() != "---").collect();
+    serde_yaml::from_str(&front.join("\n")).ok()
+}
+
+/// The `tools` list in a definition's frontmatter. `None` — treated as no
+/// definition — when there is no (non-empty) `tools` entry, or a list item
+/// that is not a string.
+fn definition_tools(yaml: &serde_yaml::Value) -> Option<Vec<String>> {
+    let tools: Vec<String> = match yaml.get("tools")? {
+        serde_yaml::Value::String(s) => split_tools(s),
+        serde_yaml::Value::Sequence(seq) => {
+            let mut all = Vec::new();
+            for v in seq {
+                all.extend(split_tools(v.as_str()?));
+            }
+            all
+        }
+        _ => return None,
+    };
+    let tools: Vec<String> = tools.into_iter().filter(|t| !t.is_empty()).collect();
+    (!tools.is_empty()).then_some(tools)
+}
+
 /// A git worktree has a `.git` file; the main checkout has a `.git` directory.
 fn in_worktree(dir: &Path) -> bool {
     dir.join(".git").is_file()
@@ -310,6 +474,11 @@ async fn session_start(project_dir: &Path) -> Result<()> {
             "{} Not a hexa project (no .hexa/project.json). Run `hexa init`.",
             "\u{26a0}".yellow()
         );
+        // What the root's manifest says, so the session is not left to guess
+        // (ADR-2611221646 §4). Nothing is said when no manifest names one.
+        if let Some(language) = manifest_language(project_dir) {
+            println!("Language: {language}");
+        }
         return Ok(());
     }
 
@@ -380,6 +549,23 @@ fn minimal_fingerprint_block(project_dir: &Path, project_name: &str) -> String {
     minimal_fingerprint_block_inner(project_dir, project_name)
 }
 
+/// The language the root's manifest names: `Cargo.toml`, `go.mod`,
+/// `package.json`, then a Python manifest (`pyproject.toml`, `setup.py`,
+/// `setup.cfg`) when none of the others is there (ADR-2611221646 §4).
+fn manifest_language(project_dir: &Path) -> Option<&'static str> {
+    if project_dir.join("Cargo.toml").exists() {
+        Some("rust")
+    } else if project_dir.join("go.mod").exists() {
+        Some("go")
+    } else if project_dir.join("package.json").exists() {
+        Some(hexa_analysis::analyzer::package_language(project_dir))
+    } else if ["pyproject.toml", "setup.py", "setup.cfg"].iter().any(|m| project_dir.join(m).exists()) {
+        Some("python")
+    } else {
+        None
+    }
+}
+
 fn minimal_fingerprint_block_inner(project_dir: &Path, project_name: &str) -> String {
     let mut language = "unknown".to_string();
     let mut framework = "unknown".to_string();
@@ -419,6 +605,9 @@ fn minimal_fingerprint_block_inner(project_dir: &Path, project_name: &str) -> St
             else if pj.contains("\"next\"") { framework = "next.js".to_string(); output_type = "web-app".to_string(); }
             else if pj.contains("\"axum\"") { framework = "axum".to_string(); }
         }
+    } else if let Some(python) = manifest_language(project_dir) {
+        // ADR-2611221646 §4: a Python manifest, and none of the others.
+        language = python.to_string();
     }
 
     // Extract objective from most recent workplan
@@ -519,7 +708,8 @@ async fn subagent_start() -> Result<()> {
         .map(PathBuf::from)
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
     let isolated = in_worktree(&cwd);
-    if !isolated && !agent_type.is_empty() && !is_read_only_agent(&agent_type) {
+    let project_dir = std::env::var("CLAUDE_PROJECT_DIR").map(PathBuf::from).unwrap_or_else(|_| cwd.clone());
+    if !isolated && !agent_type.is_empty() && !agent_is_read_only(&agent_type, &project_dir) {
         eprintln!(
             "[hexa hook] subagent {} ({}) is running in the main checkout, not a worktree; its edits land on this branch",
             agent_id, agent_type
@@ -916,16 +1106,16 @@ async fn pre_agent() -> Result<()> {
         Err(_) => return Ok(()), // Can't parse — allow (fail-open)
     };
     let subagent_type = input["subagent_type"].as_str().unwrap_or("");
-    if is_read_only_agent(subagent_type) {
+    let project_dir = std::env::var("CLAUDE_PROJECT_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
+    if agent_is_read_only(subagent_type, &project_dir) {
         return Ok(());
     }
     let isolated = input["isolation"].as_str() == Some("worktree");
     if isolated {
         return Ok(());
     }
-    let project_dir = std::env::var("CLAUDE_PROJECT_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
     let who = if subagent_type.is_empty() { "subagent".to_string() } else { format!("{subagent_type} subagent") };
     if enforcement_mode(&project_dir) == "mandatory" {
         eprintln!(
@@ -1380,7 +1570,10 @@ fn new_overlaps(project_dir: &Path, reported: &mut Vec<String>) -> Vec<String> {
 /// Text the host generated to tell the session something happened, rather
 /// than a person asking for work.
 fn is_host_notification(text: &str) -> bool {
-    const MARKERS: [&str; 4] = ["[SYSTEM NOTIFICATION", "<task-notification>", "<system-reminder>", "<local-command-caveat>"];
+    // A message from another Claude session arrives wrapped the same way: it
+    // is a peer's note, not a person asking this session for work.
+    const MARKERS: [&str; 5] =
+        ["[SYSTEM NOTIFICATION", "<task-notification>", "<system-reminder>", "<local-command-caveat>", "<cross-session-message"];
     let head: String = text.chars().take(400).collect();
     MARKERS.iter().any(|m| head.contains(m))
 }
@@ -1717,6 +1910,39 @@ struct DestructiveOp {
     branch: String,
 }
 
+/// `cmd` without the bodies of heredocs that only WRITE text. `cat > t.sh
+/// <<'EOF' … EOF` makes a file; the lines in it are data, not commands run now,
+/// so a force-push inside a test script it writes is not a force-push. A
+/// heredoc whose line has a shell on it (`bash <<EOF`, `cat <<EOF | sh`) is
+/// fed to that shell and stays, because there its body is run.
+fn without_written_heredocs(cmd: &str) -> String {
+    use std::sync::OnceLock;
+    static START: OnceLock<regex::Regex> = OnceLock::new();
+    let start = START.get_or_init(|| regex::Regex::new(r#"<<-?\s*(?:'([^']+)'|"([^"]+)"|\\?([A-Za-z_][A-Za-z0-9_]*))"#).unwrap());
+    const SHELLS: [&str; 9] = ["bash", "sh", "zsh", "dash", "ksh", "source", ".", "eval", "xargs"];
+    let mut out = String::new();
+    let mut lines = cmd.lines();
+    while let Some(line) = lines.next() {
+        out.push_str(line);
+        out.push('\n');
+        let Some(c) = start.captures(line) else { continue };
+        let tag = c.get(1).or_else(|| c.get(2)).or_else(|| c.get(3)).map(|m| m.as_str().to_string()).unwrap_or_default();
+        let runs = line
+            .split(|ch: char| ch.is_whitespace() || matches!(ch, '|' | ';' | '&' | '(' | ')'))
+            .any(|w| SHELLS.contains(&w.rsplit('/').next().unwrap_or(w)));
+        if runs {
+            continue;
+        }
+        // Drop the body, up to and including the terminator line.
+        for body in lines.by_ref() {
+            if body.trim() == tag {
+                break;
+            }
+        }
+    }
+    out
+}
+
 /// The destructive operations in `cmd`, a shell command line run in `cwd`:
 /// force-push, `reset --hard`, `clean -f`, `rm -rf` outside a temp folder,
 /// and `branch -D`. Each `&&`/`||`/`;`/`|` segment is read on its own, with
@@ -1725,6 +1951,7 @@ struct DestructiveOp {
 /// directory it runs in when it names none.
 fn destructive_ops(cmd: &str, cwd: &Path) -> Vec<DestructiveOp> {
     let mut found = Vec::new();
+    let cmd = &without_written_heredocs(cmd);
     let normalized = cmd.replace("&&", "\n").replace("||", "\n").replace([';', '|'], "\n");
     for segment in normalized.lines() {
         let toks: Vec<String> = segment
@@ -2516,6 +2743,18 @@ mod tests {
         assert_eq!(whats("sudo rm -rf ./build"), ["rm -rf"]);
         assert_eq!(whats("rm -r -f build"), ["rm -rf"]);
         assert_eq!(whats("git branch -D old"), ["branch -D"]);
+        // A heredoc that only WRITES a script is data, not a command run now; one a
+        // shell reads is still a command.
+        let wrote = "cat > t.sh <<'EOF'\ngit -C rel push -qf origin main\nrm -rf build\nEOF\nls";
+        assert!(destructive_ops(wrote, &cwd).is_empty(), "a written script was read as commands: {:?}", destructive_ops(wrote, &cwd));
+        let tee = "tee t.sh <<EOF >/dev/null\ngit push --force origin main\nEOF";
+        assert!(destructive_ops(tee, &cwd).is_empty());
+        for run in ["bash <<'EOF'\ngit push -f origin main\nEOF", "sh -s <<EOF\ngit push -f origin main\nEOF", "cat <<EOF | bash\ngit push -f origin main\nEOF"] {
+            let ops = destructive_ops(run, &cwd);
+            assert!(ops.iter().any(|o| o.protected), "a heredoc a shell runs must still be read: {run:?} -> {ops:?}");
+        }
+        let after = "cat > t.sh <<'EOF'\necho hi\nEOF\ngit push -f origin main";
+        assert!(destructive_ops(after, &cwd).iter().any(|o| o.protected), "a command after the heredoc is still read");
         for safe in ["git push origin feat", "git branch -d merged", "rm -rf /tmp/x", "rm -rf $TMPDIR/x", "git clean -n", "echo git push --force-ish", "grep -rf pattern"] {
             assert!(whats(safe).iter().all(|w| *w != "force-push" && *w != "rm -rf" && *w != "clean -f"), "{safe}: {:?}", whats(safe));
         }

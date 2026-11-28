@@ -53,6 +53,10 @@ fn read_project(root: &Path, files: &[String], ast: &dyn AstPort) -> Result<Vec<
     for rel in files {
         let rel = rel.clone();
         let lang = Language::from_path(&rel);
+        // A stub describes a module; the API is read from the module (ADR-2611261303 §4).
+        if rel.ends_with(".pyi") {
+            continue;
+        }
         let source = read_source(root, &rel)?;
         let facts = ast.extract_api(Path::new(&rel), &source, lang)?;
         if facts == ApiFacts::default() {
@@ -99,7 +103,7 @@ pub fn build(files: &[FileApi]) -> ApiBuild {
             types.entry(t.name.as_str()).or_default().push((f.file.as_str(), t));
         }
     }
-    let mut b = Builder { types, schemas: BTreeMap::new(), errors: Vec::new() };
+    let mut b = Builder { types, schemas: BTreeMap::new(), schema_files: HashMap::new(), errors: Vec::new() };
     let mut operations: Vec<ApiOperation> = Vec::new();
     let mut ports = Vec::new();
     let mut services: BTreeSet<String> = BTreeSet::new();
@@ -113,6 +117,9 @@ pub fn build(files: &[FileApi]) -> ApiBuild {
                 "`@hexa:api` tags a driving port (a trait or interface in ports/) or one of its methods, and nothing else"
                     .into(),
             );
+        }
+        for (line, message) in &f.facts.faults {
+            b.error(&f.file, *line, message.clone());
         }
         for port in &f.facts.ports {
             let Some(header) = b.port_header(f, port) else { continue };
@@ -186,7 +193,15 @@ struct PortHeader {
 struct Builder<'a> {
     types: HashMap<&'a str, Vec<(&'a str, &'a TypeDecl)>>,
     schemas: BTreeMap<String, ApiSchema>,
+    /// The file each object schema was declared in.
+    schema_files: HashMap<String, &'a str>,
     errors: Vec<ApiDiagnostic>,
+}
+
+/// Python names a type by Python's declarations, and the other three never
+/// mean one of those: a Python class is not a second `User` to a Go port.
+fn is_python(file: &str) -> bool {
+    Language::from_path(file) == Language::Python
 }
 
 impl<'a> Builder<'a> {
@@ -361,6 +376,13 @@ impl<'a> Builder<'a> {
                 None
             }
         };
+        if is_python(file) && matches!(response, Some(TypeRef::Optional(_))) {
+            self.error(
+                file,
+                m.line,
+                format!("`{}` may return None or a value; the contract cannot say a response may be null", m.name),
+            );
+        }
         let success = success.unwrap_or(if response.is_none() { 204 } else { 200 });
 
         let mut errors = header.statuses.clone();
@@ -425,8 +447,8 @@ impl<'a> Builder<'a> {
 
     /// The declaration a name means: a real declaration before another name
     /// for one, so `type Bookmark = domain.Bookmark` resolves to the struct.
-    fn lookup(&self, name: &str) -> Option<(&'a str, &'a TypeDecl)> {
-        let found = self.types.get(name)?;
+    fn lookup(&self, name: &str, python: bool) -> Option<(&'a str, &'a TypeDecl)> {
+        let found = self.declared(name, python);
         let real = found.iter().find(|(_, d)| !matches!(d.body, TypeBody::Alias(_)));
         let alias = found
             .iter()
@@ -434,12 +456,47 @@ impl<'a> Builder<'a> {
         real.or(alias).copied()
     }
 
+    /// Every declaration of `name` that a file of this family can mean.
+    fn declared(&self, name: &str, python: bool) -> Vec<(&'a str, &'a TypeDecl)> {
+        let found = self.types.get(name).map(Vec::as_slice).unwrap_or_default();
+        found.iter().filter(|(f, _)| is_python(f) == python).copied().collect()
+    }
+
+    /// Whether a Python class name is a schema class, or derives from one.
+    fn is_schema_class(&self, name: &str, seen: &mut HashSet<String>) -> bool {
+        if !seen.insert(name.to_string()) {
+            return false;
+        }
+        // A chain too long to follow is refused as a schema class would be:
+        // recursing down it overflowed the stack.
+        if seen.len() > MAX_BASES {
+            return true;
+        }
+        self.declared(name, true).into_iter().any(|(_, d)| match &d.body {
+            TypeBody::Struct(_) | TypeBody::Refused(_) => true,
+            TypeBody::Derived(bases) => bases.iter().any(|b| self.is_schema_class(b, seen)),
+            TypeBody::Alias(TypeRef::Named(t)) => self.is_schema_class(t, seen),
+            _ => false,
+        })
+    }
+
+    /// An element of a list or a map. The renderer writes an optional one as
+    /// the type alone, which for Python would be a guess: it is sent, and may
+    /// be null. The type is still returned, so the rest is checked.
+    fn element(&mut self, t: &TypeRef, file: &str, line: usize, depth: usize) -> Option<TypeRef> {
+        let t = self.resolve_depth(t, file, line, depth)?;
+        if is_python(file) && matches!(t, TypeRef::Optional(_)) {
+            self.error(file, line, "an element allows None; the contract cannot say an element may be null".into());
+        }
+        Some(t)
+    }
+
     /// Each variant of an error enum: where the enum is, the variant's
     /// identifier, and its `@hexa:status` text if it has one.
     fn variant_statuses(&self, name: &str) -> Vec<(String, usize, String, Option<String>)> {
         let mut name = name.to_string();
         for _ in 0..8 {
-            match self.lookup(&name) {
+            match self.lookup(&name, false) {
                 Some((_, TypeDecl { body: TypeBody::Alias(TypeRef::Named(t)), .. })) => name = t.clone(),
                 Some((file, TypeDecl { body: TypeBody::Enum(vs), line, .. })) => {
                     return vs.iter().map(|v| (file.to_string(), *line, v.ident.clone(), v.status.clone())).collect()
@@ -468,9 +525,9 @@ impl<'a> Builder<'a> {
         let wrap = |b: fn(Box<TypeRef>) -> TypeRef, t: Option<TypeRef>| t.map(|t| b(Box::new(t)));
         match ty {
             TypeRef::String | TypeRef::Integer | TypeRef::Number | TypeRef::Boolean | TypeRef::Unit => Some(ty.clone()),
-            TypeRef::Array(t) => wrap(TypeRef::Array, self.resolve_depth(t, file, line, depth)),
+            TypeRef::Array(t) => wrap(TypeRef::Array, self.element(t, file, line, depth)),
             TypeRef::Optional(t) => wrap(TypeRef::Optional, self.resolve_depth(t, file, line, depth)),
-            TypeRef::Map(t) => wrap(TypeRef::Map, self.resolve_depth(t, file, line, depth)),
+            TypeRef::Map(t) => wrap(TypeRef::Map, self.element(t, file, line, depth)),
             TypeRef::Unsupported(text) => {
                 self.error(
                     file,
@@ -480,11 +537,10 @@ impl<'a> Builder<'a> {
                 None
             }
             TypeRef::Named(name) => {
-                let real: Vec<&str> = self
-                    .types
-                    .get(name.as_str())
-                    .map(|v| v.iter().filter(|(_, d)| !matches!(d.body, TypeBody::Alias(_))).map(|(f, _)| *f).collect())
-                    .unwrap_or_default();
+                let python = is_python(file);
+                let found = self.declared(name, python);
+                let real: Vec<&str> =
+                    found.iter().filter(|(_, d)| !matches!(d.body, TypeBody::Alias(_))).map(|(f, _)| *f).collect();
                 if real.len() > 1 {
                     self.error(
                         file,
@@ -493,22 +549,73 @@ impl<'a> Builder<'a> {
                     );
                     return None;
                 }
-                let Some((decl_file, decl)) = self.lookup(name) else {
+                if python && real.is_empty() {
+                    let meanings: BTreeSet<&str> = found
+                        .iter()
+                        .filter_map(|(_, d)| match &d.body {
+                            TypeBody::Alias(TypeRef::Named(t)) => Some(t.as_str()),
+                            _ => None,
+                        })
+                        .collect();
+                    if meanings.len() > 1 {
+                        let meanings = meanings.into_iter().collect::<Vec<_>>().join(", ");
+                        self.error(file, line, format!("`{name}` is another name for more than one type ({meanings})"));
+                        return None;
+                    }
+                }
+                let Some((decl_file, decl)) = self.lookup(name, python) else {
                     self.error(file, line, format!("`{name}` is not declared in this project, so it has no schema"));
                     return None;
                 };
+                // One document has one schema of a name: a struct or an enum of
+                // each language of that name is two types, whichever came first.
+                if matches!(decl.body, TypeBody::Struct(_) | TypeBody::Enum(_)) {
+                    if let Some(first) = self.schema_files.get(&decl.name).filter(|first| is_python(first) != python) {
+                        let message = format!("`{name}` is declared more than once ({first}, {decl_file}), so it has no single schema");
+                        self.error(file, line, message);
+                        return None;
+                    }
+                }
                 match &decl.body {
+                    // Another name for a type is used where the name is.
+                    TypeBody::Alias(t) if python => self.resolve_depth(t, file, line, depth + 1),
                     TypeBody::Alias(t) | TypeBody::Newtype(t) => self.resolve_depth(t, decl_file, decl.line, depth + 1),
+                    TypeBody::Refused(why) => {
+                        let message = format!("`{}` has no schema hexa can derive: {why}", decl.name);
+                        self.error(decl_file, decl.line, message);
+                        None
+                    }
+                    TypeBody::Foreign(what) => {
+                        self.error(file, line, format!("`{name}` is {what}, so it has no schema"));
+                        None
+                    }
+                    TypeBody::Derived(bases) => {
+                        if bases.iter().any(|b| self.is_schema_class(b, &mut HashSet::new())) {
+                            let message = format!(
+                                "`{}` has no schema hexa can derive: it inherits a schema class, which may change what is sent",
+                                decl.name
+                            );
+                            self.error(decl_file, decl.line, message);
+                        } else {
+                            let bases = bases.join(", ");
+                            self.error(file, line, format!("`{name}` is a class deriving from {bases}, so it has no schema"));
+                        }
+                        None
+                    }
                     TypeBody::Struct(fields) => {
                         if self.schemas.contains_key(&decl.name) {
                             return Some(TypeRef::Named(decl.name.clone()));
                         }
+                        self.schema_files.insert(decl.name.clone(), decl_file);
                         // Claimed before its fields, so a type that contains
                         // itself refers to itself instead of recursing.
                         self.schemas.insert(decl.name.clone(), ApiSchema::Object(Vec::new()));
                         let mut props = Vec::new();
                         let mut ok = true;
                         for field in fields {
+                            if let Some(why) = &field.fault {
+                                self.error(decl_file, field.line, why.clone());
+                            }
                             match self.resolve_depth(&field.ty, decl_file, field.line, depth) {
                                 Some(t) => {
                                     let (inner, required) = unwrap_optional(t);
@@ -534,6 +641,7 @@ impl<'a> Builder<'a> {
                             return None;
                         }
                         let names = variants.iter().map(|v| v.name.clone()).collect();
+                        self.schema_files.insert(decl.name.clone(), decl_file);
                         self.schemas.insert(decl.name.clone(), ApiSchema::StringEnum(names));
                         Some(TypeRef::Named(decl.name.clone()))
                     }
@@ -542,6 +650,9 @@ impl<'a> Builder<'a> {
         }
     }
 }
+
+/// How many bases a Python schema class is followed through.
+const MAX_BASES: usize = 64;
 
 fn is_scalar(t: &TypeRef) -> bool {
     matches!(t, TypeRef::String | TypeRef::Integer | TypeRef::Number | TypeRef::Boolean)
@@ -621,14 +732,14 @@ mod tests {
         for d in decls {
             types.entry(d.name.as_str()).or_default().push(("a.rs", d));
         }
-        let mut b = Builder { types, schemas: BTreeMap::new(), errors: Vec::new() };
+        let mut b = Builder { types, schemas: BTreeMap::new(), schema_files: HashMap::new(), errors: Vec::new() };
         let out = b.resolve(&TypeRef::Named(start.into()), "a.rs", 1);
         (out, b.errors)
     }
 
     #[test]
     fn deep_acyclic_nesting_is_not_an_alias_cycle() {
-        let field = |ty| crate::ports::FieldDecl { wire_name: "next".into(), ty, optional: false, line: 1 };
+        let field = |ty| crate::ports::FieldDecl { wire_name: "next".into(), ty, optional: false, line: 1, fault: None };
         let mut decls = Vec::new();
         for i in 0..50 {
             let inner = if i == 49 { TypeRef::String } else { TypeRef::Named(format!("S{}", i + 1)) };

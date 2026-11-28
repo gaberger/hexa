@@ -9,7 +9,7 @@
 //! command, four passing tests and a correct ports-and-adapters layout, the
 //! same bytes every time. It is proven runnable by
 //! `hexa-cli/tests/scaffold_is_executable.rs`. What it cannot do is build *your*
-//! project — it emits a counter, in one of three languages.
+//! project — it emits a counter, in one of four languages.
 //!
 //! `/hexa-scaffold` was a 144-line Markdown prompt: an interactive wizard that
 //! generated a bespoke project, TypeScript only, with no gate, no grade, and no
@@ -54,7 +54,7 @@ pub struct ScaffoldArgs {
     /// Directory to scaffold into (repo-relative). Created if missing.
     #[arg(long)]
     pub target: String,
-    /// Language: rust | go | ts.
+    /// Language: rust | go | ts | python | js.
     #[arg(long, default_value = "rust")]
     pub lang: String,
     /// Number of divergent designs the frontier path proposes (2-4).

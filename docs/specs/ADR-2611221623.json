@@ -1,0 +1,205 @@
+{
+  "adr": "ADR-2611221623",
+  "feature": "Go exports by Go's rule, every var name an export",
+  "description": "A Go name is exported when its first character is a Unicode upper-case letter, and every name a var spec declares is its own Value export at the spec's line. (Its decision on const specs is superseded by ADR-2611221643.)",
+  "universal": [
+    "§1",
+    "§2",
+    "§3"
+  ],
+  "accepted": {
+    "by": "craigjohnson",
+    "sha256": "641f16333bd0e5baeadbee2f81e5d96ea62c02f1ec5860d7d04dbed2b5f48e4e"
+  },
+  "sealed": {
+    "hexa-analysis/tests/adr_2611221623_spec_2.rs": "24098be104994578c64750b8e68364206370b83df09536bfa9669aa730cf416e"
+  },
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A function whose name starts with a non-ASCII capital is an export",
+      "given": "a Go file `p.go` containing `package p` on line 1 and `func Äpfel() {}` on line 3",
+      "when": "extract_exports is called on it with Language::Go",
+      "then": "the result contains an ExportDeclaration with file `p.go`, name `Äpfel`, line 3 and kind Function",
+      "test": "hexa-analysis/tests/adr_2611221623_spec_2.rs::part_1::s01_function_with_non_ascii_capital_is_export",
+      "red": "92ceac7"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "The Unicode rule covers types, methods, consts and vars",
+      "given": "a Go file `p.go` declaring `type Ωmega struct{}`, `func (o Ωmega) Ärger() {}`, `const Ñame = 1` and `var Øre = 2`, each on its own line",
+      "when": "extract_exports is called on it with Language::Go",
+      "then": "the result contains `Ωmega` with kind Type, `Ärger` with kind Method, and `Ñame` and `Øre` each with kind Value, each at the line where it is declared",
+      "test": "hexa-analysis/tests/adr_2611221623_spec_2.rs::part_1::s02_unicode_rule_covers_types_methods_consts_vars",
+      "red": "92ceac7"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "ASCII capitals are still exports",
+      "given": "a Go file declaring `func Run() {}` and `var Count = 1`",
+      "when": "extract_exports is called on it with Language::Go",
+      "then": "the result contains `Run` with kind Function and `Count` with kind Value"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A name whose first character is a non-ASCII lower-case letter is not an export",
+      "given": "a Go file declaring `func äpfel() {}`, `type ωmega struct{}`, `const ärger = 1` and `var øre = 2`",
+      "when": "extract_exports is called on it with Language::Go",
+      "then": "the result contains no ExportDeclaration named `äpfel`, `ωmega`, `ärger` or `øre`"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A name starting with an underscore or with a lower-case ASCII letter followed by capitals is not an export",
+      "given": "a Go file declaring `func _Hidden() {}` and `var aPFEL = 1`",
+      "when": "extract_exports is called on it with Language::Go",
+      "then": "the result contains no ExportDeclaration named `_Hidden` or `aPFEL`"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§1"
+      ],
+      "kind": "property",
+      "description": "Exported exactly when the first character is a Unicode upper-case letter",
+      "given": "any valid Go identifier `N` that is not the blank identifier, declared as `func N() {}` in a Go file",
+      "when": "extract_exports is called on it with Language::Go",
+      "then": "an ExportDeclaration named `N` is present if and only if the first character of `N` is an upper-case letter under Unicode (Rust `char::is_uppercase`), regardless of whether that character is ASCII",
+      "test": "hexa-analysis/tests/adr_2611221623_spec_2.rs::part_1::s06_exported_iff_first_char_unicode_uppercase",
+      "red": "92ceac7"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "An ungrouped var spec with two names exports both",
+      "given": "a Go file `p.go` with `package p` on line 1 and `var A, B = 1, 2` on line 3",
+      "when": "extract_exports is called on it with Language::Go",
+      "then": "the result contains an ExportDeclaration named `A` and one named `B`, both with file `p.go`, line 3 and kind Value",
+      "test": "hexa-analysis/tests/adr_2611221623_spec_2.rs::part_1::s07_ungrouped_var_spec_exports_both_names",
+      "red": "92ceac7"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "A var spec inside a group with several names exports each at the spec's line",
+      "given": "a Go file with `package p` on line 1, `var (` on line 3, `C, D = 2, 3` on line 4 and `)` on line 5",
+      "when": "extract_exports is called on it with Language::Go",
+      "then": "the result contains `C` and `D`, each with line 4 and kind Value",
+      "test": "hexa-analysis/tests/adr_2611221623_spec_2.rs::part_1::s08_grouped_multi_name_var_spec_exports_each",
+      "red": "92ceac7"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "A typed multi-name var spec with no initialiser exports every name",
+      "given": "a Go file declaring `var X, Y, Z int` on one line",
+      "when": "extract_exports is called on it with Language::Go",
+      "then": "the result contains `X`, `Y` and `Z`, each at that line with kind Value",
+      "test": "hexa-analysis/tests/adr_2611221623_spec_2.rs::part_1::s09_typed_multi_name_var_without_initialiser",
+      "red": "92ceac7"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "A second name of a var spec can be a dead export",
+      "given": "a Go project where one file declares `var A, B = 1, 2` and another file in the project names `A` but no file other than the declaring one names `B`",
+      "when": "the project is analysed for dead exports",
+      "then": "`B` is reported as a dead export at the spec's line and `A` is not",
+      "test": "hexa-analysis/tests/adr_2611221623_spec_2.rs::part_1::s10_second_name_of_var_spec_can_be_dead",
+      "red": "92ceac7"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "A var spec is not reduced to its first name",
+      "given": "a Go file declaring `var A, B = 1, 2`",
+      "when": "extract_exports is called on it with Language::Go",
+      "then": "the result is not only `A`: exactly one ExportDeclaration named `B` is present, and no name of the spec is recorded twice",
+      "test": "hexa-analysis/tests/adr_2611221623_spec_2.rs::part_1::s11_var_spec_not_reduced_to_first_name",
+      "red": "92ceac7"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§2",
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "An unexported name in a var spec is not recorded",
+      "given": "a Go file declaring `var A, b, _ = 1, 2, 3`",
+      "when": "extract_exports is called on it with Language::Go",
+      "then": "the result contains `A` with kind Value and contains no ExportDeclaration named `b` or `_`"
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "Names of a var spec are not given another kind or another line",
+      "given": "a Go file with `var A, B = 1, 2` on line 3",
+      "when": "extract_exports is called on it with Language::Go",
+      "then": "neither `A` nor `B` has a kind other than Value, and neither has a line other than 3",
+      "test": "hexa-analysis/tests/adr_2611221623_spec_2.rs::part_1::s13_var_spec_names_have_value_kind_and_spec_line",
+      "red": "92ceac7"
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§2"
+      ],
+      "kind": "property",
+      "description": "Every exported name of any var spec is its own Value export at the spec's line",
+      "given": "any Go var spec, grouped or ungrouped, at line L declaring names N1..Nk (k ≥ 1), with or without a type and initialiser",
+      "when": "extract_exports is called on the file with Language::Go",
+      "then": "for each Ni whose first character is a Unicode upper-case letter there is exactly one ExportDeclaration named Ni with line L and kind Value, and no ExportDeclaration is produced for any Ni that is not exported",
+      "test": "hexa-analysis/tests/adr_2611221623_spec_2.rs::part_1::s14_every_exported_var_spec_name_is_own_value_export",
+      "red": "92ceac7"
+    }
+  ],
+  "amendments": [
+    {
+      "at": "2026-11-22T17:36:06.352712681+00:00",
+      "base_commit": "625361582d4e0d73854f01b2d357993d472b671c",
+      "by": "Claude (agent, in craigjohnson's session; for review)",
+      "file": "hexa-analysis/tests/adr_2611221623_spec_2.rs",
+      "from": "f7bb772af27904263cce0d7fa60b11023c22e69c310b3cee1b33462d681f530c",
+      "reason": "S17 retired with ADR-2611221623 decision 3, superseded by ADR-2611221643 §1 (both accepted by craigjohnson; ADR-2611221623 re-accepted with S15-S18 removed). The S17 test asserted a const spec's second name is not an export, the opposite of ADR-2611221643. It leaves the file; no other test or assertion changes.",
+      "to": "24098be104994578c64750b8e68364206370b83df09536bfa9669aa730cf416e"
+    }
+  ]
+}

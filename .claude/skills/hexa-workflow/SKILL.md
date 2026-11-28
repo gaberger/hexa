@@ -110,6 +110,20 @@ The commit holding them is recorded as `red` and the files are sealed. No
 change to a sealed test is accepted afterwards; a requirement changes through
 the ADR, then the spec, then a new acceptance.
 
+A scenario's test is anchored in history, as its seal is: `spec verify` fails
+when it points somewhere else with no record. `spec tests --only` and
+`--replace` record their own moves. To rename or relocate a test yourself,
+commit the new file, then run `hexa spec move ADR-<id> --scenario <S>=<file>::<name>
+--reason "<why>"`, which shows the diff, then again with `--confirm <sha256>`.
+
+When the scenarios are unchanged and only a sealed test's setup must change
+(a fixture, never an assertion), record it with `hexa spec amend ADR-<id> --file
+<test> --reason "<why>"`, which shows the diff, then again with `--confirm
+<sha256>`. Commit it in two steps, in this order: the spec record alone first
+(`git commit docs/specs/ADR-<id>.json`), then the test through `hexa do gate
+--files <test> -e '<cmd>'`. `do gate` refuses while a spec record differs from
+HEAD, and accepts the sealed file once the recorded amendment matches it.
+
 `hexa spec tests` writes Rust. A scenario tested in vitest or by a bash gate
 script is bound to a test you write first, after hexa watches it fail at its
 commit (ADR-2611191120). The ref names its runner by extension:
@@ -142,8 +156,8 @@ are already modified, unless you name them with `--also` or pass
 
 **Counted or uncounted.** A gate or evidence command passes on what a test
 runner reports, not on exit 0 alone: zero tests is a failure, and output no
-known runner wrote (cargo test, go test, node --test, bun test,
-`hexa spec verify`) is a failure. A command that runs no tests — a build, a
+known runner wrote (cargo test, go test, node --test, bun test, pytest,
+unittest and Django's test runner, `hexa spec verify`) is a failure. A command that runs no tests — a build, a
 lint, `hexa analyze . --exit-code` — must be declared uncounted, or it fails
 every time:
 
@@ -159,6 +173,21 @@ vitest's summary and JSON report are counted too, and so is cargo-nextest's
 `Summary [ … ] N tests run: P passed, F failed, S skipped`. Colour codes are
 stripped first. A gate that is exactly one bash script (`bash ci/check-x.sh`)
 counts as one test.
+
+**Python: make the type checker part of the test run.** Python has no
+compiler, so without one the first gate an agent meets is the tests it wrote
+itself. With the `pytest-mypy` plugin installed and `[tool.mypy] strict = true`
+in `pyproject.toml`, mypy runs as part of pytest: a type error is a failing
+test, and hexa counts the result like any pytest run:
+
+```bash
+hexa loop gate "pytest --mypy -q"
+hexa do gate --files <file> -e "pytest --mypy -q" -m "<what changed>"
+```
+
+A type error fails the gate with nothing committed. Run pytest the way the
+project does (for example through `uv run`), with the package importable
+(`[tool.pytest.ini_options] pythonpath`), so the plugin and the code are found.
 
 **Where tests run.** A project that builds elsewhere sets `test.remote` in
 `.hexa/project.json` to a template with `{commit}` and `{cmd}`. `spec verify`,

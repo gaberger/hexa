@@ -47,7 +47,11 @@ fn git(dir: &Path, args: &[&str]) {
         .current_dir(dir)
         .output()
         .unwrap();
-    assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+    assert!(
+        o.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&o.stderr)
+    );
 }
 
 fn write(root: &Path, rel: &str, text: &str) {
@@ -116,7 +120,11 @@ fn register(home: &Path, repo: &Path, name: &str, leases: &[&str], extra: &[&str
 
 fn ok(o: &Output) -> serde_json::Value {
     let v = json(o);
-    assert!(o.status.success() && v["ok"] == true, "expected success: {v}\n{}", String::from_utf8_lossy(&o.stderr));
+    assert!(
+        o.status.success() && v["ok"] == true,
+        "expected success: {v}\n{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
     v
 }
 
@@ -144,23 +152,48 @@ fn a_layer_slice_resolves_to_its_files_a_plain_path_is_unchanged_and_an_empty_sl
     let v = ok(&register(&home, &repo, "uc", &["usecases/billing"], &[]));
     assert_eq!(strs(&v["leases"]), vec!["src/usecases/billing"], "{v}");
 
-    let v = ok(&register(&home, &repo, "pg", &["adapters/secondary/postgres"], &["--dry-run"]));
-    assert_eq!(strs(&v["would_register"]["leases"]), vec!["src/adapters/secondary/postgres"], "{v}");
+    let v = ok(&register(
+        &home,
+        &repo,
+        "pg",
+        &["adapters/secondary/postgres"],
+        &["--dry-run"],
+    ));
+    assert_eq!(
+        strs(&v["would_register"]["leases"]),
+        vec!["src/adapters/secondary/postgres"],
+        "{v}"
+    );
 
     // A plain path is recorded as it was given, whether it exists or not.
-    let v = ok(&register(&home, &repo, "reports", &["src/usecases/reports/"], &[]));
+    let v = ok(&register(
+        &home,
+        &repo,
+        "reports",
+        &["src/usecases/reports/"],
+        &[],
+    ));
     assert_eq!(strs(&v["leases"]), vec!["src/usecases/reports"], "{v}");
     let v = ok(&register(&home, &repo, "new", &["src/nowhere/"], &[]));
     assert_eq!(strs(&v["leases"]), vec!["src/nowhere"], "{v}");
 
     // A slice naming no file is refused, and says so.
-    let v = refused(&register(&home, &repo, "none", &["usecases/shipping"], &[]), "lease_slice_empty");
+    let v = refused(
+        &register(&home, &repo, "none", &["usecases/shipping"], &[]),
+        "lease_slice_empty",
+    );
     assert_eq!(v["field"], "lease");
-    assert!(v["message"].as_str().unwrap().contains("usecases/shipping"), "{v}");
+    assert!(
+        v["message"].as_str().unwrap().contains("usecases/shipping"),
+        "{v}"
+    );
     assert!(!v["hint"].as_str().unwrap().is_empty());
 
     // The slice lease binds what it resolved to: a second slice over the same files overlaps.
-    refused(&register(&home, &repo, "again", &["usecases/billing/charge"], &[]), "lease_overlap");
+    refused(
+        &register(&home, &repo, "again", &["usecases/billing/charge"], &[]),
+        "lease_overlap",
+    );
 }
 
 // ── 2. contract leases ───────────────────────────────────────────────────────
@@ -168,48 +201,126 @@ fn a_layer_slice_resolves_to_its_files_a_plain_path_is_unchanged_and_an_empty_sl
 #[test]
 fn a_contract_lease_is_refused_while_a_live_lease_imports_it_naming_the_consumer() {
     let (_t, home, repo) = rust_repo();
-    let uc = ok(&register(&home, &repo, "charge", &["usecases/billing"], &[]));
+    let uc = ok(&register(
+        &home,
+        &repo,
+        "charge",
+        &["usecases/billing"],
+        &[],
+    ));
     let uc_id = uc["id"].as_str().unwrap().to_string();
 
     for contract in ["src/ports/billing.rs", "ports/billing", "domain"] {
-        let v = refused(&register(&home, &repo, "port", &[contract], &[]), "lease_contract_in_use");
+        let v = refused(
+            &register(&home, &repo, "port", &[contract], &[]),
+            "lease_contract_in_use",
+        );
         let msg = v["message"].as_str().unwrap();
-        assert!(msg.contains(&uc_id), "names the consumer task ({contract}): {v}");
-        assert!(msg.contains("src/usecases/billing/charge.rs"), "names the consumer file ({contract}): {v}");
+        assert!(
+            msg.contains(&uc_id),
+            "names the consumer task ({contract}): {v}"
+        );
+        assert!(
+            msg.contains("src/usecases/billing/charge.rs"),
+            "names the consumer file ({contract}): {v}"
+        );
         assert_eq!(v["field"], "lease");
     }
     // A port file nobody under a live lease imports is free.
-    ok(&register(&home, &repo, "mod", &["src/ports/mod.rs"], &["--dry-run"]));
+    ok(&register(
+        &home,
+        &repo,
+        "mod",
+        &["src/ports/mod.rs"],
+        &["--dry-run"],
+    ));
 
     // Once the consumer is released, the contract can be leased.
-    ok(&hexa(&home, &repo, &["agent", "release", "--id", &uc_id, "--json"]));
-    ok(&register(&home, &repo, "port", &["src/ports/billing.rs"], &[]));
+    ok(&hexa(
+        &home,
+        &repo,
+        &["agent", "release", "--id", &uc_id, "--json"],
+    ));
+    ok(&register(
+        &home,
+        &repo,
+        "port",
+        &["src/ports/billing.rs"],
+        &[],
+    ));
 }
 
 #[test]
 fn an_outer_lease_records_the_contracts_it_imports_as_frozen_and_waits_for_a_live_contract_lease() {
     let (_t, home, repo) = rust_repo();
 
-    let v = ok(&register(&home, &repo, "charge", &["usecases/billing"], &[]));
+    let v = ok(&register(
+        &home,
+        &repo,
+        "charge",
+        &["usecases/billing"],
+        &[],
+    ));
     let mut frozen = strs(&v["frozen"]);
     frozen.sort();
-    assert_eq!(frozen, vec!["src/domain/invoice.rs", "src/ports/billing.rs"], "{v}");
+    assert_eq!(
+        frozen,
+        vec!["src/domain/invoice.rs", "src/ports/billing.rs"],
+        "{v}"
+    );
     let listed = json(&hexa(&home, &repo, &["agent", "list", "--json"]));
-    assert_eq!(listed["tasks"][0]["frozen"], v["frozen"], "the ledger stores it: {listed}");
+    assert_eq!(
+        listed["tasks"][0]["frozen"], v["frozen"],
+        "the ledger stores it: {listed}"
+    );
 
     // A grouped `use crate::{…}` is read too, and adapters do not conflict with each other.
-    let v = ok(&register(&home, &repo, "pg", &["adapters/secondary/postgres"], &[]));
+    let v = ok(&register(
+        &home,
+        &repo,
+        "pg",
+        &["adapters/secondary/postgres"],
+        &[],
+    ));
     let mut frozen = strs(&v["frozen"]);
     frozen.sort();
-    assert_eq!(frozen, vec!["src/domain/invoice.rs", "src/ports/billing.rs"], "{v}");
-    let v = ok(&register(&home, &repo, "cli", &["adapters/primary/cli"], &[]));
-    assert!(strs(&v["frozen"]).is_empty(), "the cli imports a use case, not a contract: {v}");
+    assert_eq!(
+        frozen,
+        vec!["src/domain/invoice.rs", "src/ports/billing.rs"],
+        "{v}"
+    );
+    let v = ok(&register(
+        &home,
+        &repo,
+        "cli",
+        &["adapters/primary/cli"],
+        &[],
+    ));
+    assert!(
+        strs(&v["frozen"]).is_empty(),
+        "the cli imports a use case, not a contract: {v}"
+    );
 
     // The other direction: a live contract lease holds back a consumer that would freeze it.
     let (_t2, home2, repo2) = rust_repo();
-    let port = ok(&register(&home2, &repo2, "port", &["src/ports/billing.rs"], &[]));
-    let v = refused(&register(&home2, &repo2, "charge", &["usecases/billing"], &[]), "lease_contract_held");
-    assert!(v["message"].as_str().unwrap().contains(port["id"].as_str().unwrap()), "{v}");
+    let port = ok(&register(
+        &home2,
+        &repo2,
+        "port",
+        &["src/ports/billing.rs"],
+        &[],
+    ));
+    let v = refused(
+        &register(&home2, &repo2, "charge", &["usecases/billing"], &[]),
+        "lease_contract_held",
+    );
+    assert!(
+        v["message"]
+            .as_str()
+            .unwrap()
+            .contains(port["id"].as_str().unwrap()),
+        "{v}"
+    );
 }
 
 #[test]
@@ -221,10 +332,111 @@ fn typescript_relative_imports_count_as_consumers() {
         ("src/usecases/billing/charge.ts", "import { Billing } from '../../ports/billing.js';\nexport const charge = (b: Billing) => b;\n"),
         ("src/adapters/secondary/postgres/store.ts", "import type { Billing } from \"../../../ports/billing.js\";\nexport class Pg {}\n"),
     ]);
-    let uc = ok(&register(&home, &repo, "charge", &["usecases/billing"], &[]));
+    let uc = ok(&register(
+        &home,
+        &repo,
+        "charge",
+        &["usecases/billing"],
+        &[],
+    ));
     assert_eq!(strs(&uc["frozen"]), vec!["src/ports/billing.ts"], "{uc}");
-    let v = refused(&register(&home, &repo, "port", &["ports/billing"], &[]), "lease_contract_in_use");
-    assert!(v["message"].as_str().unwrap().contains("src/usecases/billing/charge.ts"), "{v}");
+    let v = refused(
+        &register(&home, &repo, "port", &["ports/billing"], &[]),
+        "lease_contract_in_use",
+    );
+    assert!(
+        v["message"]
+            .as_str()
+            .unwrap()
+            .contains("src/usecases/billing/charge.ts"),
+        "{v}"
+    );
+}
+
+#[test]
+fn python_absolute_and_relative_imports_count_as_consumers() {
+    let (_t, home, repo) = repo_with(&[
+        ("pyproject.toml", "[project]\nname = \"billing\"\nversion = \"0.1.0\"\n"),
+        ("src/billing/__init__.py", ""),
+        ("src/billing/domain/__init__.py", ""),
+        ("src/billing/domain/invoice.py", "class Invoice:\n    total: int = 0\n"),
+        ("src/billing/ports/__init__.py", ""),
+        ("src/billing/ports/billing.py", "from billing.domain.invoice import Invoice\n\n\nclass Billing:\n    def charge(self, i: Invoice) -> None: ...\n"),
+        ("src/billing/usecases/__init__.py", ""),
+        ("src/billing/usecases/charge.py", "import billing.ports.billing as ports\n\n\ndef charge(b: ports.Billing):\n    return b\n"),
+        ("src/billing/adapters/secondary/postgres/store.py", "from ....ports.billing import Billing\n\n\nclass Pg(Billing): ...\n"),
+        ("src/billing/adapters/secondary/memory/store.py", "from billing.ports import billing\n\n\nclass Mem(billing.Billing): ...\n"),
+    ]);
+    // absolute `import a.b.c as x`
+    let uc = ok(&register(
+        &home,
+        &repo,
+        "charge",
+        &["src/billing/usecases/charge.py"],
+        &[],
+    ));
+    assert_eq!(
+        strs(&uc["frozen"]),
+        vec!["src/billing/ports/billing.py"],
+        "{uc}"
+    );
+    // relative `from ....ports.billing import X`
+    let pg = ok(&register(
+        &home,
+        &repo,
+        "pg",
+        &["src/billing/adapters/secondary/postgres"],
+        &[],
+    ));
+    assert_eq!(
+        strs(&pg["frozen"]),
+        vec!["src/billing/ports/billing.py"],
+        "{pg}"
+    );
+    // `from pkg.ports import billing` names a submodule, not the package
+    let mem = ok(&register(
+        &home,
+        &repo,
+        "mem",
+        &["src/billing/adapters/secondary/memory"],
+        &[],
+    ));
+    assert_eq!(
+        strs(&mem["frozen"]),
+        vec!["src/billing/ports/billing.py"],
+        "{mem}"
+    );
+    // a contract lease is refused while a live lease imports it
+    let v = refused(
+        &register(&home, &repo, "port", &["src/billing/ports/billing.py"], &[]),
+        "lease_contract_in_use",
+    );
+    assert!(
+        v["message"]
+            .as_str()
+            .unwrap()
+            .contains("src/billing/usecases/charge.py"),
+        "{v}"
+    );
+}
+
+#[test]
+fn go_package_imports_count_as_consumers() {
+    let (_t, home, repo) = repo_with(&[
+        ("go.mod", "module example.com/billing\n\ngo 1.22\n"),
+        ("domain/invoice.go", "package domain\n\ntype Invoice struct{ Total int }\n"),
+        ("ports/billing.go", "package ports\n\nimport \"example.com/billing/domain\"\n\ntype Billing interface{ Charge(domain.Invoice) }\n"),
+        ("ports/billing_test.go", "package ports\n"),
+        ("usecases/charge.go", "package usecases\n\nimport (\n\t\"fmt\"\n\tp \"example.com/billing/ports\"\n)\n\nfunc Charge(b p.Billing) { fmt.Println(b) }\n"),
+        ("adapters/secondary/pg/store.go", "package pg\n\nimport \"example.com/billing/ports\"\n\ntype Pg struct{ ports.Billing }\n"),
+    ]);
+    // a package import freezes the package's non-test files; std and foreign imports are not repo files
+    let uc = ok(&register(&home, &repo, "charge", &["usecases/charge.go"], &[]));
+    assert_eq!(strs(&uc["frozen"]), vec!["ports/billing.go"], "{uc}");
+    let pg = ok(&register(&home, &repo, "pg", &["adapters/secondary/pg"], &[]));
+    assert_eq!(strs(&pg["frozen"]), vec!["ports/billing.go"], "{pg}");
+    let v = refused(&register(&home, &repo, "port", &["ports/billing.go"], &[]), "lease_contract_in_use");
+    assert!(v["message"].as_str().unwrap().contains("usecases/charge.go"), "{v}");
 }
 
 // ── 3. merge order ───────────────────────────────────────────────────────────
@@ -234,7 +446,12 @@ fn merge_order_goes_domain_ports_usecases_adapters_composition_root_and_ties_kee
     let (_t, home, repo) = rust_repo();
     let wt = |n: &str| repo.parent().unwrap().join(n).display().to_string();
     let head = String::from_utf8(
-        std::process::Command::new("git").args(["rev-parse", "--short", "HEAD"]).current_dir(&repo).output().unwrap().stdout,
+        std::process::Command::new("git")
+            .args(["rev-parse", "--short", "HEAD"])
+            .current_dir(&repo)
+            .output()
+            .unwrap()
+            .stdout,
     )
     .unwrap()
     .trim()
@@ -256,18 +473,46 @@ fn merge_order_goes_domain_ports_usecases_adapters_composition_root_and_ties_kee
         }
         // `passed` is earned: a gate that passes, and a commit that exists.
         let gate = "echo 'test result: ok. 1 passed; 0 failed; 0 ignored'";
-        let v = ok(&register(&home, &repo, name, &[lease], &["--worktree", &wt(name), "--gate", gate]));
+        let v = ok(&register(
+            &home,
+            &repo,
+            name,
+            &[lease],
+            &["--worktree", &wt(name), "--gate", gate],
+        ));
         let id = v["id"].as_str().unwrap().to_string();
-        ok(&hexa(&home, &repo, &["agent", "report", "--id", &id, "--outcome", "passed", "--commit", &head, "--json"]));
+        ok(&hexa(
+            &home,
+            &repo,
+            &[
+                "agent",
+                "report",
+                "--id",
+                &id,
+                "--outcome",
+                "passed",
+                "--commit",
+                &head,
+                "--json",
+            ],
+        ));
         ids.insert(id, *name);
     }
-    let order = json(&hexa(&home, &repo, &["dev", "worktree", "merge-order", "--json"]));
+    let order = json(&hexa(
+        &home,
+        &repo,
+        &["dev", "worktree", "merge-order", "--json"],
+    ));
     let names: Vec<&str> = order["order"]
         .as_array()
         .unwrap()
         .iter()
         .map(|t| ids[t["id"].as_str().unwrap()])
         .collect();
-    assert_eq!(names, vec!["dom", "port", "uc", "pg", "cli", "root"], "{order}");
+    assert_eq!(
+        names,
+        vec!["dom", "port", "uc", "pg", "cli", "root"],
+        "{order}"
+    );
     assert_eq!(order["order"][0]["layer"], "domain", "{order}");
 }

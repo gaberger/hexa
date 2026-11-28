@@ -1,0 +1,329 @@
+{
+  "adr": "ADR-2611271700",
+  "feature": "hexa scaffolds JavaScript",
+  "exempt": [
+    {
+      "decision": "§7",
+      "reason": "§7 names what the decision leaves undecided (the Project header label); it makes no behaviour to test"
+    }
+  ],
+  "accepted": {
+    "by": "craigjohnson",
+    "sha256": "242694b52d16691352c1bfb7be5d542931235e412a0f6c104710d79e64d2f8da"
+  },
+  "sealed": {
+    "hexa-cli/tests/adr_2611271700_spec.rs": "ee33bb92a5318420ae8a48826ec89f76e3d4bcc9a1c83b45512fc6e6097c5c94"
+  },
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "--lang js writes the whole JavaScript counter layout.",
+      "given": "a fresh empty directory and Node 22 or later",
+      "when": "hexa init <dir> --name my-app --scaffold --lang js --no-claude-md runs",
+      "then": "The directory holds exactly package.json, src/core/domain/count.js, src/core/ports/counter-store.js, src/core/usecases/increment.js, src/adapters/secondary/in-memory-counter-store.js, src/composition-root.js and src/counter.test.js, beside hexa's own files.",
+      "test": "hexa-cli/tests/adr_2611271700_spec.rs::s01_lang_js_writes_the_whole_javascript_layout",
+      "red": "99f36f8"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "package.json declares the project, a version, ES modules, the minimum Node and the test script.",
+      "given": "a fresh empty directory and Node 22 or later",
+      "when": "the JavaScript scaffold is written for a project named my-app",
+      "then": "package.json is JSON naming my-app, version 0.1.0, type module, engines.node >=22 and a scripts.test that runs node --test.",
+      "test": "hexa-cli/tests/adr_2611271700_spec.rs::s02_package_json_declares_project_modules_node_and_test",
+      "red": "99f36f8"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "The port re-exports the domain's Count and documents the store, and the test exercises the composition root.",
+      "given": "a fresh empty directory and Node 22 or later",
+      "when": "the JavaScript scaffold is written",
+      "then": "src/core/ports/counter-store.js exports Count from the domain and carries a JSDoc typedef for CounterStore with load and save, and src/counter.test.js imports the composition root and calls it.",
+      "test": "hexa-cli/tests/adr_2611271700_spec.rs::s03_port_reexports_count_and_test_uses_the_composition_root",
+      "red": "99f36f8"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "The in-memory adapter does not import the domain or the use cases.",
+      "given": "a fresh empty directory and Node 22 or later",
+      "when": "the JavaScript scaffold is written",
+      "then": "src/adapters/secondary/in-memory-counter-store.js imports only src/core/ports/counter-store.js.",
+      "test": "hexa-cli/tests/adr_2611271700_spec.rs::s04_the_adapter_imports_only_the_port",
+      "red": "99f36f8"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "No placeholder or template suffix survives in the JavaScript output.",
+      "given": "a fresh empty directory and Node 22 or later",
+      "when": "the JavaScript scaffold is written for a project named my-app",
+      "then": "No written file contains {{ or }}, none is named *.tmpl, and package.json carries the name my-app.",
+      "test": "hexa-cli/tests/adr_2611271700_spec.rs::s05_no_placeholder_or_tmpl_survives",
+      "red": "99f36f8"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "The JavaScript gate is node --test and passes on a fresh scaffold.",
+      "given": "a fresh empty directory and Node 22 or later",
+      "when": "node --test runs in the scaffolded project",
+      "then": "It exits 0 and reports 4 tests passed and 0 failed.",
+      "test": "hexa-cli/tests/adr_2611271700_spec.rs::s06_the_gate_passes_on_a_fresh_scaffold",
+      "red": "99f36f8"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "SCAFFOLD_LANGS names js with its gate command.",
+      "given": "the hexa binary",
+      "when": "the scaffold languages are read",
+      "then": "js is listed and its gate command is node --test.",
+      "test": "hexa-cli/tests/adr_2611271700_spec.rs::s07_scaffold_langs_names_js_with_its_gate",
+      "red": "99f36f8"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "The JavaScript gate needs no install step and no network.",
+      "given": "a fresh empty directory and Node 22 or later",
+      "when": "the scaffold is written and node --test runs with no network and no node_modules",
+      "then": "The tests pass; package.json has no dependencies and no devDependencies and no node_modules directory was needed.",
+      "test": "hexa-cli/tests/adr_2611271700_spec.rs::s08_the_gate_needs_no_install_or_network",
+      "red": "99f36f8"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "A failing or empty node --test run does not count as a passing gate.",
+      "given": "a scaffolded JavaScript project with one assertion changed to fail, and another with no test file",
+      "when": "the gate is judged by hexa's evidence reader",
+      "then": "The failing run is a failure and the run with no test is not a pass.",
+      "test": "hexa-cli/tests/adr_2611271700_spec.rs::s09_a_failing_or_empty_run_is_not_a_pass",
+      "red": "99f36f8"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "Every import is a relative path with its .js extension that names a scaffolded file.",
+      "given": "a fresh empty directory and Node 22 or later",
+      "when": "the JavaScript scaffold is written",
+      "then": "Each import specifier in a written .js file either starts with ./ or ../ and ends in .js and resolves to a scaffolded file, or is a node: built-in.",
+      "test": "hexa-cli/tests/adr_2611271700_spec.rs::s10_every_import_is_relative_with_js_and_resolves",
+      "red": "99f36f8"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "No import names a package from a registry.",
+      "given": "a fresh empty directory and Node 22 or later",
+      "when": "the JavaScript scaffold is written",
+      "then": "No import specifier in a written file is a bare package name; the only non-relative ones begin with node:.",
+      "test": "hexa-cli/tests/adr_2611271700_spec.rs::s11_no_import_names_a_registry_package",
+      "red": "99f36f8"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "The JavaScript ignore lines include node_modules/.",
+      "given": "the gitignore lines for js",
+      "when": "they are read",
+      "then": "node_modules/ is among them.",
+      "test": "hexa-cli/tests/adr_2611271700_spec.rs::s12_js_ignore_lines_include_node_modules",
+      "red": "99f36f8"
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "JavaScript's ignore lines are JavaScript's only.",
+      "given": "the gitignore lines for js",
+      "when": "they are read",
+      "then": "They do not include dist/, target/, __pycache__/ or .venv/.",
+      "test": "hexa-cli/tests/adr_2611271700_spec.rs::s13_js_ignore_lines_are_javascripts_only",
+      "red": "99f36f8"
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§4"
+      ],
+      "kind": "property",
+      "description": "A merged JavaScript .gitignore holds each JavaScript line exactly once.",
+      "given": "any existing .gitignore text",
+      "when": "the js lines are merged into it twice",
+      "then": "Each js line appears exactly once, and the existing lines are kept.",
+      "test": "hexa-cli/tests/adr_2611271700_spec.rs::s14_merged_js_gitignore_holds_each_line_once",
+      "red": "99f36f8"
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§5"
+      ],
+      "kind": "example",
+      "description": "hexa analyze grades the fresh JavaScript scaffold A+ with full coverage.",
+      "given": "a fresh empty directory and Node 22 or later",
+      "when": "the scaffold is written and hexa analyze --json runs on it",
+      "then": "The grade is A+, the score is 100, there are no violations, cycles or dead exports, and every graded file is in a layer.",
+      "test": "hexa-cli/tests/adr_2611271700_spec.rs::s15_analyze_grades_the_scaffold_a_plus",
+      "red": "99f36f8"
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§5"
+      ],
+      "kind": "example",
+      "description": "The JavaScript scaffold satisfies the domain policy it ships.",
+      "given": "a fresh empty directory and Node 22 or later",
+      "when": "the scaffold is written and its shipped ADR rules are checked",
+      "then": "The domain file imports nothing from outside the domain and no policy violation is reported.",
+      "test": "hexa-cli/tests/adr_2611271700_spec.rs::s16_the_scaffold_satisfies_its_domain_policy",
+      "red": "99f36f8"
+    },
+    {
+      "id": "S17",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "No JavaScript scaffold file is left unclassified or in the wrong layer.",
+      "given": "a fresh empty directory and Node 22 or later",
+      "when": "the scaffold is written and hexa analyze --json runs",
+      "then": "Each source file is in the layer its folder names, the composition root is in the composition-root layer and the unclassified list is empty.",
+      "test": "hexa-cli/tests/adr_2611271700_spec.rs::s17_every_file_is_in_the_layer_its_folder_names",
+      "red": "99f36f8"
+    },
+    {
+      "id": "S18",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "A fresh JavaScript scaffold needs no edit before its gate passes.",
+      "given": "a fresh empty directory and Node 22 or later",
+      "when": "the scaffold is written and node --test runs at once",
+      "then": "The gate passes with no change to any file.",
+      "test": "hexa-cli/tests/adr_2611271700_spec.rs::s18_a_fresh_scaffold_needs_no_edit",
+      "red": "99f36f8"
+    },
+    {
+      "id": "S19",
+      "decision": [
+        "§5"
+      ],
+      "kind": "property",
+      "description": "The JavaScript scaffold is deterministic.",
+      "given": "two empty directories",
+      "when": "the scaffold is written into each with one project name",
+      "then": "Both hold the same files with the same bytes.",
+      "test": "hexa-cli/tests/adr_2611271700_spec.rs::s19_the_scaffold_is_deterministic",
+      "red": "99f36f8"
+    },
+    {
+      "id": "S20",
+      "decision": [
+        "§6"
+      ],
+      "kind": "example",
+      "description": "--lang still defaults to rust.",
+      "given": "a fresh empty directory",
+      "when": "hexa init --scaffold runs with no --lang",
+      "then": "A Rust project is written, not a JavaScript one.",
+      "test": "hexa-cli/tests/adr_2611271700_spec.rs::s20_lang_defaults_to_rust",
+      "red": "99f36f8"
+    },
+    {
+      "id": "S21",
+      "decision": [
+        "§6"
+      ],
+      "kind": "negative",
+      "description": "An unknown --lang is refused and names js among the known ones.",
+      "given": "a fresh empty directory",
+      "when": "hexa init --scaffold --lang cobol runs",
+      "then": "It fails, writes nothing, and its message lists js among the languages it knows.",
+      "test": "hexa-cli/tests/adr_2611271700_spec.rs::s21_an_unknown_lang_is_refused_naming_js",
+      "red": "99f36f8"
+    },
+    {
+      "id": "S22",
+      "decision": [
+        "§6"
+      ],
+      "kind": "property",
+      "description": "The Rust, Go, TypeScript and Python scaffolds are byte-for-byte unchanged.",
+      "given": "each of those four languages",
+      "when": "the scaffold is written for a project named my-app",
+      "then": "The files and their bytes are those the scaffold wrote before this decision.",
+      "test": "hexa-cli/tests/adr_2611271700_spec.rs::s22_the_other_scaffolds_are_unchanged",
+      "red": "99f36f8"
+    },
+    {
+      "id": "S23",
+      "decision": [
+        "§6"
+      ],
+      "kind": "negative",
+      "description": "A JavaScript scaffold never overwrites an existing file.",
+      "given": "a directory that already holds a package.json with its own content",
+      "when": "hexa init --scaffold --lang js runs there",
+      "then": "The existing package.json is unchanged and the other scaffold files are still written.",
+      "test": "hexa-cli/tests/adr_2611271700_spec.rs::s23_an_existing_file_is_never_overwritten",
+      "red": "99f36f8"
+    }
+  ],
+  "amendments": [
+    {
+      "at": "2026-11-27T17:07:12.766077787+00:00",
+      "base_commit": "99f36f82d80fc2fb1a6cca3bf7367d76e3fdb9a7",
+      "by": "craigjohnson",
+      "file": "hexa-cli/tests/adr_2611271700_spec.rs",
+      "from": "0733d7a277a68e6ebc2ccb3dc7c97060189789853bf153a772b6f37afaada7aa",
+      "reason": "test setup only, no scenario or assertion changes: S09 ran its own git init and git commit on a project hexa init had already committed, so the commit failed before anything was judged; and its second case emptied the test file, which node counts as one passing test, where the scenario says there is no test file, so it now deletes it.",
+      "to": "ee33bb92a5318420ae8a48826ec89f76e3d4bcc9a1c83b45512fc6e6097c5c94"
+    }
+  ]
+}

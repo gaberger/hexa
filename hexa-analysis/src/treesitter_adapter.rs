@@ -5,6 +5,7 @@
 //!
 //! ADR-034 Phase 2.
 
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use tree_sitter::{Language as TsLanguage, Node as TsNode, Parser, Tree};
 
@@ -20,9 +21,365 @@ fn get_language(lang: Language) -> Result<TsLanguage, AnalysisError> {
         Language::TypeScript => Ok(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
         Language::Go => Ok(tree_sitter_go::LANGUAGE.into()),
         Language::Rust => Ok(tree_sitter_rust::LANGUAGE.into()),
+        Language::Python => Ok(tree_sitter_python::LANGUAGE.into()),
         Language::Unknown => Err(AnalysisError::Other(
             "cannot parse files with unknown language".to_string(),
         )),
+    }
+}
+
+// ── Python (ADR-2611211324) ─────────────────────────────
+
+/// Every import in a Python file, at any depth: an import under
+/// `if TYPE_CHECKING:` or inside a function is still knowledge of the module
+/// (§2). `import a.b` is `raw_path` "a.b" with no names; `from M import x, y`
+/// is `raw_path` M as written (".ports", "..", "a.b") with the names it takes.
+/// Which file a module is depends on the files there are, so resolution is
+/// the analyzer's (`path_normalizer::resolve_python_import`).
+fn extract_python_imports(root: &tree_sitter::Node, source: &str, from_file: &str) -> Result<Vec<ImportStatement>, AnalysisError> {
+    let mut out = Vec::new();
+    let mut stack = vec![*root];
+    while let Some(n) = stack.pop() {
+        match n.kind() {
+            "import_statement" => {
+                let mut cur = n.walk();
+                for name in n.children_by_field_name("name", &mut cur) {
+                    let module = match name.kind() {
+                        "aliased_import" => name.child_by_field_name("name").map(|m| node_text(m, source)),
+                        _ => Some(node_text(name, source)),
+                    };
+                    if let Some(module) = module {
+                        out.push(ImportStatement {
+                            from_file: from_file.to_string(),
+                            raw_path: module.clone(),
+                            resolved_path: module,
+                            names: Vec::new(),
+                            line: n.start_position().row + 1,
+                        });
+                    }
+                }
+            }
+            "import_from_statement" => {
+                let Some(module) = n.child_by_field_name("module_name").map(|m| node_text(m, source)) else { continue };
+                let mut names = Vec::new();
+                let mut cur = n.walk();
+                for name in n.children_by_field_name("name", &mut cur) {
+                    let taken = match name.kind() {
+                        "aliased_import" => name.child_by_field_name("name").map(|m| node_text(m, source)),
+                        _ => Some(node_text(name, source)),
+                    };
+                    names.extend(taken);
+                }
+                let mut cur = n.walk();
+                if n.named_children(&mut cur).any(|c| c.kind() == "wildcard_import") {
+                    names.push("*".to_string());
+                }
+                out.push(ImportStatement {
+                    from_file: from_file.to_string(),
+                    raw_path: module.clone(),
+                    resolved_path: module,
+                    names,
+                    line: n.start_position().row + 1,
+                });
+            }
+            _ => {
+                let mut cur = n.walk();
+                stack.extend(n.named_children(&mut cur));
+            }
+        }
+    }
+    out.sort_by_key(|i| i.line);
+    Ok(out)
+}
+
+/// The top-level definition a statement makes: a decorated definition is its
+/// definition.
+fn python_definition(n: TsNode<'_>) -> TsNode<'_> {
+    if n.kind() == "decorated_definition" {
+        n.child_by_field_name("definition").unwrap_or(n)
+    } else {
+        n
+    }
+}
+
+/// The names a top-level `x = …` or `x: T = …` assigns, with the assignment.
+fn python_assignments<'a>(n: TsNode<'a>, source: &str) -> Vec<(String, TsNode<'a>)> {
+    if n.kind() != "expression_statement" {
+        return Vec::new();
+    }
+    named_children_of(n)
+        .into_iter()
+        .filter(|a| a.kind() == "assignment")
+        .filter_map(|a| {
+            let left = a.child_by_field_name("left")?;
+            (left.kind() == "identifier").then(|| (node_text(left, source), a))
+        })
+        .collect()
+}
+
+/// A module's exports (§3): its `__all__` when it assigns one, else every
+/// top-level `def`, `class` and assignment whose name does not start with `_`.
+fn extract_python_exports(root: &tree_sitter::Node, source: &str, file: &str) -> Result<Vec<ExportDeclaration>, AnalysisError> {
+    let lines: Vec<&str> = source.split('\n').collect();
+    let mut defined: Vec<(String, usize, ExportKind, bool)> = Vec::new();
+    let mut all: Option<(Vec<(String, usize)>, bool)> = None;
+    for ch in named_children_of(*root) {
+        let line = ch.start_position().row + 1;
+        // A decorated definition starts at its first decorator, so its
+        // comment run is the one above that (ADR-2611221644 §1); a comment
+        // ending its own `def`/`class` line tags it as it would undecorated.
+        let d = python_definition(ch);
+        let tagged = python_comment_tagged(root, &lines, ch.start_position().row)
+            || python_line_tagged(root, &lines, d.start_position().row);
+        match d.kind() {
+            "function_definition" => {
+                if let Some(n) = d.child_by_field_name("name") {
+                    defined.push((node_text(n, source), line, ExportKind::Function, tagged));
+                }
+            }
+            "class_definition" => {
+                if let Some(n) = d.child_by_field_name("name") {
+                    defined.push((node_text(n, source), line, ExportKind::Type, tagged));
+                }
+            }
+            _ => {
+                for (name, a) in python_assignments(d, source) {
+                    if name == "__all__" {
+                        let listed = a
+                            .child_by_field_name("right")
+                            .filter(|r| matches!(r.kind(), "list" | "tuple"))
+                            .map(|r| {
+                                named_children_of(r)
+                                    .into_iter()
+                                    .filter(|s| s.kind() == "string")
+                                    .map(|s| (node_text(s, source).trim_matches(|c| c == '"' || c == '\'').to_string(), line))
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        // A tag above `__all__` marks every name it lists (§2).
+                        all = Some((listed, tagged));
+                    } else {
+                        defined.push((name, line, ExportKind::Value, tagged));
+                    }
+                }
+            }
+        }
+    }
+    let export = |name: String, line: usize, kind: ExportKind, hexa_public: bool| ExportDeclaration { file: file.to_string(), name, line, hexa_public, kind };
+    Ok(match all {
+        Some((listed, all_tagged)) => listed
+            .into_iter()
+            .map(|(name, line)| {
+                let found = defined.iter().find(|(n, _, _, _)| *n == name);
+                let (line, kind, tagged) = found.map(|(_, l, k, t)| (*l, *k, *t)).unwrap_or((line, ExportKind::Value, false));
+                export(name, line, kind, all_tagged || tagged)
+            })
+            .collect(),
+        None => defined.into_iter().filter(|(n, _, _, _)| !n.starts_with('_')).map(|(n, l, k, t)| export(n, l, k, t)).collect(),
+    })
+}
+
+/// The public top-level names `source` uses outside their own definitions, or
+/// none when it assigns `__all__` (ADR-2611251938 §2). A use is an identifier
+/// that reads the module's name: not an attribute or keyword of that spelling,
+/// not a binding, not a local that shadows it. Comments and strings hold no
+/// identifiers; an f-string's `{…}` is code, and counts.
+fn python_home_uses(root: TsNode<'_>, source: &str) -> HashSet<String> {
+    // Each public name, with the byte ranges of the statements defining it.
+    let mut defined: HashMap<String, Vec<std::ops::Range<usize>>> = HashMap::new();
+    for ch in named_children_of(root) {
+        let d = python_definition(ch);
+        let names: Vec<String> = match d.kind() {
+            "function_definition" | "class_definition" => {
+                d.child_by_field_name("name").map(|n| node_text(n, source)).into_iter().collect()
+            }
+            _ => python_assignments(d, source).into_iter().map(|(n, _)| n).collect(),
+        };
+        for name in names {
+            if name == "__all__" {
+                return HashSet::new();
+            }
+            if !name.starts_with('_') {
+                defined.entry(name).or_default().push(ch.byte_range());
+            }
+        }
+    }
+    let mut used = HashSet::new();
+    let mut stack = vec![root];
+    while let Some(n) = stack.pop() {
+        if n.kind() == "identifier" {
+            let name = node_text(n, source);
+            let outside = defined.get(&name).is_some_and(|at| !at.iter().any(|r| r.contains(&n.start_byte())));
+            if outside && python_reads(n) && !python_shadowed(n, &name, source) {
+                used.insert(name);
+            }
+            continue;
+        }
+        if matches!(n.kind(), "import_statement" | "import_from_statement" | "global_statement" | "nonlocal_statement") {
+            continue;
+        }
+        let mut cur = n.walk();
+        stack.extend(n.named_children(&mut cur));
+    }
+    used
+}
+
+/// Whether the identifier `n` reads a name, rather than naming an attribute, a
+/// keyword argument, a definition, a parameter or the target of a binding.
+fn python_reads(n: TsNode<'_>) -> bool {
+    let Some(parent) = n.parent() else { return true };
+    let is_field = |field: &str| parent.child_by_field_name(field).is_some_and(|f| f.id() == n.id());
+    match parent.kind() {
+        "attribute" => !is_field("attribute"),
+        "keyword_argument" | "function_definition" | "class_definition" => !is_field("name"),
+        _ => !python_binds(n),
+    }
+}
+
+/// Whether the identifier `n` is bound where it stands: a parameter, or a
+/// target of an assignment, a loop, `as` or `:=`.
+fn python_binds(n: TsNode<'_>) -> bool {
+    let Some(parent) = n.parent() else { return false };
+    let is_field = |field: &str| parent.child_by_field_name(field).is_some_and(|f| f.id() == n.id());
+    match parent.kind() {
+        "parameters" | "lambda_parameters" | "as_pattern_target" => true,
+        "typed_parameter" => !is_field("type"),
+        "default_parameter" | "typed_default_parameter" | "named_expression" => is_field("name"),
+        "assignment" | "for_statement" | "for_in_clause" => is_field("left"),
+        // `a, b = …`, `(a, b) = …`, `*args`: bound if the whole pattern is.
+        "pattern_list" | "tuple_pattern" | "list_pattern" | "list_splat_pattern" | "dictionary_splat_pattern" => python_binds(parent),
+        _ => false,
+    }
+}
+
+/// Whether `name` at `n` is a local of a function, lambda or comprehension
+/// around it, and so not the module's.
+fn python_shadowed(n: TsNode<'_>, name: &str, source: &str) -> bool {
+    let mut at = n;
+    while let Some(scope) = at.parent() {
+        let is_scope = matches!(
+            scope.kind(),
+            "function_definition" | "lambda" | "list_comprehension" | "set_comprehension" | "dictionary_comprehension" | "generator_expression"
+        );
+        // A default or an annotation is read outside the function it is on.
+        let in_header = scope.kind() == "function_definition"
+            && scope.child_by_field_name("body").is_some_and(|b| !b.byte_range().contains(&n.start_byte()));
+        if is_scope && !in_header && python_scope_binds(scope, name, source) {
+            return true;
+        }
+        at = scope;
+    }
+    false
+}
+
+/// Whether the scope binds `name` as its own local. `global name` says it does
+/// not.
+fn python_scope_binds(scope: TsNode<'_>, name: &str, source: &str) -> bool {
+    let mut bound = false;
+    let mut stack = named_children_of(scope);
+    while let Some(n) = stack.pop() {
+        match n.kind() {
+            "global_statement" if named_children_of(n).iter().any(|i| node_text(*i, source) == name) => return false,
+            // A nested definition binds its own name here, and nothing in it.
+            "function_definition" | "class_definition" => {
+                bound |= n.child_by_field_name("name").is_some_and(|i| node_text(i, source) == name);
+            }
+            // So does a lambda or a comprehension: its names are its own.
+            "lambda" | "list_comprehension" | "set_comprehension" | "dictionary_comprehension" | "generator_expression" => {}
+            "import_statement" | "import_from_statement" => bound |= python_import_binds(n, name, source),
+            "identifier" => bound |= node_text(n, source) == name && python_binds(n),
+            _ => stack.extend(named_children_of(n)),
+        }
+    }
+    bound
+}
+
+/// Whether the import statement `n` binds `name`: the alias, else the name it
+/// takes, else the first part of the module `import a.b` names.
+fn python_import_binds(n: TsNode<'_>, name: &str, source: &str) -> bool {
+    let mut cur = n.walk();
+    let bound = n.children_by_field_name("name", &mut cur).any(|item| {
+        let text = match item.child_by_field_name("alias") {
+            Some(alias) => node_text(alias, source),
+            None => node_text(item, source),
+        };
+        text.split('.').next() == Some(name)
+    });
+    bound
+}
+
+/// Whether the run of `#` comment lines directly above `row` carries
+/// `@hexa:public` (ADR-2611221644 §1). Each line of the run holds only a
+/// comment, so a blank line or a code line ends it, and a `#` comment that
+/// ends a code line belongs to that line. Lines are read from the source:
+/// tree-sitter-python can file a column-0 comment inside the block before
+/// it, so siblings would miss it. Each `#` must start a comment node, not
+/// sit inside a string. A comment ending the item's own first line is the
+/// item's too.
+fn python_comment_tagged(root: &tree_sitter::Node, lines: &[&str], row: usize) -> bool {
+    if python_line_tagged(root, lines, row) {
+        return true;
+    }
+    let mut r = row;
+    while r > 0 {
+        r -= 1;
+        let line = lines.get(r).copied().unwrap_or("");
+        let col = line.len() - line.trim_start().len();
+        if !line[col..].starts_with('#') {
+            return false;
+        }
+        let at = tree_sitter::Point { row: r, column: col };
+        if root.descendant_for_point_range(at, at).is_none_or(|n| n.kind() != "comment") {
+            return false;
+        }
+        if line.contains("@hexa:public") {
+            return true;
+        }
+    }
+    false
+}
+
+/// Whether the `#` comment that ends line `row` carries `@hexa:public`: the
+/// first `#` that starts a comment node, not one inside a string.
+fn python_line_tagged(root: &tree_sitter::Node, lines: &[&str], row: usize) -> bool {
+    let own = lines.get(row).copied().unwrap_or("");
+    for (col, _) in own.match_indices('#') {
+        let at = tree_sitter::Point { row, column: col };
+        if root.descendant_for_point_range(at, at).is_some_and(|n| n.kind() == "comment") {
+            return own[col..].contains("@hexa:public");
+        }
+    }
+    false
+}
+
+/// Counts for the layer inventory: a class whose bases name `Protocol` or
+/// `ABC` is an interface, any other class a type, and one with other bases
+/// an implementation; top-level functions are functions.
+fn python(root: TsNode<'_>, src: &str, c: &mut ItemCounts) {
+    for ch in named_children_of(root) {
+        let d = python_definition(ch);
+        match d.kind() {
+            "function_definition" => c.functions += 1,
+            "class_definition" => {
+                let bases: Vec<String> = d
+                    .child_by_field_name("superclasses")
+                    .map(|s| named_children_of(s).into_iter().map(|b| node_text(b, src)).collect())
+                    .unwrap_or_default();
+                let abstract_base = |b: &String| {
+                    let last = b.rsplit('.').next().unwrap_or(b);
+                    matches!(last, "Protocol" | "ABC") || last.starts_with("Protocol[")
+                };
+                if bases.iter().any(abstract_base) {
+                    c.interfaces += 1;
+                } else {
+                    c.types += 1;
+                    if bases.iter().any(|b| !b.starts_with("metaclass") && b != "object") {
+                        *c.implementations.get_or_insert(0) += 1;
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 }
 
@@ -64,6 +421,7 @@ fn count_items_in(source: &str, lang: Language) -> Result<ItemCounts, AnalysisEr
         Language::Rust => rust(tree.root_node(), src, &mut c),
         Language::Go => go(tree.root_node(), &mut c),
         Language::TypeScript => typescript(tree.root_node(), &mut c),
+        Language::Python => python(tree.root_node(), source, &mut c),
         Language::Unknown => {}
     }
     Ok(c)
@@ -226,6 +584,7 @@ impl AstPort for TreeSitterAdapter {
             Language::TypeScript => extract_ts_imports(&root, source, &from_file),
             Language::Go => extract_go_imports(&root, source, &from_file),
             Language::Rust => extract_rust_imports(&root, source, &from_file),
+            Language::Python => extract_python_imports(&root, source, &from_file),
             Language::Unknown => Ok(vec![]),
         }
     }
@@ -244,6 +603,7 @@ impl AstPort for TreeSitterAdapter {
             Language::TypeScript => extract_ts_exports(&root, source, &file),
             Language::Go => extract_go_exports(&root, source, &file),
             Language::Rust => extract_rust_exports(&root, source, &file),
+            Language::Python => extract_python_exports(&root, source, &file),
             Language::Unknown => Ok(vec![]),
         }
     }
@@ -265,6 +625,14 @@ impl AstPort for TreeSitterAdapter {
 
     fn extract_api(&self, _path: &Path, source: &str, lang: Language) -> Result<ApiFacts, AnalysisError> {
         super::treesitter_api::extract(source, lang)
+    }
+
+    fn names_used_at_home(&self, source: &str, lang: Language) -> Result<HashSet<String>, AnalysisError> {
+        if lang != Language::Python {
+            return Ok(HashSet::new());
+        }
+        let tree = parse_source(source, lang)?;
+        Ok(python_home_uses(tree.root_node(), source))
     }
 
     fn extract_members(
@@ -423,7 +791,82 @@ fn extract_ts_imports(
         }
     }
 
+    // CommonJS `require("x")`, wherever it is written (ADR-2611270420 §2).
+    collect_require_calls(root, source, from_file, &mut imports);
+
     Ok(imports)
+}
+
+/// Every `require("literal")` call under `node`, in document order: an import
+/// edge to what the string names. A call whose argument is anything but one
+/// plain string (`require(name)`, `require("./" + dir)`) names no file hexa
+/// can see and is not guessed at (ADR-2611270420 §2).
+fn collect_require_calls(node: &tree_sitter::Node, source: &str, from_file: &str, imports: &mut Vec<ImportStatement>) {
+    if node.kind() == "call_expression" {
+        if let Some(func) = node.child_by_field_name("function") {
+            if func.kind() == "identifier" && node_text(func, source) == "require" {
+                if let Some(args) = node.child_by_field_name("arguments") {
+                    let mut ac = args.walk();
+                    let named: Vec<_> = args.named_children(&mut ac).collect();
+                    if let [arg] = named.as_slice() {
+                        if arg.kind() == "string" {
+                            let raw_path = unquote(node_text(*arg, source));
+                            imports.push(ImportStatement {
+                                from_file: from_file.to_string(),
+                                raw_path: raw_path.clone(),
+                                resolved_path: raw_path,
+                                names: require_names(node, source),
+                                line: node.start_position().row + 1,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_require_calls(&child, source, from_file, imports);
+    }
+}
+
+/// The names a `require(...)` call takes from the module: `const { a, b } =
+/// require(..)` names `a` and `b`; `require(..).a` names `a`; anything else
+/// (`const m = require(..)`, a bare call) takes the module whole, as an
+/// `import * as` does.
+fn require_names(call: &tree_sitter::Node, source: &str) -> Vec<String> {
+    let whole = || vec!["*".to_string()];
+    let Some(parent) = call.parent() else { return whole() };
+    match parent.kind() {
+        "variable_declarator" => {
+            let Some(pattern) = parent.child_by_field_name("name") else { return whole() };
+            if pattern.kind() != "object_pattern" {
+                return whole();
+            }
+            let mut names = Vec::new();
+            let mut cursor = pattern.walk();
+            for part in pattern.named_children(&mut cursor) {
+                match part.kind() {
+                    "shorthand_property_identifier_pattern" => names.push(node_text(part, source)),
+                    "pair_pattern" => match part.child_by_field_name("key") {
+                        Some(k) => names.push(unquote(node_text(k, source))),
+                        None => return whole(),
+                    },
+                    "object_assignment_pattern" => match part.child_by_field_name("left") {
+                        Some(l) => names.push(node_text(l, source)),
+                        None => return whole(),
+                    },
+                    _ => return whole(),
+                }
+            }
+            if names.is_empty() { whole() } else { names }
+        }
+        "member_expression" => match parent.child_by_field_name("property") {
+            Some(p) => vec![node_text(p, source)],
+            None => whole(),
+        },
+        _ => whole(),
+    }
 }
 
 /// The `"pkg"` of an `import x = require("pkg")`, if this is one.
@@ -845,6 +1288,12 @@ fn extract_ts_exports(
     let mut cursor = root.walk();
 
     for child in root.children(&mut cursor) {
+        // `module.exports = …`, `module.exports.a = …`, `exports.a = …`
+        // (ADR-2611270420 §4).
+        if child.kind() == "expression_statement" {
+            extract_commonjs_exports(&child, source, file, &mut exports);
+            continue;
+        }
         if child.kind() != "export_statement" {
             continue;
         }
@@ -912,6 +1361,62 @@ fn extract_ts_exports(
     Ok(exports)
 }
 
+/// The exports a CommonJS assignment statement makes. `module.exports = { a, b:
+/// x, c() {} }` exports `a`, `b` and `c` (a spread says nothing about names and
+/// adds none); `module.exports = f` exports the module's default; `exports.a =`
+/// and `module.exports.a =` export `a`.
+fn extract_commonjs_exports(stmt: &tree_sitter::Node, source: &str, file: &str, out: &mut Vec<ExportDeclaration>) {
+    let mut cursor = stmt.walk();
+    let Some(assign) = stmt.named_children(&mut cursor).find(|c| c.kind() == "assignment_expression") else { return };
+    let (Some(left), Some(right)) = (assign.child_by_field_name("left"), assign.child_by_field_name("right")) else { return };
+    if left.kind() != "member_expression" {
+        return;
+    }
+    let hexa_public = has_hex_public_annotation(stmt, source);
+    let line = stmt.start_position().row + 1;
+    let kind_of = |value: &tree_sitter::Node| match value.kind() {
+        "function_expression" | "arrow_function" | "function" | "generator_function" => ExportKind::Function,
+        "class" | "class_declaration" => ExportKind::Type,
+        _ => ExportKind::Value,
+    };
+    let push = |out: &mut Vec<ExportDeclaration>, name: String, kind: ExportKind| {
+        out.push(ExportDeclaration { file: file.to_string(), name, line, hexa_public, kind });
+    };
+    let text = node_text(left, source);
+    if text == "module.exports" {
+        if right.kind() == "object" {
+            let mut oc = right.walk();
+            for prop in right.named_children(&mut oc) {
+                match prop.kind() {
+                    "shorthand_property_identifier" => push(out, node_text(prop, source), ExportKind::Value),
+                    "pair" => {
+                        if let Some(k) = prop.child_by_field_name("key") {
+                            let kind = prop.child_by_field_name("value").map(|v| kind_of(&v)).unwrap_or(ExportKind::Value);
+                            push(out, unquote(node_text(k, source)), kind);
+                        }
+                    }
+                    "method_definition" => {
+                        if let Some(n) = prop.child_by_field_name("name") {
+                            push(out, node_text(n, source), ExportKind::Function);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        } else {
+            push(out, "default".to_string(), ExportKind::Default);
+        }
+        return;
+    }
+    let name = text
+        .strip_prefix("module.exports.")
+        .or_else(|| text.strip_prefix("exports."))
+        .filter(|n| !n.is_empty() && n.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '$'));
+    if let Some(name) = name {
+        push(out, name.to_string(), kind_of(&right));
+    }
+}
+
 fn extract_lexical_names(node: &tree_sitter::Node, source: &str) -> Vec<String> {
     let mut names = Vec::new();
     let mut cursor = node.walk();
@@ -945,7 +1450,7 @@ fn extract_go_exports(
                             file: file.to_string(),
                             name,
                             line: child.start_position().row + 1,
-                            hexa_public: false,
+                            hexa_public: go_doc_tagged(&child, source),
                             kind: ExportKind::Function,
                         });
                     }
@@ -959,7 +1464,7 @@ fn extract_go_exports(
                             file: file.to_string(),
                             name,
                             line: child.start_position().row + 1,
-                            hexa_public: false,
+                            hexa_public: go_doc_tagged(&child, source),
                             kind: ExportKind::Method,
                         });
                     }
@@ -970,6 +1475,8 @@ fn extract_go_exports(
                 // `type Count = domain.Count` is a `type_alias`, not a
                 // `type_spec`; it is an exported type all the same, and the
                 // ports layer re-exports domain types exactly this way.
+                // A group's doc comment covers every spec in it (ADR-2611221553 §2).
+                let group = go_doc_tagged(&child, source);
                 let mut tc = child.walk();
                 for spec in child.children(&mut tc) {
                     if spec.kind() == "type_spec" || spec.kind() == "type_alias" {
@@ -980,7 +1487,7 @@ fn extract_go_exports(
                                     file: file.to_string(),
                                     name,
                                     line: spec.start_position().row + 1,
-                                    hexa_public: false,
+                                    hexa_public: group || go_doc_tagged(&spec, source),
                                     kind: ExportKind::Type,
                                 });
                             }
@@ -989,21 +1496,38 @@ fn extract_go_exports(
                 }
             }
             "const_declaration" | "var_declaration" => {
+                let group = go_doc_tagged(&child, source);
+                // A const group's specs are direct children; a var group's sit
+                // one level down, in a `var_spec_list` (ADR-2611221609 §1).
+                let mut specs = Vec::new();
                 let mut tc = child.walk();
-                for spec in child.children(&mut tc) {
-                    if spec.kind() == "const_spec" || spec.kind() == "var_spec" {
-                        if let Some(name_node) = spec.child_by_field_name("name") {
-                            let name = node_text(name_node, source);
-                            if is_go_exported(&name) {
-                                exports.push(ExportDeclaration {
-                                    file: file.to_string(),
-                                    name,
-                                    line: spec.start_position().row + 1,
-                                    hexa_public: false,
-                                    kind: ExportKind::Value,
-                                });
-                            }
-                        }
+                for c in child.children(&mut tc) {
+                    if c.kind() == "var_spec_list" {
+                        let mut lc = c.walk();
+                        specs.extend(c.children(&mut lc).filter(|s| s.kind() == "var_spec"));
+                    } else if c.kind() == "const_spec" || c.kind() == "var_spec" {
+                        specs.push(c);
+                    }
+                }
+                for spec in specs {
+                    // Every name a const or var spec declares (`const A, B = 1, 2`):
+                    // the identifiers only, not the commas (ADR-2611221643 §1).
+                    let names: Vec<String> = {
+                        let mut nc = spec.walk();
+                        spec.children_by_field_name("name", &mut nc)
+                            .filter(|n| n.kind() == "identifier")
+                            .map(|n| node_text(n, source))
+                            .collect()
+                    };
+                    let tagged = group || go_doc_tagged(&spec, source);
+                    for name in names.into_iter().filter(|n| is_go_exported(n)) {
+                        exports.push(ExportDeclaration {
+                            file: file.to_string(),
+                            name,
+                            line: spec.start_position().row + 1,
+                            hexa_public: tagged,
+                            kind: ExportKind::Value,
+                        });
                     }
                 }
             }
@@ -1014,9 +1538,53 @@ fn extract_go_exports(
     Ok(exports)
 }
 
-/// Go exports are identified by capitalized names.
+/// Whether the Go doc comment of `node` carries `@hexa:public` (ADR-2611221553
+/// §1): the run of comment lines directly above it, each on the line just
+/// above the next, so a blank line or any other node ends the run. A Go doc
+/// comment is several `//` lines, each its own node, and the tag may be on any.
+///
+/// A line is read whole (ADR-2611221934): every comment on it is gathered, so
+/// a line of comments after code (`A = 1 /* x */ // …`) is that code's, and a
+/// line holding only comments (`/* … */ // …`) is one doc line.
+fn go_doc_tagged(node: &tree_sitter::Node, source: &str) -> bool {
+    let mut next_row = node.start_position().row;
+    let mut prev = node.prev_sibling();
+    while let Some(last) = prev {
+        if last.kind() != "comment" || last.end_position().row + 1 != next_row {
+            return false;
+        }
+        // The comments on this line, back to the first of them.
+        let mut line = vec![last];
+        let mut first = last;
+        while let Some(q) = first.prev_sibling() {
+            if q.kind() == "comment" && q.end_position().row == first.start_position().row {
+                line.push(q);
+                first = q;
+            } else {
+                break;
+            }
+        }
+        // Code before the first comment on its line makes the whole line that
+        // code's line comments (`A = 1 // …`, `const ( // …`, `) // …`), not a
+        // doc line: the newline between them is hidden in the tree, so rows
+        // are the only way to tell.
+        if first.prev_sibling().is_some_and(|q| q.kind() != "comment" && q.end_position().row == first.start_position().row) {
+            return false;
+        }
+        if line.iter().any(|c| node_text(*c, source).contains("@hexa:public")) {
+            return true;
+        }
+        next_row = first.start_position().row;
+        prev = first.prev_sibling();
+    }
+    false
+}
+
+/// Go exports are identified by capitalized names: the Go spec's rule is a
+/// first character that is a Unicode upper-case letter, so `Äpfel` is exported
+/// as `Apple` is (an ASCII-only check missed it).
 fn is_go_exported(name: &str) -> bool {
-    name.starts_with(|c: char| c.is_ascii_uppercase())
+    name.starts_with(|c: char| c.is_uppercase())
 }
 
 // ── Rust Export Extraction ───────────────────────────────
@@ -1113,7 +1681,7 @@ pub fn extract_module_references(
         Language::TypeScript => collect_ts_references(tree.root_node(), source, &mut out),
         // Go cannot name a package without importing it, so there is nothing
         // here that `extract_imports` has not already seen.
-        Language::Go | Language::Unknown => {}
+        Language::Go | Language::Python | Language::Unknown => {}
     }
     Ok(out)
 }

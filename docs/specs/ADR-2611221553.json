@@ -1,0 +1,302 @@
+{
+  "adr": "ADR-2611221553",
+  "feature": "Go reads the @hexa:public tag",
+  "description": "A Go export whose doc comment (or whose group's doc comment) carries @hexa:public is marked hexa_public and is never reported dead; untagged Go, TypeScript and Rust exports behave as before.",
+  "universal": [
+    "§1",
+    "§2",
+    "§3"
+  ],
+  "accepted": {
+    "by": "craigjohnson",
+    "sha256": "1a5136f7041cea1faaccd3699f402f37212a74bc35de1b39e97edeb2e581b77c"
+  },
+  "sealed": {
+    "hexa-analysis/tests/adr_2611221553_spec_2.rs": "fd6cabb4be16043826e3795a4529637ba027159e3922a907379e51b91c5d8266"
+  },
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A tagged exported Go function is public",
+      "given": "A Go file whose line `// Build makes a client. @hexa:public` sits directly above `func Build() *Client {}`",
+      "when": "extract_exports is called with Language::Go",
+      "then": "The export named `Build`, of kind Function, has hexa_public == true",
+      "test": "hexa-analysis/tests/adr_2611221553_spec_2.rs::part_1::s01_tagged_exported_go_function_is_public",
+      "red": "24c8818"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "The tag may be on any line of a multi-line doc comment",
+      "given": "A Go file with three consecutive `//` lines directly above `func New() {}`, the second of which is `// @hexa:public` and the others plain prose",
+      "when": "extract_exports is called with Language::Go",
+      "then": "The export `New` has hexa_public == true",
+      "test": "hexa-analysis/tests/adr_2611221553_spec_2.rs::part_1::s02_tag_on_any_line_of_multi_line_doc_comment",
+      "red": "24c8818"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A tagged method is public",
+      "given": "A Go file with `type Client struct{}` and, directly above `func (c *Client) Send() error { return nil }`, the line `// @hexa:public`",
+      "when": "extract_exports is called with Language::Go",
+      "then": "The export `Send`, of kind Method, has hexa_public == true",
+      "test": "hexa-analysis/tests/adr_2611221553_spec_2.rs::part_1::s03_tagged_method_is_public",
+      "red": "24c8818"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "Tagged standalone type, const and var declarations are public",
+      "given": "A Go file with `// @hexa:public` directly above each of `type Option struct{}`, `const MaxRetries = 3` and `var DefaultTimeout = 5`",
+      "when": "extract_exports is called with Language::Go",
+      "then": "The exports `Option`, `MaxRetries` and `DefaultTimeout` each have hexa_public == true",
+      "test": "hexa-analysis/tests/adr_2611221553_spec_2.rs::part_1::s04_tagged_type_const_var_are_public",
+      "red": "24c8818"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A tagged Go export with no caller is not reported dead",
+      "given": "A project in which one Go file declares `// @hexa:public` above `func Build() {}` and no other file names `Build`",
+      "when": "The project is analysed for dead exports",
+      "then": "No DeadExport with export_name `Build` is reported",
+      "test": "hexa-analysis/tests/adr_2611221553_spec_2.rs::part_1::s05_tagged_go_export_without_caller_not_dead",
+      "red": "24c8818"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A comment separated from the declaration by a blank line is not its doc comment",
+      "given": "A Go file with `// @hexa:public`, then one blank line, then `func Build() {}`",
+      "when": "extract_exports is called with Language::Go",
+      "then": "The export `Build` has hexa_public == false"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "The run ends at a line that is not a comment",
+      "given": "A Go file with `// @hexa:public` directly above `func Helper() {}`, followed directly by `func Build() {}` with no comment of its own",
+      "when": "extract_exports is called with Language::Go",
+      "then": "`Helper` has hexa_public == true and `Build` has hexa_public == false",
+      "test": "hexa-analysis/tests/adr_2611221553_spec_2.rs::part_1::s07_run_ends_at_non_comment_line",
+      "red": "24c8818"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A tag in the body of another declaration or inside a function does not mark the next export",
+      "given": "A Go file whose `func A() {` body ends with the line `// @hexa:public` before its closing `}`, followed directly by `func B() {}`",
+      "when": "extract_exports is called with Language::Go",
+      "then": "Neither `A` nor `B` has hexa_public == true"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A doc comment without the tag does not make an export public",
+      "given": "A Go file with `// Build makes a client.` directly above `func Build() {}`",
+      "when": "extract_exports is called with Language::Go",
+      "then": "The export `Build` has hexa_public == false"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A tagged export with no caller elsewhere is still not reported dead even though unused",
+      "given": "A project with one Go file declaring `// @hexa:public` above `const Unused = 1`, named nowhere else",
+      "when": "The project is analysed for dead exports",
+      "then": "`Unused` is absent from dead_exports, and the dead-export count does not include it",
+      "test": "hexa-analysis/tests/adr_2611221553_spec_2.rs::part_1::s10_tagged_unused_const_not_reported_dead",
+      "red": "24c8818"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§1"
+      ],
+      "kind": "property",
+      "description": "For every exported Go declaration, hexa_public is exactly whether the contiguous comment run above it contains the tag",
+      "given": "Any Go file built from functions, methods, type, const and var declarations with upper-case names, each preceded by an arbitrary run of `//` lines, optionally containing `@hexa:public` on any line, optionally separated from the declaration by blank lines",
+      "when": "extract_exports is called with Language::Go",
+      "then": "For each export, hexa_public is true if and only if some line in the uninterrupted run of `//` lines ending on the line directly above its declaration contains `@hexa:public`",
+      "test": "hexa-analysis/tests/adr_2611221553_spec_2.rs::part_1::s11_hexa_public_iff_contiguous_run_contains_tag",
+      "red": "24c8818"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "A tag on a const group marks every spec in it",
+      "given": "A Go file with `// @hexa:public` directly above `const (`, which holds `A = 1`, `B = 2` and `C = 3` with no comments of their own",
+      "when": "extract_exports is called with Language::Go",
+      "then": "`A`, `B` and `C` each have hexa_public == true",
+      "test": "hexa-analysis/tests/adr_2611221553_spec_2.rs::part_1::s12_tag_on_const_group_marks_every_spec",
+      "red": "24c8818"
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "A tag on one spec inside a group marks only that spec",
+      "given": "A Go file with an untagged `type (` group holding `Alpha struct{}`, then `// @hexa:public` directly above `Beta struct{}`, then `Gamma struct{}`",
+      "when": "extract_exports is called with Language::Go",
+      "then": "`Beta` has hexa_public == true; `Alpha` and `Gamma` have hexa_public == false",
+      "test": "hexa-analysis/tests/adr_2611221553_spec_2.rs::part_1::s13_tag_on_one_spec_in_group_marks_only_that_spec",
+      "red": "24c8818"
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "A tag on a var group covers its specs",
+      "given": "A Go file with a two-line doc comment, the second line `// @hexa:public`, directly above `var (`, which holds `X = 1` and `Y = 2`",
+      "when": "extract_exports is called with Language::Go",
+      "then": "`X` and `Y` each have hexa_public == true",
+      "test": "hexa-analysis/tests/adr_2611221553_spec_2.rs::part_2::s14_a_tag_on_a_var_group_covers_its_specs",
+      "red": "24c8818"
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "A group comment separated from the group by a blank line does not cover it",
+      "given": "A Go file with `// @hexa:public`, then a blank line, then `const (` holding `A = 1` and `B = 2`",
+      "when": "extract_exports is called with Language::Go",
+      "then": "`A` and `B` have hexa_public == false"
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "A spec's own tag does not spread to its siblings",
+      "given": "A Go file with an untagged `const (` group in which `// @hexa:public` sits directly above `A = 1`, followed by `B = 2`",
+      "when": "extract_exports is called with Language::Go",
+      "then": "`A` has hexa_public == true and `B` has hexa_public == false",
+      "test": "hexa-analysis/tests/adr_2611221553_spec_2.rs::part_2::s16_a_specs_own_tag_does_not_spread_to_its_siblings",
+      "red": "24c8818"
+    },
+    {
+      "id": "S17",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "A group's tag does not cover a declaration after the group",
+      "given": "A Go file with `// @hexa:public` above `const (` holding `A = 1`, closed by `)`, followed directly by `const B = 2`",
+      "when": "extract_exports is called with Language::Go",
+      "then": "`A` has hexa_public == true and `B` has hexa_public == false",
+      "test": "hexa-analysis/tests/adr_2611221553_spec_2.rs::part_2::s17_a_groups_tag_does_not_cover_a_declaration_after_the_group",
+      "red": "24c8818"
+    },
+    {
+      "id": "S18",
+      "decision": [
+        "§2"
+      ],
+      "kind": "property",
+      "description": "A grouped spec is public exactly when its own run or the group's run carries the tag",
+      "given": "Any Go file with type, const and var groups of exported specs, where the group and each spec are preceded by arbitrary comment runs, each run optionally containing `@hexa:public` and optionally separated by blank lines",
+      "when": "extract_exports is called with Language::Go",
+      "then": "For each grouped spec, hexa_public is true if and only if the tag is in the contiguous comment run directly above the spec or in the contiguous comment run directly above its group's keyword",
+      "test": "hexa-analysis/tests/adr_2611221553_spec_2.rs::part_2::s18_a_grouped_spec_is_public_exactly_when_its_run_or_the_groups_run_carries_the_tag",
+      "red": "24c8818"
+    },
+    {
+      "id": "S19",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "An untagged Go project grades as before",
+      "given": "A Go project with no `@hexa:public` anywhere, one exported function `Orphan` named by no other file",
+      "when": "The project is analysed",
+      "then": "`Orphan` is reported in dead_exports, every Go export has hexa_public == false, and health_score equals compute_health_score over the same counts as before the change"
+    },
+    {
+      "id": "S20",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "TypeScript and Rust still read the tag as before",
+      "given": "A TypeScript file with `/** @hexa:public */` above `export function build() {}` and a Rust file with `/// @hexa:public` above `pub fn build() {}`",
+      "when": "extract_exports is called with the matching language",
+      "then": "Each `build` export has hexa_public == true"
+    },
+    {
+      "id": "S21",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "Untagged TypeScript and Rust exports do not become public",
+      "given": "A TypeScript file with `export function f() {}` and a Rust file with `pub fn f() {}`, neither with any comment",
+      "when": "extract_exports is called with the matching language",
+      "then": "Each `f` export has hexa_public == false"
+    },
+    {
+      "id": "S22",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "The tag does not change any other field of a Go export",
+      "given": "A Go file with `// @hexa:public` directly above `func Build() {}` on line 2",
+      "when": "extract_exports is called with Language::Go",
+      "then": "The `Build` export has name `Build`, line 2, kind Function, and only hexa_public differs from the untagged version of the same file",
+      "test": "hexa-analysis/tests/adr_2611221553_spec_2.rs::part_2::s22_the_tag_does_not_change_any_other_field_of_a_go_export",
+      "red": "24c8818"
+    },
+    {
+      "id": "S23",
+      "decision": [
+        "§3"
+      ],
+      "kind": "property",
+      "description": "For any input with no tag, exports and grade are unchanged",
+      "given": "Any Go, TypeScript or Rust source in which no comment contains `@hexa:public`",
+      "when": "extract_exports is called and the project is analysed",
+      "then": "Every export has hexa_public == false, and the exports, dead_exports and health_score are identical to those produced before the change"
+    }
+  ]
+}

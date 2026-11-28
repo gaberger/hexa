@@ -95,13 +95,18 @@ fn find(root: &Path, id: &str) -> anyhow::Result<Adr> {
 
 /// Where an ADR's spec is kept: `docs/specs/<ADR>.json`, else the first of the
 /// other homes a ledger may use that exists.
-fn spec_path(root: &Path, id: &str) -> PathBuf {
-    let homes = [
+/// Every place a spec may live, the preferred one first.
+fn spec_homes(root: &Path, id: &str) -> [PathBuf; 4] {
+    [
         root.join(SPECS).join(format!("{id}.json")),
         root.join(".hexa/specs").join(format!("{id}.json")),
         root.join("docs/adr").join(format!("{id}.spec.json")),
         root.join(ADRS).join(format!("{id}.spec.json")),
-    ];
+    ]
+}
+
+fn spec_path(root: &Path, id: &str) -> PathBuf {
+    let homes = spec_homes(root, id);
     homes.iter().find(|p| p.exists()).cloned().unwrap_or_else(|| homes[0].clone())
 }
 
@@ -172,6 +177,8 @@ struct WithAmendments<'a> {
     spec: &'a Spec,
     #[serde(skip_serializing_if = "<[Value]>::is_empty")]
     amendments: &'a [Value],
+    #[serde(skip_serializing_if = "<[Value]>::is_empty")]
+    moves: &'a [Value],
 }
 
 fn save(root: &Path, spec: &Spec) -> anyhow::Result<()> {
@@ -181,12 +188,20 @@ fn save(root: &Path, spec: &Spec) -> anyhow::Result<()> {
 /// Write `spec`. The amendments on disk are kept unless `amendments` replaces
 /// them: a list that is append-only survives every other write.
 fn write_spec(root: &Path, spec: &Spec, amendments: Option<&[Value]>) -> anyhow::Result<()> {
+    write_records(root, spec, amendments, &[])
+}
+
+/// `write_spec`, appending `new_moves` to the moves on disk, which every write
+/// keeps (ADR-2611251652 §2).
+fn write_records(root: &Path, spec: &Spec, amendments: Option<&[Value]>, new_moves: &[Value]) -> anyhow::Result<()> {
     let p = spec_path(root, &spec.adr);
     let old: Option<Value> = std::fs::read_to_string(&p).ok().and_then(|t| serde_json::from_str(&t).ok());
     let kept: Vec<Value> = match amendments {
         Some(a) => a.to_vec(),
         None => old.as_ref().and_then(|o| o.get("amendments")).and_then(Value::as_array).cloned().unwrap_or_default(),
     };
+    let mut moves: Vec<Value> = old.as_ref().and_then(|o| o.get("moves")).and_then(Value::as_array).cloned().unwrap_or_default();
+    moves.extend_from_slice(new_moves);
     let text = match old {
         Some(Value::Object(mut file)) if !file.contains_key("specs") && file.contains_key("scenarios") => {
             let Value::Object(new) = serde_json::to_value(spec)? else { anyhow::bail!("a spec is an object") };
@@ -221,9 +236,12 @@ fn write_spec(root: &Path, spec: &Spec, amendments: Option<&[Value]>) -> anyhow:
             } else {
                 file.insert("amendments".into(), Value::Array(kept));
             }
+            if !moves.is_empty() {
+                file.insert("moves".into(), Value::Array(moves));
+            }
             serde_json::to_string_pretty(&Value::Object(file))?
         }
-        _ => serde_json::to_string_pretty(&WithAmendments { spec, amendments: &kept })?,
+        _ => serde_json::to_string_pretty(&WithAmendments { spec, amendments: &kept, moves: &moves })?,
     };
     std::fs::write(&p, text + "\n")?;
     Ok(())
@@ -277,19 +295,24 @@ pub fn check(adr: Option<&str>) -> anyhow::Result<()> {
 }
 
 /// A spec is drafted and accepted only where a test could be bound to it:
-/// a Cargo.toml (generated Rust tests), a package.json (vitest), or a
-/// configured runner (ADR-2611191120 §9). Said before a paid `spec draft`.
+/// a Cargo.toml (generated Rust tests), a package.json (vitest), a Python
+/// manifest (the built-in pytest runner, ADR-2611221935 §1), or a configured
+/// runner (ADR-2611191120 §9). Said before a paid `spec draft`.
 fn require_a_rust_project(root: &Path, id: &str, verb: &str) -> anyhow::Result<()> {
     if root.join("Cargo.toml").is_file() || root.join("package.json").is_file() {
+        return Ok(());
+    }
+    if ["pyproject.toml", "setup.py", "setup.cfg"].iter().any(|m| root.join(m).is_file()) {
         return Ok(());
     }
     if test_config(root).is_ok_and(|c| !c.runners.is_empty()) {
         return Ok(());
     }
     anyhow::bail!(
-        "{id}: {verb} refused: no Cargo.toml, package.json or test.runners at {}. `hexa spec tests` generates Rust tests only; \
+        "{id}: {verb} refused: no Cargo.toml, package.json, Python manifest (pyproject.toml, setup.py or setup.cfg) or test.runners at {}. \
+         `hexa spec tests` generates Rust tests only; \
          a test in another language is written by hand and bound with `hexa spec red <ADR> <commit> --test <S>=<file>::<name>`, \
-         which needs a runner for its file: vitest under a package.json, bash for .sh, or one in test.runners in .hexa/project.json",
+         which needs a runner for its file: vitest under a package.json, pytest for .py, bash for .sh, or one in test.runners in .hexa/project.json",
         root.display()
     )
 }
@@ -530,7 +553,12 @@ pub async fn draft(adr: &str, model: Option<&str>, force: bool) -> anyhow::Resul
     for f in &d.findings {
         println!("  {} {}", "\u{2717}".red(), f.message());
     }
-    println!("\n  Read every scenario. It is what \"correct\" will mean. Then `hexa spec accept {}`.", a.id);
+    // `spec accept` refuses an uncommitted first acceptance (ADR-2611161600
+    // §1), so the instruction says to commit first (ADR-2611230831 §2).
+    println!(
+        "\n  Read every scenario in {}/{}.json. It is what \"correct\" will mean. Commit it, then `hexa spec accept {}`.",
+        SPECS, a.id, a.id
+    );
     Ok(())
 }
 
@@ -566,6 +594,13 @@ pub async fn tests(
         }
         None
     };
+    // What each scenario is anchored to, before this generation moves any. A
+    // binding that already fails is refused before a model is paid for.
+    let all: Vec<String> = spec.specs.iter().map(|s| s.id.clone()).collect();
+    let anchored = match &replace {
+        Some(_) => bindings_before(&root, &a.id, &spec, &all)?,
+        None => BTreeMap::new(),
+    };
     let options = hexa_exec::spec_author::TestOptions { red_at, replace: replace.clone(), only: None, because: None };
     let model = model_for(model, "t2")?;
     require_a_completion_path(&root, "`hexa spec tests`", &model)?;
@@ -594,7 +629,14 @@ pub async fn tests(
         spec.sealed.remove(&r.old_file);
     }
     record_generated(&mut spec, &g.refs, &g.red, &g.file);
+    let made = match &replace {
+        Some(r) => moves_made(&root, &spec, &anchored, &r.because)?,
+        None => Vec::new(),
+    };
     save_unchanged(&root, &spec, &read)?;
+    if !made.is_empty() {
+        write_records(&root, &spec, None, &made)?;
+    }
     println!("  {} {} tests in {}, every one red at {}", "\u{2713}".green(), g.refs.len(), g.file, g.red);
     seal(&a.id)?;
     // A replacement at the same path moves the seal, so it is recorded as an
@@ -707,6 +749,11 @@ pub async fn reprove(
             if bound.len() == 1 { "has" } else { "have" }
         );
     }
+    let anchored = bindings_before(&root, &a.id, &spec, only)?;
+    if !anchored.is_empty() && because.is_none() {
+        let ids: Vec<&str> = anchored.keys().map(String::as_str).collect();
+        anyhow::bail!("{}: re-proving moves the binding of {}; give --because \"<reason>\", which its move records", a.id, ids.join(", "));
+    }
     let model = model_for(model, "t2")?;
     let path_env = gate_path(
         std::env::var_os("HOME").map(PathBuf::from).as_deref(),
@@ -731,6 +778,8 @@ pub async fn reprove(
     };
     report_guards(&root, &g.guards);
 
+    // What each file was sealed at, before the old tests are cut from it.
+    let sealed_before = spec.sealed.clone();
     // The superseded tests leave the files that held them.
     let mut by_file: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for s in spec.specs.iter().filter(|s| only.contains(&s.id)) {
@@ -765,9 +814,34 @@ pub async fn reprove(
     }
     spec.sealed.remove(&g.file);
     spec.sealed = seal_files_of(&root, &a.id, &spec, spec.test_files())?;
-    save(&root, &spec)?;
-
     let reason = because.unwrap_or_else(|| "left without a test when the spec was re-accepted".to_string());
+    let made = moves_made(&root, &spec, &anchored, &reason)?;
+    // A file the old tests were cut from moves its seal, so that is amended:
+    // every move of a seal is in the chain (ADR-2611081151 §1).
+    let mut amended = amendments_of(&std::fs::read_to_string(spec_path(&root, &a.id))?);
+    let by = git_user_or_env(None)?;
+    for file in by_file.keys() {
+        // The hash the file's seal had. A re-acceptance drops the seal of a file
+        // that held a changed scenario's test, so there may be none recorded; the
+        // move still happened, and it chains from where the file's amendments
+        // end, or from its anchor in history when it has none. Skipping it left
+        // the chain broken for good ("does not continue the chain").
+        let from = sealed_before.get(file).cloned().or_else(|| chain_end(&amended, file)).or_else(|| seal_anchor(&root, file));
+        let (Some(from), Some(to)) = (from, spec.sealed.get(file)) else { continue };
+        if from != *to {
+            amended.push(serde_json::json!({
+                "file": file,
+                "from": from,
+                "to": to,
+                "by": by,
+                "reason": format!("tests cut by `hexa spec tests --only`: {reason}"),
+                "at": chrono::Utc::now().to_rfc3339(),
+                "base_commit": git_head(&root),
+            }));
+        }
+    }
+    write_records(&root, &spec, Some(&amended), &made)?;
+
     let old: Vec<&str> = by_file.keys().map(String::as_str).collect();
     let msg = format!(
         "test(spec): {} re-proves {} in {}\n\n{}{}\n\nEvery new test fails at {} (ADR-2610281628 §2).",
@@ -813,6 +887,42 @@ fn record_generated(spec: &mut Spec, refs: &BTreeMap<String, String>, red: &str,
 }
 
 /// `hexa spec seal <ADR>` — hash every test file the scenarios name (§6).
+/// `hexa spec seal`: seal, then name any sealed file no commit holds. Such a
+/// seal is made (the hash is recorded) but history cannot anchor it, so `spec
+/// verify --ci` fails it as unanchored until the file is committed.
+pub fn seal_verb(adr: &str) -> anyhow::Result<()> {
+    seal(adr)?;
+    let root = std::env::current_dir()?;
+    let a = find(&root, adr)?;
+    if let Some((_, spec)) = load_text(&root, &a.id)? {
+        for f in spec.sealed.keys().filter(|f| seal_anchor(&root, f).is_none()) {
+            println!(
+                "  {} {f} is not committed: `hexa spec verify --ci` reports this seal unanchored until you commit it",
+                "!".yellow()
+            );
+        }
+        // The chain starts at the blob of the commit that first added the file. A
+        // test edited after that commit and sealed at the edited text has a step
+        // no amendment records, and `verify` says so only later. Ask the same
+        // judge `verify` uses, so the two cannot disagree.
+        use hexa_core::ports::spec::{judge_seal, SealVerdict};
+        let raw: Value = std::fs::read_to_string(spec_path(&root, &a.id)).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null);
+        let amendments = amendment_chain(&raw);
+        for (f, recorded) in &spec.sealed {
+            let Some(anchor) = seal_anchor(&root, f) else { continue };
+            let current = std::fs::read(root.join(f)).ok().map(|b| sha256_hex(&b));
+            if matches!(judge_seal(f, Some(&anchor), &amendments, Some(recorded), current.as_deref()), SealVerdict::Rewritten | SealVerdict::BrokenChain(_)) {
+                println!(
+                    "  {} {f} was edited since it was first committed (at {}…), and no amendment records that: `hexa spec verify` will report this seal's chain broken. A test generated by `hexa spec tests` is sealed as first committed; commit a hand-written one at its final text in one commit before sealing",
+                    "!".yellow(),
+                    &anchor[..anchor.len().min(12)]
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn seal(adr: &str) -> anyhow::Result<()> {
     let root = std::env::current_dir()?;
     let a = find(&root, adr)?;
@@ -920,12 +1030,18 @@ fn seal_files_of(
 /// The bytes of `file` at `commit`, if that commit holds it.
 fn blob_at(root: &Path, commit: &str, file: &str) -> Option<Vec<u8>> {
     std::process::Command::new("git")
-        .args(["cat-file", "blob", &format!("{commit}:{file}")])
+        .args(["cat-file", "blob", &format!("{commit}:./{file}")])
         .current_dir(root)
         .output()
         .ok()
         .filter(|o| o.status.success())
         .map(|o| o.stdout)
+}
+
+/// The `to` of the last amendment recorded for `file`: the hash its seal had
+/// when it was last moved.
+fn chain_end(amendments: &[Value], file: &str) -> Option<String> {
+    amendments.iter().rev().find(|a| a["file"] == file).and_then(|a| a["to"].as_str()).map(str::to_string)
 }
 
 /// The sha256 a sealed file is anchored to (ADR-2611081151 §1, §2): its blob
@@ -961,6 +1077,321 @@ fn amendment_chain(raw: &Value) -> Vec<hexa_core::ports::spec::Amendment> {
             base_commit: s(e, "base_commit"),
         })
         .collect()
+}
+
+/// The spec's moves as the domain reads them, oldest first.
+fn move_chain(raw: &Value) -> Vec<hexa_core::ports::spec::Move> {
+    let s = |e: &Value, k: &str| e.get(k).and_then(Value::as_str).unwrap_or_default().to_string();
+    raw.get("moves")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|e| hexa_core::ports::spec::Move {
+            scenario: s(e, "scenario"),
+            from: s(e, "from"),
+            to: s(e, "to"),
+            by: s(e, "by"),
+            reason: s(e, "reason"),
+            at: s(e, "at"),
+            base_commit: s(e, "base_commit"),
+        })
+        .collect()
+}
+
+/// Every committed revision of one spec along the branch, oldest first:
+/// whether its acceptance holds, the spec, and the moves it records.
+///
+/// The branch is its first-parent line. History simplification would drop the
+/// line a merge did not take the spec from, and with it a binding nothing
+/// recorded leaving; flattening both sides of a merge would put their
+/// revisions in no true order. A side branch's changes show at its merge.
+struct History(Vec<(bool, Spec, Vec<hexa_core::ports::spec::Move>)>);
+
+impl History {
+    fn of(root: &Path, id: &str) -> History {
+        // Every home a spec may have: moving it between them keeps its past.
+        let homes: Vec<String> = spec_homes(root, id)
+            .iter()
+            .map(|p| p.strip_prefix(root).unwrap_or(p).to_string_lossy().replace('\\', "/"))
+            .collect();
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(root)
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        };
+        if git(&["rev-parse", "--is-shallow-repository"]).is_some_and(|s| s.trim() == "true") {
+            println!("  {} {id} shallow clone: bindings older than its history cannot be checked", "?".yellow());
+        }
+        let mut args = vec!["log", "--first-parent", "--reverse", "--format=%H", "--"];
+        args.extend(homes.iter().map(String::as_str));
+        History(
+            git(&args)
+                .unwrap_or_default()
+                .lines()
+                .filter_map(|rev| {
+                    let text = String::from_utf8(homes.iter().find_map(|rel| blob_at(root, rev, rel))?).ok()?;
+                    let spec = read_spec(&text).ok()?;
+                    let moves = serde_json::from_str::<Value>(&text).map(|v| move_chain(&v)).unwrap_or_default();
+                    Some((acceptance_holds(&spec).is_ok(), spec, moves))
+                })
+                .collect(),
+        )
+    }
+
+    /// `s`'s anchor (ADR-2611251652 §1), and the moves already recorded in the
+    /// revision it was taken from: those led to it, or to an older text's
+    /// anchor, and are not applied to it again.
+    fn anchor(&self, s: &hexa_core::ports::spec::Scenario) -> (Option<String>, Vec<hexa_core::ports::spec::Move>) {
+        let revisions: Vec<(bool, Spec)> = self.0.iter().map(|(h, spec, _)| (*h, spec.clone())).collect();
+        let mut spent = Vec::new();
+        for (_, spec, moves) in self.0.iter().rev().filter(|(holds, _, _)| *holds) {
+            let Some(then) = spec.specs.iter().find(|then| then.same_text(s)) else { break };
+            if then.test.is_some() {
+                spent = moves.clone();
+            }
+        }
+        (hexa_core::ports::spec::binding_anchor(s, &revisions), spent)
+    }
+}
+
+/// One scenario's binding against history and the recorded moves.
+struct Binding {
+    /// The ref the anchored chain reaches; `None` with no anchor, or when the
+    /// chain is broken.
+    reached: Option<String>,
+    /// What `verify` reports, when the binding does not hold.
+    problem: Option<String>,
+}
+
+fn binding(history: &History, moves: &[hexa_core::ports::spec::Move], s: &hexa_core::ports::spec::Scenario) -> Binding {
+    use hexa_core::ports::spec::{judge_binding, BindingVerdict};
+    let (anchor, spent) = history.anchor(s);
+    let Some(anchor) = anchor else { return Binding { reached: None, problem: None } };
+    let (at, live): (Vec<usize>, Vec<_>) =
+        moves.iter().enumerate().filter(|(_, m)| !spent.contains(m)).map(|(i, m)| (i, m.clone())).unzip();
+    // No ref is empty, so judging the empty one asks where the chain reaches.
+    let (reached, broken) = match judge_binding(&s.id, Some(&anchor), &live, Some("")) {
+        BindingVerdict::Moved { expected } => (Some(expected), None),
+        BindingVerdict::BrokenChain(i) => (None, Some(at[i])),
+        BindingVerdict::Holds => (None, None),
+    };
+    let problem = match (broken, s.test.as_deref()) {
+        (Some(i), held) => Some(format!(
+            "{} binding chain broken: move {i} does not continue from the ref history reaches (anchor {anchor}); the spec holds {}",
+            s.id,
+            held.unwrap_or("no test")
+        )),
+        (None, Some(held)) if reached.as_deref() != Some(held) => Some(format!(
+            "{} binding moved without a record: history expects {}, the spec holds {held}; record it with `hexa spec move`",
+            s.id,
+            reached.as_deref().unwrap_or("?")
+        )),
+        _ => None,
+    };
+    Binding { reached, problem }
+}
+
+/// Judge every scenario's binding (ADR-2611251652 §2), say how many moves the
+/// spec records, and return how many bindings do not hold.
+fn report_bindings(root: &Path, id: &str, spec: &Spec, raw: &Value, verbose: bool) -> usize {
+    let moves = move_chain(raw);
+    if !moves.is_empty() {
+        let n = moves.len();
+        println!("  {} {id} {n} move{}", "\u{25cb}".dimmed(), if n == 1 { "" } else { "s" });
+        if verbose {
+            for m in &moves {
+                println!("      {} {} → {} by {} at {}: {}", m.scenario, m.from, m.to, m.by, m.at, m.reason);
+            }
+        }
+    }
+    let history = History::of(root, id);
+    let mut failed = 0;
+    // A reviewed move's content must be in the new file's seal chain: else
+    // one version was shown and another committed (ADR-2611251652 §4).
+    let amendments = amendment_chain(raw);
+    for m in raw.get("moves").and_then(Value::as_array).into_iter().flatten() {
+        let (Some(reviewed), Some(to)) = (m["sha256"].as_str(), m["to"].as_str()) else { continue };
+        let Some(file) = parse_test_ref(to).map(|t| t.file) else { continue };
+        let Some(anchor) = seal_anchor(root, &file) else { continue };
+        if anchor != reviewed && !amendments.iter().any(|a| a.file == file && a.to == reviewed) {
+            println!(
+                "  {} {id} {} binding move to {to}: the content reviewed for it is not in {file}'s history",
+                "\u{2717}".red(),
+                m["scenario"].as_str().unwrap_or("?")
+            );
+            failed += 1;
+        }
+    }
+    for s in &spec.specs {
+        if let Some(problem) = binding(&history, &moves, s).problem {
+            println!("  {} {id} {problem}", "\u{2717}".red());
+            failed += 1;
+        }
+    }
+    failed
+}
+
+/// The ref each of `ids` is anchored to now, before a verb moves any of them.
+/// A binding that already does not hold is refused: a move recorded on top of
+/// it would hide it (ADR-2611251652 §3).
+fn bindings_before(root: &Path, id: &str, spec: &Spec, ids: &[String]) -> anyhow::Result<BTreeMap<String, String>> {
+    let raw: Value = serde_json::from_str(&std::fs::read_to_string(spec_path(root, id))?)?;
+    let (moves, history) = (move_chain(&raw), History::of(root, id));
+    let mut out = BTreeMap::new();
+    for s in spec.specs.iter().filter(|s| ids.contains(&s.id)) {
+        let b = binding(&history, &moves, s);
+        if let Some(problem) = b.problem {
+            anyhow::bail!("{id}: {problem}. Nothing was changed");
+        }
+        if let Some(reached) = b.reached {
+            out.insert(s.id.clone(), reached);
+        }
+    }
+    Ok(out)
+}
+
+fn git_head(root: &Path) -> String {
+    std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(root)
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default()
+}
+
+fn move_record(root: &Path, scenario: &str, from: &str, to: &str, by: &str, reason: &str) -> Value {
+    serde_json::json!({
+        "scenario": scenario,
+        "from": from,
+        "to": to,
+        "by": by,
+        "reason": reason,
+        "at": chrono::Utc::now().to_rfc3339(),
+        "base_commit": git_head(root),
+    })
+}
+
+/// One move for each anchored scenario whose ref `spec` changes.
+fn moves_made(root: &Path, spec: &Spec, before: &BTreeMap<String, String>, reason: &str) -> anyhow::Result<Vec<Value>> {
+    let by = git_user_or_env(None)?;
+    Ok(spec
+        .specs
+        .iter()
+        .filter_map(|s| {
+            let (from, to) = (before.get(&s.id)?, s.test.as_deref()?);
+            (from != to).then(|| move_record(root, &s.id, from, to, &by, reason))
+        })
+        .collect())
+}
+
+fn git_user_or_env(by: Option<&str>) -> anyhow::Result<String> {
+    acceptor(
+        by,
+        || {
+            let out = std::process::Command::new("git").args(["config", "user.name"]).output().ok()?;
+            Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+        },
+        || std::env::var("USER").ok(),
+    )
+}
+
+/// The newest committed version of `file`, if history holds one.
+fn last_version(root: &Path, file: &str) -> Option<Vec<u8>> {
+    let log = std::process::Command::new("git").args(["log", "--format=%H", "--", file]).current_dir(root).output().ok()?;
+    String::from_utf8_lossy(&log.stdout).lines().find_map(|rev| blob_at(root, rev, file))
+}
+
+/// `hexa spec move <ADR> --scenario <id>=<ref>` (ADR-2611251652 §4): the first
+/// call shows the diff, `--confirm` records the move.
+pub fn move_binding(adr: &str, scenario: &str, reason: &str, confirm: Option<&str>, by: Option<&str>) -> anyhow::Result<()> {
+    let root = std::env::current_dir()?;
+    let a = find(&root, adr)?;
+    let id = a.id.as_str();
+    if reason.trim().is_empty() {
+        anyhow::bail!("{id}: --reason is empty: say why the test binding moves");
+    }
+    let (read, mut spec) = load_text(&root, id)?.ok_or_else(|| anyhow::anyhow!("{id} has no spec"))?;
+    if let Err(why) = acceptance_holds(&spec) {
+        anyhow::bail!("{id}: {why}. A move is recorded against an accepted spec");
+    }
+    let (sid, to) = scenario
+        .split_once('=')
+        .map(|(a, b)| (a.trim(), b.trim()))
+        .ok_or_else(|| anyhow::anyhow!("{id}: --scenario {scenario}: expected <scenario>=<file>::<name>"))?;
+    let at = spec
+        .specs
+        .iter()
+        .position(|s| s.id == sid)
+        .ok_or_else(|| anyhow::anyhow!("{id}: {sid} is not a scenario of this spec"))?;
+    let parsed = parse_test_ref(to).ok_or_else(|| anyhow::anyhow!("{id}: {to} is not one test ref"))?;
+    let file = parsed.file.clone();
+    if !is_test_file(&file) {
+        anyhow::bail!("{id}: {file} is not a test file (ADR-2611191120 §8)");
+    }
+    let now = std::fs::read(root.join(&file)).map_err(|e| anyhow::anyhow!("{id}: {file}: {e}"))?;
+    let text = String::from_utf8_lossy(&now).into_owned();
+    let cfg = test_config(&root).map_err(|e| anyhow::anyhow!("{id}: {e}"))?;
+    let named = parsed.name.as_deref().map(|n| n.rsplit("::").next().unwrap_or(n));
+    // Rust is read, not planned: a plan needs a crate around the file, and
+    // the question here is only whether the file holds the test.
+    let missing = if file.ends_with(".rs") {
+        named.is_some_and(|n| !hexa_core::ports::spec::test_fns(&text).iter().any(|f| f == n))
+    } else {
+        matches!(plan_test(&root, to, &cfg, ""), Err(TestRun::NotFound(_)))
+    };
+    if missing {
+        anyhow::bail!("{id}: {to}: that test is not in {file}");
+    }
+    let raw: Value = serde_json::from_str(&read)?;
+    let b = binding(&History::of(&root, id), &move_chain(&raw), &spec.specs[at]);
+    let Some(from) = b.reached else {
+        match b.problem {
+            Some(problem) => anyhow::bail!("{id}: {problem}. Remove the record that breaks the chain first"),
+            None => anyhow::bail!("{id}: {sid} has no anchor in history, so there is no binding to move"),
+        }
+    };
+    if from == to {
+        anyhow::bail!("{id}: nothing to record: {sid}'s chain already reaches {to}");
+    }
+    let old_file = parse_test_ref(&from).map(|t| t.file).ok_or_else(|| anyhow::anyhow!("{id}: {from} is not one test ref"))?;
+    let old = last_version(&root, &old_file)
+        .ok_or_else(|| anyhow::anyhow!("{id}: {old_file} has no version in git history, so the move cannot be shown"))?;
+    let hash = sha256_hex(&now);
+    let Some(given) = confirm else {
+        println!("{} {id} {sid}: {from} → {to}", "\u{2b21} spec move".cyan().bold());
+        if old == now {
+            println!("  {old_file} at its last version and {file} have the same content.");
+        } else {
+            let diff = unified_diff(&file, &old, &now)?;
+            let hunks: Vec<&str> = diff.lines().skip(2).collect();
+            println!("--- {old_file} (last in history)\n+++ {file} (the move's target)\n{}", hunks.join("\n"));
+        }
+        println!("  The diff above and your reason are the review: this verb cannot tell whether a move weakened a test.");
+        println!("  To record it, as shown:\n\n    hexa spec move {id} --scenario {sid}={to} --reason {reason:?} --confirm {hash}\n");
+        return Ok(());
+    };
+    if !given.trim().eq_ignore_ascii_case(&hash) {
+        anyhow::bail!(
+            "{id}: --confirm {given} is not the sha256 of {file} as it is now, so it confirms content that was not shown. \
+             Run again without --confirm to see the diff of the file as it stands"
+        );
+    }
+    let by = git_user_or_env(by)?;
+    let mut record = move_record(&root, sid, &from, to, &by, reason);
+    // What was reviewed, which `verify` holds the new file's history to.
+    record["sha256"] = Value::String(hash.clone());
+    spec.specs[at].test = Some(to.to_string());
+    if std::fs::read_to_string(spec_path(&root, id)).ok().as_deref() != Some(read.as_str()) {
+        anyhow::bail!("{id}: the spec changed while the move was prepared; nothing was written");
+    }
+    write_records(&root, &spec, None, &[record])?;
+    println!("  {} {id} {sid} moved to {to} by {by}: {reason}", "\u{2713}".green());
+    Ok(())
 }
 
 /// Judge every sealed file of one spec against history (ADR-2611081151 §1,
@@ -1006,7 +1437,7 @@ fn report_seals(root: &Path, id: &str, raw: &Value, also: &[String], ci: bool) -
                 Some(_) => (format!("seal broken: {f} changed since sealing. A sealed test changes through the spec"), true),
             },
             SealVerdict::Unanchored => (
-                format!("seal unanchored: no commit in history holds {f}; re-anchor it with `hexa spec tests --red-at <commit>`"),
+                format!("seal unanchored: no commit in history holds {f}; commit it, so history can anchor the seal"),
                 ci,
             ),
         };
@@ -1049,6 +1480,9 @@ pub async fn verify(adr: Option<&str>, ci: bool, prove: bool, verbose: bool, loc
     // Each tested scenario: (ADR, scenario, ref, its plan or why it cannot run).
     let mut jobs: Vec<(String, String, String, Result<Planned, TestRun>)> = Vec::new();
     let mut to_prove: Vec<(Adr, Spec)> = Vec::new();
+    // Scenarios found, whatever became of them: the empty-run check is about
+    // finding none (ADR-2611230830 §2), not about how many ran.
+    let mut scenarios_found = 0usize;
     for a in &adrs {
         // The seals are judged from the raw record, so a spec this cannot
         // otherwise parse still guards its tests (ADR-2611081151 §1).
@@ -1070,6 +1504,7 @@ pub async fn verify(adr: Option<&str>, ci: bool, prove: bool, verbose: bool, loc
                 continue;
             }
         };
+        scenarios_found += spec.specs.len();
         let alt = is_alt(&text);
         if !print_coverage(a, &spec, alt) {
             fatal += 1;
@@ -1078,6 +1513,7 @@ pub async fn verify(adr: Option<&str>, ci: bool, prove: bool, verbose: bool, loc
             println!("  {} {} {}", "\u{2717}".red(), a.id, why);
             fatal += 1;
         }
+        fatal += report_bindings(&root, &a.id, &spec, raw.as_ref().unwrap_or(&Value::Null), verbose);
         let amended = amendments_of(&text);
         if !amended.is_empty() {
             let n = amended.len();
@@ -1172,6 +1608,12 @@ pub async fn verify(adr: Option<&str>, ci: bool, prove: bool, verbose: bool, loc
     }
     println!("\n  {passed} passed · {failed} failed · {unproven} not proven here · {pending} pending");
     let unproven_fails = if ci { unproven } else { 0 };
+    // A whole-repository --ci run that found no scenario checked nothing, and
+    // a vacuous gate is a failed gate (ADR-2611230830 §2). Said first, so the
+    // reason is the one a reader needs.
+    if ci && adr.is_none() && scenarios_found == 0 {
+        anyhow::bail!("`hexa spec verify --ci`: no spec holds a scenario, so nothing was checked");
+    }
     if failed + fatal + unproven_fails > 0 {
         anyhow::bail!("spec verification failed");
     }
@@ -1183,6 +1625,148 @@ pub async fn verify(adr: Option<&str>, ci: bool, prove: bool, verbose: bool, loc
             "spec verification proved nothing: 0 passed and {pending} pending. Generate the tests (`hexa spec tests <ADR> --crate <dir>`) before using this as a gate"
         );
     }
+    Ok(())
+}
+
+/// The commit that first added `file` to this branch's history: where its seal's
+/// chain is anchored (ADR-2611081151 §1).
+fn anchor_commit(root: &Path, file: &str) -> Option<String> {
+    let adds = std::process::Command::new("git")
+        .args(["log", "--diff-filter=A", "--format=%H", "--", file])
+        .current_dir(root)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())?;
+    String::from_utf8_lossy(&adds.stdout).lines().last().map(str::to_string)
+}
+
+/// `hexa spec amend <ADR> --file <f> --reason <why> --at <commit>…`: record steps
+/// of a sealed file's chain that went unrecorded (every move of a seal is an
+/// amendment, ADR-2611081151 §1, and a hexa verb or a test edited before it was
+/// sealed left some out). It adds no way to reach a new state: each step's hash
+/// is the file's blob at a named commit of this branch, the commits run oldest
+/// first from the anchor, and they must end at exactly the hash the chain already
+/// needs (where its first recorded amendment starts, else the recorded seal). The
+/// first call shows the diffs and writes nothing; `--confirm` with the digest it
+/// printed records them, before the amendments already there.
+pub fn amend_history(adr: &str, reason: &str, file: Option<&str>, at: &[String], confirm: Option<&str>, by: Option<&str>) -> anyhow::Result<()> {
+    let root = std::env::current_dir()?;
+    let a = find(&root, adr)?;
+    let id = a.id.as_str();
+    if reason.trim().is_empty() {
+        anyhow::bail!("{id}: --reason is empty: say why these steps were not recorded when they happened");
+    }
+    let Some(file) = file.map(|f| f.trim_start_matches("./")) else {
+        anyhow::bail!("{id}: --file <path> is required with --at: steps are recorded for one sealed file at a time");
+    };
+    let (text, spec) = load_text(&root, id)?.ok_or_else(|| anyhow::anyhow!("{id} has no spec to amend"))?;
+    if let Err(why) = acceptance_holds(&spec) {
+        anyhow::bail!("{id}: {why}. Steps are recorded against an accepted spec");
+    }
+    let Some(recorded) = spec.sealed.get(file).cloned() else {
+        let all: Vec<&str> = spec.sealed.keys().map(String::as_str).collect();
+        anyhow::bail!("{id}: {file} is not a sealed file of this spec (sealed: {})", all.join(", "));
+    };
+    if !is_test_file(file) {
+        anyhow::bail!("{id}: {file} is not a test file (ADR-2611191120 §8)");
+    }
+    let git = |args: &[&str]| -> Option<String> {
+        let o = std::process::Command::new("git").args(args).current_dir(&root).output().ok()?;
+        o.status.success().then(|| String::from_utf8_lossy(&o.stdout).trim().to_string())
+    };
+    let Some(anchor_at) = anchor_commit(&root, file) else {
+        anyhow::bail!("{id}: no commit in history holds {file}, so its chain has no anchor to continue from: commit it first");
+    };
+    let Some(anchor_bytes) = blob_at(&root, &anchor_at, file) else {
+        anyhow::bail!("{id}: {file} has no version at its anchor {anchor_at}");
+    };
+    let anchor = sha256_hex(&anchor_bytes);
+    let mut amended = amendments_of(&text);
+    // Where the recorded chain has to be reached: the hash its first amendment starts from.
+    let first_existing = amended.iter().position(|m| m["file"] == file);
+    let target = match first_existing {
+        Some(i) => amended[i]["from"].as_str().unwrap_or_default().to_string(),
+        None => recorded.clone(),
+    };
+
+    // The commits: real, on this branch, oldest first, none before the anchor.
+    let mut steps: Vec<(String, String, Vec<u8>)> = Vec::new(); // (commit, hash, bytes)
+    let mut earlier = anchor_at.clone();
+    for c in at {
+        let sha = git(&["rev-parse", "--verify", "--quiet", &format!("{c}^{{commit}}")]).ok_or_else(|| anyhow::anyhow!("{id}: {c} is not a commit"))?;
+        if git(&["merge-base", "--is-ancestor", &sha, "HEAD"]).is_none() {
+            anyhow::bail!("{id}: {c} is not an ancestor of HEAD: a step is recorded from this branch's history");
+        }
+        if git(&["merge-base", "--is-ancestor", &earlier, &sha]).is_none() {
+            anyhow::bail!("{id}: {c} is not after the previous commit (or the anchor {}): name the commits oldest first", &anchor_at[..anchor_at.len().min(8)]);
+        }
+        let bytes = blob_at(&root, &sha, file).ok_or_else(|| anyhow::anyhow!("{id}: {file} does not exist at {c}"))?;
+        steps.push((sha.clone(), sha256_hex(&bytes), bytes));
+        earlier = sha;
+    }
+    // Only the steps that change the file are steps.
+    let mut hops: Vec<(String, String, String, Vec<u8>, Vec<u8>)> = Vec::new(); // (commit, from, to, old, new)
+    let (mut cur, mut cur_bytes) = (anchor.clone(), anchor_bytes);
+    for (sha, h, bytes) in &steps {
+        if *h != cur {
+            hops.push((sha.clone(), cur.clone(), h.clone(), cur_bytes.clone(), bytes.clone()));
+            cur = h.clone();
+            cur_bytes = bytes.clone();
+        }
+    }
+    if cur != target {
+        anyhow::bail!(
+            "{id}: these commits do not reach where the chain needs to: they end at {}…, and {file}'s record needs {}… ({}). Name the commit at which the file had that hash as the last --at",
+            &cur[..cur.len().min(12)],
+            &target[..target.len().min(12)],
+            if first_existing.is_some() { "where its first recorded amendment starts" } else { "its recorded seal" }
+        );
+    }
+    if hops.is_empty() {
+        anyhow::bail!("{id}: nothing to record: {file}'s chain already starts at its anchor and reaches {}…", &target[..target.len().min(12)]);
+    }
+    // One digest over the steps as shown, so --confirm confirms exactly these.
+    let digest = sha256_hex(hops.iter().map(|h| format!("{}>{}@{}\n", h.1, h.2, h.0)).collect::<String>().as_bytes());
+    let Some(given) = confirm else {
+        println!("{} {id} {file}: {} unrecorded step(s) from its anchor", "\u{2b21} spec amend --at".cyan().bold(), hops.len());
+        for (i, (sha, from, to, old, new)) in hops.iter().enumerate() {
+            println!("\nstep {} at {}: {}… → {}…", i + 1, &sha[..sha.len().min(10)], &from[..from.len().min(12)], &to[..to.len().min(12)]);
+            let diff = unified_diff(file, old, new)?;
+            let hunks: Vec<&str> = diff.lines().skip(2).collect();
+            println!("{}", hunks.join("\n"));
+        }
+        println!("\n  The diffs above and your reason are the review: this verb cannot tell whether a step weakened a test. It records steps history already holds and reaches no state the record did not already need.");
+        let ats: String = at.iter().map(|c| format!(" --at {c}")).collect();
+        println!("  To record them, as shown:\n\n    hexa spec amend {id} --file {file} --reason {reason:?}{ats} --confirm {digest}\n");
+        return Ok(());
+    };
+    if !given.trim().eq_ignore_ascii_case(&digest) {
+        anyhow::bail!("{id}: --confirm {given} is not the digest of the steps as they stand, so it confirms steps that were not shown. Run again without --confirm to see them");
+    }
+    let by = git_user_or_env(by)?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let records: Vec<Value> = hops
+        .iter()
+        .map(|(sha, from, to, _, _)| {
+            serde_json::json!({
+                "file": file,
+                "from": from,
+                "to": to,
+                "by": by,
+                "reason": format!("recorded from history (the step went unrecorded when it happened): {reason}"),
+                "at": now,
+                "base_commit": sha,
+            })
+        })
+        .collect();
+    // Before the amendments already there: they continue from where these end.
+    let at_index = first_existing.unwrap_or(amended.len());
+    for (k, r) in records.into_iter().enumerate() {
+        amended.insert(at_index + k, r);
+    }
+    write_records(&root, &spec, Some(&amended), &[])?;
+    println!("  {} {id} {file}: {} step(s) recorded by {by}, oldest first, before any amendment already there", "\u{2713}".green(), hops.len());
+    println!("\n  Commit {}.", spec_rel(&root, id));
     Ok(())
 }
 
@@ -1535,6 +2119,8 @@ pub async fn red(adr: &str, commit: &str, tests: &[String], local: bool) -> anyh
 
     // What is checked: each scenario named, with the test it is bound to.
     let mut targets: Vec<(String, String, bool)> = Vec::new();
+    let history = History::of(&root, id);
+    let moves = serde_json::from_str::<Value>(&read).map(|v| move_chain(&v)).unwrap_or_default();
     for t in tests {
         let (sid, r) = t
             .split_once('=')
@@ -1545,6 +2131,13 @@ pub async fn red(adr: &str, commit: &str, tests: &[String], local: bool) -> anyh
             .iter()
             .find(|s| s.id == sid)
             .ok_or_else(|| anyhow::anyhow!("{id}: {sid} is not a scenario of this spec"))?;
+        // A binding history anchors moves only by a record (ADR-2611251652 §3).
+        if let Some(anchored) = binding(&history, &moves, s).reached.filter(|anchored| anchored != r) {
+            anyhow::bail!(
+                "{id}: {sid} is anchored to {anchored} in history; `spec red` does not move it to {r}. \
+                 Record the move with `hexa spec move {id} --scenario {sid}={r} --reason \"<why>\"`"
+            );
+        }
         if let Some(have) = &s.test {
             anyhow::bail!(
                 "{id}: {sid} already has its test, {have}. A scenario's test changes through the spec: a person \

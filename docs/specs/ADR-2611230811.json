@@ -1,0 +1,211 @@
+{
+  "adr": "ADR-2611230811",
+  "feature": "Default domain policy denies Python standard-library I/O",
+  "description": "The domain import policy `hexa init` scaffolds denies Python's standard-library I/O modules, as it already does for Rust, TypeScript and Go, and still allows pure modules.",
+  "universal": [
+    "§1",
+    "§2",
+    "§3"
+  ],
+  "accepted": {
+    "by": "craigjohnson",
+    "sha256": "9e3b017f4a389ebca0057455eb74899560372c2f018d8e0fd897f4fb471abc16"
+  },
+  "sealed": {
+    "hexa-analysis/tests/adr_2611230811_spec.rs": "b65bbf80865058759f77d9c14694f76dd36cbb4d364846c40c8d9c3b4d06fbf4"
+  },
+  "red": "e6ae250",
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A Python domain module importing subprocess is denied by the scaffolded policy",
+      "given": "A project whose rules file is the template `hexa init` writes, and a Python file in the domain layer",
+      "when": "The file imports `subprocess` and the policy `domain-imports-only-what-it-is-allowed` judges that standard-library import",
+      "then": "The verdict is a denial naming the `subprocess` entry, and the grade no longer holds",
+      "test": "hexa-analysis/tests/adr_2611230811_spec.rs::part_1::s01_subprocess_is_denied_by_its_entry"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "Each newly listed Python module appears under a `# Python` heading in the template's deny list",
+      "given": "The scaffolded `ADR-rules.toml` template",
+      "when": "Its `domain-imports-only-what-it-is-allowed` policy is read",
+      "then": "Its deny list contains `subprocess`, `socket`, `shutil`, `tempfile`, `glob`, `sqlite3`, `urllib.request`, `ftplib`, `smtplib`, `poplib`, `imaplib`, `ssl`, `signal`, `multiprocessing`, `ctypes` and `importlib`, placed under a `# Python` comment heading",
+      "test": "hexa-analysis/tests/adr_2611230811_spec.rs::part_1::s02_python_modules_listed_under_python_heading"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A submodule of a listed module is denied on the `.` boundary",
+      "given": "The scaffolded policy and a Python domain file",
+      "when": "The file imports `multiprocessing.pool`, `importlib.util` or `urllib.request` itself",
+      "then": "Each import is denied, because each is the listed module or lies below it on a `.` boundary",
+      "test": "hexa-analysis/tests/adr_2611230811_spec.rs::part_1::s03_submodules_are_denied"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "`os` and `http` already listed for other languages deny Python's os and http modules",
+      "given": "The scaffolded policy and a Python domain file",
+      "when": "The file imports `os.path` or `http.client`",
+      "then": "Each import is denied by the existing `os` or `http` entry",
+      "test": "hexa-analysis/tests/adr_2611230811_spec.rs::part_1::s04_os_and_http_deny_python_modules"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "`os` and `http` are not listed a second time for Python",
+      "given": "The scaffolded `ADR-rules.toml` template",
+      "when": "The entries in its deny list are counted",
+      "then": "`os` appears exactly once and `http` appears exactly once; the `# Python` section does not repeat either",
+      "test": "hexa-analysis/tests/adr_2611230811_spec.rs::part_1::s05_os_and_http_listed_once"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A module that only shares a prefix with a listed name is not denied",
+      "given": "The scaffolded policy and a Python domain file",
+      "when": "The file imports a standard-library-origin name such as `signals` or `globals_helper` that is not `signal`/`glob` nor below them on a `.` boundary",
+      "then": "The import is not denied by the `signal` or `glob` entries",
+      "test": "hexa-analysis/tests/adr_2611230811_spec.rs::part_1::s06_prefix_sharing_names_not_denied"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A listed Python I/O import in a domain file never passes",
+      "given": "The scaffolded policy and a Python domain file importing `socket`",
+      "when": "The policy judges the import",
+      "then": "The verdict is not a pass",
+      "test": "hexa-analysis/tests/adr_2611230811_spec.rs::part_1::s07_socket_never_passes"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§1"
+      ],
+      "kind": "property",
+      "description": "Every listed Python module and every module below it is denied",
+      "given": "The scaffolded policy, any module M from {subprocess, socket, shutil, tempfile, glob, sqlite3, urllib.request, ftplib, smtplib, poplib, imaplib, ssl, signal, multiprocessing, ctypes, importlib, os, http}, and any suffix S of `.`-separated identifiers (possibly empty)",
+      "when": "A Python domain file imports `M` or `M.S` from the standard library",
+      "then": "The policy denies the import",
+      "test": "hexa-analysis/tests/adr_2611230811_spec.rs::part_1::s08_every_listed_module_and_below_denied"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "Pure standard-library modules pass in the domain",
+      "given": "The scaffolded policy and a Python domain file",
+      "when": "The file imports `pathlib`, `json`, `datetime`, `dataclasses`, `typing`, `enum`, `decimal`, `re` and `io`",
+      "then": "Every import passes the policy",
+      "test": "hexa-analysis/tests/adr_2611230811_spec.rs::part_1::s09_pure_modules_pass"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "`urllib.parse` passes although `urllib.request` is denied",
+      "given": "The scaffolded policy and a Python domain file",
+      "when": "The file imports `urllib.parse`",
+      "then": "The import passes; only `urllib.request` and what lies below it is denied",
+      "test": "hexa-analysis/tests/adr_2611230811_spec.rs::part_1::s10_urllib_parse_passes"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "The template does not list pure modules, nor `urllib` as a whole",
+      "given": "The scaffolded `ADR-rules.toml` template",
+      "when": "Its deny list is read",
+      "then": "It contains none of `pathlib`, `io`, `urllib`, `urllib.parse`, `json`, `datetime`, `dataclasses`, `typing`, `enum`, `decimal` or `re`",
+      "test": "hexa-analysis/tests/adr_2611230811_spec.rs::part_2::s11_template_does_not_list_pure_modules_nor_urllib"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§2"
+      ],
+      "kind": "property",
+      "description": "A standard-library import no deny entry covers always passes",
+      "given": "The scaffolded policy and any Python standard-library module name N that is neither a listed entry nor below one on a `.` boundary",
+      "when": "A Python domain file imports N",
+      "then": "The import passes the policy",
+      "test": "hexa-analysis/tests/adr_2611230811_spec.rs::part_2::s12_uncovered_stdlib_import_passes"
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "Rust, TypeScript and Go entries are unchanged",
+      "given": "The scaffolded template before and after this ADR",
+      "when": "The deny entries outside the `# Python` section are compared",
+      "then": "They are the same entries as before, and a Rust domain file importing `std::fs` or a Go domain file importing `os/exec` is judged exactly as before",
+      "test": "hexa-analysis/tests/adr_2611230811_spec.rs::part_2::s13_other_language_entries_unchanged"
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "Third-party Python packages are not denied by default",
+      "given": "The scaffolded policy and a Python domain file",
+      "when": "The file imports a third-party package such as `requests` or `sqlalchemy`",
+      "then": "No entry added by this ADR denies it; the template's deny list names no third-party package",
+      "test": "hexa-analysis/tests/adr_2611230811_spec.rs::part_2::s14_third_party_packages_not_denied"
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "An existing project's rules file is not rewritten",
+      "given": "A Python project whose rules file was written before this ADR, with a deny list lacking `subprocess`",
+      "when": "The project is analyzed after this change",
+      "then": "Its own deny list is used unchanged, so a domain import of `subprocess` is not denied by it, and the file is not modified"
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§3"
+      ],
+      "kind": "property",
+      "description": "The change only adds Python standard-library entries",
+      "given": "The deny list of the template before this ADR (B) and after (A)",
+      "when": "A is compared with B",
+      "then": "B is a subset of A, and every entry in A not in B is one of the sixteen Python standard-library modules §1 names",
+      "test": "hexa-analysis/tests/adr_2611230811_spec.rs::part_2::s16_change_only_adds_python_stdlib_entries"
+    }
+  ]
+}

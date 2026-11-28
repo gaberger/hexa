@@ -1,0 +1,263 @@
+{
+  "adr": "ADR-2611230900",
+  "feature": "Import policy covers files declared in its layer",
+  "description": "A [[import_policy]] whose layer names a hex layer also judges every file analyze.layers declares in that layer, and nothing else changes.",
+  "universal": [
+    "§1",
+    "§2",
+    "§3",
+    "§4"
+  ],
+  "accepted": {
+    "by": "craigjohnson",
+    "sha256": "0c92ad283280fb6d3d7e6b663872831c5595ff7bd9a7f193bdb3791ad89ef346"
+  },
+  "sealed": {
+    "hexa-cli/tests/adr_2611230900_spec.rs": "a09885c745f3bdb33ef368c31fa9aac50ddc07e5a39267a851152ee193037150"
+  },
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A Go file declared domain by analyze.layers is held to the domain policy",
+      "given": "A Go project whose .hexa/project.json has analyze.layers {\"perfpayload\": \"domain\"}, and a rules file with an [[import_policy]] layer = \"/domain/\" whose deny list includes \"os/exec\" at severity \"error\". domain/access_control.go and perfpayload/encode.go each contain `import _ \"os/exec\"`",
+      "when": "hexa analyze runs on the project",
+      "then": "The policy reports one finding in domain/access_control.go and one in perfpayload/encode.go, each naming \"os/exec\" at its line",
+      "test": "hexa-cli/tests/adr_2611230900_spec.rs::part_1::s01_go_file_declared_domain_is_held_to_domain_policy",
+      "red": "0ab2027"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A Python domain declared only by map is checked by the domain policy",
+      "given": "A Python project with analyze.layers {\"sdk/core\": \"domain\"} and no folder named domain. The domain [[import_policy]] (layer \"/domain/\") denies os, ssl and subprocess at severity error. sdk/core/client.py imports os, ssl and subprocess",
+      "when": "hexa analyze runs",
+      "then": "Three error findings are reported for sdk/core/client.py, and the health score is 30 points lower than for the same tree with those three imports removed",
+      "test": "hexa-cli/tests/adr_2611230900_spec.rs::part_1::s02_python_domain_declared_by_map_is_checked",
+      "red": "0ab2027"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A layer name with a slash in it, written with or without surrounding slashes, picks up its declared files",
+      "given": "analyze.layers {\"src/db\": \"adapters/secondary\"}, and an [[import_policy]] with layer \"adapters/secondary/\" that denies \"net/http\". src/db/store.go imports \"net/http\"",
+      "when": "hexa analyze runs",
+      "then": "A finding is reported for src/db/store.go. The same finding is reported when the policy's layer is written \"/adapters/secondary\" or \"adapters/secondary\"",
+      "test": "hexa-cli/tests/adr_2611230900_spec.rs::part_1::s03_slashed_layer_name_picks_up_declared_files",
+      "red": "0ab2027"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A key naming a source file also covers its module",
+      "given": "analyze.layers {\"src/model.py\": \"domain\"}, and a domain policy (layer \"/domain/\") denying subprocess. src/model/history.py imports subprocess",
+      "when": "hexa analyze runs",
+      "then": "A finding is reported for src/model/history.py",
+      "test": "hexa-cli/tests/adr_2611230900_spec.rs::part_1::s04_source_file_key_covers_its_module",
+      "red": "0ab2027"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A file declared in a different layer is not added to the policy",
+      "given": "analyze.layers {\"src/http\": \"adapters/primary\"}, and a domain policy (layer \"/domain/\") denying os. src/http/server.py imports os, and no segment of its path is \"domain\"",
+      "when": "hexa analyze runs",
+      "then": "The domain policy reports nothing for src/http/server.py",
+      "test": "hexa-cli/tests/adr_2611230900_spec.rs::part_1::s05_file_declared_in_other_layer_is_not_added",
+      "red": "0ab2027"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A policy layer that only contains a layer name, without being exactly one, adds no declared files",
+      "given": "analyze.layers {\"perfpayload\": \"domain\"}, and an [[import_policy]] with layer \"/domain/models/\" that denies \"os/exec\". perfpayload/encode.go imports \"os/exec\"",
+      "when": "hexa analyze runs",
+      "then": "That policy reports nothing for perfpayload/encode.go",
+      "test": "hexa-cli/tests/adr_2611230900_spec.rs::part_1::s06_policy_layer_containing_layer_name_adds_nothing",
+      "red": "0ab2027"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§1"
+      ],
+      "kind": "property",
+      "description": "Every declared file is in scope of the policy for its declared layer",
+      "given": "Any project and any analyze.layers map, and any policy whose layer, with its leading and trailing '/' trimmed, equals a layer name L",
+      "when": "hexa analyze runs",
+      "then": "The set of files the policy judges is the files its path matches, together with every file an analyze.layers key assigns to L, less the files §3 excludes. The policy judges no file outside that set",
+      "test": "hexa-cli/tests/adr_2611230900_spec.rs::part_1::s07_declared_files_are_in_scope_of_their_layer_policy",
+      "red": "0ab2027"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "Without analyze.layers, a policy judges exactly the files its path matches",
+      "given": "A project with no analyze.layers in .hexa/project.json. A domain policy denies std::fs. src/domain/a.rs uses std::fs, and src/core/b.rs uses std::fs",
+      "when": "hexa analyze runs",
+      "then": "The findings are the same as before this ADR: one for src/domain/a.rs and none for src/core/b.rs",
+      "test": "hexa-cli/tests/adr_2611230900_spec.rs::part_1::s08_without_layers_policy_is_path_only",
+      "red": "0ab2027"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "A crate named for its layer adds nothing to the policy",
+      "given": "No analyze.layers. A crate directory app-domain/ whose files the built-in classification grades as domain, though no path segment is \"domain\". A domain policy (layer \"/domain/\") denies std::fs, and app-domain/src/lib.rs uses std::fs",
+      "when": "hexa analyze runs",
+      "then": "The domain policy reports nothing for app-domain/src/lib.rs",
+      "test": "hexa-cli/tests/adr_2611230900_spec.rs::part_1::s09_crate_named_for_layer_adds_nothing",
+      "red": "0ab2027"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "A key covers whole path segments only",
+      "given": "analyze.layers {\"src/core\": \"domain\"}, and a domain policy denying os. src/core_utils/io.py imports os",
+      "when": "hexa analyze runs",
+      "then": "The domain policy reports nothing for src/core_utils/io.py",
+      "test": "hexa-cli/tests/adr_2611230900_spec.rs::part_1::s10_key_covers_whole_segments_only",
+      "red": "0ab2027"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§2"
+      ],
+      "kind": "property",
+      "description": "No declaration, no change",
+      "given": "Any project with no analyze.layers, and any set of import policies",
+      "when": "hexa analyze runs",
+      "then": "Every import-policy finding, and the grade, are identical to what path matching alone produces",
+      "test": "hexa-cli/tests/adr_2611230900_spec.rs::part_2::s11_no_declaration_no_change",
+      "red": "0ab2027"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "A file matched by path and also declared is judged once",
+      "given": "analyze.layers {\"src/domain\": \"domain\"}, and a domain policy (layer \"/domain/\") denying os at severity error. src/domain/x.py imports os once",
+      "when": "hexa analyze runs",
+      "then": "Exactly one finding is reported for that import, and the score falls by 10 points, not 20",
+      "test": "hexa-cli/tests/adr_2611230900_spec.rs::part_2::s12_path_matched_and_declared_is_judged_once",
+      "red": "0ab2027"
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "Allow and severity apply to declared files as written",
+      "given": "analyze.layers {\"pkg/model\": \"domain\"}. A domain policy allows only \"fmt\" and is at severity \"warning\". pkg/model/a.go imports \"fmt\" and \"net\"",
+      "when": "hexa analyze runs",
+      "then": "There is no finding for \"fmt\". There is one warning for \"net\", and the health score is unchanged by it",
+      "test": "hexa-cli/tests/adr_2611230900_spec.rs::part_2::s13_allow_and_severity_apply_to_declared_files",
+      "red": "0ab2027"
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "A declared file under top-level tests/ stays out of scope",
+      "given": "analyze.layers {\"tests/fixtures\": \"domain\"}, and a domain policy denying subprocess. tests/fixtures/run.py imports subprocess. The same holds for benches/ and examples/",
+      "when": "hexa analyze runs",
+      "then": "The domain policy reports nothing for files under the top-level tests/, benches/ or examples/",
+      "test": "hexa-cli/tests/adr_2611230900_spec.rs::part_2::s14_declared_file_under_top_level_tests_stays_out_of_scope",
+      "red": "0ab2027"
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§3"
+      ],
+      "kind": "property",
+      "description": "Each import is judged at most once per policy",
+      "given": "Any project, any policy, and any file that is both path-matched and declared in the policy's layer",
+      "when": "hexa analyze runs",
+      "then": "Each import or reference in that file yields at most one finding from that policy. No file under a top-level tests/, benches/ or examples/ yields any",
+      "test": "hexa-cli/tests/adr_2611230900_spec.rs::part_2::s15_each_import_judged_at_most_once_per_policy",
+      "red": "0ab2027"
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "A path policy that names no layer stays path-only",
+      "given": "analyze.layers {\"netbox_plugin/utilities\": \"domain\", \"netbox_plugin/core\": \"domain\"}, and a policy with layer \"netbox_plugin/utilities\" that denies requests. netbox_plugin/utilities/a.py and netbox_plugin/core/b.py both import requests",
+      "when": "hexa analyze runs",
+      "then": "That policy reports a.py and does not report b.py",
+      "test": "hexa-cli/tests/adr_2611230900_spec.rs::part_2::s16_path_policy_naming_no_layer_stays_path_only",
+      "red": "0ab2027"
+    },
+    {
+      "id": "S17",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "Boundary rules and the grade formula do not change",
+      "given": "A project whose boundary violations, cycles, dead exports and unused ports are known, and with no policy whose layer names a layer",
+      "when": "hexa analyze runs before and after this change",
+      "then": "The boundary violations and every other rule kind's findings are identical, and the health score is identical"
+    },
+    {
+      "id": "S18",
+      "decision": [
+        "§4"
+      ],
+      "kind": "property",
+      "description": "Non-layer policies are unaffected by any analyze.layers map",
+      "given": "Any project, any analyze.layers map, and any policy whose trimmed layer is not a layer name",
+      "when": "hexa analyze runs",
+      "then": "The policy's findings equal those produced by path matching alone. Every non-policy finding is the same as when the policy is judged by path alone",
+      "test": "hexa-cli/tests/adr_2611230900_spec.rs::part_2::s18_non_layer_policies_unaffected_by_layers_map",
+      "red": "0ab2027"
+    }
+  ],
+  "amendments": [
+    {
+      "at": "2026-11-23T15:59:20.447678037+00:00",
+      "base_commit": "0ab20276be2e5e880257c035afb51d2918a55284",
+      "by": "Claude Code agent",
+      "file": "hexa-cli/tests/adr_2611230900_spec.rs",
+      "from": "9deaaac6176ef68f657ac0413cf7e741f14d0f81082c1e301e6854e384f9e1ad",
+      "reason": "Fixture defects, plus one corrected example: the rules were written to .hexa/rules.toml, which hexa never reads (it reads .hexa/ADR-rules.toml), and each [[import_policy]] lacked the required adr, id and message fields, so no policy ran and the control cases failed too; S13 used the standard-library net as the import the allow list omits, but the standard library is permitted unless denied (before and after this ADR), so it now uses an external import, example.com/ext, which keeps S13's point (allow and severity apply to declared files). Without the fix 9 fail and 8 guards pass; with it 17 pass",
+      "to": "a09885c745f3bdb33ef368c31fa9aac50ddc07e5a39267a851152ee193037150"
+    }
+  ]
+}

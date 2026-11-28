@@ -765,8 +765,8 @@ fn strip_test_modules(text: &str) -> String {
             continue;
         }
         if in_test {
-            depth += line.matches('{').count() as i32;
-            depth -= line.matches('}').count() as i32;
+            depth += i32::try_from(line.matches('{').count()).unwrap_or(i32::MAX);
+            depth -= i32::try_from(line.matches('}').count()).unwrap_or(i32::MAX);
             out.push('\n');
             if depth <= 0 && line.contains('}') {
                 in_test = false;

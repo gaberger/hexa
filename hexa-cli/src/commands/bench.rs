@@ -107,6 +107,10 @@ async fn agentic(
         println!("{} no fixtures matched in {}", "⬡ bench:".yellow(), corpus);
         return Ok(());
     }
+    // ADR-2611221646 §2: every evidence program must resolve before anything runs.
+    if let Some(refusal) = missing_evidence_programs(&fixtures) {
+        anyhow::bail!("{refusal}");
+    }
 
     println!(
         "{} {} fixture(s) × arms [{}] · model {} · isolation: worktree",
@@ -300,6 +304,119 @@ fn print_vector(results: &[ArmResult]) {
             mark, r.id, r.tier, r.arm, yn(r.did_edit), r.failure_reason, r.wall_ms, r.attempts
         );
     }
+}
+
+/// Shell builtins and keywords: always present, never looked up on `PATH`.
+const SHELL_BUILTINS: &[&str] = &[
+    ":", ".", "[", "[[", "]]", "alias", "break", "builtin", "case", "cd", "command", "continue", "declare", "done",
+    "echo", "esac", "eval", "exec", "exit", "export", "false", "fi", "getopts", "hash", "local", "printf", "pushd",
+    "popd", "pwd", "read", "readonly", "return", "set", "shift", "source", "test", "trap", "true", "type", "ulimit",
+    "umask", "unalias", "unset", "wait", "{", "}", ")",
+];
+
+/// Words that start a command without being one: the program follows them.
+const SHELL_PREFIXES: &[&str] = &["if", "then", "else", "elif", "while", "until", "do", "!", "time"];
+
+/// A leading `NAME=value` assignment: an identifier, then `=`.
+fn is_assignment(word: &str) -> bool {
+    match word.split_once('=') {
+        Some((name, _)) => {
+            !name.is_empty()
+                && !name.starts_with(|c: char| c.is_ascii_digit())
+                && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        }
+        None => false,
+    }
+}
+
+/// A redirection word such as `2>/dev/null`, `>out` or `<in`: not a program.
+fn is_redirection(word: &str) -> bool {
+    word.trim_start_matches(|c: char| c.is_ascii_digit()).starts_with(['>', '<'])
+}
+
+/// The commands of a shell line, split at `&&`, `||`, `;`, `|`, `&` and
+/// newlines outside quotes. The `&` of a redirection (`2>&1`, `&>`) is not a
+/// separator.
+fn command_segments(command: &str) -> Vec<&str> {
+    let bytes = command.as_bytes();
+    let mut segments = Vec::new();
+    let mut start = 0;
+    let mut quote: Option<u8> = None;
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        match quote {
+            Some(q) if b == q => quote = None,
+            Some(_) => {}
+            None => match b {
+                b'\'' | b'"' => quote = Some(b),
+                b'\\' => i += 1,
+                b'&' if (i > 0 && matches!(bytes[i - 1], b'>' | b'<')) || bytes.get(i + 1) == Some(&b'>') => {}
+                b'&' | b'|' | b';' | b'\n' => {
+                    segments.push(&command[start..i]);
+                    start = i + 1;
+                }
+                _ => {}
+            },
+        }
+        i += 1;
+    }
+    segments.push(&command[start.min(command.len())..]);
+    segments
+}
+
+/// Every program an evidence command runs: in each command between `&&`,
+/// `||`, `;` and `|`, its first word after any leading `NAME=value`
+/// assignments. Shell builtins are left out; they are always present.
+fn evidence_programs(command: &str) -> Vec<&str> {
+    let mut programs = Vec::new();
+    for segment in command_segments(command) {
+        let program = segment
+            .split_whitespace()
+            .map(|w| w.trim_start_matches(['(', '{']))
+            .filter(|w| !w.is_empty())
+            .find(|w| !is_assignment(w) && !is_redirection(w) && !SHELL_PREFIXES.contains(w));
+        if let Some(p) = program {
+            if !SHELL_BUILTINS.contains(&p) && !programs.contains(&p) {
+                programs.push(p);
+            }
+        }
+    }
+    programs
+}
+
+/// Whether `program` can be run: a path that exists, or a name found on `PATH`.
+fn program_resolves(program: &str) -> bool {
+    if program.contains('/') {
+        return Path::new(program).is_file();
+    }
+    std::env::var_os("PATH")
+        .map(|paths| std::env::split_paths(&paths).any(|d| d.join(program).is_file()))
+        .unwrap_or(false)
+}
+
+/// The refusal when a selected fixture's evidence program is not on `PATH`
+/// (ADR-2611221646 §2): each missing program with the fixtures that need it.
+fn missing_evidence_programs(fixtures: &[Fixture]) -> Option<String> {
+    let mut missing: BTreeMap<String, Vec<&str>> = BTreeMap::new();
+    for fx in fixtures {
+        for program in evidence_programs(&fx.oracle.command) {
+            if !program_resolves(program) {
+                missing.entry(program.to_string()).or_default().push(&fx.id);
+            }
+        }
+    }
+    if missing.is_empty() {
+        return None;
+    }
+    let lines: Vec<String> = missing
+        .iter()
+        .map(|(program, ids)| format!("  {program} (needed by {})", ids.join(", ")))
+        .collect();
+    Some(format!(
+        "bench refused: evidence program(s) not found on PATH, so no fixture was run:\n{}",
+        lines.join("\n")
+    ))
 }
 
 fn load_fixtures(dir: &str, filter: Option<&str>, include_draft: bool) -> anyhow::Result<Vec<Fixture>> {

@@ -425,9 +425,23 @@ fn collect(command: &str, cwd: &Path, read_script: &dyn Fn(&Path) -> Option<Stri
                 }
             }
             p if is_python(p) || matches!(p, "node" | "nodejs" | "bun" | "deno" | "ruby") => {
-                if let Some((code, argv)) = interpreter_code(p, args, &simple.stdin_text, &cwd, read_script) {
+                if let Some((code, argv, script)) = interpreter_code(p, args, &simple.stdin_text, &cwd, read_script) {
+                    // A script that reads its arguments and was handed an absolute
+                    // directory joins its own relative names onto it
+                    // (`root = Path(sys.argv[1])`): those names are that
+                    // directory's, not the place the command runs.
+                    let root_arg = code.contains("argv").then(|| argv.iter().find(|a| a.starts_with('/'))).flatten();
                     for lit in code_write_targets(&code, &argv) {
-                        out.extend(resolve(&cwd, &lit));
+                        // Running a script is not editing it: its own name, in a
+                        // usage line, is a literal it merely mentions.
+                        let target = match root_arg {
+                            Some(root) if !lit.starts_with('/') && !argv.contains(&lit) => resolve(Path::new(root), &lit),
+                            _ => resolve(&cwd, &lit),
+                        };
+                        if target.is_some() && target == script {
+                            continue;
+                        }
+                        out.extend(target);
                     }
                 }
             }
@@ -575,7 +589,7 @@ fn interpreter_code(
     stdin_text: &[String],
     cwd: &Path,
     read_script: &dyn Fn(&Path) -> Option<String>,
-) -> Option<(String, Vec<String>)> {
+) -> Option<(String, Vec<String>, Option<PathBuf>)> {
     let python = is_python(prog);
     let code_flags: &[&str] = if python { &["-c"] } else { &["-e", "--eval", "-p", "--print"] };
     // Flags that take a value and are not code.
@@ -584,7 +598,7 @@ fn interpreter_code(
     while i < args.len() {
         let a = args[i].as_str();
         if code_flags.contains(&a) {
-            return args.get(i + 1).map(|c| (c.clone(), args[i + 2..].to_vec()));
+            return args.get(i + 1).map(|c| (c.clone(), args[i + 2..].to_vec(), None));
         }
         if python && a == "-m" {
             return None; // a module: `python -m pytest`
@@ -593,7 +607,7 @@ fn interpreter_code(
             return None; // a test runner or package script
         }
         if a == "-" {
-            return Some((stdin_text.join("\n"), args[i + 1..].to_vec()));
+            return Some((stdin_text.join("\n"), args[i + 1..].to_vec(), None));
         }
         if valued.contains(&a) {
             i += 2;
@@ -606,12 +620,12 @@ fn interpreter_code(
         let script = resolve(cwd, a)?;
         let mut code = read_script(&script)?;
         code.truncate(floor_char_boundary(&code, SCRIPT_READ_CAP));
-        return Some((code, args[i + 1..].to_vec()));
+        return Some((code, args[i + 1..].to_vec(), Some(script)));
     }
     if stdin_text.is_empty() {
         None
     } else {
-        Some((stdin_text.join("\n"), Vec::new()))
+        Some((stdin_text.join("\n"), Vec::new(), None))
     }
 }
 
@@ -816,6 +830,38 @@ mod tests {
         assert_eq!(targets_with("python3 /tmp/w.py src/y.rs", Some(by_arg)), vec!["/repo/src/y.rs"]);
         // A script that cannot be read is not a candidate.
         assert!(targets_with("python3 /tmp/missing.py", None).is_empty());
+    }
+
+    #[test]
+    fn a_script_is_not_a_write_target_of_itself() {
+        // A script that opens a variable path for writing makes every
+        // path-like string in it a candidate; its own name, in a usage line, is
+        // one. Running it is not editing it.
+        let gen = "SOURCE = \"examples/world/gen.py\"\nUSAGE = \"python3 -I examples/world/gen.py OUTDIR\"\nwith open(path, \"w\") as f:\n    f.write(\"x\")\n";
+        assert!(targets_with("python3 -I examples/world/gen.py --help", Some(gen)).is_empty());
+        assert!(targets_with("python3 examples/world/gen.py --help 2>&1 | head -3", Some(gen)).is_empty());
+        // Control: a path it is given is still a candidate.
+        assert_eq!(targets_with("python3 examples/world/gen.py out/x.txt", Some(gen)), vec!["/repo/out/x.txt"]);
+    }
+
+    #[test]
+    fn names_a_script_roots_at_an_absolute_argument_are_not_the_repos() {
+        // The script is handed a directory and joins its own relative names onto
+        // it (root = Path(sys.argv[1]); (root / f).write_text(...)). The names
+        // are relative to that directory, not to where the command runs.
+        let script = "import sys, pathlib\nroot = pathlib.Path(sys.argv[1])\nfiles = ['ci/check.sh', 'docs/operating.md', '.forgejo/workflows/ci.yml']\nfor f in files:\n    p = root / f\n    p.write_text(p.read_text().replace('a', 'b'))\n";
+        let got = targets_with("python3 -I /tmp/rename.py /home/x/.cache/scratch/after", Some(script));
+        assert!(got.iter().all(|p| !p.starts_with("/repo/")), "names rooted at the argument were read as the repo's: {got:?}");
+        // The directory it was handed is still a candidate.
+        assert!(got.contains(&"/home/x/.cache/scratch/after".to_string()), "{got:?}");
+        // Control: with a relative argument, or none, the names are the cwd's.
+        let got = targets_with("python3 -I /tmp/rename.py", Some(script));
+        assert!(got.contains(&"/repo/ci/check.sh".to_string()), "{got:?}");
+        let got = targets_with("python3 -I /tmp/rename.py out", Some(script));
+        assert!(got.contains(&"/repo/ci/check.sh".to_string()), "{got:?}");
+        // Control: a script that does not read its arguments keeps the cwd.
+        let patch = "p = 'src/x.rs'\nopen(p, 'w').write('x')\n";
+        assert_eq!(targets_with("python3 /tmp/patch.py /home/x/elsewhere", Some(patch)), vec!["/repo/src/x.rs", "/home/x/elsewhere"]);
     }
 
     #[test]

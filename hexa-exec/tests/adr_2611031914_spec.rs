@@ -162,14 +162,20 @@ fn hexa_bin() -> PathBuf {
     if let Ok(p) = std::env::var("HEXA_BIN") {
         return PathBuf::from(p);
     }
+    // The test executable is in target/<profile>/deps/, or under target/<profile>/
+    // build/<crate>/<hash>/out/ from rustc 1.100 on: look in each directory above
+    // it, up to `target`, for the `hexa` the profile holds.
     let exe = std::env::current_exe().expect("current exe");
-    let mut dir = exe.parent().unwrap().to_path_buf();
-    if dir.ends_with("deps") {
-        dir = dir.parent().unwrap().to_path_buf();
+    for dir in exe.ancestors().skip(1) {
+        let bin = dir.join("hexa");
+        if bin.is_file() {
+            return bin;
+        }
+        if dir.file_name().is_some_and(|n| n == "target") {
+            break;
+        }
     }
-    let bin = dir.join("hexa");
-    assert!(bin.exists(), "the hexa binary was not found at {}", bin.display());
-    bin
+    panic!("the hexa binary was not found above {}", exe.display());
 }
 
 fn run_hexa(args: &[&str], cwd: &Path, home: &Path, envs: &[(&str, &str)]) -> (bool, String, String) {
@@ -1767,19 +1773,21 @@ fn hexa_bin() -> PathBuf {
     if let Ok(p) = std::env::var("HEXA_BIN") {
         return PathBuf::from(p);
     }
+    // target/<profile>/deps/<test> -> target/<profile>/hexa; from rustc 1.100 the
+    // test executable is under target/<profile>/build/<crate>/<hash>/out/ instead,
+    // so look in each directory above it, up to `target`.
     let exe = std::env::current_exe().expect("current exe");
-    // target/<profile>/deps/<test> -> target/<profile>/hexa
-    let mut dir = exe.parent().expect("deps dir").to_path_buf();
-    if dir.ends_with("deps") {
-        dir = dir.parent().expect("profile dir").to_path_buf();
+    let name = if cfg!(windows) { "hexa.exe" } else { "hexa" };
+    for dir in exe.ancestors().skip(1) {
+        let candidate = dir.join(name);
+        if candidate.is_file() {
+            return candidate;
+        }
+        if dir.file_name().is_some_and(|n| n == "target") {
+            break;
+        }
     }
-    let candidate = dir.join(if cfg!(windows) { "hexa.exe" } else { "hexa" });
-    assert!(
-        candidate.exists(),
-        "the hexa binary was not found at {}; build hexa-cli first",
-        candidate.display()
-    );
-    candidate
+    panic!("the hexa binary was not found above {}; build hexa-cli first", exe.display());
 }
 
 /// S31: A long first sentence is cut to 80 characters

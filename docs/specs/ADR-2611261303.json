@@ -1,0 +1,465 @@
+{
+  "adr": "ADR-2611261303",
+  "feature": "Python API contract",
+  "description": "A tagged Python driving port declares the same API contract as a Rust, Go or TypeScript port, and anything that cannot be read is reported as an error rather than guessed.",
+  "universal": [
+    "§1",
+    "§2",
+    "§3",
+    "§4",
+    "§5"
+  ],
+  "accepted": {
+    "by": "craigjohnson",
+    "sha256": "cec80ba9e66230c0a95ba08e6784d7c594606799ba0f7d86a971314d0cac07d3"
+  },
+  "sealed": {
+    "hexa-cli/tests/adr_2611261303_spec.rs": "b6ea047c40dccf574b7554e99a09bb32ab4a29603e5244c9f4cbb3cb476dd9cf"
+  },
+  "red": "e4a792c",
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "Tag comments above a class and its method declare a port and an operation",
+      "given": "A file in the ports layer with a Protocol class and a method. Each has a comment run directly above it holding a valid `# @hexa:api` tag (grammar of ADR-2610092245 §1) and prose lines. The method also has a docstring with different text.",
+      "when": "The API is extracted and the contract is built",
+      "then": "There is one port and one operation. Each declaration's tag is the text after `@hexa:api`. The operation's description is the comment prose with every `@hexa:` line removed, not the docstring.",
+      "test": "hexa-cli/tests/adr_2611261303_spec.rs::part_1::s01_tag_comments_declare_port_and_operation"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A comment run above the first decorator holds the tag",
+      "given": "A tagged port in the ports layer written as an abstract base class. The class has a decorator, and its tag comment is above that decorator. A method has `@abstractmethod` and another decorator, with the tag comment above the first of them.",
+      "when": "The contract is built",
+      "then": "The port is found and the method is exposed with the tag and prose from the run above its first decorator.",
+      "test": "hexa-cli/tests/adr_2611261303_spec.rs::part_1::s02_comment_above_first_decorator_holds_tag"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "The docstring is the description when the comment run has no prose",
+      "given": "A tagged method whose comment run contains only `@hexa:` lines, and whose multi-line docstring has an unindented first line, indented later lines, and leading and trailing blank lines",
+      "when": "The contract is built",
+      "then": "The operation's description equals the result of `inspect.cleandoc` on the docstring.",
+      "test": "hexa-cli/tests/adr_2611261303_spec.rs::part_1::s03_docstring_is_cleaned_description"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "Untagged methods and tags inside strings or docstrings expose nothing",
+      "given": "A tagged port with one tagged method, one untagged method, one method whose only `@hexa:api` text is in its docstring, and one whose only such text is in a string default or a string in its body. Another class has `@hexa:api` only in its docstring.",
+      "when": "The contract is built",
+      "then": "Only the tagged method is an operation. The other class is not a port. None of the text in strings or docstrings is reported as a stray tag.",
+      "test": "hexa-cli/tests/adr_2611261303_spec.rs::part_1::s04_strings_and_docstrings_are_not_tags"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A tag on a class outside the ports layer is a rule error",
+      "given": "A Python class and method tagged `@hexa:api` in a file in the domain layer or an adapter layer",
+      "when": "The project is analyzed and the contract is checked",
+      "then": "The same rule error that ADR-2610092245 §6 gives the other languages is reported with the file and line, and the check does not pass.",
+      "test": "hexa-cli/tests/adr_2611261303_spec.rs::part_1::s05_tag_outside_ports_is_rule_error"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A tagged overload or property is an error",
+      "given": "A tagged port with a tagged method decorated `@overload`, and in a separate case a tagged method decorated `@property`",
+      "when": "Each contract is built",
+      "then": "Each case produces an error naming the file and a line of the offending method. Neither method is silently published or silently ignored.",
+      "test": "hexa-cli/tests/adr_2611261303_spec.rs::part_1::s06_tagged_overload_or_property_is_error"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§1"
+      ],
+      "kind": "property",
+      "description": "The methods exposed are exactly those with a tag comment",
+      "given": "Any tagged port in the ports layer with any mix of readable methods. Each method has a valid tag in the comment run above it or its first decorator, has no tag, or has tag-like text only inside a string or docstring. Overloads and properties are untagged.",
+      "when": "The contract is built",
+      "then": "The set of operations is exactly the set of methods with a tag in their comment run. No operation description contains an `@hexa:` line taken from that run.",
+      "test": "hexa-cli/tests/adr_2611261303_spec.rs::part_1::s07_exposed_methods_are_exactly_the_tagged_ones"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "The receiver and bare separators are not parameters",
+      "given": "Tagged methods with: an instance method whose first parameter is named `this`; a `@classmethod` with first parameter `cls`; a `@staticmethod` whose first parameter is a real annotated input; and signatures containing bare `/` and `*`. All other parameters are annotated and bindable under ADR-2610092245 §2.",
+      "when": "The contract is built",
+      "then": "The receivers of the instance and class methods are absent. The static method's first parameter is present. Neither `/` nor `*` appears as a parameter, and all real parameters keep their order.",
+      "test": "hexa-cli/tests/adr_2611261303_spec.rs::part_1::s08_receiver_and_separators_are_not_parameters"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "Sync, async and awaitable return forms give the same response",
+      "given": "Otherwise equivalent tagged methods written as `def -> T`, `async def -> T`, `def -> Awaitable[T]` and `def -> Coroutine[Any, Any, T]`, where T is a readable schema class",
+      "when": "The contract is built",
+      "then": "All four have the same parameters, body, success status and response type T. No wrapper type appears as a schema.",
+      "test": "hexa-cli/tests/adr_2611261303_spec.rs::part_1::s09_return_forms_give_the_same_response"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "A None return is 204 unless the tag says otherwise",
+      "given": "One tagged method returning `None` whose tag gives no status, and another returning `None` whose tag gives a different success status",
+      "when": "The contract is built",
+      "then": "The first has success 204 and no response body. The second has the tag's status and no response body.",
+      "test": "hexa-cli/tests/adr_2611261303_spec.rs::part_1::s10_none_return_is_204_unless_tag_says_otherwise"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "String annotations and the future import do not change the reading",
+      "given": "A tagged port written three ways: with plain annotations, with the same annotations as strings, and with plain annotations after `from __future__ import annotations`",
+      "when": "Each contract is built",
+      "then": "All three produce the same operations and schemas. Each contract has exactly the operations of the port, and none is empty.",
+      "test": "hexa-cli/tests/adr_2611261303_spec.rs::part_2::s11_string_annotations_and_future_import_do_not_change_the_reading"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "Only a nullable type with a None default is made optional by its default",
+      "given": "Query-bound parameters declared `a: str = \"x\"`, `b: int = 5`, `c: str = None` and `d: str | None = None`",
+      "when": "The contract is built",
+      "then": "`a`, `b` and `c` are required. `d` is not required and its resolved type is string.",
+      "test": "hexa-cli/tests/adr_2611261303_spec.rs::part_2::s12_only_a_nullable_type_with_a_none_default_is_optional"
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "Unannotated and variadic signatures are refused",
+      "given": "Separate tagged methods, each on a single line, with: an unannotated non-receiver parameter; no return annotation; an unannotated first parameter after the receiver that has a default; an unannotated first parameter of a `@staticmethod`; annotated `*args`; and annotated `**kwargs`",
+      "when": "Each contract is built",
+      "then": "Each case produces an error naming the file and that method's line. No type is guessed.",
+      "test": "hexa-cli/tests/adr_2611261303_spec.rs::part_2::s13_unannotated_and_variadic_signatures_are_refused"
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "A string annotation that does not parse is an error",
+      "given": "A tagged method with the parameter annotation `\"list[\"`, and in a separate case the same string as its return annotation",
+      "when": "Each contract is built",
+      "then": "Each produces an error naming the file and line. No operation is published with a substituted or empty type.",
+      "test": "hexa-cli/tests/adr_2611261303_spec.rs::part_2::s14_a_string_annotation_that_does_not_parse_is_an_error"
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§2"
+      ],
+      "kind": "property",
+      "description": "Spelling of the signature does not change the operation",
+      "given": "Any readable tagged method signature in a tagged port, and any rewrite of it that renames the receiver, adds or removes valid bare `/` or `*` separators, switches between `def` and `async def`, wraps the return in `Awaitable` or `Coroutine`, quotes any annotation, or adds the future annotations import",
+      "when": "Both contracts are built",
+      "then": "Their operations have identical parameters, requiredness, body, success status, response, errors and schemas. Both contracts contain that operation.",
+      "test": "hexa-cli/tests/adr_2611261303_spec.rs::part_2::s15_spelling_of_the_signature_does_not_change_the_operation"
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "Class and method status comments declare errors",
+      "given": "A tagged port with an `@hexa:status 401 …` line in the class comment run and two tagged methods. Only the first has `@hexa:status 404 …` in its comment run.",
+      "when": "The contract is built",
+      "then": "The first operation's errors are sorted and include 401, 404 and 500. The second's include 401 and 500 but not 404. The `@hexa:status` lines are not part of any description.",
+      "test": "hexa-cli/tests/adr_2611261303_spec.rs::part_2::s16_class_and_method_status_comments_declare_errors"
+    },
+    {
+      "id": "S17",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "Every Python method has an opaque error channel",
+      "given": "A tagged method with no `@hexa:status` line and no `raise` in its body",
+      "when": "The API is extracted and the contract is built",
+      "then": "The method's error channel is Opaque. The operation can fail, declares 500, and has no typed error or error variants.",
+      "test": "hexa-cli/tests/adr_2611261303_spec.rs::part_2::s17_every_python_method_has_an_opaque_error_channel"
+    },
+    {
+      "id": "S18",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "Docstrings, raised exceptions and exception classes declare no errors",
+      "given": "A tagged method with `@hexa:status 404 gone` only in its docstring, a `Raises:` section, a `raise` statement in its body, and an exception class in the project carrying a status comment on the class",
+      "when": "The contract is built",
+      "then": "The operation does not declare 404 or any status inferred from these sources. It declares 500 and has no typed error.",
+      "test": "hexa-cli/tests/adr_2611261303_spec.rs::part_2::s18_docstrings_raises_and_exception_classes_declare_no_errors"
+    },
+    {
+      "id": "S19",
+      "decision": [
+        "§3"
+      ],
+      "kind": "property",
+      "description": "Declared errors follow their scope",
+      "given": "Any tagged port with any set of valid error status lines in the class comment run and in each method's comment run",
+      "when": "The contract is built",
+      "then": "Every operation declares 500, every class-level status and every one of its own statuses. No operation gets a status solely because another method declares it. The port has at least one tagged method, and the contract has one operation per tagged method.",
+      "test": "hexa-cli/tests/adr_2611261303_spec.rs::part_2::s19_declared_errors_follow_their_scope"
+    },
+    {
+      "id": "S20",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "The three schema class kinds keep field names as written",
+      "given": "A tagged port using a `@dataclass`, a `TypedDict` and a Pydantic `BaseModel`, with fields such as `saved_at` and `pageURL` of types `str`, `int`, `float` and `bool`",
+      "when": "The contract is built",
+      "then": "Each class is an object schema with fields in declaration order. Wire names are exactly as written. The types are string, integer, number and boolean.",
+      "test": "hexa-cli/tests/adr_2611261303_spec.rs::part_2::s20_three_schema_class_kinds_keep_field_names_as_written"
+    },
+    {
+      "id": "S21",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "Containers, NewType and names across files resolve",
+      "given": "Schema fields using `list[T]`, `Sequence[T]`, `tuple[T, ...]`, their `typing` spellings, `dict[str, T]`, `Mapping[str, T]` and a `NewType` over `str`. Types are declared in another file and referenced both through `from m import X as Y` and as `m.X`.",
+      "when": "The contract is built",
+      "then": "All sequence forms are arrays of T and both mapping forms are maps of T. The NewType is a string. `Y` and `m.X` both resolve to the declaration of X.",
+      "test": "hexa-cli/tests/adr_2611261303_spec.rs::part_3::s21_containers_newtype_and_cross_file_names_resolve"
+    },
+    {
+      "id": "S22",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "Requiredness follows the rules for each schema kind",
+      "given": "A dataclass and a BaseModel, each with `a: str | None = None`, `b: str = \"x\"` and `c: int`. A total TypedDict has `d: NotRequired[str]` and `e: str`. A `total=False` TypedDict has `f: str` and `g: Required[str]`.",
+      "when": "The contract is built",
+      "then": "`a`, `d` and `f` are not required. `b`, `c`, `e` and `g` are required.",
+      "test": "hexa-cli/tests/adr_2611261303_spec.rs::part_3::s22_requiredness_follows_each_schema_kind"
+    },
+    {
+      "id": "S23",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "Permitted field values and config are accepted, and non-fields are omitted",
+      "given": "Readable schema classes containing `ClassVar`, `InitVar` and `KW_ONLY` annotations; fields set to literals, `field(default_factory=list)` and `Field(default=\"x\", description=\"d\")`; and a Pydantic model whose config sets only `frozen`, written as `model_config` or `class Config`",
+      "when": "The contract is built",
+      "then": "There are no errors. `ClassVar`, `InitVar` and `KW_ONLY` annotations are not in any schema, and all other annotated fields are.",
+      "test": "hexa-cli/tests/adr_2611261303_spec.rs::part_3::s23_permitted_values_and_config_are_accepted_and_non_fields_omitted"
+    },
+    {
+      "id": "S24",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "Unsupported types are errors and never empty schemas",
+      "given": "Separate tagged contracts that each use one of: a NamedTuple, `Any`, `str | int`, `tuple[str, int]`, bare `list`, bare `dict`, an Enum, `Literal`, `datetime`, `date`, `UUID`, `Decimal`, `set`, `bytes`, `Annotated`, or an ordinary class",
+      "when": "Each contract is built",
+      "then": "Each produces an error at the file and line where the type is used. No `{}` schema or substitute type is published for it.",
+      "test": "hexa-cli/tests/adr_2611261303_spec.rs::part_3::s24_unsupported_types_are_errors_never_empty_schemas"
+    },
+    {
+      "id": "S25",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "A required field that allows None is refused",
+      "given": "Used schema classes with: a dataclass field `T | None` with no default; a BaseModel field `Optional[T]` with a non-None default; and a total TypedDict field `T | None` without `NotRequired`",
+      "when": "Each contract is built",
+      "then": "Each produces an error. None is published as a required non-null field or silently made optional.",
+      "test": "hexa-cli/tests/adr_2611261303_spec.rs::part_3::s25_required_nullable_field_is_refused"
+    },
+    {
+      "id": "S26",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "Class features that could change what is sent are refused",
+      "given": "Separate used schema classes with: a base other than BaseModel or TypedDict (including another schema class); a class decorator other than `@dataclass`; a `computed_field`, `field_serializer` or `model_serializer` method; a `model_config` setting something other than `frozen`; or a `class Config` setting something other than `frozen`; a `@dataclass` given a `config` argument; or a Pydantic class given a class keyword such as `alias_generator`, or a TypedDict given a keyword other than `total`",
+      "when": "Each contract is built",
+      "then": "Each produces an error naming the refused class's file and line. No guessed schema is published for it.",
+      "test": "hexa-cli/tests/adr_2611261303_spec.rs::part_3::s26_class_features_that_change_the_wire_are_refused"
+    },
+    {
+      "id": "S27",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "Private fields and unreadable field values are refused",
+      "given": "Separate used schema classes with: a field named `_secret`; a field assigned a call to an arbitrary function; a field assigned `Field(alias=\"other\")`; a field assigned `Field(exclude=True)`; and a field assigned `field(init=False)`",
+      "when": "Each contract is built",
+      "then": "Each produces an error naming where the type is used. The field's name is not published as a valid schema field.",
+      "test": "hexa-cli/tests/adr_2611261303_spec.rs::part_3::s27_private_fields_and_unreadable_values_are_refused"
+    },
+    {
+      "id": "S28",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "Declarations in .pyi files are not read for the API",
+      "given": "A tagged port in a `.py` file uses a type whose only schema declaration is in a `.pyi` file",
+      "when": "The contract is built",
+      "then": "The use is reported as an error, and no schema is built from the `.pyi` declaration.",
+      "test": "hexa-cli/tests/adr_2611261303_spec.rs::part_3::s28_pyi_declarations_are_not_read"
+    },
+    {
+      "id": "S29",
+      "decision": [
+        "§4"
+      ],
+      "kind": "property",
+      "description": "Equivalent nullable spellings mean the same thing",
+      "given": "Any supported type T written as `T | None`, `None | T`, `Optional[T]` or `Union[T, None]`, in any position and with any defaults",
+      "when": "A contract is built for each spelling",
+      "then": "All four give the same schemas, requiredness and success or failure. Each built contract contains the schema or parameter that uses the spelling.",
+      "test": "hexa-cli/tests/adr_2611261303_spec.rs::part_3::s29_nullable_spellings_are_equivalent"
+    },
+    {
+      "id": "S30",
+      "decision": [
+        "§4"
+      ],
+      "kind": "property",
+      "description": "Any unreadable type on the wire is an error",
+      "given": "Any parameter, return or field type that contains a type refused by §4, nested to any depth within arrays, maps, optionals or schema classes",
+      "when": "The contract is built",
+      "then": "At least one error identifies where the unreadable type is used. No empty or guessed schema stands in for it.",
+      "test": "hexa-cli/tests/adr_2611261303_spec.rs::part_3::s30_any_unreadable_type_at_any_depth_is_an_error"
+    },
+    {
+      "id": "S31",
+      "decision": [
+        "§5"
+      ],
+      "kind": "example",
+      "description": "The Python bookmarks port renders the shared document",
+      "given": "The Python fixture of the four-operation bookmarks port, with fields spelled as in the shared document",
+      "when": "`hexa api spec` is run",
+      "then": "The OpenAPI 3.1 document matches the hand-written `expected.openapi.json` that the Rust, Go and TypeScript fixtures match.",
+      "test": "hexa-cli/tests/adr_2611261303_spec.rs::part_4::s31_python_bookmarks_port_renders_the_shared_document"
+    },
+    {
+      "id": "S32",
+      "decision": [
+        "§5"
+      ],
+      "kind": "example",
+      "description": "The API commands, CI gate and grade treat Python like other languages",
+      "given": "A graded Python project with a valid tagged port that no primary adapter names in an annotation or import",
+      "when": "`hexa api list`, `hexa api check`, the `hexa ci` gate and analysis are run",
+      "then": "The commands and gate see the same operations, applying the rules of ADR-2610092245 §6. Analysis counts those operations and reports the port as unserved.",
+      "test": "hexa-cli/tests/adr_2611261303_spec.rs::part_4::s32_commands_gate_and_grade_treat_python_like_other_languages"
+    },
+    {
+      "id": "S33",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "A bad Python contract fails the gate and costs grade",
+      "given": "A graded Python project with an unreadable `@hexa:api` operation, and an otherwise equivalent project without the error",
+      "when": "`hexa api check`, the `hexa ci` gate and analysis are run",
+      "then": "The bad project's check and API gate fail. Its API findings give the error's file and line, and the error costs the same as a rule error.",
+      "test": "hexa-cli/tests/adr_2611261303_spec.rs::part_4::s33_bad_python_contract_fails_the_gate_and_costs_grade"
+    },
+    {
+      "id": "S34",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "Ungraded Python files are not silently treated as having no tags",
+      "given": "A project that does not say it is Python, containing Python files with tagged operations that are left ungraded, and no operation in any other file",
+      "when": "`hexa api` is run",
+      "then": "It does not publish operations from the ungraded files. It states how many Python files were left ungraded and how to have them graded.",
+      "test": "hexa-cli/tests/adr_2611261303_spec.rs::part_4::s34_ungraded_python_files_are_reported"
+    },
+    {
+      "id": "S35",
+      "decision": [
+        "§5"
+      ],
+      "kind": "property",
+      "description": "Equivalent ports give the same contract in every language",
+      "given": "Any contract expressible in Python and in Rust, Go or TypeScript with the same names, wire spellings, types, tags and declared errors, with equivalent error channels, and with no integers when comparing with TypeScript",
+      "when": "The OpenAPI document is rendered from each, using the same title and version",
+      "then": "The documents are equal.",
+      "test": "hexa-cli/tests/adr_2611261303_spec.rs::part_4::s35_equivalent_ports_give_the_same_contract"
+    },
+    {
+      "id": "S36",
+      "decision": [
+        "§5"
+      ],
+      "kind": "property",
+      "description": "The API commands read exactly the files the grade reads",
+      "given": "Any project containing any mix of graded and ungraded Python files, with or without tags",
+      "when": "`hexa api` and the grade are run",
+      "then": "API operations and tag diagnostics come only from files the grade reads. Whenever no operation is found and some Python files were left ungraded, the output gives their count and how to have them graded.",
+      "test": "hexa-cli/tests/adr_2611261303_spec.rs::part_4::s36_api_commands_read_exactly_the_files_the_grade_reads"
+    }
+  ],
+  "amendments": [
+    {
+      "at": "2026-11-26T14:56:25.279354858+00:00",
+      "base_commit": "e4a792c2b5256f52f8bb7482c5e8cf21d3195205",
+      "by": "craigjohnson",
+      "file": "hexa-cli/tests/adr_2611261303_spec.rs",
+      "from": "55a2e6907ef798a65b681a99e06e4342fce985bd60489cc2e041e06e87f0204f",
+      "reason": "Fixture only: class tags written as bare names are invalid under ADR-2610092245 section 1 and become service=<name>; the shared-document comparison ignores info.x-generated-by (section 7)",
+      "to": "b6ea047c40dccf574b7554e99a09bb32ab4a29603e5244c9f4cbb3cb476dd9cf"
+    }
+  ]
+}

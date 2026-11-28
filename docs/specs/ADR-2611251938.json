@@ -1,0 +1,223 @@
+{
+  "adr": "ADR-2611251938",
+  "feature": "python-grading-scope-and-local-use",
+  "description": "Python is graded only where a project says it is Python, and a public name that its own module uses is not a dead export.",
+  "universal": [
+    "§1",
+    "§2"
+  ],
+  "accepted": {
+    "by": "craigjohnson",
+    "sha256": "885406a5e590b0597836139270bf88b001ff1a87ab20c2c2f0478a533c13b246"
+  },
+  "sealed": {
+    "hexa-cli/tests/adr_2611251938_spec.rs": "d23b47e6649ef9b4a08b8c7916744b91a8a6b5cc3e9e567becc125c068165190"
+  },
+  "red": "c6b5213",
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "Helper scripts in a project with no Python manifest and no layer covering them are left ungraded.",
+      "given": "A Rust and TypeScript project with no pyproject.toml, setup.py, manage.py or requirements.txt, and no analyze.layers key covering any Python file. It has several .py scripts with unimported public top-level names, and the scripts are in no layer.",
+      "when": "hexa analyze runs on the project.",
+      "then": "No import, export, cycle, import-policy or layer-coverage finding comes from any of the scripts. The grade, score and findings are the same as for the same project with the .py files removed.",
+      "test": "hexa-cli/tests/adr_2611251938_spec.rs::part_1::s01_helper_scripts_without_manifest_are_ungraded"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "The output says how many Python files were not graded and how to have them graded.",
+      "given": "A project with no Python manifest and no analyze.layers key covering Python, containing exactly two .py files and one .pyi file.",
+      "when": "hexa analyze runs on the project.",
+      "then": "The printed output says that 3 Python files were not graded and says how to have them graded.",
+      "test": "hexa-cli/tests/adr_2611251938_spec.rs::part_1::s02_output_counts_ungraded_python_files"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "Any one of the Python manifests causes Python to be graded.",
+      "given": "Four projects, each with exactly one of pyproject.toml, setup.py, manage.py or requirements.txt where hexa analyze looks for a manifest. None has an analyze.layers key covering Python. Each has a .py file with a public top-level function that nothing imports or refers to.",
+      "when": "hexa analyze runs on each project.",
+      "then": "In each project the .py file is read and the function is reported as a dead export.",
+      "test": "hexa-cli/tests/adr_2611251938_spec.rs::part_1::s03_each_manifest_enables_python_grading"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A layer key covering one Python file opts the project's Python into grading without a manifest.",
+      "given": "A project with no Python manifest, with two .py files. An analyze.layers key covers the first file and no key covers the second. Each file has a public top-level name that nothing imports or refers to.",
+      "when": "hexa analyze runs on the project.",
+      "then": "Both files are read and graded. Both unused names are reported as dead exports, and the second file is subject to layer-coverage findings.",
+      "test": "hexa-cli/tests/adr_2611251938_spec.rs::part_1::s04_layer_key_covering_one_file_grades_all_python"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A layer key covering only a .pyi file also opts Python into grading.",
+      "given": "A project with no Python manifest, whose only analyze.layers key covering Python covers a single .pyi file. It also has a .py file, outside that key, with a public name that nothing imports or refers to.",
+      "when": "hexa analyze runs on the project.",
+      "then": "Both the .pyi and .py files are read and graded, and the unused name in the .py file is reported as a dead export.",
+      "test": "hexa-cli/tests/adr_2611251938_spec.rs::part_1::s05_layer_key_covering_only_pyi_enables_grading"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "Ungraded Python produces no import, cycle, policy or coverage findings and does not cap the score.",
+      "given": "A project with no Python manifest and no analyze.layers key covering Python. Its non-Python code earns a full score. Its .py files include two that import each other, one whose import would break the import policy if graded, one with an unresolvable import and several in no layer.",
+      "when": "hexa analyze runs on the project.",
+      "then": "No finding comes from any .py file, and the Python files neither cap nor lower the score. The score stays full.",
+      "test": "hexa-cli/tests/adr_2611251938_spec.rs::part_1::s06_ungraded_python_produces_no_findings_and_no_cap"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A layer key that covers only non-Python files does not enable Python grading.",
+      "given": "A project with no Python manifest. Its analyze.layers keys cover Rust or TypeScript files and cover no .py or .pyi file. A .py script has an unused public name.",
+      "when": "hexa analyze runs on the project.",
+      "then": "The script is not graded, no dead-export or layer-coverage finding comes from it, and the output counts it as an ungraded Python file.",
+      "test": "hexa-cli/tests/adr_2611251938_spec.rs::part_1::s07_layer_key_covering_no_python_does_not_enable_grading"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§1"
+      ],
+      "kind": "property",
+      "description": "Python affects the grade only when there is a Python manifest or a layer key covering at least one Python file.",
+      "given": "Any project with any set of one or more .py and .pyi files, with any contents, that has no Python manifest where hexa analyze looks for one and no analyze.layers key covering any of those files.",
+      "when": "hexa analyze runs on the project, and also on a copy with all .py and .pyi files removed.",
+      "then": "The grade, score and findings are identical. The run with Python files also prints a count of ungraded files equal to the number of .py and .pyi files that analyze would otherwise have read, and says how to have them graded.",
+      "test": "hexa-cli/tests/adr_2611251938_spec.rs::part_1::s08_python_without_manifest_or_layer_never_affects_grade"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "A public function called elsewhere in its own module is not dead.",
+      "given": "A project with a Python manifest. A module assigns no __all__, defines a public top-level function helper, and calls it from other code in the same module. Nothing imports helper.",
+      "when": "hexa analyze runs on the project.",
+      "then": "helper is not reported as a dead export.",
+      "test": "hexa-cli/tests/adr_2611251938_spec.rs::part_1::s09_locally_called_function_is_not_dead"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "Local use counts for public constants and classes as well as functions.",
+      "given": "A project with a Python manifest. A module with no __all__ defines a public constant LIMIT, read inside a function, and a public class Record, instantiated inside that function. Nothing imports LIMIT or Record.",
+      "when": "hexa analyze runs on the project.",
+      "then": "Neither LIMIT nor Record is reported as a dead export.",
+      "test": "hexa-cli/tests/adr_2611251938_spec.rs::part_1::s10_locally_used_constant_and_class_are_not_dead"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "A name that nothing at all refers to is still reported.",
+      "given": "A project with a Python manifest. A module with no __all__ defines a public top-level function orphan. No code in any module imports or refers to it.",
+      "when": "hexa analyze runs on the project.",
+      "then": "orphan is reported as a dead export.",
+      "test": "hexa-cli/tests/adr_2611251938_spec.rs::part_2::s11_unreferenced_name_is_reported"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "Mentions in comments and strings are not uses.",
+      "given": "A project with a Python manifest. A module with no __all__ defines a public top-level function ghost. The only other mentions of ghost in the module are in a comment, a docstring and an ordinary string literal. Nothing imports it.",
+      "when": "hexa analyze runs on the project.",
+      "then": "ghost is reported as a dead export.",
+      "test": "hexa-cli/tests/adr_2611251938_spec.rs::part_2::s12_comments_and_strings_are_not_uses"
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "A definition that refers only to itself does not use itself.",
+      "given": "A project with a Python manifest. A module with no __all__ defines a public recursive function walk. The only reference to walk is the call inside its own body, and nothing imports it.",
+      "when": "hexa analyze runs on the project.",
+      "then": "walk is reported as a dead export.",
+      "test": "hexa-cli/tests/adr_2611251938_spec.rs::part_2::s13_self_recursion_is_not_a_use"
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "Local use does not excuse a name listed in __all__.",
+      "given": "A project with a Python manifest. A module assigns __all__ = [\"listed\"], defines the function listed, and calls it from other code in the same module. Nothing imports listed.",
+      "when": "hexa analyze runs on the project.",
+      "then": "listed is reported as a dead export.",
+      "test": "hexa-cli/tests/adr_2611251938_spec.rs::part_2::s14_local_use_does_not_excuse_listed_name"
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "In a module with __all__, only the listed names are its exports.",
+      "given": "A project with a Python manifest. A module assigns __all__ = [\"api\"] and defines public functions api and unlisted. Another module imports api. Nothing imports or refers to unlisted.",
+      "when": "hexa analyze runs on the project.",
+      "then": "Neither api nor unlisted is reported as a dead export.",
+      "test": "hexa-cli/tests/adr_2611251938_spec.rs::part_2::s15_only_listed_names_are_exports"
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§2"
+      ],
+      "kind": "property",
+      "description": "In a module without __all__, an unimported public name is dead exactly when the module's code does not use it outside its own definition.",
+      "given": "Any graded Python module that assigns no __all__, and any public top-level name in it that nothing imports. The name has any combination of references in the module's code outside its definition, references only within its own definition, and mentions in comments or strings.",
+      "when": "hexa analyze runs on the project.",
+      "then": "The name is reported as a dead export if and only if the module's code has no reference to it outside its own definition. Self-references, comments and strings never change the result.",
+      "test": "hexa-cli/tests/adr_2611251938_spec.rs::part_2::s16_dead_exactly_when_not_used_outside_definition"
+    },
+    {
+      "id": "S17",
+      "decision": [
+        "§2"
+      ],
+      "kind": "property",
+      "description": "In a module with __all__, local references never change which listed names are dead.",
+      "given": "Any graded Python module that assigns __all__, with any set of listed names, any subset of them imported elsewhere, and any local references to them.",
+      "when": "hexa analyze runs with and without those local references.",
+      "then": "In both runs, the listed names reported as dead exports are exactly those that nothing imports.",
+      "test": "hexa-cli/tests/adr_2611251938_spec.rs::part_2::s17_local_references_do_not_affect_listed_names"
+    }
+  ]
+}

@@ -1,0 +1,227 @@
+{
+  "adr": "ADR-2611221706",
+  "feature": "TSX test files are tests",
+  "description": "A file named *.test.tsx or *.spec.tsx is a test file wherever it sits: it is left out of the grade and its imports count as uses for the dead-export finder, the same as a .test.ts file. Nothing else changes.",
+  "universal": [
+    "§1",
+    "§2"
+  ],
+  "accepted": {
+    "by": "craigjohnson",
+    "sha256": "10aafe44518d5326a62cc646ac76175be9e825d29b89e5c811b6753513ddf791"
+  },
+  "sealed": {
+    "hexa-analysis/tests/adr_2611221706_spec.rs": "a99c5b4be703b6a71ffce8737dfb99f806d29a249d9e9a7ca1e9dc4539b11c5f"
+  },
+  "red": "4a0354c",
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "An export used only by a .test.tsx file beside its component is not dead",
+      "given": "A TypeScript project with src/ui/Button.tsx exporting `Button` and `buttonVariants`. src/ui/App.tsx imports `Button`. src/ui/Button.test.tsx, which is not under any test folder, imports `buttonVariants` from ./Button. No other file names `buttonVariants`.",
+      "when": "ArchAnalysisPort::analyze runs on the project root",
+      "then": "dead_exports has no entry with file src/ui/Button.tsx and export_name `buttonVariants`",
+      "test": "hexa-analysis/tests/adr_2611221706_spec.rs::part_1::s01_export_used_only_by_test_tsx_is_not_dead",
+      "red": "4a0354c"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A .spec.tsx file is left out of the grade",
+      "given": "A TypeScript project whose source files are all classified into layers, plus src/ui/Card.spec.tsx outside any test folder",
+      "when": "analyze runs",
+      "then": "coverage.unclassified does not contain src/ui/Card.spec.tsx; coverage.total equals the count of the project's files other than src/ui/Card.spec.tsx; no violations entry has src/ui/Card.spec.tsx as edge.from_file or edge.to_file"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A .test.tsx file's own exports are never reported dead",
+      "given": "src/ui/Button.test.tsx exports a helper `renderButton` that no other file names",
+      "when": "analyze runs",
+      "then": "dead_exports has no entry whose file is src/ui/Button.test.tsx"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "The rule holds at any depth and at the project root",
+      "given": "Three files: Root.test.tsx at the project root, src/features/billing/deep/Invoice.spec.tsx, and src/ui/__tests__/Modal.test.tsx. Each imports a distinct export from its own component, and that export has no other user.",
+      "when": "analyze runs",
+      "then": "none of the three files appears in coverage.unclassified or counts in coverage.total, and none of the three imported exports appears in dead_exports",
+      "test": "hexa-analysis/tests/adr_2611221706_spec.rs::part_1::s04_rule_holds_at_any_depth_and_at_root",
+      "red": "4a0354c"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "Excluding the .test.tsx file lowers the file count",
+      "given": "Project A has N graded source files. Project B is project A plus src/ui/Button.test.tsx outside any test folder.",
+      "when": "analyze runs on each",
+      "then": "project B's file_count and coverage.total equal project A's"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A name that only contains 'test' before .tsx is not a test file",
+      "given": "src/ui/Contest.tsx, src/ui/latest.tsx and src/ui/Button.tests.tsx, each exporting a symbol no other file names, outside any test folder",
+      "when": "analyze runs",
+      "then": "each of the three files is counted in coverage.total, and each one's unused export appears in dead_exports"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A .test.tsx file only adds uses; it does not mark an export that nothing imports as used",
+      "given": "src/ui/Button.tsx exports `Button` and `legacyButton`. src/ui/Button.test.tsx imports only `Button`. No file names `legacyButton`.",
+      "when": "analyze runs",
+      "then": "dead_exports contains an entry with file src/ui/Button.tsx and export_name `legacyButton`"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "The suffix must be at the end of the name",
+      "given": "src/ui/Button.test.tsx.snap and src/ui/Button.spec.tsx.orig exist next to src/ui/Button.tsx, which exports `unusedThing`. Neither of those two files is a recognised source file.",
+      "when": "analyze runs",
+      "then": "neither file is treated as a test whose imports count as uses, and `unusedThing` in src/ui/Button.tsx appears in dead_exports"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§1"
+      ],
+      "kind": "property",
+      "description": "A .tsx test is read exactly as a .ts test with the same content",
+      "given": "Any TypeScript project P that contains a file F named X.test.ts or X.spec.ts at any path, and P', which is P with F renamed to X.test.tsx or X.spec.tsx respectively and its content unchanged",
+      "when": "analyze runs on P and on P'",
+      "then": "dead_exports, coverage.total, coverage.classified, coverage.unclassified, file_count and health_score are equal for P and P'",
+      "test": "hexa-analysis/tests/adr_2611221706_spec.rs::part_1::s09_tsx_test_read_as_ts_test",
+      "red": "4a0354c"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§1"
+      ],
+      "kind": "property",
+      "description": "For every path ending in .test.tsx or .spec.tsx, the file is excluded and its imports are uses",
+      "given": "Any project and any file at any path whose name ends in `.test.tsx` or `.spec.tsx`",
+      "when": "analyze runs",
+      "then": "the file is not in coverage.unclassified and does not count in coverage.total; no dead_exports entry has it as file; no export the file imports by name appears in dead_exports",
+      "test": "hexa-analysis/tests/adr_2611221706_spec.rs::part_1::s10_every_test_or_spec_tsx_is_excluded_and_its_imports_are_uses",
+      "red": "4a0354c"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "A .test.ts file still works as before",
+      "given": "src/ui/format.ts exports `formatDate`, used only by src/ui/format.test.ts, which sits outside any test folder",
+      "when": "analyze runs",
+      "then": "`formatDate` is not in dead_exports, and src/ui/format.test.ts is not in coverage.total or coverage.unclassified"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "Test folders and other languages' test files work as before",
+      "given": "A project with tests/integration.ts, src/__tests__/util.ts, pkg/store_test.go and src/lib.test.rs, each importing one export that has no other user",
+      "when": "analyze runs",
+      "then": "none of the four files counts in coverage.total, and none of the four imported exports appears in dead_exports"
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "An ordinary .tsx component is still graded as source",
+      "given": "src/ui/Button.tsx outside any test folder, exporting `Button`, which no file names",
+      "when": "analyze runs",
+      "then": "src/ui/Button.tsx counts in coverage.total, and dead_exports contains file src/ui/Button.tsx with export_name `Button`"
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "The change does not extend to other JS/TS test suffixes the ADR does not name",
+      "given": "src/ui/Widget.test.jsx outside any test folder, exporting `helper`, which no file names",
+      "when": "analyze runs",
+      "then": "src/ui/Widget.test.jsx is treated as it was before this ADR: the grade reads no .jsx file, so coverage.total is 0 and the file appears in no finding (no dead export, no unclassified file)"
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "An export used only by an ordinary .tsx file is not a test use",
+      "given": "src/ui/Button.tsx exports `Button`. Only src/ui/Story.tsx, a non-test file, imports it.",
+      "when": "analyze runs",
+      "then": "src/ui/Story.tsx counts in coverage.total, and its import of `Button` counts as an ordinary source import, which keeps `Button` live"
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§2"
+      ],
+      "kind": "property",
+      "description": "Projects with no .test.tsx or .spec.tsx file are unaffected",
+      "given": "Any project P that contains no file named *.test.tsx or *.spec.tsx",
+      "when": "analyze runs on P",
+      "then": "every file is a test file exactly when its name ends in .test.ts, .spec.ts, _test.go or .test.rs, or it sits under /tests/, /test/ or /__tests__/; every other file the grade reads counts in coverage.total; dead_exports, coverage, file_count and health_score are what those pre-existing rules alone produce"
+    },
+    {
+      "id": "S17",
+      "decision": [
+        "§2"
+      ],
+      "kind": "property",
+      "description": "Adding a .test.tsx file changes nothing about the other files",
+      "given": "Any project P and P', which is P plus one file T named *.test.tsx or *.spec.tsx at any path",
+      "when": "analyze runs on P and on P'",
+      "then": "coverage.unclassified is the same for P and P'; coverage.total is the same; dead_exports for P' equals dead_exports for P minus exactly the entries whose exports T imports by name",
+      "test": "hexa-analysis/tests/adr_2611221706_spec.rs::part_2::s17_adding_a_tsx_test_changes_nothing_about_the_other_files",
+      "red": "4a0354c"
+    }
+  ],
+  "amendments": [
+    {
+      "at": "2026-11-23T00:35:35.428769+00:00",
+      "base_commit": "4a0354c2ed878d9a9ebe5132761fd7c5c24d7659",
+      "by": "Claude Code agent (spec re-accepted by craigjohnson)",
+      "file": "hexa-analysis/tests/adr_2611221706_spec.rs",
+      "from": "2f5fdd1f7949888ba78e677617b7d122063668e99af988a36cfbe9bd55da4e53",
+      "reason": "S14 follows the re-accepted spec: the grade reads no .jsx file, so Widget.test.jsx counts in nothing, before this ADR and after; the drafted S14 claimed it was graded, which was never true",
+      "to": "a99c5b4be703b6a71ffce8737dfb99f806d29a249d9e9a7ca1e9dc4539b11c5f"
+    }
+  ]
+}

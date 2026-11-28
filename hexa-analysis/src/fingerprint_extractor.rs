@@ -153,7 +153,14 @@ async fn detect_language_framework(root: &Path) -> (String, String) {
     // TypeScript / Node
     if let Ok(content) = fs::read_to_string(root.join("package.json")).await {
         let framework = detect_ts_framework(&content);
-        return ("typescript".to_string(), framework);
+        return (crate::analyzer::package_language(root).to_string(), framework);
+    }
+
+    // Python: a Python manifest and none of the others (ADR-2611221646 §4).
+    for manifest in ["pyproject.toml", "setup.py", "setup.cfg"] {
+        if fs::metadata(root.join(manifest)).await.is_ok() {
+            return ("python".to_string(), "none".to_string());
+        }
     }
 
     ("unknown".to_string(), "none".to_string())
@@ -502,15 +509,17 @@ fn infer_output_type(objective: &str, language: &str, framework: &str, root: &Pa
     {
         return "cli".to_string();
     }
-    if lower.contains("api") || lower.contains("server") || lower.contains("rest")
-        || lower.contains("http") || lower.contains("endpoint")
-    {
-        return "web-api".to_string();
-    }
+    // A library word outranks an API word: "an SDK for the X API" is a
+    // library, not a web API (ADR-2611230831 §3).
     if lower.contains("library") || lower.contains("crate") || lower.contains("package")
         || lower.contains("sdk") || lower.contains("framework")
     {
         return "library".to_string();
+    }
+    if lower.contains("api") || lower.contains("server") || lower.contains("rest")
+        || lower.contains("http") || lower.contains("endpoint")
+    {
+        return "web-api".to_string();
     }
 
     // Go binaries default to CLI unless framework says otherwise

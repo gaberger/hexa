@@ -81,7 +81,7 @@ fn discover_with(
             name: e.id.clone(),
             detail: format!("{} · {} · {}", e.url, e.provider, e.model),
             via: "~/.hexa/inference-servers.json".to_string(),
-            reachable: probe(&e.url),
+            reachable: if e.url.is_empty() { None } else { probe(&e.url) },
             models: {
                 let mut m = e.models.clone();
                 if !e.model.is_empty() && !m.contains(&e.model) {

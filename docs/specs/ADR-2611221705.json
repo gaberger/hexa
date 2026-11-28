@@ -1,0 +1,259 @@
+{
+  "adr": "ADR-2611221705",
+  "feature": "Unmatched layer keys are config errors",
+  "description": "An analyze.layers key under which no graded file falls is reported in config_errors and costs a rule error. A glob key also names the prefix it was probably meant to be. Nothing else about layer classification changes.",
+  "universal": [
+    "§1",
+    "§2",
+    "§3"
+  ],
+  "accepted": {
+    "by": "craigjohnson",
+    "sha256": "9b4a7b39ec2143e40e59857db9d4db7782dfcf20ddb7b65c96b6069d648ef526"
+  },
+  "sealed": {
+    "hexa-analysis/tests/adr_2611221705_spec.rs": "afe775641f1756c2db23dea33e499553eec1d25493b150413ee16c9daa875536"
+  },
+  "red": "bb13809",
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A glob key that matches no graded file is reported by name",
+      "given": "A project with graded files src/domain/order.ts and src/ui/view.ts. Its analyze.layers declares \"src/domain\" as domain and \"src/ui/**\" as adapters/primary.",
+      "when": "ArchAnalysisPort::analyze runs on the project root",
+      "then": "config_errors holds exactly one layer-key entry. That entry contains `analyze.layers[\"src/ui/**\"] matches no file the grade reads`. No entry names \"src/domain\".",
+      "test": "hexa-analysis/tests/adr_2611221705_spec.rs::part_1::s01_glob_key_matching_no_file_is_reported_by_name",
+      "red": "bb13809"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "Each unmatched key costs what one rule error costs",
+      "given": "Project A has graded files src/domain/a.rs and src/ports/b.rs, with keys \"src/domain\" and \"src/ports\" and no other findings. Project B is identical except that it adds a third key, \"src/adpaters\" (a typo), which matches no file.",
+      "when": "Both projects are analyzed",
+      "then": "Project B's config_errors has one more entry than project A's, and that entry names \"src/adpaters\". Project B's health_score is exactly 10 lower than project A's.",
+      "test": "hexa-analysis/tests/adr_2611221705_spec.rs::part_1::s02_each_unmatched_key_costs_one_rule_error",
+      "red": "bb13809"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A key whose only files are removed by analyze.exclude is reported",
+      "given": "Graded files are src/domain/a.ts plus src/generated/client.ts. analyze.exclude removes src/generated. analyze.layers declares \"src/domain\" and \"src/generated\".",
+      "when": "The project is analyzed",
+      "then": "config_errors holds an entry naming analyze.layers[\"src/generated\"] as matching no file the grade reads. No entry names \"src/domain\".",
+      "test": "hexa-analysis/tests/adr_2611221705_spec.rs::part_1::s03_key_whose_files_are_all_excluded_is_reported",
+      "red": "bb13809"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "Two unmatched keys produce two entries",
+      "given": "Graded file src/domain/a.ts. Keys are \"src/domain\", \"src/old_folder\" and \"lib/ui\", and nothing exists under the last two.",
+      "when": "The project is analyzed",
+      "then": "config_errors holds two layer-key entries, one naming \"src/old_folder\" and one naming \"lib/ui\". The health_score is 20 lower than the same project without those two keys.",
+      "test": "hexa-analysis/tests/adr_2611221705_spec.rs::part_1::s04_two_unmatched_keys_produce_two_entries",
+      "red": "bb13809"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A string prefix that does not fall on a segment boundary is not a match",
+      "given": "The only graded file is src/domainx/a.ts. analyze.layers declares the key \"src/domain\".",
+      "when": "The project is analyzed",
+      "then": "config_errors holds an entry naming analyze.layers[\"src/domain\"]. The key is not counted as matching src/domainx/a.ts.",
+      "test": "hexa-analysis/tests/adr_2611221705_spec.rs::part_1::s05_prefix_off_a_segment_boundary_is_not_a_match",
+      "red": "bb13809"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A source-file key that names an existing module is not an error",
+      "given": "The graded files are src/store/disk.rs and src/domain/a.rs, and src/store.rs does not exist. Keys are \"src/store.rs\" and \"src/domain\".",
+      "when": "The project is analyzed",
+      "then": "config_errors holds no entry naming \"src/store.rs\" or \"src/domain\", because src/store/disk.rs falls under the module that \"src/store.rs\" names."
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A key that names a graded file exactly, or a folder holding one, is not an error",
+      "given": "Graded files are src/main.rs and src/domain/deep/x.rs. Keys are \"src/main.rs\" and \"src/domain\".",
+      "when": "The project is analyzed",
+      "then": "config_errors holds no layer-key entries, and the health_score equals the score computed from the other findings alone."
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§1"
+      ],
+      "kind": "property",
+      "description": "Layer-key errors correspond one to one with unmatched keys",
+      "given": "Any project with any set of analyze.layers keys and any analyze.exclude",
+      "when": "The project is analyzed",
+      "then": "The number of config_errors entries of the form `analyze.layers[\"K\"] matches no file the grade reads` equals the number of keys K under which no graded file falls. Each such K is named in exactly one entry. Every such entry adds 10 points of penalty, saturating at a score of 0.",
+      "test": "hexa-analysis/tests/adr_2611221705_spec.rs::part_1::s08_layer_key_errors_correspond_one_to_one_with_unmatched_keys",
+      "red": "bb13809"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "A ** key is told that keys are prefixes and is offered the prefix",
+      "given": "The graded file is src/ui/view.ts. The key is \"src/ui/**\".",
+      "when": "The project is analyzed",
+      "then": "The config_errors entry for \"src/ui/**\" says that analyze.layers keys are path prefixes, not globs. It names the prefix \"src/ui\", with the trailing slash removed.",
+      "test": "hexa-analysis/tests/adr_2611221705_spec.rs::part_1::s09_double_star_key_is_told_keys_are_prefixes_and_offered_prefix",
+      "red": "bb13809"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "The ? and [ characters count as glob characters, and the prefix stops before the first of them",
+      "given": "There are no graded files under the keys \"src/a?c/x\" and \"lib/[ab]/y\".",
+      "when": "The project is analyzed",
+      "then": "The entry for \"src/a?c/x\" names the prefix \"src/a\". The entry for \"lib/[ab]/y\" names the prefix \"lib\". Both say that keys are path prefixes, not globs.",
+      "test": "hexa-analysis/tests/adr_2611221705_spec.rs::part_1::s10_question_mark_and_bracket_are_glob_characters",
+      "red": "bb13809"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "An unmatched key with no glob character gets no glob hint",
+      "given": "The key \"src/adpaters\" matches no graded file.",
+      "when": "The project is analyzed",
+      "then": "The config_errors entry for \"src/adpaters\" names the key. It does not mention globs and does not propose a prefix.",
+      "test": "hexa-analysis/tests/adr_2611221705_spec.rs::part_2::s11_unmatched_key_without_glob_gets_no_glob_hint",
+      "red": "bb13809"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "A glob key is not read as a glob even when files would match the pattern",
+      "given": "The graded files are src/ui/view.ts and src/ui/deep/panel.ts. The key \"src/ui/**\" is declared as adapters/primary. No other key covers src/ui.",
+      "when": "The project is analyzed",
+      "then": "Neither file is classified as adapters/primary, and both appear in coverage.unclassified. config_errors holds the glob-hint entry for \"src/ui/**\".",
+      "test": "hexa-analysis/tests/adr_2611221705_spec.rs::part_2::s12_glob_key_is_not_read_as_glob",
+      "red": "bb13809"
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§2"
+      ],
+      "kind": "property",
+      "description": "The proposed prefix is the key cut at its first glob character",
+      "given": "Any unmatched key K that contains at least one of the characters *, ? or [",
+      "when": "The project is analyzed",
+      "then": "K's entry states that keys are path prefixes, not globs. It names P, where P is K up to its first *, ? or [ with any trailing '/' removed. Any unmatched key without those characters gets an entry with no such statement.",
+      "test": "hexa-analysis/tests/adr_2611221705_spec.rs::part_2::s13_proposed_prefix_is_key_cut_at_first_glob_char",
+      "red": "bb13809"
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "A project without analyze.layers grades as before",
+      "given": "A project with no analyze.layers in .hexa/project.json",
+      "when": "The project is analyzed",
+      "then": "config_errors holds no layer-key entries. Classification, violations, coverage and health_score are as they were before this ADR.",
+      "test": "hexa-analysis/tests/adr_2611221705_spec.rs::part_2::s14_project_without_layers_grades_as_before",
+      "red": "bb13809"
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "The S26 fixture: the keys are still read as prefixes, and the gap is now reported",
+      "given": "Graded files are src/domain/order.ts and src/ui/view.ts, where view.ts imports order.ts. The keys are \"src/domain/**\" (domain) and \"src/ui/**\" (adapters/primary).",
+      "when": "The project is analyzed",
+      "then": "Coverage is what it is with no analyze.layers: src/domain/order.ts takes the domain layer from the built-in folder convention and src/ui/view.ts is unclassified; neither key classifies anything. config_errors holds two entries, one for each key, and each carries the glob hint (\"src/domain\" and \"src/ui\"). The health_score is no higher than with no analyze.layers: one file in two has a layer, so the coverage ceiling (50) caps both scores here; S02 shows the 20 points the two errors cost when no ceiling hides them."
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "An unmatched key does not change how other files are classified",
+      "given": "A project whose matching keys classify src/domain/a.rs as domain and src/adapters/primary/cli.rs as adapters/primary, with one boundary violation between them. A second copy of the project adds the unmatched key \"src/nothing\".",
+      "when": "Both copies are analyzed",
+      "then": "The violations, coverage, dead_exports, circular_deps and the layer of every file are identical in both copies. They differ only in the one config_errors entry for \"src/nothing\" and a score 10 points lower.",
+      "test": "hexa-analysis/tests/adr_2611221705_spec.rs::part_2::s16_unmatched_key_does_not_change_classification",
+      "red": "bb13809"
+    },
+    {
+      "id": "S17",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "A project whose keys all match gains no layer-key config errors",
+      "given": "A project where every analyze.layers key has at least one graded file under it",
+      "when": "The project is analyzed",
+      "then": "config_errors contains no entry of the form `analyze.layers[...] matches no file the grade reads`, and the health_score is unaffected by its layer keys.",
+      "test": "hexa-analysis/tests/adr_2611221705_spec.rs::part_2::s17_all_matching_keys_add_no_errors",
+      "red": "bb13809"
+    },
+    {
+      "id": "S18",
+      "decision": [
+        "§3"
+      ],
+      "kind": "property",
+      "description": "Unmatched keys change only config_errors and the score",
+      "given": "Any project P, and P', which is P with any set of keys added that match no graded file",
+      "when": "Both are analyzed",
+      "then": "P' has the same violations, coverage, dead_exports, circular_deps, orphan_files, unused_ports, file_count and edge_count as P. Its config_errors equals P's plus one entry for each added key. Its health_score is P's score minus 10 for each added key, saturating at 0.",
+      "test": "hexa-analysis/tests/adr_2611221705_spec.rs::part_2::s18_unmatched_keys_change_only_config_errors_and_score",
+      "red": "bb13809"
+    }
+  ],
+  "amendments": [
+    {
+      "at": "2026-11-23T00:35:04.629583610+00:00",
+      "base_commit": "bb1380947c8e32581a87f1c0517d249f77e4056e",
+      "by": "Claude Code agent (spec re-accepted by craigjohnson)",
+      "file": "hexa-analysis/tests/adr_2611221705_spec.rs",
+      "from": "1749b62fbd2dee158323077e304a7e345567e058738d7b6ceddb462e4f5960af",
+      "reason": "part_2 ran the analyzer with a hand-rolled block_on and no tokio runtime, so every part_2 test panicked before any assertion; it now uses a tokio runtime as part_1 does. S15 follows the re-accepted spec: src/domain is classified by its folder, and the coverage ceiling caps both scores (S15's score check is weaker, as the spec now says; S02 keeps the cost)",
+      "to": "afe775641f1756c2db23dea33e499553eec1d25493b150413ee16c9daa875536"
+    }
+  ]
+}

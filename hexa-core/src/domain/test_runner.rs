@@ -51,6 +51,8 @@ pub enum Runner {
     Cargo,
     Vitest,
     Bash,
+    /// pytest, for a `.py` test (ADR-2611211324 §8).
+    Pytest,
     /// A `test.runners` template from `.hexa/project.json`.
     Configured(String),
 }
@@ -67,6 +69,7 @@ pub fn runner_for(ext: &str, configured: &BTreeMap<String, String>) -> Option<Ru
     match ext {
         "rs" => Some(Runner::Cargo),
         "sh" => Some(Runner::Bash),
+        "py" => Some(Runner::Pytest),
         e if VITEST_EXTENSIONS.contains(&e) => Some(Runner::Vitest),
         _ => None,
     }
@@ -80,6 +83,7 @@ pub fn is_test_file(path: &str) -> bool {
         || base.contains(".test.")
         || base.contains(".spec.")
         || extension(path) == Some("sh")
+        || (base.ends_with(".py") && (base.starts_with("test_") || base.ends_with("_test.py")))
 }
 
 /// `s` as one single-quoted shell word.

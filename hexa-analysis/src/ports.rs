@@ -95,6 +95,16 @@ pub trait AstPort: Send + Sync {
         Ok(std::collections::HashMap::new())
     }
 
+    /// The public names the module's own code uses somewhere other than where
+    /// it defines them, so that nothing needing them elsewhere is not read as
+    /// dead (ADR-2611251938 §2). Only Python has this: it has no keyword that
+    /// makes a name private to its file. Empty for a module that assigns
+    /// `__all__`, which says what it exports, and for every other language.
+    fn names_used_at_home(&self, source: &str, lang: Language) -> Result<std::collections::HashSet<String>, AnalysisError> {
+        let _ = (source, lang);
+        Ok(std::collections::HashSet::new())
+    }
+
     /// The method names each trait or interface in the file declares, by
     /// trait name. A Go type implements an interface by having its methods
     /// and never names it, so a detector that asks "does an adapter stand

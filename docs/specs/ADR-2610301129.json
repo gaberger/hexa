@@ -11,7 +11,7 @@
     "sha256": "1b7e044e73730af0d9b768dce01138a29d4010e4fdd3308f0ef87226f5533eb7"
   },
   "sealed": {
-    "hexa-cli/tests/adr_2610301129_spec.rs": "8c04f4a42929fe4b07faa6a0fb6f9acfe95a10f0e18e7b3c49c95758c8a3c2f5"
+    "hexa-cli/tests/adr_2610301129_spec.rs": "13d98358d1dbab3c75126a0ae26a60640f8436341bc854c37c3635b69e6390cc"
   },
   "red": "c6e14b8",
   "specs": [
@@ -282,13 +282,22 @@
   ],
   "amendments": [
     {
+      "at": "2026-11-08T18:02:25.490444+00:00",
+      "base_commit": "7c2037939731658d84d41c64805d6dcfebd8641e",
+      "by": "gary (baseline run by Claude on gary's instruction)",
       "file": "hexa-cli/tests/adr_2610301129_spec.rs",
       "from": "29b56248db7734af993f8c3ad13b9bf49845f6add0d21b686d902dc07446c62d",
-      "to": "8c04f4a42929fe4b07faa6a0fb6f9acfe95a10f0e18e7b3c49c95758c8a3c2f5",
-      "by": "gary (baseline run by Claude on gary's instruction)",
       "reason": "baseline (ADR-2611081151 §1): this seal moved before every move was recorded; history and the record agree on both ends",
-      "at": "2026-11-08T18:02:25.490444+00:00",
-      "base_commit": "7c2037939731658d84d41c64805d6dcfebd8641e"
+      "to": "8c04f4a42929fe4b07faa6a0fb6f9acfe95a10f0e18e7b3c49c95758c8a3c2f5"
+    },
+    {
+      "at": "2026-11-28T02:40:05.641926654+00:00",
+      "base_commit": "da00d4953ab364e4411ef161c61ab711d405f63b",
+      "by": "craigjohnson",
+      "file": "hexa-cli/tests/adr_2610301129_spec.rs",
+      "from": "8c04f4a42929fe4b07faa6a0fb6f9acfe95a10f0e18e7b3c49c95758c8a3c2f5",
+      "reason": "test environment only, no assertion changes: S18 ran hexa bootstrap, which also checks the machine (Rust, Cargo, Bun) and fails with 'no path to a model' when none exists, so it failed on any machine without a local model server or Bun, and on one with a system-wide claude in /usr/bin, whose directory the test's own PATH filter drops. The scenario is about extracting and installing the mods, so it now passes --skip-prereq (the flag meant for CI) and names a completion command for the model check. The assertions on the extracted files, the install calls, the step lines and the exit code are unchanged.",
+      "to": "13d98358d1dbab3c75126a0ae26a60640f8436341bc854c37c3635b69e6390cc"
     }
   ]
 }

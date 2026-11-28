@@ -1,0 +1,245 @@
+{
+  "adr": "ADR-2611271955",
+  "feature": "a package.json project is JavaScript when its sources are",
+  "accepted": {
+    "by": "craigjohnson",
+    "sha256": "792be3a9b751af80d9528fcc540986637f630106d48f91e1a96a879a591eb59b"
+  },
+  "sealed": {
+    "hexa-cli/tests/adr_2611271955_spec.rs": "55b661b93457af4c64a602668b5014b3de554c8b193d5a04ddb8507c78b73908"
+  },
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A package.json project with only JavaScript sources is javascript.",
+      "given": "a project with package.json and src/index.js, no TypeScript and no tsconfig.json",
+      "when": "hexa analyze runs on it",
+      "then": "Its language line reads javascript (package.json).",
+      "test": "hexa-cli/tests/adr_2611271955_spec.rs::s01_javascript_only_is_javascript",
+      "red": "5c002a9"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A project with any TypeScript source stays typescript, JavaScript beside it or not.",
+      "given": "a project with package.json, src/a.ts and src/b.js",
+      "when": "hexa analyze runs on it",
+      "then": "Its language line reads typescript (package.json), not javascript.",
+      "test": "hexa-cli/tests/adr_2611271955_spec.rs::s02_any_typescript_source_keeps_typescript",
+      "red": "5c002a9"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A tsconfig.json at the root keeps a project typescript before it has a source.",
+      "given": "a project with package.json, a root tsconfig.json and src/a.js only",
+      "when": "hexa analyze runs on it",
+      "then": "Its language line reads typescript (package.json).",
+      "test": "hexa-cli/tests/adr_2611271955_spec.rs::s03_tsconfig_keeps_typescript",
+      "red": "5c002a9"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A package.json with no source is typescript, as before.",
+      "given": "a project with only a package.json",
+      "when": "hexa analyze runs on it",
+      "then": "Its language line reads typescript (package.json).",
+      "test": "hexa-cli/tests/adr_2611271955_spec.rs::s04_package_json_alone_is_typescript",
+      "red": "5c002a9"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "hexa doctor names the same language.",
+      "given": "a project with package.json and src/index.js, and one with package.json and src/a.ts",
+      "when": "hexa doctor runs in each",
+      "then": "The type line reads javascript (package.json) for the first and typescript (package.json) for the second.",
+      "test": "hexa-cli/tests/adr_2611271955_spec.rs::s05_doctor_names_the_same_language",
+      "red": "5c002a9"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "The session-start fingerprint names the same language.",
+      "given": "a project with package.json and src/index.js",
+      "when": "the session-start hook prints its project block",
+      "then": "The Language entry is javascript.",
+      "test": "hexa-cli/tests/adr_2611271955_spec.rs::s06_session_start_names_the_same_language",
+      "red": "5c002a9"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "The session-start fingerprint still names typescript for a TypeScript project.",
+      "given": "a project with package.json and src/a.ts",
+      "when": "the session-start hook prints its project block",
+      "then": "The Language entry is typescript.",
+      "test": "hexa-cli/tests/adr_2611271955_spec.rs::s07_session_start_still_names_typescript",
+      "red": "5c002a9"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "Beside a Python manifest, JavaScript sources list javascript.",
+      "given": "a project with a pyproject.toml, package.json and src/index.js and no TypeScript",
+      "when": "hexa analyze runs on it",
+      "then": "Its language line lists javascript (package.json) and python (pyproject.toml).",
+      "test": "hexa-cli/tests/adr_2611271955_spec.rs::s08_beside_a_python_manifest_javascript_is_listed",
+      "red": "5c002a9"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "Beside a Python manifest, a package.json that is tooling only is not listed.",
+      "given": "a project with a pyproject.toml and a package.json and no JavaScript or TypeScript source",
+      "when": "hexa analyze runs on it",
+      "then": "Its language line lists python only.",
+      "test": "hexa-cli/tests/adr_2611271955_spec.rs::s09_a_tooling_package_json_is_not_listed",
+      "red": "5c002a9"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§4"
+      ],
+      "kind": "negative",
+      "description": "JavaScript in node_modules or in analyze.exclude does not make a project javascript.",
+      "given": "a project with a package.json whose only JavaScript is under node_modules and in a path listed in analyze.exclude",
+      "when": "hexa analyze runs on it",
+      "then": "Its language line reads typescript (package.json).",
+      "test": "hexa-cli/tests/adr_2611271955_spec.rs::s10_excluded_javascript_does_not_count",
+      "red": "5c002a9"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§4"
+      ],
+      "kind": "example",
+      "description": "A test file does not make a project javascript, and a source file does.",
+      "given": "a project with package.json, src/a.test.js and src/index.js",
+      "when": "hexa analyze runs on it",
+      "then": "Its language line reads javascript (package.json); with src/index.js removed it reads typescript (package.json).",
+      "test": "hexa-cli/tests/adr_2611271955_spec.rs::s11_a_test_file_does_not_count_a_source_file_does",
+      "red": "5c002a9"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§5"
+      ],
+      "kind": "example",
+      "description": "The layer inventory's language column is unchanged for JavaScript files.",
+      "given": "a JavaScript project with files in layers",
+      "when": "hexa analyze --json runs on it",
+      "then": "Each layer_inventory row for those files names language typescript, as before.",
+      "test": "hexa-cli/tests/adr_2611271955_spec.rs::s12_the_inventory_column_is_unchanged",
+      "red": "5c002a9"
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§6"
+      ],
+      "kind": "negative",
+      "description": "The label change moves no grade, score or finding.",
+      "given": "the JavaScript scaffold",
+      "when": "hexa analyze --json runs on it",
+      "then": "The grade is A+, the score is 100 and there are no violations or dead exports.",
+      "test": "hexa-cli/tests/adr_2611271955_spec.rs::s13_no_grade_moves",
+      "red": "5c002a9"
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§6"
+      ],
+      "kind": "negative",
+      "description": "The Rust, Go and Python labels are unchanged.",
+      "given": "a Rust, a Go and a Python scaffold",
+      "when": "hexa analyze runs on each",
+      "then": "The language lines read rust (Cargo.toml), go (go.mod) and python (pyproject.toml).",
+      "test": "hexa-cli/tests/adr_2611271955_spec.rs::s14_other_labels_unchanged",
+      "red": "5c002a9"
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§6"
+      ],
+      "kind": "property",
+      "description": "Naming JavaScript does not depend on the order of the files.",
+      "given": "a JavaScript project and a shuffle of the order its files are written in",
+      "when": "hexa analyze runs on each",
+      "then": "Every run names javascript (package.json).",
+      "test": "hexa-cli/tests/adr_2611271955_spec.rs::s15_order_does_not_matter",
+      "red": "5c002a9"
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§6"
+      ],
+      "kind": "example",
+      "description": "The TypeScript scaffold keeps its label and its grade.",
+      "given": "the TypeScript scaffold",
+      "when": "hexa analyze --json runs on it",
+      "then": "Its language line reads typescript (package.json) and the grade is A+.",
+      "test": "hexa-cli/tests/adr_2611271955_spec.rs::s16_the_typescript_scaffold_is_unchanged",
+      "red": "5c002a9"
+    },
+    {
+      "id": "S17",
+      "decision": [
+        "§5"
+      ],
+      "kind": "negative",
+      "description": "The inventory gains no javascript row.",
+      "given": "a JavaScript project",
+      "when": "hexa analyze --json runs on it",
+      "then": "No layer_inventory row names the language javascript, and the files of a mixed project are not split between two rows by extension.",
+      "test": "hexa-cli/tests/adr_2611271955_spec.rs::s17_no_javascript_row",
+      "red": "5c002a9"
+    }
+  ],
+  "amendments": [
+    {
+      "at": "2026-11-27T20:20:02.861181304+00:00",
+      "base_commit": "5c002a9b46d4622a403799102258576a9bdba9fa",
+      "by": "craigjohnson",
+      "file": "hexa-cli/tests/adr_2611271955_spec.rs",
+      "from": "e0c5b12784f950aad97b4096917408c7a17c10cae3eec0b15bdd82e13205debc",
+      "reason": "test setup only, no scenario text changes: hexa analyze refuses a project with no graded source (not graded: no source files) and prints no language line, so S04 (package.json alone) and S10 (only excluded JavaScript) now observe the same label through hexa doctor and the session-start block, which always name one; S09 gains one Python source so analyze has something to grade. The scenarios' own wording says hexa analyze for S04 and S10, which cannot be observed for a project with no source.",
+      "to": "55b661b93457af4c64a602668b5014b3de554c8b193d5a04ddb8507c78b73908"
+    }
+  ]
+}

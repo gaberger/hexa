@@ -466,13 +466,13 @@
   ],
   "amendments": [
     {
+      "at": "2026-11-08T18:02:25.490444+00:00",
+      "base_commit": "7c2037939731658d84d41c64805d6dcfebd8641e",
+      "by": "gary (baseline run by Claude on gary's instruction)",
       "file": "hexa-cli/tests/adr_2610271736_spec.rs",
       "from": "7739f64763f65fa29b5b74bcfae26eb0def7dd2e74ab5777b4701d8f64e9629d",
-      "to": "962f284e727a3d7cb53d590ad01ab6cd896b2d9d3356cf17c2f67d652784c793",
-      "by": "gary (baseline run by Claude on gary's instruction)",
       "reason": "baseline (ADR-2611081151 §1): this seal moved before every move was recorded; history and the record agree on both ends",
-      "at": "2026-11-08T18:02:25.490444+00:00",
-      "base_commit": "7c2037939731658d84d41c64805d6dcfebd8641e"
+      "to": "962f284e727a3d7cb53d590ad01ab6cd896b2d9d3356cf17c2f67d652784c793"
     },
     {
       "at": "2026-11-08T15:12:17.572839733+00:00",
@@ -482,6 +482,228 @@
       "from": "962f284e727a3d7cb53d590ad01ab6cd896b2d9d3356cf17c2f67d652784c793",
       "reason": "add the lint header hexa gives generated test files, #![allow(unused, clippy::all)], so CI clippy -D warnings passes; no test changed",
       "to": "ff13c86ef3a57039f83638b13e8e502d2ef44756d4419db9f826d1b4c9110341"
+    }
+  ],
+  "moves": [
+    {
+      "at": "2026-11-26T02:14:27.607668473+00:00",
+      "base_commit": "9f7e6082648061c92ac123b10feafcc46b18fdf4",
+      "by": "Claude Code agent (baseline from history, for review)",
+      "from": "hexa-cli/tests/adr_2610271736_spec.rs::s06_checked_in_vendored_copy_matches_upstream",
+      "reason": "recorded from history (baseline for ADR-2611251652): this binding moved before moves were recorded",
+      "scenario": "S06",
+      "sha256": "ff13c86ef3a57039f83638b13e8e502d2ef44756d4419db9f826d1b4c9110341",
+      "to": "hexa-cli/tests/adr_2610271736_spec.rs::s06_checked_in_vendored_copy_matches_upstream_json"
+    },
+    {
+      "at": "2026-11-26T02:14:27.885489115+00:00",
+      "base_commit": "9f7e6082648061c92ac123b10feafcc46b18fdf4",
+      "by": "Claude Code agent (baseline from history, for review)",
+      "from": "hexa-cli/tests/adr_2610271736_spec.rs::s09_drift_report_has_persona_and_commit",
+      "reason": "recorded from history (baseline for ADR-2611251652): this binding moved before moves were recorded",
+      "scenario": "S09",
+      "sha256": "ff13c86ef3a57039f83638b13e8e502d2ef44756d4419db9f826d1b4c9110341",
+      "to": "hexa-cli/tests/adr_2610271736_spec.rs::s09_drift_report_is_attributed"
+    },
+    {
+      "at": "2026-11-26T02:14:28.113417431+00:00",
+      "base_commit": "9f7e6082648061c92ac123b10feafcc46b18fdf4",
+      "by": "Claude Code agent (baseline from history, for review)",
+      "from": "hexa-cli/tests/adr_2610271736_spec.rs::s11_reviewer_prompt_has_no_earlier_or_peer_findings",
+      "reason": "recorded from history (baseline for ADR-2611251652): this binding moved before moves were recorded",
+      "scenario": "S11",
+      "sha256": "ff13c86ef3a57039f83638b13e8e502d2ef44756d4419db9f826d1b4c9110341",
+      "to": "hexa-cli/tests/adr_2610271736_spec.rs::s11_reviewer_prompt_has_no_other_findings"
+    },
+    {
+      "at": "2026-11-26T02:14:28.346105047+00:00",
+      "base_commit": "9f7e6082648061c92ac123b10feafcc46b18fdf4",
+      "by": "Claude Code agent (baseline from history, for review)",
+      "from": "hexa-cli/tests/adr_2610271736_spec.rs::s13_goldfish_uses_model_flag_else_tier",
+      "reason": "recorded from history (baseline for ADR-2611251652): this binding moved before moves were recorded",
+      "scenario": "S13",
+      "sha256": "ff13c86ef3a57039f83638b13e8e502d2ef44756d4419db9f826d1b4c9110341",
+      "to": "hexa-cli/tests/adr_2610271736_spec.rs::s13_goldfish_uses_model_flag_else_t25"
+    },
+    {
+      "at": "2026-11-26T02:14:28.584901603+00:00",
+      "base_commit": "9f7e6082648061c92ac123b10feafcc46b18fdf4",
+      "by": "Claude Code agent (baseline from history, for review)",
+      "from": "hexa-cli/tests/adr_2610271736_spec.rs::s15_oversized_source_is_cut_and_stated",
+      "reason": "recorded from history (baseline for ADR-2611251652): this binding moved before moves were recorded",
+      "scenario": "S15",
+      "sha256": "ff13c86ef3a57039f83638b13e8e502d2ef44756d4419db9f826d1b4c9110341",
+      "to": "hexa-cli/tests/adr_2610271736_spec.rs::s15_long_source_is_cut_and_cut_stated"
+    },
+    {
+      "at": "2026-11-26T02:14:28.843562905+00:00",
+      "base_commit": "9f7e6082648061c92ac123b10feafcc46b18fdf4",
+      "by": "Claude Code agent (baseline from history, for review)",
+      "from": "hexa-cli/tests/adr_2610271736_spec.rs::s16_backquoted_paths_in_first_mention_order",
+      "reason": "recorded from history (baseline for ADR-2611251652): this binding moved before moves were recorded",
+      "scenario": "S16",
+      "sha256": "ff13c86ef3a57039f83638b13e8e502d2ef44756d4419db9f826d1b4c9110341",
+      "to": "hexa-cli/tests/adr_2610271736_spec.rs::s16_backquoted_paths_in_order_once"
+    },
+    {
+      "at": "2026-11-26T02:14:29.089424190+00:00",
+      "base_commit": "9f7e6082648061c92ac123b10feafcc46b18fdf4",
+      "by": "Claude Code agent (baseline from history, for review)",
+      "from": "hexa-cli/tests/adr_2610271736_spec.rs::s17_missing_and_outside_paths_are_not_returned",
+      "reason": "recorded from history (baseline for ADR-2611251652): this binding moved before moves were recorded",
+      "scenario": "S17",
+      "sha256": "ff13c86ef3a57039f83638b13e8e502d2ef44756d4419db9f826d1b4c9110341",
+      "to": "hexa-cli/tests/adr_2610271736_spec.rs::s17_missing_and_outside_paths_not_returned"
+    },
+    {
+      "at": "2026-11-26T02:14:29.357798812+00:00",
+      "base_commit": "9f7e6082648061c92ac123b10feafcc46b18fdf4",
+      "by": "Claude Code agent (baseline from history, for review)",
+      "from": "hexa-cli/tests/adr_2610271736_spec.rs::s18_unresolved_paths_are_not_read_and_are_listed",
+      "reason": "recorded from history (baseline for ADR-2611251652): this binding moved before moves were recorded",
+      "scenario": "S18",
+      "sha256": "ff13c86ef3a57039f83638b13e8e502d2ef44756d4419db9f826d1b4c9110341",
+      "to": "hexa-cli/tests/adr_2610271736_spec.rs::s18_unresolved_paths_not_read_and_listed"
+    },
+    {
+      "at": "2026-11-26T02:14:29.623809014+00:00",
+      "base_commit": "9f7e6082648061c92ac123b10feafcc46b18fdf4",
+      "by": "Claude Code agent (baseline from history, for review)",
+      "from": "hexa-cli/tests/adr_2610271736_spec.rs::s19_unquoted_paths_are_not_returned",
+      "reason": "recorded from history (baseline for ADR-2611251652): this binding moved before moves were recorded",
+      "scenario": "S19",
+      "sha256": "ff13c86ef3a57039f83638b13e8e502d2ef44756d4419db9f826d1b4c9110341",
+      "to": "hexa-cli/tests/adr_2610271736_spec.rs::s19_unquoted_paths_not_returned"
+    },
+    {
+      "at": "2026-11-26T02:14:29.891109733+00:00",
+      "base_commit": "9f7e6082648061c92ac123b10feafcc46b18fdf4",
+      "by": "Claude Code agent (baseline from history, for review)",
+      "from": "hexa-cli/tests/adr_2610271736_spec.rs::s21_presets_give_egm_stages_in_order",
+      "reason": "recorded from history (baseline for ADR-2611251652): this binding moved before moves were recorded",
+      "scenario": "S21",
+      "sha256": "ff13c86ef3a57039f83638b13e8e502d2ef44756d4419db9f826d1b4c9110341",
+      "to": "hexa-cli/tests/adr_2610271736_spec.rs::s21_presets_give_stages_in_order"
+    },
+    {
+      "at": "2026-11-26T02:14:30.146128251+00:00",
+      "base_commit": "9f7e6082648061c92ac123b10feafcc46b18fdf4",
+      "by": "Claude Code agent (baseline from history, for review)",
+      "from": "hexa-cli/tests/adr_2610271736_spec.rs::s22_stage_reviewers_and_per_stage_numbering",
+      "reason": "recorded from history (baseline for ADR-2611251652): this binding moved before moves were recorded",
+      "scenario": "S22",
+      "sha256": "ff13c86ef3a57039f83638b13e8e502d2ef44756d4419db9f826d1b4c9110341",
+      "to": "hexa-cli/tests/adr_2610271736_spec.rs::s22_stage_reviewers_and_numbered_findings"
+    },
+    {
+      "at": "2026-11-26T02:14:30.396451479+00:00",
+      "base_commit": "9f7e6082648061c92ac123b10feafcc46b18fdf4",
+      "by": "Claude Code agent (baseline from history, for review)",
+      "from": "hexa-cli/tests/adr_2610271736_spec.rs::s23_review_never_edits_draft",
+      "reason": "recorded from history (baseline for ADR-2611251652): this binding moved before moves were recorded",
+      "scenario": "S23",
+      "sha256": "ff13c86ef3a57039f83638b13e8e502d2ef44756d4419db9f826d1b4c9110341",
+      "to": "hexa-cli/tests/adr_2610271736_spec.rs::s23_review_does_not_edit_draft"
+    },
+    {
+      "at": "2026-11-26T02:14:30.650272314+00:00",
+      "base_commit": "9f7e6082648061c92ac123b10feafcc46b18fdf4",
+      "by": "Claude Code agent (baseline from history, for review)",
+      "from": "hexa-cli/tests/adr_2610271736_spec.rs::s25_single_stage_runs_only_that_stage",
+      "reason": "recorded from history (baseline for ADR-2611251652): this binding moved before moves were recorded",
+      "scenario": "S25",
+      "sha256": "ff13c86ef3a57039f83638b13e8e502d2ef44756d4419db9f826d1b4c9110341",
+      "to": "hexa-cli/tests/adr_2610271736_spec.rs::s25_stage_flag_runs_one_stage"
+    },
+    {
+      "at": "2026-11-26T02:14:30.902207980+00:00",
+      "base_commit": "9f7e6082648061c92ac123b10feafcc46b18fdf4",
+      "by": "Claude Code agent (baseline from history, for review)",
+      "from": "hexa-cli/tests/adr_2610271736_spec.rs::s26_presets_run_stages_ascending",
+      "reason": "recorded from history (baseline for ADR-2611251652): this binding moved before moves were recorded",
+      "scenario": "S26",
+      "sha256": "ff13c86ef3a57039f83638b13e8e502d2ef44756d4419db9f826d1b4c9110341",
+      "to": "hexa-cli/tests/adr_2610271736_spec.rs::s26_presets_strictly_ascending"
+    },
+    {
+      "at": "2026-11-26T02:14:31.164975247+00:00",
+      "base_commit": "9f7e6082648061c92ac123b10feafcc46b18fdf4",
+      "by": "Claude Code agent (baseline from history, for review)",
+      "from": "hexa-cli/tests/adr_2610271736_spec.rs::s27_brainstorm_and_draft_use_artifact_directory",
+      "reason": "recorded from history (baseline for ADR-2611251652): this binding moved before moves were recorded",
+      "scenario": "S27",
+      "sha256": "ff13c86ef3a57039f83638b13e8e502d2ef44756d4419db9f826d1b4c9110341",
+      "to": "hexa-cli/tests/adr_2610271736_spec.rs::s27_brainstorm_and_draft_write_to_artifact_dir"
+    },
+    {
+      "at": "2026-11-26T02:14:31.444402310+00:00",
+      "base_commit": "9f7e6082648061c92ac123b10feafcc46b18fdf4",
+      "by": "Claude Code agent (baseline from history, for review)",
+      "from": "hexa-cli/tests/adr_2610271736_spec.rs::s28_default_artifact_directory",
+      "reason": "recorded from history (baseline for ADR-2611251652): this binding moved before moves were recorded",
+      "scenario": "S28",
+      "sha256": "ff13c86ef3a57039f83638b13e8e502d2ef44756d4419db9f826d1b4c9110341",
+      "to": "hexa-cli/tests/adr_2610271736_spec.rs::s28_default_artifact_dir"
+    },
+    {
+      "at": "2026-11-26T02:14:31.705012701+00:00",
+      "base_commit": "9f7e6082648061c92ac123b10feafcc46b18fdf4",
+      "by": "Claude Code agent (baseline from history, for review)",
+      "from": "hexa-cli/tests/adr_2610271736_spec.rs::s29_resolve_passes_only_accepted_findings",
+      "reason": "recorded from history (baseline for ADR-2611251652): this binding moved before moves were recorded",
+      "scenario": "S29",
+      "sha256": "ff13c86ef3a57039f83638b13e8e502d2ef44756d4419db9f826d1b4c9110341",
+      "to": "hexa-cli/tests/adr_2610271736_spec.rs::s29_resolve_hands_only_accepted_findings"
+    },
+    {
+      "at": "2026-11-26T02:14:31.976269889+00:00",
+      "base_commit": "9f7e6082648061c92ac123b10feafcc46b18fdf4",
+      "by": "Claude Code agent (baseline from history, for review)",
+      "from": "hexa-cli/tests/adr_2610271736_spec.rs::s30_no_command_marks_design_approved",
+      "reason": "recorded from history (baseline for ADR-2611251652): this binding moved before moves were recorded",
+      "scenario": "S30",
+      "sha256": "ff13c86ef3a57039f83638b13e8e502d2ef44756d4419db9f826d1b4c9110341",
+      "to": "hexa-cli/tests/adr_2610271736_spec.rs::s30_no_command_marks_approved"
+    },
+    {
+      "at": "2026-11-26T02:14:32.231447263+00:00",
+      "base_commit": "9f7e6082648061c92ac123b10feafcc46b18fdf4",
+      "by": "Claude Code agent (baseline from history, for review)",
+      "from": "hexa-cli/tests/adr_2610271736_spec.rs::s33_drift_fails_only_when_asked",
+      "reason": "recorded from history (baseline for ADR-2611251652): this binding moved before moves were recorded",
+      "scenario": "S33",
+      "sha256": "ff13c86ef3a57039f83638b13e8e502d2ef44756d4419db9f826d1b4c9110341",
+      "to": "hexa-cli/tests/adr_2610271736_spec.rs::s33_drift_fails_only_with_flag"
+    },
+    {
+      "at": "2026-11-26T02:14:32.483346158+00:00",
+      "base_commit": "9f7e6082648061c92ac123b10feafcc46b18fdf4",
+      "by": "Claude Code agent (baseline from history, for review)",
+      "from": "hexa-cli/tests/adr_2610271736_spec.rs::s34_no_drift_with_fail_on_drift_exits_zero",
+      "reason": "recorded from history (baseline for ADR-2611251652): this binding moved before moves were recorded",
+      "scenario": "S34",
+      "sha256": "ff13c86ef3a57039f83638b13e8e502d2ef44756d4419db9f826d1b4c9110341",
+      "to": "hexa-cli/tests/adr_2610271736_spec.rs::s34_no_drift_with_flag_exits_zero"
+    },
+    {
+      "at": "2026-11-26T02:14:32.767948207+00:00",
+      "base_commit": "9f7e6082648061c92ac123b10feafcc46b18fdf4",
+      "by": "Claude Code agent (baseline from history, for review)",
+      "from": "hexa-cli/tests/adr_2610271736_spec.rs::s35_commands_write_only_allowed_directories",
+      "reason": "recorded from history (baseline for ADR-2611251652): this binding moved before moves were recorded",
+      "scenario": "S35",
+      "sha256": "ff13c86ef3a57039f83638b13e8e502d2ef44756d4419db9f826d1b4c9110341",
+      "to": "hexa-cli/tests/adr_2610271736_spec.rs::s35_writes_only_to_allowed_dirs"
+    },
+    {
+      "at": "2026-11-26T02:14:33.058627996+00:00",
+      "base_commit": "9f7e6082648061c92ac123b10feafcc46b18fdf4",
+      "by": "Claude Code agent (baseline from history, for review)",
+      "from": "hexa-cli/tests/adr_2610271736_spec.rs::s37_no_run_writes_outside_allowed_directories",
+      "reason": "recorded from history (baseline for ADR-2611251652): this binding moved before moves were recorded",
+      "scenario": "S37",
+      "sha256": "ff13c86ef3a57039f83638b13e8e502d2ef44756d4419db9f826d1b4c9110341",
+      "to": "hexa-cli/tests/adr_2610271736_spec.rs::s37_no_run_writes_outside_allowed_dirs"
     }
   ]
 }

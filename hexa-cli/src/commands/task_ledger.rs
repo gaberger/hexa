@@ -178,7 +178,9 @@ pub fn ensure_ignored(root: &Path) -> std::io::Result<bool> {
     let dir = root.join(".hexa");
     let file = dir.join(".gitignore");
     let have = std::fs::read_to_string(&file).unwrap_or_default();
-    let want = ["tasks.json", "tasks.lock", ".tasks.json.*.tmp"];
+    // The Stop hook's per-session counter is session state too
+    // (ADR-2611221936 §1).
+    let want = ["tasks.json", "tasks.lock", ".tasks.json.*.tmp", "stop-blocks.json"];
     let missing: Vec<&str> = want
         .iter()
         .copied()

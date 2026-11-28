@@ -1,0 +1,322 @@
+{
+  "adr": "ADR-2611221644",
+  "feature": "Python reads the @hexa:public tag",
+  "description": "A Python export is hexa_public when the run of # comment lines directly above it, or above its first decorator, or above the module's __all__ assignment, carries @hexa:public; nothing else changes.",
+  "universal": [
+    "§1",
+    "§2",
+    "§3"
+  ],
+  "accepted": {
+    "by": "craigjohnson",
+    "sha256": "609003035ec3e762f53764f723629168beba6ed99d5bd7bc730771e1537e788d"
+  },
+  "sealed": {
+    "hexa-analysis/tests/adr_2611221644_spec_2.rs": "11ad6fa85a46c9a0c3d9fe921daec7f0fec2157dd8e48c11dfda9965e9e88cae"
+  },
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A tagged top-level def is public",
+      "given": "A Python file `lib.py` whose source is `# @hexa:public\\ndef connect():\\n    pass\\n` and has no `__all__`",
+      "when": "`extract_exports` is called on it with `Language::Python`",
+      "then": "The export named `connect` has `hexa_public: true`",
+      "test": "hexa-analysis/tests/adr_2611221644_spec_2.rs::part_1::s01_tagged_top_level_def_is_public",
+      "red": "00b66bd"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "The tag may be on any line of a multi-line comment run",
+      "given": "A Python file whose source is `# Opens a session.\\n# @hexa:public\\n# Thread-safe.\\nclass Client:\\n    pass\\n`",
+      "when": "`extract_exports` is called with `Language::Python`",
+      "then": "The export named `Client` has `hexa_public: true`",
+      "test": "hexa-analysis/tests/adr_2611221644_spec_2.rs::part_1::s02_tag_on_any_line_of_comment_run",
+      "red": "00b66bd"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "A tagged top-level assignment is public",
+      "given": "A Python file whose source is `# @hexa:public\\nDEFAULT_TIMEOUT = 30\\n`",
+      "when": "`extract_exports` is called with `Language::Python`",
+      "then": "The export named `DEFAULT_TIMEOUT` has `hexa_public: true`",
+      "test": "hexa-analysis/tests/adr_2611221644_spec_2.rs::part_1::s03_tagged_assignment_is_public",
+      "red": "00b66bd"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "For a decorated def, the comment run above the first decorator counts",
+      "given": "A Python file whose source is `# @hexa:public\\n@cache\\n@trace\\ndef lookup(key):\\n    pass\\n`",
+      "when": "`extract_exports` is called with `Language::Python`",
+      "then": "The export named `lookup` has `hexa_public: true`",
+      "test": "hexa-analysis/tests/adr_2611221644_spec_2.rs::part_1::s04_decorated_def_comment_above_first_decorator",
+      "red": "00b66bd"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "For a decorated class, the comment run above the first decorator counts",
+      "given": "A Python file whose source is `# @hexa:public\\n@dataclass\\nclass Point:\\n    x: int\\n`",
+      "when": "`extract_exports` is called with `Language::Python`",
+      "then": "The export named `Point` has `hexa_public: true`",
+      "test": "hexa-analysis/tests/adr_2611221644_spec_2.rs::part_1::s05_decorated_class_comment_above_first_decorator",
+      "red": "00b66bd"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A blank line ends the comment run",
+      "given": "A Python file whose source is `# @hexa:public\\n\\ndef connect():\\n    pass\\n`",
+      "when": "`extract_exports` is called with `Language::Python`",
+      "then": "The export named `connect` has `hexa_public: false`"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A blank line inside the run cuts off the tag above it",
+      "given": "A Python file whose source is `# @hexa:public\\n\\n# Opens a connection.\\ndef connect():\\n    pass\\n`",
+      "when": "`extract_exports` is called with `Language::Python`",
+      "then": "The export named `connect` has `hexa_public: false`"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A trailing comment belongs to the code line it ends, not to the next definition",
+      "given": "A Python file whose source is `VERSION = \"1.0\"  # @hexa:public\\ndef connect():\\n    pass\\n`",
+      "when": "`extract_exports` is called with `Language::Python`",
+      "then": "The export named `VERSION` has `hexa_public: true`, because its own line carries the tag. The export named `connect` has `hexa_public: false`",
+      "test": "hexa-analysis/tests/adr_2611221644_spec_2.rs::part_1::s08_trailing_comment_belongs_to_its_line",
+      "red": "00b66bd"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A tag in a docstring is not a # comment",
+      "given": "A Python file whose source is `def connect():\\n    \"\"\"@hexa:public\"\"\"\\n    pass\\n`",
+      "when": "`extract_exports` is called with `Language::Python`",
+      "then": "The export named `connect` has `hexa_public: false`"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A tag above one definition does not carry over to the next one",
+      "given": "A Python file whose source is `# @hexa:public\\ndef a():\\n    pass\\n\\ndef b():\\n    pass\\n`",
+      "when": "`extract_exports` is called with `Language::Python`",
+      "then": "`a` has `hexa_public: true` and `b` has `hexa_public: false`",
+      "test": "hexa-analysis/tests/adr_2611221644_spec_2.rs::part_1::s10_tag_does_not_carry_over",
+      "red": "00b66bd"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "A tagged private name does not become an export",
+      "given": "A Python file with no `__all__`, whose source is `# @hexa:public\\ndef _helper():\\n    pass\\n`",
+      "when": "`extract_exports` is called with `Language::Python`",
+      "then": "No export named `_helper` is returned"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "The tag must be on a comment line of the run, not on a line further up",
+      "given": "A Python file whose source is `# @hexa:public\\nx = 1\\n# helper\\ndef connect():\\n    pass\\n`",
+      "when": "`extract_exports` is called with `Language::Python`",
+      "then": "`x` has `hexa_public: true` and `connect` has `hexa_public: false`",
+      "test": "hexa-analysis/tests/adr_2611221644_spec_2.rs::part_1::s12_tag_must_be_in_directly_above_run",
+      "red": "00b66bd"
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§1"
+      ],
+      "kind": "property",
+      "description": "An export is public exactly when its directly-above comment run carries the tag",
+      "given": "Any Python source made of top-level defs, classes and assignments, each optionally decorated, with any arrangement of `#` comment lines, trailing comments and blank lines above each, and no tag above `__all__`",
+      "when": "`extract_exports` is called with `Language::Python`",
+      "then": "For every returned export, `hexa_public` is true if and only if some line of the unbroken run of whole-line `#` comments directly above the definition (or above its first decorator) contains `@hexa:public`. A blank line ends the run, and a comment that trails code does not count for the next definition",
+      "test": "hexa-analysis/tests/adr_2611221644_spec_2.rs::part_1::s13_public_iff_directly_above_run_carries_tag",
+      "red": "00b66bd"
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "A tag above __all__ marks every listed name",
+      "given": "A Python file whose source is `# @hexa:public\\n__all__ = [\"connect\", \"Client\"]\\n\\ndef connect():\\n    pass\\n\\nclass Client:\\n    pass\\n\\ndef extra():\\n    pass\\n`",
+      "when": "`extract_exports` is called with `Language::Python`",
+      "then": "The exports are exactly `connect` and `Client`, and both have `hexa_public: true`",
+      "test": "hexa-analysis/tests/adr_2611221644_spec_2.rs::part_1::s14_tag_above_all_marks_every_listed_name",
+      "red": "00b66bd"
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "Tagged __all__ names are never reported as dead exports",
+      "given": "A project with one Python module whose tagged `__all__` lists `connect`, and no file in the project names `connect`",
+      "when": "The project is analysed",
+      "then": "`dead_exports` holds no entry for `connect`",
+      "test": "hexa-analysis/tests/adr_2611221644_spec_2.rs::part_2::s15_tagged_all_names_are_never_reported_as_dead_exports",
+      "red": "00b66bd"
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "An untagged __all__ marks nothing",
+      "given": "A Python file whose source is `__all__ = [\"connect\"]\\n\\ndef connect():\\n    pass\\n`",
+      "when": "`extract_exports` is called with `Language::Python`",
+      "then": "The export named `connect` has `hexa_public: false`"
+    },
+    {
+      "id": "S17",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "A blank line between the tag and __all__ cuts it off",
+      "given": "A Python file whose source is `# @hexa:public\\n\\n__all__ = [\"connect\"]\\n\\ndef connect():\\n    pass\\n`",
+      "when": "`extract_exports` is called with `Language::Python`",
+      "then": "The export named `connect` has `hexa_public: false`"
+    },
+    {
+      "id": "S18",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "A tag on one listed definition does not mark the other listed names",
+      "given": "A Python file whose source is `__all__ = [\"a\", \"b\"]\\n\\n# @hexa:public\\ndef a():\\n    pass\\n\\ndef b():\\n    pass\\n`",
+      "when": "`extract_exports` is called with `Language::Python`",
+      "then": "`a` has `hexa_public: true` and `b` has `hexa_public: false`",
+      "test": "hexa-analysis/tests/adr_2611221644_spec_2.rs::part_2::s18_tag_on_one_listed_definition_does_not_mark_others",
+      "red": "00b66bd"
+    },
+    {
+      "id": "S19",
+      "decision": [
+        "§2"
+      ],
+      "kind": "property",
+      "description": "With a tagged __all__, every export is public",
+      "given": "Any Python source that assigns `__all__` with a list of names, with a `#` run directly above the assignment that contains `@hexa:public`",
+      "when": "`extract_exports` is called with `Language::Python`",
+      "then": "Every returned export is a name `__all__` lists, and every returned export has `hexa_public: true`",
+      "test": "hexa-analysis/tests/adr_2611221644_spec_2.rs::part_2::s19_with_tagged_all_every_export_is_public",
+      "red": "00b66bd"
+    },
+    {
+      "id": "S20",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "An untagged Python export is graded as before",
+      "given": "A project with one Python module whose `__all__` is untagged and lists `helper`, and no file in the project names `helper`",
+      "when": "The project is analysed",
+      "then": "`dead_exports` holds an entry for `helper` in that module"
+    },
+    {
+      "id": "S21",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "Other languages still read the tag",
+      "given": "A TypeScript file, a Rust file and a Go file, each declaring one exported item preceded by its language's `@hexa:public` comment and one exported item without it",
+      "when": "`extract_exports` is called on each with its own language",
+      "then": "In each file the tagged item has `hexa_public: true` and the untagged item has `hexa_public: false`, as before this ADR"
+    },
+    {
+      "id": "S22",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "The tag does not change which names are Python exports",
+      "given": "A Python file with a tagged `__all__ = [\"a\"]` that also defines `a`, `b` and `_c`",
+      "when": "`extract_exports` is called with `Language::Python`",
+      "then": "Only `a` is returned. Neither `b` nor `_c` is added by the tag",
+      "test": "hexa-analysis/tests/adr_2611221644_spec_2.rs::part_2::s22_tag_does_not_change_which_names_are_exports",
+      "red": "00b66bd"
+    },
+    {
+      "id": "S23",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "An internal module's __all__ is not treated as public",
+      "given": "A project with an internal Python module whose `__all__` lists `x` and `y`, carries no tag, and only `x` is named by another file",
+      "when": "The project is analysed",
+      "then": "`dead_exports` reports `y` and does not report `x`"
+    },
+    {
+      "id": "S24",
+      "decision": [
+        "§3"
+      ],
+      "kind": "property",
+      "description": "Without the tag, Python extraction is unchanged",
+      "given": "Any Python source in which the text `@hexa:public` does not appear",
+      "when": "`extract_exports` is called with `Language::Python`",
+      "then": "Every returned export has `hexa_public: false`. The returned names, lines and kinds are the same as before this ADR"
+    },
+    {
+      "id": "S25",
+      "decision": [
+        "§3"
+      ],
+      "kind": "property",
+      "description": "Non-Python extraction is unchanged",
+      "given": "Any TypeScript, Rust or Go source",
+      "when": "`extract_exports` is called with that language",
+      "then": "The result, including every `hexa_public` value, is identical to what it was before this ADR"
+    }
+  ]
+}

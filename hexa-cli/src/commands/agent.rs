@@ -569,7 +569,12 @@ fn earn_passed(cwd: &Path, t: &Task, commit: Option<&str>) -> Result<(), LedgerE
     if verdict.passes() {
         return Ok(());
     }
-    let why = hexa_exec::direct_exec::evidence_failure(gate, &verdict, "");
+    // The shared message ends "or declare the evidence --uncounted", the way a
+    // `loop gate` or `do run` user closes a gate that runs no tests. A task's
+    // gate has no such form, so that clause is dropped: it named a flag this
+    // verb does not have.
+    let why = hexa_exec::direct_exec::evidence_failure(gate, &verdict, "")
+        .replace("Use a test command, or declare the evidence --uncounted", "Use a test command: a task's gate is judged by its test output, and `agent register` has no uncounted form");
     let tail: Vec<&str> = text.lines().rev().take(15).collect::<Vec<_>>().into_iter().rev().collect();
     Err(LedgerError::new(
         "gate_failed",
@@ -787,6 +792,26 @@ mod tests {
                 assert_eq!(list(d.path(), true).unwrap()["count"]["active"], 1, "the refused task stays open");
                 release(d.path(), &id, false).unwrap();
             }
+        });
+    }
+
+    #[test]
+    fn a_refused_gate_never_recommends_a_flag_the_task_ledger_does_not_have() {
+        // A gate that exits 0 without test-runner output (`test -f file`) is
+        // refused. The shared message tells a `loop gate` user to declare the
+        // evidence `--uncounted`; `agent register` and `agent report` have no
+        // such flag, so naming it sent a peer looking for it.
+        let d = repo();
+        let sha = commit(d.path());
+        with_home(|| {
+            let mut r = req("one", &["src/a"]);
+            r.gate = Some("test -f .git/HEAD".into());
+            let id = register(d.path(), &r, false).unwrap()["id"].as_str().unwrap().to_string();
+            let e = report(d.path(), &id, Outcome::Passed, Some(&sha), None, false).unwrap_err();
+            assert_eq!(e.code, "gate_failed", "{}", e.message);
+            let said = format!("{} {}", e.message, e.hint);
+            assert!(!said.contains("--uncounted"), "names a flag this verb does not have: {said}");
+            assert!(said.contains("test command"), "still says what to do: {said}");
         });
     }
 

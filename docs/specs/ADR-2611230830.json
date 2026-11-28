@@ -1,0 +1,215 @@
+{
+  "adr": "ADR-2611230830",
+  "feature": "A --ci check that checked nothing does not pass",
+  "description": "`hexa adr gates --ci` and `hexa spec verify --ci` exit non-zero, with a reason, when the run judged no gate or found no scenario. Everything else behaves as before.",
+  "universal": [
+    "§1",
+    "§2",
+    "§3"
+  ],
+  "accepted": {
+    "by": "craigjohnson",
+    "sha256": "8b9ad20a4cde40c604664e582b71a6992dc6fa69c98a98b78d83754ed501e11c"
+  },
+  "sealed": {
+    "hexa-cli/tests/adr_2611230830_spec.rs": "01b456fcbff68fa11f8c0a156b2b85922d0f4faa5d5196a7c60b882c637b020a"
+  },
+  "red": "bfe7a81",
+  "specs": [
+    {
+      "id": "S01",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "gates --ci in a repository with no ADR fails and says nothing was checked",
+      "given": "a repository whose docs/adrs/ holds no ADR",
+      "when": "`hexa adr gates --ci` runs",
+      "then": "it exits non-zero, and its output says that no ADR records a gate, so nothing was checked",
+      "test": "hexa-cli/tests/adr_2611230830_spec.rs::part_1::s01_gates_ci_with_no_adr_fails_and_says_nothing_checked"
+    },
+    {
+      "id": "S02",
+      "decision": [
+        "§1"
+      ],
+      "kind": "example",
+      "description": "gates --ci where every ADR is without a gate fails",
+      "given": "a repository with three ADRs, none of which records a gate",
+      "when": "`hexa adr gates --ci` runs",
+      "then": "it exits non-zero, and its output says that no ADR records a gate, so nothing was checked",
+      "test": "hexa-cli/tests/adr_2611230830_spec.rs::part_1::s02_gates_ci_with_only_gateless_adrs_fails"
+    },
+    {
+      "id": "S03",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "one passing gate is not an empty run",
+      "given": "a repository with one ADR whose gate passes and two ADRs without a gate, none declared unbuilt",
+      "when": "`hexa adr gates --ci` runs",
+      "then": "it exits 0, and its output does not say that nothing was checked"
+    },
+    {
+      "id": "S04",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "a gate declared unbuilt was judged, so the run is not empty",
+      "given": "a repository with one ADR whose gate fails and is declared in adr.unbuilt with a reason, and other ADRs without a gate",
+      "when": "`hexa adr gates --ci` runs",
+      "then": "its output does not say that nothing was checked; the run is judged as ADR-2610271110 decides for declared ADRs"
+    },
+    {
+      "id": "S05",
+      "decision": [
+        "§1"
+      ],
+      "kind": "negative",
+      "description": "one failing gate fails for that gate, not for an empty run",
+      "given": "a repository with one ADR whose gate fails and others without a gate",
+      "when": "`hexa adr gates --ci` runs",
+      "then": "it exits non-zero, reports the failed gate, and its output does not say that nothing was checked"
+    },
+    {
+      "id": "S06",
+      "decision": [
+        "§1"
+      ],
+      "kind": "property",
+      "description": "gates --ci reports an empty run exactly when no gate was judged",
+      "given": "any set of ADRs, each with any outcome (passed, failed, unrunnable, cannot-run-here, not-proven-here, no gate) and any adr.unbuilt declaration",
+      "when": "`hexa adr gates --ci` runs",
+      "then": "the output says nothing was checked exactly when no ADR's verdict is passed, failed or declared unbuilt, and every such run exits non-zero",
+      "test": "hexa-cli/tests/adr_2611230830_spec.rs::part_1::s06_empty_run_reported_exactly_when_no_gate_judged"
+    },
+    {
+      "id": "S07",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "verify --ci with no spec fails and says nothing was checked",
+      "given": "a repository with no file in docs/specs/",
+      "when": "`hexa spec verify --ci` runs",
+      "then": "it exits non-zero, and its output says that no spec holds a scenario, so nothing was checked",
+      "test": "hexa-cli/tests/adr_2611230830_spec.rs::part_1::s07_verify_ci_with_no_spec_fails"
+    },
+    {
+      "id": "S08",
+      "decision": [
+        "§2"
+      ],
+      "kind": "example",
+      "description": "verify --ci where specs hold no scenarios fails",
+      "given": "a repository with two specs whose `specs` lists are empty",
+      "when": "`hexa spec verify --ci` runs",
+      "then": "it exits non-zero, and its output says that no spec holds a scenario, so nothing was checked",
+      "test": "hexa-cli/tests/adr_2611230830_spec.rs::part_1::s08_verify_ci_with_empty_specs_fails"
+    },
+    {
+      "id": "S09",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "a run with only pending scenarios is not the empty case",
+      "given": "a repository whose only spec holds scenarios that are all pending, for an ADR that is not Completed",
+      "when": "`hexa spec verify --ci` runs",
+      "then": "its output reports the pending scenarios as it does today and does not say that nothing was checked, and it exits as it does today"
+    },
+    {
+      "id": "S10",
+      "decision": [
+        "§2"
+      ],
+      "kind": "negative",
+      "description": "one passing scenario is not an empty run",
+      "given": "a repository with one spec holding one sealed scenario whose test passes",
+      "when": "`hexa spec verify --ci` runs",
+      "then": "it exits 0, and its output does not say that nothing was checked",
+      "test": "hexa-cli/tests/adr_2611230830_spec.rs::part_1::s10_one_passing_scenario_is_not_empty"
+    },
+    {
+      "id": "S11",
+      "decision": [
+        "§2"
+      ],
+      "kind": "property",
+      "description": "verify --ci reports an empty run exactly when there is no scenario",
+      "given": "any set of specs, each holding any number of scenarios in any state (passed, failed, not proven here, pending)",
+      "when": "`hexa spec verify --ci` runs",
+      "then": "the output says nothing was checked, and the run exits non-zero for that reason, exactly when the total number of scenarios across all specs is zero",
+      "test": "hexa-cli/tests/adr_2611230830_spec.rs::part_2::s11_verify_ci_reports_empty_run_exactly_when_no_scenario"
+    },
+    {
+      "id": "S12",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "without --ci an empty repository is reported as today",
+      "given": "a repository with no ADR and no spec",
+      "when": "`hexa adr gates` and `hexa spec verify` run without --ci",
+      "then": "each prints its zero-count summary as today, neither says that nothing was checked, and each exits 0"
+    },
+    {
+      "id": "S13",
+      "decision": [
+        "§3"
+      ],
+      "kind": "example",
+      "description": "verify for one ADR is judged as before",
+      "given": "a spec for ADR X with no scenarios",
+      "when": "`hexa spec verify X --ci` runs",
+      "then": "it is judged as it was before this ADR, and its output does not say that no spec holds a scenario"
+    },
+    {
+      "id": "S14",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "the new guard must not turn a passing non-empty --ci run into a failure",
+      "given": "a repository with one ADR whose gate passes and one spec with one scenario whose test passes",
+      "when": "`hexa adr gates --ci` and `hexa spec verify --ci` run",
+      "then": "both exit 0 with the same summary they printed before this ADR",
+      "test": "hexa-cli/tests/adr_2611230830_spec.rs::part_2::s14_non_empty_passing_ci_run_still_passes"
+    },
+    {
+      "id": "S15",
+      "decision": [
+        "§3"
+      ],
+      "kind": "negative",
+      "description": "without --ci, no gate recorded does not fail",
+      "given": "a repository with ADRs, none of which records a gate",
+      "when": "`hexa adr gates` runs without --ci",
+      "then": "it exits 0 and does not say that nothing was checked"
+    },
+    {
+      "id": "S16",
+      "decision": [
+        "§3"
+      ],
+      "kind": "property",
+      "description": "outside the empty --ci case, output and exit status are unchanged",
+      "given": "any repository and any invocation that is not a --ci run of `hexa adr gates` judging no gate and is not a --ci run of `hexa spec verify` finding no scenario",
+      "when": "the command runs",
+      "then": "its exit status and summary are the same as they were before this ADR"
+    }
+  ],
+  "amendments": [
+    {
+      "at": "2026-11-23T15:09:12.637884705+00:00",
+      "base_commit": "bfe7a8115771c5464663fd7b74d3f9408ca1bec8",
+      "by": "Claude Code agent",
+      "file": "hexa-cli/tests/adr_2611230830_spec.rs",
+      "from": "f060acd3647e406f0b3fc6467863f3dd5aac0c17ce95426cf274e2e2d16d53f1",
+      "reason": "Fixture defects only: S10's project had no test home, so spec accept refused it before the run under test (a pyproject.toml now gives one, and its .sh test keeps the built-in bash runner); S14's spec had one example and no negative for §1, so verify rejected the spec as incomplete (a negative scenario is added; its summary assertion counts the two scenarios, 2 passed, the same check as before for the complete spec). Without the fix S10 and S14 pass: guards, recorded red only for these defects",
+      "to": "01b456fcbff68fa11f8c0a156b2b85922d0f4faa5d5196a7c60b882c637b020a"
+    }
+  ]
+}

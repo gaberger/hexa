@@ -7,6 +7,7 @@
 use std::path::{Path, PathBuf};
 
 use colored::Colorize;
+use hexa_analysis::analyzer::PYTHON_MANIFESTS;
 use hexa_analysis::ports::HexLayer as Layer;
 use hexa_analysis::layer_classifier::{get_violation_rule, LayerMap};
 
@@ -124,35 +125,50 @@ pub async fn run(
         let has_package_json = root.join("package.json").is_file();
         let has_cargo_toml = root.join("Cargo.toml").is_file();
         let has_go_mod = root.join("go.mod").is_file();
-        let has_pyproject = root.join("pyproject.toml").is_file()
-            || root.join("setup.py").is_file()
-            || root.join("requirements.txt").is_file();
+        let python_manifest = PYTHON_MANIFESTS.iter().copied().find(|m| root.join(m).is_file());
+        let has_pyproject = python_manifest.is_some();
         let has_hex_config = root.join(".hexa").is_dir();
         let has_docs_adrs = root.join("docs").join("adrs").is_dir();
 
         // The language is read from the manifest that is present. A Rust
         // project is not missing package.json and go.mod; it is a Rust
         // project, and the rest of the report is read in that light.
-        let language = if has_cargo_toml {
-            Some(("rust", "Cargo.toml"))
-        } else if has_go_mod {
-            Some(("go", "go.mod"))
-        } else if has_package_json {
-            Some(("typescript", "package.json"))
-        } else {
-            None
+        //
+        // A Python project names every language it holds (ADR-2611211324 §4):
+        // a package.json beside it is often tooling only (a browser test
+        // runner), and names TypeScript only when there is TypeScript to grade.
+        let languages: Vec<(&str, &str)> = match python_manifest {
+            Some(manifest) => {
+                let mut l = Vec::new();
+                if has_cargo_toml {
+                    l.push(("rust", "Cargo.toml"));
+                }
+                if has_go_mod {
+                    l.push(("go", "go.mod"));
+                }
+                // Listed only where the project has sources of it (ADR-2611271955 §3).
+                if has_package_json {
+                    if let Some(lang) = hexa_analysis::analyzer::node_sources_language(&root) {
+                        l.push((lang, "package.json"));
+                    }
+                }
+                l.push(("python", manifest));
+                l
+            }
+            None if has_cargo_toml => vec![("rust", "Cargo.toml")],
+            None if has_go_mod => vec![("go", "go.mod")],
+            None if has_package_json => vec![(hexa_analysis::analyzer::package_language(&root), "package.json")],
+            None => Vec::new(),
         };
         println!("  {}", "Project:".bold());
-        match language {
-            Some((lang, manifest)) => println!("    language:     {} ({})", lang, manifest),
-            None if has_pyproject => println!(
-                "    language:     {} (Python; hexa grades Rust, Go and TypeScript)",
-                "unsupported".yellow()
-            ),
-            None => println!(
-                "    language:     {} (no Cargo.toml, go.mod or package.json)",
+        if languages.is_empty() {
+            println!(
+                "    language:     {} (no Cargo.toml, go.mod, package.json or Python manifest)",
                 "unknown".yellow()
-            ),
+            );
+        } else {
+            let named: Vec<String> = languages.iter().map(|(lang, manifest)| format!("{lang} ({manifest})")).collect();
+            println!("    language:     {}", named.join(", "));
         }
         print_check(".hexa/ config", has_hex_config);
         println!("    docs/adrs/:   {}", if has_docs_adrs { "present" } else { "none" });
@@ -165,17 +181,24 @@ pub async fn run(
         let mut layer_counts: std::collections::HashMap<Layer, usize> = std::collections::HashMap::new();
         // Rust and TypeScript keep layers under src/; Go keeps them at the
         // module root (internal/domain, adapters/secondary).
+        // A Python package usually sits at the root, not under src/.
         let scan_dir = if has_src { root.join("src") } else { root.clone() };
-        if has_src || has_go_mod {
+        if has_src || has_go_mod || has_pyproject {
             println!();
             println!("  {}", "Hex layers:".bold());
 
-            for file in collect_source_files(&scan_dir) {
-                let rel = file
-                    .strip_prefix(&root)
-                    .unwrap_or(&file)
-                    .to_string_lossy()
-                    .replace('\\', "/");
+            // The tally counts the files the grade reads (ADR-2611221646 §3):
+            // a file `analyze.exclude` or a built-in pattern leaves out is in
+            // no layer. The list is the grade's own, so its extensions (`.tsx`
+            // in, `.js` out) and its skipped directories are the grade's too.
+            let scan_prefix = scan_dir
+                .strip_prefix(&root)
+                .map(|p| p.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_default();
+            for rel in hexa_analysis::analyzer::graded_files_sync(&root) {
+                if !scan_prefix.is_empty() && !rel.starts_with(&format!("{scan_prefix}/")) {
+                    continue;
+                }
                 // The patterns are `/adapters/secondary/`; a path relative to
                 // the module root, `adapters/secondary/memory.go`, has no
                 // leading slash and matched nothing.
@@ -259,7 +282,7 @@ pub async fn run(
                 for dir in go_dirs {
                     let layer_path = root.join(dir);
                     if layer_path.is_dir() {
-                        let count = collect_source_files(&layer_path).len();
+                        let count = collect_graded_files(&root, &layer_path).len();
                         total += count;
                         println!("    {} {} ({} files)", "\u{2713}".green(), dir, count);
                     }
@@ -291,10 +314,13 @@ pub async fn run(
         // Count total source files across the project
         let mut total_files = 0usize;
         if has_src {
-            total_files += collect_source_files(&root.join("src")).len();
+            total_files += collect_graded_files(&root, &root.join("src")).len();
         }
         total_files += rust_total;
         total_files += go_files_total;
+        if has_pyproject && !has_src {
+            total_files += collect_source_files(&root).iter().filter(|f| f.extension().is_some_and(|e| e == "py")).count();
+        }
 
         println!();
         println!("  {}", "Boundary analysis:".bold());
@@ -331,6 +357,7 @@ pub async fn run(
         // nothing, and every boundary claim below is then computed from an
         // empty edge set (ADR-2609140020).
         let mut parsed_files: Option<usize> = None;
+        let mut ungraded_python = 0usize;
         let deep_score: Option<u64> = match deep_analysis(&root).await {
             Ok(result) => {
                 // This count used to be printed and then dropped. `--exit-code`
@@ -366,6 +393,7 @@ pub async fn run(
                     println!("    {} {}", "\u{2717}".red(), e.red());
                 }
                 parsed_files = Some(result.file_count);
+                ungraded_python = result.ungraded_python_files;
                 graded_violations = Some(result.violations.len());
                 println!(
                     "    {} Analysed {} files, {} import edges",
@@ -394,10 +422,21 @@ pub async fn run(
             }
         };
 
+        if ungraded_python > 0 {
+            println!(
+                "    {} Python files not graded: {} (no Python manifest; add pyproject.toml, setup.py, manage.py or requirements.txt, or an analyze.layers key in .hexa/project.json that covers one)",
+                "\u{2023}".dimmed(),
+                ungraded_python
+            );
+        }
+
         // "0 boundary violations" is a claim about files that were read.
         // Saying it over a tree the parser could not open states the one
         // thing the run does not know (ADR-2609140020).
-        let nothing_parsed = total_files > 0 && parsed_files == Some(0);
+        // Zero parsed is not graded whatever the scan counted: a scan that
+        // found nothing it reads (a package.json that is only tooling, beside
+        // sources in no graded folder) printed A+ 100/100 (ADR-2611211324 §6).
+        let nothing_parsed = parsed_files == Some(0);
         if all_violation_count == 0 && !nothing_parsed {
             println!("    {} 0 boundary violations", "\u{2713}".green());
         }
@@ -413,7 +452,7 @@ pub async fn run(
             );
             println!(
                 "    {}",
-                "hexa parses Rust, Go and TypeScript. Nothing here was read, so every boundary result above is computed from an empty graph — including a score of 100. A grade is withheld rather than awarded on no evidence.".yellow()
+                "hexa parses Rust, Go, TypeScript and Python. Nothing here was read, so every boundary result above is computed from an empty graph — including a score of 100. A grade is withheld rather than awarded on no evidence.".yellow()
             );
         }
         let score = deep_score.unwrap_or_else(|| {
@@ -997,6 +1036,7 @@ async fn print_layer_inventory(root: &Path) {
             Language::Rust => "rust",
             Language::Go => "go",
             Language::TypeScript => "typescript",
+            Language::Python => "python",
             Language::Unknown => "unknown",
         };
         // Go never declares an implementation; a dash, not a zero.
@@ -1039,7 +1079,7 @@ fn scan_local_violations(root: &Path) -> Vec<ImportViolation> {
     let src = root.join("src");
     let mut all_violations = Vec::new();
 
-    let files = collect_source_files(&src);
+    let files = collect_graded_files(root, &src);
 
     for path in &files {
         let rel = path
@@ -1096,6 +1136,17 @@ fn is_test_file(rel: &str) -> bool {
         || name.contains(".spec.")
 }
 
+/// [`collect_source_files`] under `dir`, less the Python of a project at `root`
+/// that does not say it is Python (ADR-2611251938 §1). For the scans that
+/// judge or count what the grade reads.
+fn collect_graded_files(root: &Path, dir: &Path) -> Vec<PathBuf> {
+    let mut files = collect_source_files(dir);
+    if !hexa_analysis::analyzer::python_is_graded(root) {
+        files.retain(|f| f.extension().is_none_or(|e| e != "py"));
+    }
+    files
+}
+
 /// Recursively collect `.rs`, `.ts`, `.js`, `.go`, and `.py` source files under a directory.
 fn collect_source_files(dir: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
@@ -1113,12 +1164,12 @@ fn collect_source_files_recursive(dir: &Path, out: &mut Vec<PathBuf>) {
         if path.is_dir() {
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            if matches!(name.as_ref(), "target" | "node_modules" | "vendor" | ".git" | "dist") {
+            if matches!(name.as_ref(), "target" | "node_modules" | "vendor" | ".git" | "dist" | ".venv" | "venv" | "site-packages" | "__pycache__") {
                 continue;
             }
             collect_source_files_recursive(&path, out);
         } else if let Some(ext) = path.extension().and_then(|x| x.to_str()) {
-            if matches!(ext, "rs" | "ts" | "js" | "go" | "py") {
+            if matches!(ext, "rs" | "ts" | "js" | "jsx" | "mjs" | "cjs" | "go" | "py") {
                 out.push(path);
             }
         }
@@ -1510,6 +1561,24 @@ fn project_names(root: &Path) -> hexa_analysis::import_policy::ProjectNames {
         }
     }
 
+    // Python: the top-level names an absolute import of the project's own code
+    // starts with, from the root and from `src/` (ADR-2611211324 §2). Without
+    // these, `from pkg.domain import X` reads as a third-party package.
+    for base in [root.to_path_buf(), root.join("src")] {
+        let Ok(entries) = std::fs::read_dir(&base) else { continue };
+        for e in entries.flatten() {
+            let p = e.path();
+            let name = e.file_name().to_string_lossy().to_string();
+            if p.is_dir() && p.join("__init__.py").is_file() {
+                names.python_packages.push(name);
+            } else if let Some(stem) = name.strip_suffix(".py").or_else(|| name.strip_suffix(".pyi")) {
+                names.python_packages.push(stem.to_string());
+            }
+        }
+    }
+    names.python_packages.sort();
+    names.python_packages.dedup();
+
     names
 }
 
@@ -1544,7 +1613,7 @@ fn resolve_root(path: &str) -> anyhow::Result<PathBuf> {
 fn refuse_an_empty_scan(root: &Path) -> anyhow::Result<()> {
     if collect_source_files(root).is_empty() {
         anyhow::bail!(
-            "no source files under {}\n       There is nothing to grade. A grade printed for an empty scan is a\n       vacuous gate: it reports a perfect result because it read nothing.",
+            "not graded: no source files under {}\n       There is nothing to grade. A grade printed for an empty scan is a\n       vacuous gate: it reports a perfect result because it read nothing.",
             root.display()
         );
     }
@@ -1632,7 +1701,11 @@ fn walk_manifests(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) {
 /// The first segment of a module path, which is the name that decides whether
 /// the path leaves the project at all.
 fn first_segment(lang: hexa_analysis::ports::Language, raw: &str) -> String {
-    let sep = if lang == hexa_analysis::ports::Language::Rust { "::" } else { "/" };
+    let sep = match lang {
+        hexa_analysis::ports::Language::Rust => "::",
+        hexa_analysis::ports::Language::Python => ".",
+        _ => "/",
+    };
     raw.trim().trim_start_matches("::").split(sep).next().unwrap_or("").to_string()
 }
 
@@ -1657,16 +1730,27 @@ fn evaluate_import_policies(
     // The whole tree, not just `src/`: Go puts its layers under `internal/`
     // and `cmd/`, and a policy that silently skipped them would report a
     // clean domain because it never looked at one.
-    let mut files = collect_source_files(root);
+    let mut files = collect_graded_files(root, root);
     files.sort();
+    // A policy whose `layer` names a layer also covers the files an explicit
+    // `analyze.layers` key declares in it (ADR-2611230900 §1, §2).
+    let declared = hexa_analysis::layer_classifier::LayerMap::from_project(root).unwrap_or_default();
     let mut reported_findings: std::collections::HashSet<(String, usize, String, String)> =
         std::collections::HashSet::new();
 
     for path in &files {
         let rel = path.strip_prefix(root).unwrap_or(path).to_string_lossy().replace('\\', "/");
         let rel_slashed = format!("/{}", rel.trim_start_matches('/'));
-        let matching: Vec<&ImportPolicyConfig> =
-            policies.iter().filter(|p| layer_matches(&rel_slashed, &p.layer)).collect();
+        let declared_layer = declared.declared(&rel);
+        let matching: Vec<&ImportPolicyConfig> = policies
+            .iter()
+            .filter(|p| {
+                layer_matches(&rel_slashed, &p.layer)
+                    || (declared_layer.is_some()
+                        && declared_layer == hexa_analysis::layer_classifier::layer_named(&p.layer)
+                        && !out_of_policy_scope(&rel_slashed))
+            })
+            .collect();
         if matching.is_empty() {
             continue;
         }
@@ -1805,7 +1889,11 @@ fn denied_name(
     names: &hexa_analysis::import_policy::ProjectNames,
 ) -> String {
     let _ = names;
-    let sep = if lang == hexa_analysis::ports::Language::Rust { "::" } else { "/" };
+    let sep = match lang {
+        hexa_analysis::ports::Language::Rust => "::",
+        hexa_analysis::ports::Language::Python => ".",
+        _ => "/",
+    };
     let path = raw_path.trim().trim_start_matches("::");
     let mut best: Option<&str> = None;
     for d in deny {
@@ -1845,6 +1933,15 @@ fn unchecked_file(
             severity: "warning".to_string(),
         })
         .collect()
+}
+
+/// A top-level `tests/`, `benches/` or `examples/` file, which no policy
+/// judges (ADR-2609221430 §7; ADR-2611230900 §3).
+fn out_of_policy_scope(rel_slashed: &str) -> bool {
+    rel_slashed
+        .split('/')
+        .find(|s| !s.is_empty())
+        .is_some_and(|s| matches!(s, "tests" | "benches" | "examples"))
 }
 
 /// Whether a file sits in a policy's layer.
@@ -1932,7 +2029,7 @@ fn check_adr_compliance_inner(root: &Path, announce: bool) -> AdrCompliance {
     // one of which named a crate that no longer exists — so in an eight-crate
     // workspace the rules were checked against one crate and reported as
     // though they had been checked against all of them.
-    let mut all_files = collect_source_files(&root.join("src"));
+    let mut all_files = collect_graded_files(root, &root.join("src"));
     let mut members: Vec<PathBuf> = std::fs::read_dir(root)
         .map(|entries| {
             entries
@@ -1944,7 +2041,7 @@ fn check_adr_compliance_inner(root: &Path, announce: bool) -> AdrCompliance {
         .unwrap_or_default();
     members.sort();
     for sub in members {
-        all_files.extend(collect_source_files(&sub));
+        all_files.extend(collect_graded_files(root, &sub));
     }
 
     for path in &all_files {
@@ -2195,9 +2292,10 @@ async fn run_json(root: &Path, strict: bool, adr_compliance_only: bool, exit_cod
         match deep_analysis(root).await {
             Err(e) => deep_failed = Some(e.to_string()),
             Ok(deep) if deep.file_count == 0 => {
+                result["ungraded_python_files"] = serde_json::json!(deep.ungraded_python_files);
                 not_graded = Some(format!(
-                    "{} source files scanned, 0 parsed: hexa parses Rust, Go and TypeScript, and nothing here was read",
-                    collect_source_files(root).len()
+                    "{} source files scanned, 0 parsed: hexa parses Rust, Go, TypeScript and Python, and nothing here was read",
+                    collect_graded_files(root, root).len()
                 ))
             }
             Ok(deep) => {

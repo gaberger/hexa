@@ -277,3 +277,47 @@ async fn a_scaffolded_root_crate_keeps_its_crate_import_edges() {
         lib.imported_by
     );
 }
+
+#[tokio::test]
+async fn a_python_module_imported_in_any_form_has_importers() {
+    // ADR-2611211324 put `.py` files in the graph. A Python import is written
+    // `pkg.mod` or `.mod`, which no Rust or TypeScript rule resolves, so every
+    // Python module looked unimported and `graph consumers` printed SAFE TO
+    // REMOVE for a module the program imports — the excision-oracle failure.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("pyapp");
+    fs::create_dir_all(&root).unwrap();
+    write(&root, "pkg/__init__.py", "");
+    write(&root, "pkg/mod.py", "def f():\n    return 1\n");
+    write(&root, "main.py", "import pkg.mod\nprint(pkg.mod.f())\n");
+    write(&root, "a.py", "from pkg import mod\n");
+    write(&root, "pkg/b.py", "from . import mod\n");
+    write(&root, "pkg/c.py", "from .mod import f\n");
+    write(&root, "pkg/d.py", "import os\nfrom collections import OrderedDict\n");
+    write(&root, "pkg/other.py", "X = 1\n");
+    write(&root, "e.py", "from pkg import other, mod\n");
+    // A package whose subpackage has no `__init__.py` (a namespace package).
+    write(&root, "ns/__init__.py", "");
+    write(&root, "ns/sub/leaf.py", "Z = 1\n");
+    write(&root, "f.py", "import ns.sub.leaf\n");
+
+    let opts = BuildOpts { project_id: "pyapp".into(), mode: Mode::Ast, ..Default::default() };
+    let g = build(&root, opts, &NoopSemanticExtractor).await.unwrap();
+    let ctx = hexa_graph::context::context_for(&g, "pkg/mod.py", hexa_graph::context::ContextOpts::default())
+        .expect("context for pkg/mod.py");
+
+    let mut got: Vec<&str> = ctx.imported_by.iter().map(String::as_str).collect();
+    got.sort();
+    assert_eq!(got, ["a.py", "e.py", "main.py", "pkg/b.py", "pkg/c.py"], "imported_by: a `from` import of two names reaches both");
+    // Importing a submodule runs its package's `__init__.py` first.
+    let init = hexa_graph::context::context_for(&g, "pkg/__init__.py", hexa_graph::context::ContextOpts::default()).unwrap();
+    assert!(init.imported_by.iter().any(|f| f == "main.py"), "`import pkg.mod` runs pkg/__init__.py: {:?}", init.imported_by);
+    // A sibling import inside the package does not import the package itself.
+    assert!(!init.imported_by.iter().any(|f| f.starts_with("pkg/")), "no loop from pkg's own modules: {:?}", init.imported_by);
+    // The walk goes past a directory with no `__init__.py`.
+    let ns = hexa_graph::context::context_for(&g, "ns/__init__.py", hexa_graph::context::ContextOpts::default()).unwrap();
+    assert!(ns.imported_by.iter().any(|f| f == "f.py"), "`import ns.sub.leaf` runs ns/__init__.py: {:?}", ns.imported_by);
+    // The standard library is not a project file: no edge from pkg/d.py.
+    let d = hexa_graph::context::context_for(&g, "pkg/d.py", hexa_graph::context::ContextOpts::default()).unwrap();
+    assert!(d.imports.is_empty(), "stdlib imports are not edges: {:?}", d.imports);
+}

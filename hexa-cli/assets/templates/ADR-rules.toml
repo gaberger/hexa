@@ -46,7 +46,7 @@ adr = "ADR-2609121400"
 id = "no-hardcoded-absolute-path"
 message = "Hardcoded absolute path. A path that names one machine writes outside the repository on every other machine, and no test notices. Resolve it from the working directory or an environment variable."
 severity = "error"
-file_patterns = [".rs", ".go", ".ts", ".tsx"]
+file_patterns = [".rs", ".go", ".ts", ".tsx", ".py"]
 exclude_patterns = ["test", "_test.", ".test.", "example"]
 violation_patterns = ["\"/home/", "\"/Users/", "\"C:\\\\Users"]
 
@@ -55,7 +55,7 @@ adr = "ADR-2609121400"
 id = "no-hardcoded-host-port"
 message = "Hardcoded host:port. A literal address is a daemon dependency the code never decided to have, and removing the daemon later means touching every caller. Put the address in configuration."
 severity = "warning"
-file_patterns = [".rs", ".go", ".ts", ".tsx"]
+file_patterns = [".rs", ".go", ".ts", ".tsx", ".py"]
 exclude_patterns = ["test", "_test.", ".test.", "config", "example", "infer"]
 violation_patterns = ["127.0.0.1:", "localhost:", "0.0.0.0:"]
 
@@ -64,7 +64,7 @@ adr = "ADR-2609121400"
 id = "no-model-name-outside-inference"
 message = "A model or provider name outside the inference boundary. A caller that names a model cannot be re-pointed by editing configuration, which is exactly the property model-independence means. Read the tier from config instead."
 severity = "error"
-file_patterns = [".rs", ".go", ".ts", ".tsx"]
+file_patterns = [".rs", ".go", ".ts", ".tsx", ".py"]
 exclude_patterns = ["infer", "inference", "test", "_test.", ".test.", "config"]
 violation_patterns = ["gpt-4", "gpt-5", "claude-3", "claude-4", "qwen", "llama-3", "mistral", "ollama"]
 
@@ -149,8 +149,22 @@ deny = [
   "fs", "child_process",
   # Go (and the bare Node spellings it shares). `plugin` loads code at run
   # time, which is infrastructure by definition (ADR-2609211600 §6).
-  "os", "net", "http", "net/http", "database/sql", "os/exec", "io/ioutil",
+  # A Go entry denies the one package it names (ADR-2611221933), so the I/O
+  # packages below `os` and `net` are named here; `net/netip`, `net/url`,
+  # `net/mail` and `net/textproto` do no I/O and are not.
+  "os", "os/exec", "os/signal", "os/user",
+  "net", "http", "net/http", "net/http/httptest", "net/http/httputil", "net/http/pprof",
+  "net/rpc", "net/rpc/jsonrpc", "net/smtp",
+  "database/sql", "io/ioutil",
   "plugin",
+  # The standard library's I/O (ADR-2611230811); `os` and `http` above
+  # already cover `os.*` and `http.*`. Pure modules (`pathlib`, `io`,
+  # `urllib.parse`, `json`, …) are not listed; `importlib` loads code at run
+  # time, as Go's `plugin` does.
+  # Python
+  "subprocess", "socket", "shutil", "tempfile", "glob", "sqlite3",
+  "urllib.request", "ftplib", "smtplib", "poplib", "imaplib", "ssl",
+  "signal", "multiprocessing", "ctypes", "importlib",
 ]
 message = "The domain imported something from outside the project that it is not allowed to know about. Put the capability behind a port, or add it to `allow` in .hexa/ADR-rules.toml deliberately and say why in an ADR."
 severity = "error"

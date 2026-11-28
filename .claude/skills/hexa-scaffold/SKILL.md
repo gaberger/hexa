@@ -13,7 +13,7 @@ It does not generate files itself.
 Deterministic, no model call, passes its own tests immediately.
 
 ```bash
-hexa init <dir> --scaffold --lang <rust|go|ts>
+hexa init <dir> --scaffold --lang <rust|go|ts|python|js>
 ```
 
 Use this when the user wants a starting point and will write the code.
@@ -24,7 +24,7 @@ The frontier path builds the description onto the skeleton. Two gates: the
 language's test command, and the architecture grade.
 
 ```bash
-hexa scaffold "<one-sentence description>" --target <dir> --lang <rust|go|ts> --grade A
+hexa scaffold "<one-sentence description>" --target <dir> --lang <rust|go|ts|python|js> --grade A
 ```
 
 Use this when the user describes what the project should do. Ask for the
